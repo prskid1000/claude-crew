@@ -16,17 +16,26 @@ function Get-KitPomInfo([string]$Pom) {
   [pscustomobject]@{ dir = Split-Path $Pom; key = "$($x.artifactId)"; g = $g; a = "$($x.artifactId)"; v = $v; pk = "$($x.packaging)"
     deps = @($x.dependencies.dependency | Where-Object { $_ } | ForEach-Object { "$($_.groupId)|$($_.artifactId)" }); mods = @($x.modules.module | Where-Object { $_ } | ForEach-Object { "$_" }) }
 }
+# the topmost aggregator above module folder $Dir (up to the repo root) -> @{ root; all = its modules by artifactId } (envy lane builds too)
+function Get-KitReactorPoms([string]$Dir) {
+  $root = $null; $d = Split-Path $Dir; $all = @{}
+  while ($d -and (Test-Path -LiteralPath (Join-Path $d 'pom.xml'))) { if ((Get-Content -LiteralPath (Join-Path $d 'pom.xml') -Raw) -match '<modules>') { $root = $d }; if (Test-Path -LiteralPath (Join-Path $d '.git')) { break }; $d = Split-Path $d }
+  $q = [Collections.Generic.Queue[string]]::new(); if ($root) { $q.Enqueue($root) }
+  while ($q.Count -and $all.Count -lt 400) { $p = Get-KitPomInfo (Join-Path $q.Dequeue() 'pom.xml'); if (-not $p -or $all[$p.key]) { continue }; $all[$p.key] = $p; foreach ($m in $p.mods) { $md = Join-Path $p.dir $m; if (Test-Path -LiteralPath (Join-Path $md 'pom.xml')) { $q.Enqueue($md) } } }
+  @{ root = $root; all = $all }
+}
+# the modules of $All that $Mine depends on (transitively) -> artifactId -> pom info
+function Get-KitReactorNeeds($Mine, [hashtable]$All) {
+  $need = @{}; $todo = [Collections.Generic.Queue[string]]::new(); foreach ($k in $Mine.deps) { $todo.Enqueue($k) }
+  # an outside library sharing a module's artifactId (core, api) has another literal groupId: not a reactor module
+  while ($todo.Count) { $dg, $k = $todo.Dequeue() -split '\|', 2; if ($need[$k] -or -not $All[$k] -or ($dg -and $dg -notmatch '^\$' -and $dg -ne $All[$k].g)) { continue }; $need[$k] = $All[$k]; foreach ($k2 in $All[$k].deps) { $todo.Enqueue($k2) } }
+  $need
+}
 function Update-KitReactorDeps {
   $me = Join-Path $st.dir 'pom.xml'; if ($Show -or -not (Test-Path -LiteralPath $me)) { return 0 }
-  $root = $null; $d = Split-Path $st.dir
-  while ($d -and (Test-Path -LiteralPath (Join-Path $d 'pom.xml'))) { if ((Get-Content -LiteralPath (Join-Path $d 'pom.xml') -Raw) -match '<modules>') { $root = $d }; if (Test-Path -LiteralPath (Join-Path $d '.git')) { break }; $d = Split-Path $d }
-  if (-not $root) { return 0 }
-  $all = @{}; $q = [Collections.Generic.Queue[string]]::new(); $q.Enqueue($root)
-  while ($q.Count -and $all.Count -lt 400) { $p = Get-KitPomInfo (Join-Path $q.Dequeue() 'pom.xml'); if (-not $p -or $all[$p.key]) { continue }; $all[$p.key] = $p; foreach ($m in $p.mods) { $md = Join-Path $p.dir $m; if (Test-Path -LiteralPath (Join-Path $md 'pom.xml')) { $q.Enqueue($md) } } }
+  $rp = Get-KitReactorPoms $st.dir; $root = $rp.root; if (-not $root) { return 0 }
   $mine = Get-KitPomInfo $me; if (-not $mine) { return 0 }
-  $need = @{}; $todo = [Collections.Generic.Queue[string]]::new(); foreach ($k in $mine.deps) { $todo.Enqueue($k) }
-  # an outside library sharing a module's artifactId (core, api) has another literal groupId: not a reactor module
-  while ($todo.Count) { $dg, $k = $todo.Dequeue() -split '\|', 2; if ($need[$k] -or -not $all[$k] -or ($dg -and $dg -notmatch '^\$' -and $dg -ne $all[$k].g)) { continue }; $need[$k] = $all[$k]; foreach ($k2 in $all[$k].deps) { $todo.Enqueue($k2) } }
+  $need = Get-KitReactorNeeds $mine $rp.all
   $repo = if ($env:MAVEN_REPO_LOCAL) { $env:MAVEN_REPO_LOCAL } else { Join-Path $HOME '.m2/repository' }
   $stale = @(foreach ($p in $need.Values) {
     if (-not $p.v -or $p.v -match '\$') { continue }   # a ${revision} version: its artefact path is unknown here

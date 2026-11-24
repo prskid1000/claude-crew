@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L470 code · L481 migrations ·
-  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L769 hooks · L842 marks · L1023 seed ·
-  L1090 processes · L1476 daemon · L1938 cleanup · L2010 verbs
+  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L770 hooks · L843 marks · L1024 seed ·
+  L1091 processes · L1477 daemon · L1939 cleanup · L2011 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -638,6 +638,7 @@ function Build-Repo([string]$e, [string]$rn) {
     if ($hit) { Write-Host "[$e] $($s.name): lane $($hit.lane) built the same code: its copy is staged, no build"; $script:SharedStage[$s.name] = $hit; Event $e 'build-shared' @{ service = $s.name; repo = $rn; from = $hit.lane; key = $key }; continue }
     $dir = SvcDir $e $s; $cmd = Expand-Placeholders ([string]$s.build) $e $s $dir ''
     if ($cmd -match '\{reactor\}') { $cmd = $cmd.Replace('{reactor}', (Write-Reactor $e $s)) }
+    elseif ($lr = Get-LayerReactorFlags $e $s $cmd) { $cmd = Add-ToolFlags $cmd $lr }
     Write-Host "[$e] building $($s.name): $cmd"
     $log = LogFile $e "$($s.name)-build"; Remove-Item $log -ErrorAction SilentlyContinue; $t0 = Get-Date
     With-Env (EnvVars $e $s) { & $KitCmd.dev gate -Dir $dir -Cmd "$cmd > `"$log`" 2>&1" *>&1 | Select-String -Pattern '^\[gate\] (starting|waiting.*Biggest)' | ForEach-Object { Write-Host "  $_" } }

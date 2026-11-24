@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L67 lane pick · L117 thin artifacts
+# Sections: L4 shared builds · L110 lane pick · L160 thin artifacts
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -58,11 +58,54 @@ function Get-ReactorModules([string]$e, $s) {
   [pscustomobject]@{ wt = $wt; me = $me; use = @(@($use) + $me | Select-Object -Unique); skip = @($skip) }
 }
 function Write-Reactor([string]$e, $s) {
-  $rm = Get-ReactorModules $e $s; $wt = $rm.wt; $me = $rm.me; $mods = $rm.use
-  if ($rm.skip.Count) { Write-Host "[$e] $($s.name) reactor: from the local repository, not built (parent outside $me's chain): $($rm.skip -join ', ')" }
-  $f = Join-Path $wt ".localenv-reactor-$($s.name).xml"
-  Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>localenv</groupId><artifactId>reactor-$($s.name)</artifactId><version>0</version><packaging>pom</packaging><modules>$(($mods | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
+  $rm = Get-ReactorModules $e $s
+  if ($rm.skip.Count) { Write-Host "[$e] $($s.name) reactor: from the local repository, not built (parent outside $($rm.me)'s chain): $($rm.skip -join ', ')" }
+  Write-ReactorPom $rm.wt $s.name $rm.me $rm.use
+}
+function Write-ReactorPom([string]$wt, [string]$name, [string]$me, [string[]]$mods) {
+  $f = Join-Path $wt ".localenv-reactor-$name.xml"
+  Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>localenv</groupId><artifactId>reactor-$name</artifactId><version>0</version><packaging>pom</packaging><modules>$(($mods | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
   "-f `"$f`" -pl $me -am"
+}
+# $flags after every mvn / mvnw / mvnd / gradle(w) that starts a command step (a folder named so, an echo argument: untouched)
+function Add-ToolFlags([string]$cmd, [string]$flags) {
+  $re = '(?<=(?:^|&&|\|\||;|\||\()\s*(?:call\s+)?(?:cmd(?:\.exe)?\s+/[cs]\s+)?(?:"[^"]*[\\/]|"|[^\s"&|;()]*[\\/])?)(mvnw|mvnd|mvn|gradlew|gradle)(\.cmd|\.bat)?"?(?=[\s)]|$)'
+  [regex]::new($re).Replace($cmd, { param($m) "$($m.Value) $flags" })
+}
+# the folder holding one of $marks, from $from up to the worktree $wt; else $null
+function Find-MarkerDir([string]$wt, [string]$from, [string[]]$marks) {
+  $top = $wt.TrimEnd('\', '/'); for ($d = $from.TrimEnd('\', '/'); $d -and $d.Length -ge $top.Length; $d = Split-Path $d) { if (@($marks | Where-Object { Test-Path -LiteralPath (Join-Path $d $_) -PathType Leaf }).Count) { return $d } }
+  $null
+}
+# a build whose layers change a module it depends on: Maven builds the changed modules (and those between) in one reactor with
+# it (-f <aggregator> -pl <module> -am), Gradle adds each changed build (--include-build); never installed: the local repository
+# is shared by every lane and agent (envfix-5). Empty: no layer, an own -pl / -f / --include-build, or no such module
+function Get-LayerReactorFlags([string]$e, $s, [string]$cmd) {
+  if ($cmd -match '(^|\s)(-pl|--projects|-f|--file|--include-build)(\s|=|$)') { return '' }
+  $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return '' }
+  $n = 0; while ($n -lt 50 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv *') { $n++ }   # layer merges + prepare commits on the target
+  if (-not $n) { return '' }
+  $changed = @(git -C $wt -c core.quotepath=off diff --name-only "HEAD~$n" HEAD 2>$null | Where-Object { $_ } | ForEach-Object { Split-Path (Join-Path $wt $_) })
+  $svc = (SvcDir $e $s).TrimEnd('\', '/')
+  if ($cmd -match '\b(mvn|mvnw|mvnd)\b' -and (Test-Path -LiteralPath (Join-Path $svc 'pom.xml'))) {
+    $mods = @{}; foreach ($d in @($changed | Select-Object -Unique)) { if (($md = Find-MarkerDir $wt $d 'pom.xml') -and $md -ne $svc -and ($p = Get-KitPomInfo (Join-Path $md 'pom.xml'))) { $mods[$p.key] = $p } }
+    if (-not $mods.Count) { return '' }
+    $all = (Get-KitReactorPoms $svc).all; foreach ($k in $mods.Keys) { if (-not $all[$k]) { $all[$k] = $mods[$k] } }   # a module no aggregator lists
+    $need = Get-KitReactorNeeds (Get-KitPomInfo (Join-Path $svc 'pom.xml')) $all
+    $keep = @{}; $visit = { param($k) if ($keep.ContainsKey($k)) { return $keep[$k] }; $keep[$k] = $false
+      $v = $mods[$k] -and $mods[$k].dir -eq $need[$k].dir; foreach ($dk in @($need[$k].deps | ForEach-Object { ($_ -split '\|', 2)[1] })) { if ($need[$dk] -and (& $visit $dk)) { $v = $true } }; $keep[$k] = [bool]$v; [bool]$v }
+    $use = @($need.Keys | Where-Object { & $visit $_ } | ForEach-Object { [IO.Path]::GetRelativePath($wt, $need[$_].dir).Replace('\', '/') } | Sort-Object)
+    if (-not $use.Count) { return '' }
+    $me = [IO.Path]::GetRelativePath($wt, $svc).Replace('\', '/')
+    Write-Host "[$e] $($s.name): layers change $($use -join ', ') it depends on: built in one reactor with it, not taken from the local repository"
+    return Write-ReactorPom $wt $s.name $me @(@($use) + $me)
+  }
+  if ($cmd -match '\bgradlew?\b') {
+    $sm = 'settings.gradle', 'settings.gradle.kts'; $sep = [IO.Path]::DirectorySeparatorChar
+    $inc = @($changed | Select-Object -Unique | ForEach-Object { Find-MarkerDir $wt $_ $sm } | Where-Object { $_ -and -not "$svc$sep".StartsWith("$_$sep", [StringComparison]::OrdinalIgnoreCase) } | Select-Object -Unique)   # the service's own build or one enclosing it: not included
+    if ($inc.Count) { Write-Host "[$e] $($s.name): layers change build(s) $(@($inc | ForEach-Object { [IO.Path]::GetRelativePath($wt, $_) }) -join ', '): included (--include-build)"; return (@($inc | ForEach-Object { "--include-build `"$_`"" }) -join ' ') }
+  }
+  ''
 }
 # ---- lane pick: envy.ps1 calls Select-Lane at -Env <env> (K58 lane opening); Get-LaneLoad, Get-LanesOpen
 # a lane's users: agents with a layer, lease, hold or open deploy there; services up; train running

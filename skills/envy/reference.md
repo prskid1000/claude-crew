@@ -94,18 +94,18 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
   staged copy (unknown routes -> index.html; no dev server).
 - `prepare` = a command after each sync whose edits are committed locally on the lane branch `lane/<product>-<bird>` (a build cache at `{cache}`,
   outside the repo).
-- `unpack` = a command unpacking `{artifact}` into `{out}` (failed: the plain artifact staged, event `unpack-fallback`, doctor warns).
-- `keepReleases` (2) staged per service + the ones running.
-- `stageLinks` (true): a release copies nothing: the artifact is moved out of the build (copied when another service
-  stages the same one); unpacked and static files are kept once per content hash in `_lib` and hard-linked (a served file
-  is never written in place); another release's files hard-linked.
+- `unpack` = a command unpacking `{artifact}` into `{out}` (failed: plain artifact staged, event `unpack-fallback`).
+- `keepReleases` (2) per service + running ones.
+- `stageLinks` (true): the artifact is moved out of the build (copied when another service stages it); unpacked and static
+  files are kept once per content hash in `_lib` and hard-linked (never written in place).
 - `reuseBuilds` (false): a lane re-stages its own copy of the same tree + config, no build; only for builds that read
   nothing outside the worktree (a local SNAPSHOT dependency goes stale).
 - `aotTrain` ({aotFile}): one gated background run per artifact after it is up; `{aot}` in `start` = `aotUse`
   (`-XX:AOTCache="{aotFile}"`) once it exists.
 - `classpathFile` (off): thin jar + this classpath: per-release argfile; `start`: `@"{javaArgs}" <main>`.
 - `{reactor}` in `build` = `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only modules whose parent is
-  in the module's parent chain, the rest come from the local repository: doctor lists them).
+  in the module's parent chain, the rest come from the local repository: doctor lists them). Without it (or `-pl`):
+  modules a layer changes that the service needs join its reactor (Gradle `--include-build`), never installed.
 - An edited kit.local.json, envy.ps1, lib.ps1 or `adapters/` file restarts the loop between trains.
 - `readyPattern`: a ready log line checks health at once (else every 5 s; fail lines every 1 s).
 - `logClasses` { expected, startup, connection, 5xx, dependency }: regexes replacing the generic log classes (supervise's

@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 local-env-5.tests.ps1: envy.ps1 thin artifacts (services[].classpathFile): per-release classpath.txt + java.args, {javaArgs};
-a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers; lanes -Sync; down without -Env / -All; deploy -Dir a,b.
+a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers; lanes -Sync; down without -Env / -All; deploy -Dir a,b; layer reactor builds.
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-5.tests.ps1 (tests/kit-tests.ps1 -Area local-env-5 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -9,6 +9,7 @@ param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/h
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 $k = New-TestKit le5; $ed = New-Item -ItemType Directory -Force (Join-Path $k 'skills/envy/adapters'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $ed)
 Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) $ed
+Copy-Item (Join-Path $src 'skills/crafty/adapters/container-tests.ps1') (Join-Path $k 'skills/crafty/adapters')   # Get-KitPomInfo for layer reactor builds
 $L5 = Join-Path $k 'skills/envy/envy.ps1'
 $api = @{ name = 'api'; repo = 'r'; dir = 'api'; port = 41051; artifact = 'target/app-*.jar'; classpathFile = 'target/classpath.txt'; start = 'java @"{javaArgs}" a.Main' }
 & $J @{ localEnv = @{ envs = @{ t = @{ services = @($api) } } } } (Join-Path $k 'skills/crafty/kit.local.json') 8
@@ -77,6 +78,37 @@ $ua = & { . $L5 6>$null; $e = 'uz'; $Agent = 'B'; $Services = @(); $AllServices 
   $null = . ([scriptblock]::Create($use.Substring(1, $use.Length - 2))); "$(@((Read-State uz).leases.B.services) -join ',')" }
 $uAlias = @($uAst.FindAll({ $args[0] -is [Management.Automation.Language.ParameterAst] -and $args[0].Name.VariablePath.UserPath -eq 'AllServices' }, $true) | ForEach-Object { "$($_.Attributes)" }) -join ''
 Expect "envy use: -All leases every managed service; -All is AllServices' alias ($ua | $uAlias)" ($ua -eq 'api,web' -and $uAlias -match "Alias\('All'\)")
+# envfix-5: a layer changing a module the service depends on -> built in one reactor with it (and the modules between), never installed
+$lrx = & { . $L5; $rw = Join-Path $k 'lrx-wt'; $null = New-Item -ItemType Directory -Force $rw; git -C $rw init -q -b main
+  $mk = { param($a, $deps) $null = New-Item -ItemType Directory -Force (Join-Path $rw "$a/src"); "class X {}" | Set-Content (Join-Path $rw "$a/src/X.java")
+    "<project><groupId>o</groupId><artifactId>$(Split-Path $a -Leaf)</artifactId><version>1</version><dependencies>$(($deps | ForEach-Object { "<dependency><groupId>o</groupId><artifactId>$_</artifactId><version>1</version></dependency>" }) -join '')</dependencies></project>" | Set-Content (Join-Path $rw "$a/pom.xml") }
+  & $mk 'common/core' @(); & $mk 'mid' @('core'); & $mk 'api' @('mid'); & $mk 'other' @()
+  '<project><groupId>o</groupId><artifactId>root</artifactId><version>1</version><packaging>pom</packaging><modules><module>common/core</module><module>mid</module><module>api</module><module>other</module></modules></project>' | Set-Content (Join-Path $rw 'pom.xml')
+  $g = { git -C $rw -c user.name=t -c user.email=t@t @args 2>&1 | Out-Null }
+  & $g add -A; & $g commit -q -m base
+  $layer = { param($dir) & $g checkout -q -B "f-$(Split-Path $dir -Leaf)" main; "class Y {}" | Set-Content (Join-Path $rw "$dir/Y.java"); & $g add -A; & $g commit -q -m change; & $g checkout -q main
+    & $g checkout -q -B lane main; & $g merge -q --no-ff -m "localenv layer f-$dir (devy)" "f-$(Split-Path $dir -Leaf)" }
+  function EnvRepos { @{ r = [pscustomobject]@{ wt = $rw } } }; function RepoOf { 'r' }; function SvcDir { Join-Path $rw 'api' }
+  $sv = [pscustomobject]@{ name = 'api'; dir = 'api' }
+  & $layer 'common/core/src'; 'c' | Set-Content (Join-Path $rw 'api/cache.txt'); & $g add -A; & $g commit -q -m 'localenv prepare api (local only)'   # a prepare commit on top
+  $f1 = Get-LayerReactorFlags t $sv 'mvn -q package -DskipTests' 6>$null; $x1 = Get-Content (Join-Path $rw '.localenv-reactor-api.xml') -Raw
+  $own = Get-LayerReactorFlags t $sv 'mvn -q package -pl api' 6>$null
+  & $g checkout -q main; & $layer 'other/src'; $f2 = Get-LayerReactorFlags t $sv 'mvn -q package' 6>$null
+  & $g checkout -q main; $f0 = Get-LayerReactorFlags t $sv 'mvn -q package' 6>$null
+  # Gradle: a changed separate build is included; the service's own and an enclosing build are not
+  & $g checkout -q main; $null = New-Item -ItemType Directory -Force (Join-Path $rw 'app/src'), (Join-Path $rw 'lib/src')
+  foreach ($sd in '.', 'app', 'lib') { 'x' | Set-Content (Join-Path $rw "$sd/settings.gradle") }; & $g add -A; & $g commit -q -m gradle-base
+  & $g checkout -q -B f-g main; 'y' | Set-Content (Join-Path $rw 'lib/src/A.kt'); 'y' | Set-Content (Join-Path $rw 'app/src/B.kt'); 'y' | Set-Content (Join-Path $rw 'README'); & $g add -A; & $g commit -q -m g
+  & $g checkout -q -B lane main; & $g merge -q --no-ff -m 'localenv layer f-g (devy)' f-g
+  function SvcDir { Join-Path $rw 'app' }; $fg = Get-LayerReactorFlags t ([pscustomobject]@{ name = 'app' }) './gradlew build' 6>$null; $gw = '--include-build "' + (Join-Path $rw 'lib') + '"'
+  "$($f1 -match '-pl api -am$')|$($x1 -match '<module>common/core</module><module>mid</module><module>api</module></modules>')|$($x1 -notmatch 'other')|[$own][$f2][$f0]|$($fg -eq $gw)" }
+Expect "build: a layer changing a nested dependency (common/core, via mid; a prepare commit on top) -> -f <aggregator of common/core, mid, api> -pl api -am; an own -pl, an unrelated module or no layer -> no flags; Gradle: only the changed separate build is included ($lrx)" ($lrx -eq 'True|True|True|[][][]|True')
+# the flags go after every Maven / Gradle step, never onto a folder or an echo argument
+$atf = & { . $L5; $cases = [ordered]@{ 'mvn -q package' = 'mvn -F -q package'; 'cd D:\tools\mvn && ./mvnw package' = 'cd D:\tools\mvn && ./mvnw -F package'; 'mvn clean && mvn package' = 'mvn -F clean && mvn -F package'
+    '"C:\Program Files\mvn\bin\mvn.cmd" -q package' = '"C:\Program Files\mvn\bin\mvn.cmd" -F -q package'; 'cmd /c "mvnw.cmd package"' = 'cmd /c "mvnw.cmd -F package"'; 'echo gradle && gradlew.bat build' = 'echo gradle && gradlew.bat -F build' }
+  @($cases.Keys | Where-Object { (Add-ToolFlags $_ '-F') -cne $cases[$_] } | ForEach-Object { "$_ -> $(Add-ToolFlags $_ '-F')" }) -join '; ' }
+$lsx = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
+Expect "build: layer reactor flags follow each tool step (quoted, wrapper, chained, cmd /c), never a folder or echo argument; Build-Repo uses them ($atf)" (-not $atf -and $lsx -match 'elseif \(\$lr = Get-LayerReactorFlags \$e \$s \$cmd\) \{ \$cmd = Add-ToolFlags \$cmd \$lr \}')
 $kd = New-TestKit le5d; $dd = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy/adapters'); Copy-Item $L5 (Split-Path $dd); Copy-Item (Join-Path $src 'skills/envy/adapters/*') $dd
 & $J @{ localEnv = @{ envs = @{ t = @{ db = @{ engine = 'mysql'; port = 41999 }; services = @(@{ name = 'db'; port = 41999; start = 'x' }) } } } } (Join-Path $kd 'skills/crafty/kit.local.json') 8
 $dt = @(pwsh -NoProfile -File (Join-Path $kd 'skills/envy/envy.ps1') dbtemp -Env t 2>&1); $dtc = $LASTEXITCODE
