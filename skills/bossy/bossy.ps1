@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L252 budget · L282 launch · L525 recover · L612 pause · L623 resume · L690 program · L728 param ·
   L734 track · L1122 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
-  L1734 decide · L1903 debate · L1947 health · L2015 setup · L2110 guard-sendmessage
+  L1734 decide · L1904 debate · L1948 health · L2016 setup · L2111 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1820,10 +1820,10 @@ function Invoke-Decide {
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
       # a scope ask (-Gate scope, or naming `decide record -Gate scope`) answered by a recording pick: the scope word (wt commit -ScopeOk)
-      $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope') { "$($o.item)" }
+      $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope' -or "$($o.question)" -match '(?i)\boutside (the )?(area|scope)\b') { "$($o.item)" }
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
       if ($scItem -and $By -notmatch $crewRx) {
-        if ($pick -and "$($pick.label)" -match '(?i)\b(record|approve|allow|widen|yes)\b' -and "$($pick.label)" -notmatch "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep)\b") {
+        if ($pick -and "$($pick.label)" -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept)\b' -and "$($pick.label)" -notmatch "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep|drop|skip|remove|exclude|decline|undo|without|narrow)\b") {
           $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
             kind = 'decision'; run = $o.run; agent = 'coordinator'; item = $scItem; gate = 'scope'; question = $o.question; options = @(); blocking = $false; status = 'answered'; at = $now
             task = "$($o.task)"; mrs = @($o.mrs); answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }
@@ -1872,7 +1872,8 @@ function Invoke-Decide {
         Where-Object { $_.status -eq 'answered' -and $_.kind -ne 'envfix' } |
         Where-Object {
           # every key given matches: a staging yes never serves production
-          $rec = $_; $itemOk = -not $items.Count -or $rec.item -in $items -or ($rec.task -and $rec.task -in $wantTasks) -or @($rec.mrs | Where-Object { $_ -in $items }).Count
+          $rec = $_; $itemOk = -not $items.Count -or $rec.item -in $items -or ($rec.task -and $rec.task -in $wantTasks) -or @($rec.mrs | Where-Object { $_ -in $items }).Count -or
+            ($rec.gate -eq 'scope' -and @($items | Where-Object { $bt = $_ -split '[/_.-]'; @("$($rec.task)", "$($rec.item)" | Where-Object { $_.Length -ge 6 -and $_ -in $bt }).Count }).Count)   # an item's scope word serves its branch
           $mrOk = -not $wantMrs.Count -or -not @($wantMrs | Where-Object { $_ -notin @($rec.mrs) }).Count
           $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -or $Item -or $wantMrs.Count) -and $(if ($gates.Count -gt 1) { $rec.gate -in $gates } else { -not $rec.gate -or $Gate -notin $kitGates -or $rec.gate -eq $Gate }) } else { $rec.gate -in $gates }
           $gateOk -and $itemOk -and $mrOk })

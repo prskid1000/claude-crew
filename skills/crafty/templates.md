@@ -35,7 +35,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | qa-report | the QA run report (an "<env> run" section of the human doc) | header table, ## Tasks, ## Results, ## Failures in detail, ## Notes, ## Setup changes and test data, ## Evidence index | prose:900w each:15b 25sw | id verdict evidence |
 | result-note | a results.json `observed` / `what_was_done` | `<observed> vs <expected>; <evidence>` | 40w 1l | — |
 | mr-title | MR / PR title ("MR spec") | keyed task: `<type>(<scope>): <change> [<KEY>]`; else `mrTitleFormat`, default `<type>(<scope>): <change> (<task id>)` | 1l 90ch | conv |
-| mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Summary:40w | link |
+| mr-body | MR / PR description | ## Summary, ## Changes, ## How tested, ## Risks, ## Links | 260w each:3b Links:9b Summary:40w | link |
 | commit | commit message ("MR spec") | `commitFormat` subject; blank line; body bullets | first:72ch 12l 100ch | conv |
 | merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
 | task-name | tracker task name (`tracker create`: `naming make title`) | `<KEY> <outcome>`; kind, product, area, wave: tags (`naming tags`); DUP-WORDS | 1l 100ch | — |

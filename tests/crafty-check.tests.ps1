@@ -168,5 +168,20 @@ $er2 = "$((& $e2 'src/app/orders/list.component.ts' '-Show').out)|$((& $e2 'READ
 Expect 'check -Step e2e: tests.e2e.run = cmd + env, one run per spec folder; -AllTests: a folder glob each' ($er2 -match 'env: CY_L=1' -and $er2 -match 'e2e : x -r0 --spec "cypress/e2e/02-orders/01\.create\.cy\.ts"' -and
   $er2 -match '"cypress/e2e/(misc|nav)\.cy\.ts,cypress/e2e/(misc|nav)\.cy\.ts"' -and $er2 -match '"cypress/e2e/invoices/\*\.cy\.\*"' -and @([regex]::Matches($er2, 'e2e : ')).Count -eq 5)
 Remove-Item $kl
+# a Maven test step installs the reactor modules it depends on (transitively) whose sources are newer than their local-repo artefact (retro: stale sibling jar)
+$rx = Invoke-PsTest 'reactor-deps' @'
+$r = Join-Path $args[1] 'reactor'; $repo = Join-Path $args[1] 'm2'; $env:MAVEN_REPO_LOCAL = $repo
+$pom = { param($d, $a, $deps, $mods) New-Item -ItemType Directory -Force "$d/src/main" | Out-Null; 'x' | Set-Content "$d/src/main/X.java"
+  "<project><groupId>org.example</groupId><artifactId>$a</artifactId><version>1.0</version>$(if ($mods) { "<modules>$(-join ($mods | ForEach-Object { "<module>$_</module>" }))</modules>" })<dependencies>$(-join ($deps | ForEach-Object { "<dependency><groupId>`${project.groupId}</groupId><artifactId>$_</artifactId></dependency>" }))</dependencies></project>" | Set-Content "$d/pom.xml" }
+& $pom $r 'root' @() @('core', 'mid', 'app', 'other'); & $pom "$r/core" 'core' @() @(); & $pom "$r/mid" 'mid' @('core') @(); & $pom "$r/app" 'app' @('mid') @(); & $pom "$r/other" 'other' @() @()
+New-Item -ItemType Directory -Force "$repo/org/example/mid/1.0" | Out-Null; 'j' | Set-Content "$repo/org/example/mid/1.0/mid-1.0.jar"   # mid fresh, core missing
+$script:calls = @(); $KitCmd = @{ dev = 'fake' }; function fake { $script:calls += , @($args); $global:LASTEXITCODE = 0 }; function Get-CheckLog { 'log' }
+. $args[0]; $st = @{ dir = "$r/app"; commands = @{ test = 'mvn test' } }; $Show = $false
+$rc = Update-KitReactorDeps; "first:$rc|$(@($script:calls | ForEach-Object { $_ -join ' ' }) -join ';')"
+$script:calls = @(); New-Item -ItemType Directory -Force "$repo/org/example/core/1.0" | Out-Null; 'j' | Set-Content "$repo/org/example/core/1.0/core-1.0.jar"
+$rc2 = Update-KitReactorDeps; "fresh:$rc2|$($script:calls.Count)"
+'@ @((Join-Path $k 'skills/crafty/adapters/container-tests.ps1'), (Kd))
+Expect "check -Step test (maven): stale or missing reactor deps (transitive, not unrelated modules) are installed first through the gate; none when fresh ($rx)" (
+  "$rx" -match 'first:0\|gate -Dir \S*reactor -Cmd mvn -q install -DskipTests -pl core -am' -and "$rx" -notmatch 'other' -and "$rx" -match 'fresh:0\|0')
 Remove-TestKit $k
 Complete-Tests

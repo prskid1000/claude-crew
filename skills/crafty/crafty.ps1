@@ -231,7 +231,7 @@ switch ($Action) {
     if (($area = @(Meta $Dir 'scope' | Where-Object { $_ })).Count) {   # the branch's diff and this commit stay in the brief area
       $at = Meta $Dir 'target'; $br = (git -C $Dir rev-parse --abbrev-ref HEAD).Trim()
       $out = @(Get-KitScopeOutside @(@(if ($at) { git -C $Dir -c core.quotepath=false diff --name-only "origin/$at...HEAD" }) + @(git -C $Dir -c core.quotepath=false diff --cached --name-only) | Select-Object -Unique) $area)
-      if ($out.Count -and -not ($ScopeOk -and "$(pwsh -NoProfile -File $KitCmd.orch decide check -Id $ScopeOk -Gate scope -Item $br -MaxHours 720)" -match '^WORD ')) {
+      if ($out.Count -and "$(pwsh -NoProfile -File $KitCmd.orch decide check $(if ($ScopeOk) { '-Id', $ScopeOk }) -Gate scope -Item $br -MaxHours 720)" -notmatch '^WORD ') {
         [Console]::Error.WriteLine("commit refused: $($out.Count) file(s) outside the area ($($area -join ', ')): $(($out | Select-Object -First 12) -join ', '). Revert them (a product bug in a test-only area: pin today's behaviour, decide ask); an owner-approved exception: bossy.ps1 decide record -Gate scope -Item $br ..., then -ScopeOk <id>"); exit 1
       }
     }
@@ -1017,7 +1017,7 @@ foreach ($s in $steps) {
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
-  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # adapters/container-tests.ps1
+  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Invoke-KitJvmTestPrep -ErrorAction SilentlyContinue }   # adapters/container-tests.ps1
   if ($ct) {
     $rc = & $ct
     if ($rc -and -not $Show) { exit $rc }

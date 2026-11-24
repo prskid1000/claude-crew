@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L470 code · L481 migrations ·
-  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L769 hooks · L841 marks · L1022 seed ·
-  L1089 processes · L1475 daemon · L1937 cleanup · L2009 verbs
+  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L769 hooks · L842 marks · L1023 seed ·
+  L1090 processes · L1476 daemon · L1938 cleanup · L2010 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -798,7 +798,8 @@ function Invoke-Hook([string]$e, [string]$name, [hashtable]$vars = @{}) {
   if (-not $cmd) { return "no db.$name hook configured" }
   $log = LogFile $e 'db'
   Add-Content $log "== $(Now) $name : $cmd"
-  $code = Invoke-Shell $cmd $log (EnvVars $e ([pscustomobject]@{})) (HookTimeout $e $name)
+  $hv = EnvVars $e ([pscustomobject]@{}); if ($name -eq 'query' -and "$($cmd)" -match 'KIT_DB_URI') { $hv['KIT_DB_URI'] = "$((Get-EnvCfg $e).db.uri)" }   # mongosh: db.uri off argv
+  $code = Invoke-Shell $cmd $log $hv (HookTimeout $e $name)
   $script:HookOut = @($script:ShellOut)
   Event $e "db-$name" @{ code = $code; vars = $vars }
   if ($code) { return "db.$name failed ($(Get-ShellWhy $code)): $((@($script:HookOut) | Select-Object -Last 8) -join ' | ')" }

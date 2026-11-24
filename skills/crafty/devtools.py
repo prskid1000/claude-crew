@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1504 publish · L2002 render · L2571 spec · L3115 plugins · L3129 keepboth · L3148 selftest · L3850 CLI
+  L1534 publish · L2032 render · L2610 spec · L3154 plugins · L3168 keepboth · L3187 selftest · L3908 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1482,6 +1482,35 @@ def with_tags(text, ext, tags):
     return t if not tags else t[:m.end()] + f'\n{line}\n' + t[m.end():] if m else f'{line}\n\n' + t
 
 
+def redact_files(files):
+    """Text evidence masked in place before upload (retro: a saved request body with a test password reached Drive): JSON keys
+    matching _paths.log.secretKey -> [redacted], strings through the log's secret masks (emails stay: test data)."""
+    import kitbag
+    rxs = [(rx, r) for rx, r in kitbag._MASKS if 'redacted' in r]
+
+    def red(v):
+        if isinstance(v, dict):
+            return {k: '[redacted]' if re.search(kitbag.LOG['secretKey'], str(k)) and v[k] not in (None, '') else red(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [red(x) for x in v]
+        for rx, r in rxs if isinstance(v, str) else ():
+            v = rx.sub(r, v)
+        return v
+    for f in [f for f in files if re.search(r'\.(json|har|txt|log)$', str(f), re.I) and os.path.isfile(f)]:
+        try:
+            t = open(f, encoding='utf-8-sig', newline='').read()
+        except UnicodeDecodeError:   # not UTF-8 text: never rewritten
+            continue
+        try:
+            j = json.loads(t)
+            n = t if red(j) == j else json.dumps(red(j), indent=2, ensure_ascii=False)
+        except ValueError:
+            n = red(t)
+        if n != t:
+            open(f, 'w', encoding='utf-8', newline='').write(n)
+            print(f'[evidence] {os.path.basename(f)}: secrets redacted before upload', file=sys.stderr)
+
+
 def make_evidence(name, files, folder=None, parent=None, key=None):
     """Host evidence files -> {folderId, folderLink, label, files}; {} = they stay in the run folder; key: reuse its folder.
     Evidence store (README "Adapters"): reports.evidence report (default: the report adapter's own host, e.g. gdocs = Drive) |
@@ -1493,6 +1522,7 @@ def make_evidence(name, files, folder=None, parent=None, key=None):
     fn = {'local': None, 'command': _evidence_command}.get(st, (ad or {}).get('evidence'))
     if not fn:
         return {}
+    redact_files(files)
     rec = _pub_read(key) if key else {}
     out = fn({'name': name, 'files': files, 'folder': folder or rec.get('folderId'), 'parent': parent})
     if key and out.get('folderId'):
@@ -2274,6 +2304,11 @@ def cases_cmd(a):
                                            'failed': '; '.join(f"{k['id']}: {k['result']}" for k in ran if str(k['result']).upper().startswith('FAIL'))}]})
         else:
             if verb == 'add':   # a shared task: one wave agent never rewrites another's title or ids
+                old_of = lambda k, i: next((x for x in c.get(k) or [] if isinstance(x, dict) and str(x.get('id')) == str(i)), None)
+                dup = [f'{k} {e.get("id")}' for k in ('cases', 'checks', 'qualities', 'unchanged') for e in new.get(k) or [] if isinstance(e, dict)
+                       and (o := old_of(k, e.get('id'))) and any(o.get(f) != v for f, v in e.items() if f != 'by')]
+                if dup and '--replace' not in rest:   # retro: an existing id was overwritten silently
+                    raise SystemExit(f'cases add: {", ".join(dup)} exist(s) with other values: a new id for a new case, or --replace to change it. Nothing was written.')
                 own_spec(c, new, '--replace' in rest)
             c = merge_spec(c, new)
         gaps = cases_gaps(c)
@@ -2366,7 +2401,7 @@ def render_mr_body(s):
                         '## Changes', '\n'.join(f'- {c["text"]}' + (f' · **Technical:** `{c["technical"]}`' if c.get('technical') else '') for c in s.get('changes') or []) or 'n/a — the spec lists no change',
                         '## How tested', _table(['Check', 'Result'], rows), '## Risks', '\n'.join(risks), '## Links',
                         (f'- **Sibling {mr_word()}s:** {", ".join(link_refs(x) for x in sib)} (merge order: producers first)' if sib else f'- **Sibling {mr_word()}s:** none')
-                        + (f'\n- **Spec S-ids:** {", ".join(map(str, _as_list(s["specIds"])))}' + (f' (v{v})' if (v := spec_rec(t).get('version')) else '')
+                        + (f' · **Spec S-ids:** {", ".join(map(str, _as_list(s["specIds"])))}' + (f' (v{v})' if (v := spec_rec(t).get('version')) else '')   # one bullet: Links cap
                            if _as_list(s.get('specIds')) else '')]) + '\n'
 
 
@@ -2426,8 +2461,12 @@ SPEC_NEEDS = {'mr-body': ('type', 'change', 'summary'), 'mr-title': ('type', 'ch
 
 
 def spec_gaps(s, kind):
-    """What a spec lacks for its kind (SPEC_NEEDS) + change entries without text."""
-    return [k for k in SPEC_NEEDS.get(kind, ()) if not s.get(k)] + [f'changes[{i}].text' for i, c in enumerate(s.get('changes') or []) if not c.get('text')]
+    """What a spec lacks for its kind (SPEC_NEEDS) + change entries without text; a bare string item becomes {"text": it}."""
+    for k in ('changes', 'risks'):   # retro: render commit crashed 2x on 'str' object has no attribute 'get'
+        if isinstance(s.get(k), (str, list)):
+            s[k] = [{'text': c} if isinstance(c, str) else c for c in ([s[k]] if isinstance(s[k], str) else s[k])]
+    return [k for k in SPEC_NEEDS.get(kind, ()) if not s.get(k)] + [f'{k}[{i}].text' for k in ('changes', 'risks') for i, c in enumerate(s.get(k) or [])
+                                                                   if not isinstance(c, dict) or k == 'changes' and not c.get('text')]
 
 
 # templates.md "Final reports": each role's JSON keys in reading order (others: the generic shape)
@@ -2678,7 +2717,7 @@ def spec_migrate(s):
         s['decisions'] = dec or (s.get('decisions') if _na(s.get('decisions')) else o)
     elif dec:
         s['decisions'] = dec
-    old = {k: s.pop(k) for k in ('approach', 'impact', 'contracts', 'diagrams') if k in s}
+    old = {k: s.pop(k) for k in ('approach', 'impact', 'contracts', 'diagrams') if k in s and (k != 'impact' or s.get('kind') != 'bug')}   # bug: Impact is its own section
     if old:   # bug -> Fix; subject -> Data model (diagrams) + Interfaces (contracts), the rest carried; feature -> Design
         part = {'approach': old.get('approach'), 'modules': old.get('impact'), 'contracts': old.get('contracts'), 'diagrams': old.get('diagrams')}
         part = {k: v for k, v in part.items() if v is not None}
@@ -3477,8 +3516,9 @@ def _publish_selftest(expect, refused):
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
             if os.path.exists(os.path.join(KIT_DIR, 'skills/crafty/templates.md')):
-                expect('prose: a missing kitbag.py path falls back in-process (4 Links bullets still a finding)',
-                       any('Links: 4 bullets' in f for f in prose('mr-body', '## Links\n' + '- x\n' * 4, tool=os.path.join(KIT_DIR, 'no-such-kitbag.py'))))
+                expect('prose: a missing kitbag.py path falls back in-process (4 Risks bullets still a finding; Links has its own cap 9)',
+                       any('Risks: 4 bullets' in f for f in prose('mr-body', '## Risks\n' + '- x\n' * 4, tool=os.path.join(KIT_DIR, 'no-such-kitbag.py')))
+                       and not any('Links' in f and 'bullets' in f for f in prose('mr-body', '## Links\n' + '- x\n' * 9)))
             with contextlib.redirect_stderr(io.StringIO()) as pg_err:
                 g['PROSE_OK'] = ''; refused('prose_gate: the refusal names the kind\'s format and limits (mr-title)', lambda: prose_gate('mr-title', 'x' * 200), 'limits 1l 90ch'); g['PROSE_OK'] = 'selftest'
             expect('prose_gate: a refusal prints the rendered text it checked', 'mr-title as checked (1 words, 200 chars):\n' + 'x' * 200 in pg_err.getvalue())
@@ -3538,6 +3578,24 @@ def _publish_selftest(expect, refused):
             cases_cmd(['add', 'T78', mxs])
         task_index('T78', lambda x: x.pop('cases', None))
         expect('cases add: a UI case without each qa.matrix value warns at once, not first at finish', 'WARN cases T78: UI cases miss qa.matrix value(s) 1280x720' in fe.getvalue())
+        c80 = lambda e: w(os.path.join(tmp, 'c80.json'), json.dumps({'title': 'd', 'cases': [{'id': 'A1', 'type': 'negative', 'steps': 's', 'expected': e}]}))
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            cases_cmd(['add', 'T80', c80('e1')]); cases_cmd(['add', 'T80', c80('e1')])   # the same file again: no change, no refusal
+            refused('cases add: an existing id with other values is refused without --replace', lambda: cases_cmd(['add', 'T80', c80('e2')]), 'cases A1 exist(s) with other values')
+            cases_cmd(['add', 'T80', c80('e3'), '--replace'])
+        expect('cases add --replace changes an existing case', (state_read(task_file('T80')) or {})['cases']['cases'][0]['expected'] == 'e3')
+        task_index('T80', lambda x: x.pop('cases', None))
+        sc = {'type': 'fix', 'change': 'c', 'summary': 's', 'changes': ['bare text', {'text': 't2'}], 'risks': 'one risk'}
+        expect('render commit / mr-body: a bare string change or risk is its text (no AttributeError); a non-object item is a gap',
+               not spec_gaps(sc, 'commit') and '- bare text' in render_commit(sc) and '- one risk' in render_mr_body(sc) and spec_gaps({**sc, 'changes': [3]}, 'commit') == ['changes[0].text']
+               and re.search(r'(?m)^- \*\*Sibling .*none · \*\*Spec S-ids:\*\* S1$', render_mr_body({**sc, 'specIds': ['S1']})))   # one Links bullet
+        expect('spec_migrate: a bug keeps its Impact section; a feature\'s legacy impact still maps to design.modules',
+               spec_migrate({'kind': 'bug', 'impact': {'who': 'drivers'}})['impact'] == {'who': 'drivers'} and spec_migrate({'kind': 'feature', 'impact': ['m1']})['design'] == {'modules': ['m1']})
+        ev1, ev2 = w(os.path.join(tmp, 'ev.json'), json.dumps({'request': {'body': {'login': 'qa', 'newPassword': 'Pw-1234567'}}, 'mail': 'a@b.example'})), w(os.path.join(tmp, 'ev.txt'), 'password=Pw-1234567&x=1')
+        with contextlib.redirect_stderr(io.StringIO()):
+            redact_files([ev1, ev2, os.path.join(tmp, 'none.json')])
+        expect('evidence upload: secret JSON keys and password=... text are redacted in place, other values (an email) stay',
+               json.loads(open(ev1, encoding='utf-8').read()) == {'request': {'body': {'login': 'qa', 'newPassword': '[redacted]'}}, 'mail': 'a@b.example'} and 'Pw-1234567' not in open(ev2, encoding='utf-8').read())
         with contextlib.redirect_stderr(io.StringIO()) as fe:
             refused('doc --key: the first publish of a task doc needs a fresh prior', lambda: doc_prior('T79:testing-ai'), 'run crafty.ps1 prior -Task T79')
             _pub_update('T79:testing-ai', url='https://x/d79'); doc_prior('T79:testing-ai')

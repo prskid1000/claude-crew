@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L160 seat · L234 api · L485 users · L597 login surfaces (parity.json login) · L630 finalize ·
-  L1171 results · L1204 retest · L1261 prepare
+Sections: L29 lanes · L43 report · L160 seat · L234 api · L487 users · L599 login surfaces (parity.json login) · L632 finalize ·
+  L1173 results · L1206 retest · L1263 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -466,9 +466,11 @@ if ($Save) {
     if ($o -is [System.Collections.IDictionary]) { foreach ($k in @($o.Keys)) { $o[$k] = if ("$k" -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $o[$k] } }; return , $o }
     if ($o -is [System.Management.Automation.PSCustomObject]) { foreach ($p in (Get-KitProps $o)) { $p.Value = if ($p.Name -match $KitLogMap.secretKey) { '[redacted]' } else { Redact $p.Value } }; return $o }
     if ($o -is [array]) { return , @($o | ForEach-Object { Redact $_ }) }
+    # a string: the login's password and form / query secret fields (retro: a saved request body held a test password)
+    if ($o -is [string]) { $o = $o -replace '(?i)((?:^|[?&])[^=&\s]*(?:passw|pwd|token|secret|api[-_]?key|authoriz|cookie|credential|private[-_]?key|signature)[^=&\s]*=)[^&\s]*', '$1[redacted]'; if ("$($u[1])".Length -ge 8) { $o = $o.Replace([string]$u[1], '[redacted]') } }
     $o
   }
-  function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = $s.Substring(0, 200KB) } }; try { Redact (ConvertFrom-Json $s -NoEnumerate) } catch { $s } }
+  function Parse($s) { if (-not $s) { return $null }; if ($s.Length -gt 200KB) { return [ordered]@{ _truncated = $true; text = (Redact $s.Substring(0, 200KB)) } }; try { Redact (ConvertFrom-Json $s -NoEnumerate) } catch { Redact $s } }
   $red = [ordered]@{}; foreach ($k in $script:sentHeaders.Keys) { $red[$k] = if ($k -match $KitLogMap.secretKey) { '[redacted]' } else { $script:sentHeaders[$k] } }
   $code, $check = if ($Save -match '^([A-Za-z0-9]+)-([A-Za-z]*\d+)') { $Matches[1], $Matches[2] } else { '', '' }
   [ordered]@{
@@ -1287,12 +1289,13 @@ if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
 # N3: <testy-id> -> testy-<nnnn> (kitbag.py naming next id: one locked counter per kind, no date)
-if ("$($jb.runFolder)" -match '<(?<k>[a-z]+)-id>') { $idKind = $Matches.k; $nid = "$(& (Get-Python) -X utf8 $KitCmd.kitbag naming next id $idKind 2>$null | Select-Object -Last 1)".Trim()
-  if ($nid -notmatch '^[a-z]+-\d{4,}$') { throw "prepare: kitbag.py naming next id $idKind gave '$nid'" }; $jb.runFolder = "$($jb.runFolder)" -replace '<[a-z]+-id>', $nid }
-$dir = [regex]::Replace("$($jb.runFolder)", '<([yMdHms][^<>]*)>', { param($DateTok) Get-Date -Format $DateTok.Groups[1].Value })   # <yyyy-MM-dd> and other date formats
+$newRunId = { param($IdKind) $nid = "$(& (Get-Python) -X utf8 $KitCmd.kitbag naming next id $IdKind 2>$null | Select-Object -Last 1)".Trim()
+  if ($nid -notmatch '^[a-z]+-\d{4,}$') { throw "prepare: kitbag.py naming next id $IdKind gave '$nid'" }; $nid }
+if ("$($jb.runFolder)" -match '<(?<k>[a-z]+)-id>') { $jb.runFolder = "$($jb.runFolder)" -replace '<[a-z]+-id>', (& $newRunId $Matches.k) }
+# a date placeholder (<yyyy-MM-dd>, ...) or a leading '-' (a caller's stamp expanded to nothing): the testy counter id, never a date (N3)
+$dir = "$($jb.runFolder)"; if ($dir -match '<[yMdHms][^<>]*>') { $dir = $dir -replace '(?:<[yMdHms][^<>]*>[-_]?)+', "$(& $newRunId testy)-" -replace '-(?=$|[\\/])', '' }
 if (-not [IO.Path]::IsPathRooted($dir)) { $dir = Join-Path (Split-Path $KitConf.Kit) $dir }   # testy's relative runFolder is from the workspace root, never this cwd (the kit: <kit>/.claude/.runtime, retro 1549)
-# a caller that expanded the stamp itself to nothing left '-<name>' (a leading '-' reads as a CLI flag)
-if ((Split-Path $dir -Leaf) -like '-*') { $dir = Join-Path (Split-Path $dir -Parent) "$(Get-Date -Format 'yyyy-MM-dd-HHmmss')$(Split-Path $dir -Leaf)" }
+if ((Split-Path $dir -Leaf) -like '-*') { $dir = Join-Path (Split-Path $dir -Parent) "$(& $newRunId testy)$(Split-Path $dir -Leaf)" }
 if (Get-ChildItem -LiteralPath $dir -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { throw "prepare: $dir exists with files: pass another name, or launch with { runDir }" }   # an empty one is reused
 New-Item -ItemType Directory -Force (Join-Path $dir 'guides') | Out-Null; $dir = (Resolve-Path -LiteralPath $dir).Path -replace '\\', '/'
 # 1. candidates: lists x statuses, plus tasks, minus exclude; mine = the tracker owner's

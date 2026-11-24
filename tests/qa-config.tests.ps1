@@ -85,15 +85,15 @@ $pjob = @{ runFolder = "$wd/qa-runs/<yyyy-MM-dd>-stg"; statuses = @(); exclude =
 Set-JsonFile "$k/skills/crafty/kit.local.json" @{ process = @{ docs = @(@{ key = 'ai'; label = 'Testing doc (AI)' }, @{ key = 'human'; label = 'Testing doc (human)' }) }; qa = @{ guideDoc = 'human' } }
 $pp = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $ppCode = $LASTEXITCODE; $pRun = ("$($pp[-1])" -replace '^RUN ') | ConvertFrom-Json
 $pNotes = Get-Content -Raw "$($pRun.runDir)/lead-notes.md"; $null = pwsh -NoProfile -File $PKp lead-notes add -RunDir $pRun.runDir -Code T1 -Text 'which tenant? -> madrid' 2>&1
-$pDay = Get-Date -Format 'yyyy-MM-dd'
+$pDay = (Split-Path $pRun.runDir -Leaf) -replace '-stg$'   # a date placeholder -> the testy counter id (N3: no dates in names)
 Expect "prepare: one item (MR + doc + in test), the doc-less task left out, exclude honoured; exit 0, the last line is RUN <run>; lead-notes skeleton + lead-notes add ($ppCode $($pp[-2]))" ($ppCode -eq 0 -and "$($pp[-1])".StartsWith('RUN ') -and @($pRun.items).Count -eq 1 -and $pRun.items[0].code -eq 'T1' -and $pRun.items[0].subtasks[0].mrs -eq 'web!5' -and $pRun.items[0].target -eq 'stg-a' -and
-  (Get-Content -Raw $pRun.items[0].guideFile) -match 'https://docs.example/h1' -and @($pRun.left).Count -eq 1 -and $pRun.left[0].reason -match 'Testing doc' -and $pRun.mandate[0] -eq 'test the sort' -and $pRun.runDir -match "qa-runs/$pDay-stg$" -and
+  (Get-Content -Raw $pRun.items[0].guideFile) -match 'https://docs.example/h1' -and @($pRun.left).Count -eq 1 -and $pRun.left[0].reason -match 'Testing doc' -and $pRun.mandate[0] -eq 'test the sort' -and $pRun.runDir -match "qa-runs/testy-\d{4,}-stg$" -and
   (Gold $pNotes "# Lead notes: $pDay-stg`n**Result:** 1 in, 1 left out · target stg-a`n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| T1 [Bug] Orders sort | from the guide | to check |`n`n## Left out`n`n| Task | Reason |`n|---|---|`n| $tB [Bug] No doc | no ""Testing doc (human):"" link |`n`n## Answers (newest last)") -and
   (Get-Content -Raw "$($pRun.runDir)/lead-notes.md") -match '(?m)^- \d\d:\d\d T1: which tenant\? -> madrid\r?$')
 $ttl = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Limit-KitWords ((1..30 | ForEach-Object { ""w`$_"" }) -join ' ') 25 '+3-items'), (Limit-KitWords 'a b' 25 x)"
 Expect "prepare: the run title is cut to 25 words at creation (finalize -Check limit), the last word says how many items ($($ttl[0]))" (@($ttl[0] -split ' ').Count -eq 25 -and $ttl[0] -match 'w24 \+3-items$' -and $ttl[1] -eq 'a b' -and (Get-Content $PKp -Raw) -match 'title = \(Limit-KitWords ')
-$ppAgain = @(pwsh -NoProfile -File $PKp prepare -Job $pjob 2>&1); $ppAgainCode = $LASTEXITCODE
-$null = New-Item -ItemType Directory -Force "$wd/qa-runs/$pDay-empty/guides"; $pjobEmpty = $pjob -replace '<yyyy-MM-dd>-stg', '<yyyy-MM-dd>-empty'
+$ppAgain = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', "$pDay-stg") 2>&1); $ppAgainCode = $LASTEXITCODE
+$null = New-Item -ItemType Directory -Force "$wd/qa-runs/$pDay-empty/guides"; $pjobEmpty = $pjob -replace '<yyyy-MM-dd>-stg', "$pDay-empty"
 $ppEmpty = @(pwsh -NoProfile -File $PKp prepare -Job $pjobEmpty 2>&1); $ppEmptyCode = $LASTEXITCODE
 Expect "prepare: a run folder with files is refused (exit 1, no -2 suffix); an empty one is reused and RUN printed ($ppAgainCode $ppEmptyCode $($ppEmpty[-2]))" ($ppAgainCode -eq 1 -and "$ppAgain" -match 'exists with files' -and -not (Test-Path "$wd/qa-runs/$pDay-stg-2") -and $ppEmptyCode -eq 0 -and "$($ppEmpty[-1])" -match "^RUN .*qa-runs/$pDay-empty""")
 Set-JsonFile $kl @{ process = @{ docs = @() } }   # [] = no docs (unset: the built-in pair, vocab.json)
@@ -104,7 +104,7 @@ New-Task 'SUB1' '[Bug] Sort sub' $tA 'in test' 'MR: https://git.example/g/web/-/
 $idsJob = @{ runFolder = 'w/qa-runs/-ids'; statuses = @('inTest'); tasks = @($tA); target = 'stg-a'; kitDir = $k } | ConvertTo-Json -Compress
 $ppIds = @(pwsh -NoProfile -File $PKp prepare -Job $idsJob 2>&1); $idsRun = ("$($ppIds[-1])" -replace '^RUN ') | ConvertFrom-Json
 $idsGot = @(@($idsRun.items.subtasks.id) + @($idsRun.left.id) | Sort-Object) -join ','
-Expect "prepare select.tasks: only the named task + its in-test subtask (not $tB, not SUB2); a '-ids' folder gets its date stamp; a relative runFolder is from the workspace root ($idsGot | $($idsRun.runDir))" ($idsGot -eq ((@($tA, 'SUB1') | Sort-Object) -join ',') -and $idsRun.runDir -match 'qa-runs/\d{4}-\d\d-\d\d-\d{6}-ids$' -and $idsRun.runDir.StartsWith(($wd -replace '\\', '/')))
+Expect "prepare select.tasks: only the named task + its in-test subtask (not $tB, not SUB2); a '-ids' folder gets the testy counter id, no date; a relative runFolder is from the workspace root ($idsGot | $($idsRun.runDir))" ($idsGot -eq ((@($tA, 'SUB1') | Sort-Object) -join ',') -and $idsRun.runDir -match 'qa-runs/testy-\d{4,}-ids$' -and $idsRun.runDir.StartsWith(($wd -replace '\\', '/')))
 foreach ($subId in 'SUB1', 'SUB2') { New-Task $subId 'closed sub' $tA 'closed' }   # out of the later status sweeps
 # NOT_TESTED undeployed whose MRs are all N/A for the target (another product's change): kept open, never failedTesting; NOT-DEPLOYED, a mixed row or another untested check still fails
 $naFin = @'

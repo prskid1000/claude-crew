@@ -7,7 +7,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L15 helpers · L106 intest · L278 deploy · L483 restart · L547 supervise
+Sections: L15 helpers · L106 intest · L284 deploy · L489 restart · L553 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -164,10 +164,11 @@ function Get-MrPaths([string]$mr) {
 
 $gone = @(); $tally = [ordered]@{}; $ready = [Collections.Generic.List[object]]::new()   # outcome -> task ids (and why); tasks whose MRs are probed
 function Add-Tally([string]$Outcome, [string]$Detail) { if (-not $tally.Contains($Outcome)) { $tally[$Outcome] = [Collections.Generic.List[string]]::new() }; $tally[$Outcome].Add($Detail) }
-$nIt = 0
+$nIt = 0; $ck0 = @{}
 foreach ($id in $cand.Keys) {
-  $nIt++; if ($BudgetSec -and $id -notin $first -and ((Get-Date) - $t0).TotalSeconds -gt 0.6 * $BudgetSec) { Add-Tally 'not checked (time budget)' $id; continue }
-  Write-InTestProgress "task $nIt/$($cand.Count) $id"; $ckAt[$id] = (Get-Date).ToString('o')
+  # every page checks at least one task (a slow start never leaves the next page where this one began)
+  $nIt++; if ($BudgetSec -and $id -notin $first -and $nIt -gt $first.Count + 1 -and ((Get-Date) - $t0).TotalSeconds -gt 0.6 * $BudgetSec) { Add-Tally 'not checked (time budget)' $id; continue }
+  Write-InTestProgress "task $nIt/$($cand.Count) $id"; $ck0[$id] = $ckAt[$id]; $ckAt[$id] = (Get-Date).ToString('o')
   # a task deleted in the tracker: skipped, reported, dropped from tracking; another task's failure never ends the batch
   $info = try { Get-TrackerTask $id } catch { if (Remove-KitGoneTask $id $_) { $gone += $id; Add-Tally 'deleted in the tracker' $id; Out-Line "GONE  $id  deleted in the tracker: skipped, no longer tracked" } else { Add-Tally 'unreadable' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  tracker view failed: $($_.Exception.Message)" }; continue }
   if (-not $info) { Add-Tally 'unreadable' "$id`: the tracker returned nothing"; if ($Task.Count) { Out-Line "SKIP  $id  the tracker returned nothing" }; continue }
@@ -188,8 +189,6 @@ foreach ($id in $cand.Keys) {
   if (-not $mrs.Count) { Add-Tally 'no MRs found' $id; Out-Line "SKIP  $id  no MRs found | $short"; continue }
   $ready.Add([pscustomobject]@{ id = $id; short = $short; mrs = $mrs })
 }
-$ckKeep = @{}; foreach ($k in @($ckAt.Keys)) { if ($track.Contains($k) -or $cand.Contains($k)) { $ckKeep[$k] = $ckAt[$k] } };   # a -Task run keeps the full run's stamps
- try { Write-KitAtomic $ckf ($ckKeep | ConvertTo-Json -Compress) } catch { }
 # ONE deployed probe for every task's MRs (pokey memoises the branch lookups per repo); rounds re-probe what its -TimeoutSec left
 # unchecked until none is left or a round checks nothing (a hung host: K31). Per-MR calls in one budget left 4 of 10 tasks unchecked
 $rowsOf = @{}; $whyOf = @{}; $round = 0; $probeEnd = (Get-Date).AddSeconds($(if ($BudgetSec) { [math]::Max(15.0, $BudgetSec - ((Get-Date) - $t0).TotalSeconds) } else { 10 * $TimeoutSec }))   # a host slower than -TimeoutSec per MR: one MR a round (K31)
@@ -225,10 +224,10 @@ if ($round -gt 1) { Out-Line "PROBE $(@($rowsOf.Keys).Count) MR(s) checked in $r
 $igMr = @(@((Read-KitState (Get-KitPath mr-ignore)).mrs.Keys) | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) })   # track ignore + closed: not the task's work
 foreach ($rd in $ready) {
   $id = $rd.id; $short = $rd.short; $mrs = $rd.mrs
-  $live = @(); $why = $null
+  $live = @(); $why = $null; $unprobed = $false
   foreach ($mr in $mrs) {
     $mk = Get-CanonMr (ConvertTo-MrRef $mr)
-    if (-not $rowsOf.ContainsKey($mk)) { $why = if ($whyOf[$mk]) { $whyOf[$mk] } else { "$mr not checked" }; break }
+    if (-not $rowsOf.ContainsKey($mk)) { $why = if ($whyOf[$mk]) { $whyOf[$mk] } else { "$mr not checked" }; $unprobed = "$why" -match 'budget'; break }
     $rows = @($rowsOf[$mk])
     if ($mk -in $igMr -and @($rows | Where-Object { $_.state -eq 'NOT-MERGED' -and "$($_.detail)" -eq 'closed' }).Count) { continue }
     # another product's deploy branch proves nothing
@@ -256,6 +255,8 @@ foreach ($rd in $ready) {
     $why = "$mr not live on: " + $(if ($missing.Count) { $missing -join ', ' } else { 'a test env' }) + $(if ($r0) { " ($($r0.state): $($r0.detail))" } else { '' }); break
   }
   if (-not $why -and -not $live.Count) { $why = "its only MRs are closed and ignored (bossy.ps1 track remove -Task $id -Mrs <ref>)" }
+  # the probe's budget ran out: the next page starts with it (its old check time back), never 'not deployed yet'
+  if ($unprobed) { Add-Tally 'not checked (time budget)' $id; if ($null -eq $ck0[$id]) { $ckAt.Remove($id) } else { $ckAt[$id] = $ck0[$id] }; continue }
   if ($why) { Add-Tally 'not deployed yet' $id; Out-Line "WAIT  $id  $why | $short"; continue }
   if (-not $Apply) { Add-Tally 'would move to in test (no -Apply)' $id; Out-Line "MARK  $id  would set in test ($($live -join '; ')) | $short"; continue }
   try {
@@ -265,6 +266,9 @@ foreach ($rd in $ready) {
     Add-Tally 'moved to in test' $id; Out-Line "MARKED  $id  in test ($($live -join '; ')) | $short"
   } catch { Add-Tally 'blocked' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  could not set status: $($_.Exception.Message)" }
 }
+# pages: each task's last check time (oldest first next run); a -Task run keeps the full run's stamps
+$ckKeep = @{}; foreach ($k in @($ckAt.Keys)) { if ($track.Contains($k) -or $cand.Contains($k)) { $ckKeep[$k] = $ckAt[$k] } }
+try { Write-KitAtomic $ckf ($ckKeep | ConvertTo-Json -Compress) } catch { }
 if (-not $Quiet -or $gone.Count -or $tally.Contains('blocked') -or $tally.Contains('unreadable')) { Format-KitInTestSummary $cand.Count $nKit $nList $Days ([bool]$Task.Count) $tally }
 }
 # "mark-in-test: <n> tasks checked (<where from>): <n> <outcome>, ..."; ids where a person acts (blocked, unreadable, deleted)
@@ -272,7 +276,9 @@ function Format-KitInTestSummary([int]$Total, [int]$FromKit, [int]$FromLists, [i
   $src = if ($Named) { 'the tasks named (-Task / -Mrs)' } else { @(if ($FromKit) { "$FromKit promoted by the kit in $Days d, subtasks included" }; if ($FromLists) { "$FromLists more assigned to you in trackerLists" }) -join ', ' }
   $order = @('moved to in test', 'would move to in test (no -Apply)', 'already closed', 'already in test') + @($Tally.Keys | Where-Object { $_ -like 'now *' }) + @('not deployed yet', 'no MRs found', 'not checked (time budget)', 'blocked', 'unreadable', 'deleted in the tracker')
   $parts = foreach ($k in $order | Where-Object { $Tally.Contains($_) }) { "$($Tally[$k].Count) $k$(if ($k -in 'blocked', 'unreadable', 'deleted in the tracker') { " ($($Tally[$k] -join '; '))" } elseif ($k -eq 'not checked (time budget)') { " ($(@($Tally[$k] | Select-Object -First 5) -join '; ')$(if ($Tally[$k].Count -gt 5) { "; +$($Tally[$k].Count - 5) more" }); run deploy intest again: the next page starts with them)" })" }
-  "mark-in-test: $Total task(s) checked$(if ($src) { " ($src)" }): $(if ($parts) { $parts -join ', ' } else { 'nothing to do' })"
+  $left = if ($Tally.Contains('not checked (time budget)')) { $Tally['not checked (time budget)'].Count } else { 0 }
+  "mark-in-test: $(if ($left) { "$($Total - $left) of " })$Total task(s) checked$(if ($src) { " ($src)" }): $(if ($parts) { $parts -join ', ' } else { 'nothing to do' })"
+  if ($left) { "PAGE  $left task(s) left by the time budget: run deploy intest again (same flags): it resumes with them, oldest check first" }
 }
 
 # ---- deploy: plan, request, record

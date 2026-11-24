@@ -9,7 +9,7 @@
 # Verbs: sql @{ e; sql; sec } -> rows (string[] each; mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb: mongosh
 #   JavaScript) · pos @{ e } -> "<file>:<pos>" · binlogs @{ e } -> names.
 # An engine without a verb refuses it ("engine <x>: verb <v> not implemented"); never another engine's client.
-# Sections: L13 engines · L50 mysql / mariadb · L72 other clients (postgres, sqlserver, sqlite, oracle, mongodb)
+# Sections: L13 engines · L53 mysql / mariadb · L75 other clients (postgres, sqlserver, sqlite, oracle, mongodb)
 # ---- engines: one registration each (parity.json db-engine)
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
 $mysql = @{ defaultPort = 3306; passwordEnv = 'MYSQL_PWD'; supportsMarks = $true; supportsTemp = $true
@@ -32,9 +32,12 @@ Register-KitAdapter db-engine sqlite @{ query = "sqlite3 `"{N}`" `"{sql}`""; exe
 Register-KitAdapter db-engine oracle @{ defaultPort = 1521; passwordEnv = 'ORACLE_PWD'; exec = "sqlplus -s -l {U}@{H}:{P}/{N} @{file}"
   sql = { param($a) $c = DbConn $a.e; $pw = (EnvVars $a.e ([pscustomobject]@{}))["$((Get-EnvCfg $a.e).db.passwordEnv)"]
     Invoke-DbCliRows $a.e 'sqlplus' @('-s', '-l', '/nolog') "WHENEVER SQLERROR EXIT 1`nCONNECT $($c.user)/`"$pw`"@//$($c.host):$($c.port)/$($c.name)`nSET HEADING OFF FEEDBACK OFF PAGESIZE 0 LINESIZE 32767 TRIMOUT ON TAB OFF COLSEP '`t'`n$($a.sql.TrimEnd().TrimEnd(';'));`nEXIT`n" $a.sec -Trim } }
-# mongodb: the statement is mongosh JavaScript (print rows, fields joined by tabs); kit-built SQL fails there loudly
-Register-KitAdapter db-engine mongodb @{ defaultPort = 27017; query = "mongosh `"{URI}`" --quiet --eval `"{sql}`""
-  sql = { param($a) $c = DbConn $a.e; Invoke-DbCliRows $a.e 'mongosh' @($(if ((Get-EnvCfg $a.e).db.uri) { "$((Get-EnvCfg $a.e).db.uri)" } else { "mongodb://$($c.host):$($c.port)/$($c.name)" }), '--quiet', '--eval', $a.sql) $null $a.sec } }
+# mongodb: the statement is mongosh JavaScript (print rows, fields joined by tabs); kit-built SQL fails there loudly. db.uri
+# (credentials) reaches only mongosh, as env KIT_DB_URI (here; the query hook: envy.ps1 Invoke-Hook), never argv; unset: host / port / name
+$__mg = "db = connect(process.env.KIT_DB_URI || 'mongodb://{H}:{P}/{N}');"
+Register-KitAdapter db-engine mongodb @{ defaultPort = 27017; query = "mongosh --nodb --quiet --eval `"$__mg {sql}`""
+  sql = { param($a) $c = DbConn $a.e; $js = "db = connect(process.env.KIT_DB_URI || 'mongodb://$($c.host):$($c.port)/$("$($c.name)" -replace "['\\]", '\$0')'); $($a.sql)"
+    With-Env @{ KIT_DB_URI = "$((Get-EnvCfg $a.e).db.uri)" } { Invoke-DbCliRows $a.e 'mongosh' @('--nodb', '--quiet', '--eval', $js) $null $a.sec } } }
 # key-value and search stores (no SQL, no marks): sizes = a scriptblock giving the schemaSizes rows (scope TAB rows TAB MB)
 Register-KitAdapter db-engine redis @{ defaultPort = 6379; passwordEnv = 'REDISCLI_AUTH'; query = 'redis-cli -h {H} -p {P} {sql}'
   sizes = { param($a) $c = DbConn $a.e; $r = With-Env (EnvVars $a.e ([pscustomobject]@{})) { Invoke-KitExe 'redis-cli' @('-h', $c.host, '-p', $c.port, 'INFO') 30 }; if ($r.code) { throw "redis-cli: $($r.err)" }

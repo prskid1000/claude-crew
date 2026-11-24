@@ -139,5 +139,12 @@ Set-Content $lf @(foreach ($m in 45, 20, 5) { [ordered]@{ at = $t0.AddMinutes(-$
 $rd = { @(Get-KitLogLines $lf $t0.AddMinutes(-21) | ForEach-Object { "$(($_ | ConvertFrom-Json).m)" }) -join ',' }; $d30 = & $rd; $env:KIT_PARAM_LOG_SINCESLACKMINUTES = '0'; "$d30|$(& $rd)"
 '@ @($O)
 Expect "log.sinceSlackMinutes: the 30-min default reads a 45-min-old row from 21 min, 0 does not ($sl)" ("$sl".Trim() -eq '45,20,5|20,5')
+# an item's ask ("outside the area", no -Gate), add pick: its scope word serves the item's branch (no 2nd ask)
+$siA = pwsh @np $O decide ask -Run r -Agent devy -Item itm4321x -Question 'Fix in Svc.java, outside the area.' -Context 'today: saves fail' -Options 'A: add Svc.java to the scope — saves work', 'B: no change — saves fail' -Recommend A | Out-String
+$siR = pwsh @np $O decide answer -Id $(if ($siA -match 'DECISION (\S+)') { $Matches[1] }) -Answer 'A' | Out-String
+$siC, $siN = foreach ($b in 'itm4321x', 'oth99') { pwsh @np $O decide check -Gate scope -Item "fix/CU-$b-x" | Out-String }
+$sdA = pwsh @np $O decide ask -Run r -Agent devy -Item itm5 -Question 'Fix in Svc.java, outside the area.' -Context 'today: saves fail' -Options 'A: drop Svc.java, add a test — saves fail', 'B: no — x' -Recommend A | Out-String
+$sdR = pwsh @np $O decide answer -Id $(if ($sdA -match 'DECISION (\S+)') { $Matches[1] }) -Answer 'A' | Out-String
+Expect "decide answer: an item's scope word is found for a branch naming the item, not another; a 'drop ..., add' pick records none ($siR | $siC | $sdR)" ($siR -match 'SCOPE RECORDED' -and $siC -match '^WORD ' -and $siN -notmatch '^WORD ' -and $sdR -match 'no scope word')
 Remove-TestKit $k
 Complete-Tests

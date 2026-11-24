@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L226 kitlog · L328 load · L821 lint · L1235 README graph · L1353 lint command · L1635 audit ·
-  L1783 registry · L1843 tools · L1931 parity · L2384 arch lint · L2657 prose · L2837 sections · L2967 budget · L2985 migrate ·
-  L3133 plugins · L3190 state lint · L3378 main
+  L1783 registry · L1843 tools · L1931 parity · L2384 arch lint · L2657 prose · L2838 sections · L2968 budget · L2986 migrate ·
+  L3134 plugins · L3191 state lint · L3379 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2716,12 +2716,13 @@ def prose_check(kind, text, spec, banned):
     lines, secs = prose_parts(text)
     body = [l for l in lines if l.strip()]
     flat = '\n'.join(lines)
+    own = {(m.group(1).replace('_', ' '), m.group(3)) for t in spec['limits'].replace(';', ' ').split() if (m := re.match(r'^([A-Z][\w ()/-]*?):(\d+)(\w+)$', t))}   # a section's own cap beats each:
     for tok in spec['limits'].replace(';', ' ').split():
         m = re.match(r'^(?:(each|first|prose|[A-Z][\w ()/-]*?):)?(\d+)(w|t|l|ch|sw|b)$', tok)
         if not m:
             continue
         scope, n, u = (m.group(1) or '').replace('_', ' ') or None, int(m.group(2)), m.group(3)
-        targets = {'(all)': body} if not scope else {'(first line)': body[:1]} if scope == 'first' else secs if scope == 'each' else {'(prose)': [l for l in body if not re.match(r'\s*(?:\|.*\||!\[.*\))\s*$', l)]} if scope == 'prose' else {scope: secs.get(scope, [])}   # prose: no table rows (cells have own caps), no image lines
+        targets = {'(all)': body} if not scope else {'(first line)': body[:1]} if scope == 'first' else {k: v for k, v in secs.items() if (k, u) not in own} if scope == 'each' else {'(prose)': [l for l in body if not re.match(r'\s*(?:\|.*\||!\[.*\))\s*$', l)]} if scope == 'prose' else {scope: secs.get(scope, [])}   # prose: no table rows (cells have own caps), no image lines
         for name, ls in targets.items():
             txt = '\n'.join(ls)
             v = {'w': lambda: words(txt), 't': lambda: (len(txt.encode('utf-8')) + 3) // 4, 'l': lambda: len([l for l in ls if l.strip()]),

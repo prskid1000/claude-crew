@@ -127,7 +127,7 @@ $script:viewed = @(); $bq = Invoke-MarkInTest -FromMrs 'api!4' -BudgetSec 1 | Ou
 $rxBud = 'not checked \(time budget\) \('; "budget:$($script:viewed[0] -eq 'open4' -and $script:viewed.Count -lt 4 -and $bq -match $rxBud)"
 # no -Mrs: bounded too, pages: a re-run starts with the task the last run left (oldest check first), the summary says so
 $script:viewed = @(); $pq1 = Invoke-MarkInTest -BudgetSec 1 | Out-String; $pv1 = @($script:viewed); $script:viewed = @(); $pq2 = Invoke-MarkInTest -BudgetSec 1 | Out-String
-"page:$($pv1.Count -eq 1 -and $script:viewed[0] -and $script:viewed[0] -ne $pv1[0] -and $pq1 -match 'run deploy intest again: the next page starts with them')"
+"page:$($pv1.Count -eq 1 -and $script:viewed[0] -and $script:viewed[0] -ne $pv1[0] -and $pq1 -match 'run deploy intest again: the next page starts with them' -and $pq1 -match 'mark-in-test: 1 of \d+ task\(s\) checked' -and $pq1 -match '(?m)^PAGE  \d+ task\(s\) left by the time budget: run deploy intest again')"
 $null = Invoke-MarkInTest -Task old3 | Out-String; $ckj = Get-Content (Join-Path (Get-KitPath deploys) 'intest-checked.json') -Raw | ConvertFrom-Json -AsHashtable; "keep:$($ckj.ContainsKey('ok2') -and $ckj.ContainsKey('qa5') -and $ckj.ContainsKey('old3'))"   # a -Task run keeps the pages
 # a tracker with no promoted / review role (tracker.statuses.<role> null): merged work waits in inProgress, the source role
 function Test-TrackerStatusOff($s) { $s -in 'promoted', 'review' }; $tq2 = Invoke-MarkInTest -Task old3 | Out-String; "minimal:$($tq2 -notmatch 'SKIP  old3  status')"

@@ -17,7 +17,7 @@ $null = pwsh -NoProfile -File $O board msg -Agent m1 -To m2 -Text ('y' * 2001) 2
 $bmRow = Get-Content -Raw (Join-Path (TkPath $k board) 'inbox/m2.jsonl') | ConvertFrom-Json
 $bmIn = pwsh -NoProfile -File $O board inbox -Agent m2 2>&1 | Out-String
 Expect "board msg: the row is { at, from, to, kind, text, ref, read }; an unknown kind and a text over 2000 chars refused (2); inbox shows kind and ref ($($bmIn.Trim()))" ($bm1 -match 'sent to m2' -and (@($bmRow.PSObject.Properties.Name) -join ',') -eq 'at,from,to,kind,text,ref,read' -and $bmKindCode -eq 2 -and $bmLongCode -eq 2 -and $bmIn -match 'from m1 \[dispute\]: own, not new \(ref web!5\)')
-# (cap move) board check claims the worktree on the caller's row (cleanup's sweep keeps live claims); twice = one claim; another agent: OTHER WRITER
+# board check claims the worktree on the caller's row (cleanup keeps live claims); twice = one claim; another agent: OTHER WRITER
 $cwt = Join-Path (Kd) 'cwt'; $jw = pwsh -NoProfile -File $O board join -Agent CW -Run cw | Out-String; $sw1 = if ($jw -match 'SESSION (\S+)') { $Matches[1] }
 foreach ($n in 1, 2) { $null = pwsh -NoProfile -File $O board check -Worktree $cwt -Session $sw1 }
 $jw2 = pwsh -NoProfile -File $O board join -Agent CW2 -Run cw | Out-String; $cwo = pwsh -NoProfile -File $O board check -Worktree $cwt -Session $(if ($jw2 -match 'SESSION (\S+)') { $Matches[1] }) | Out-String; $cwc = $LASTEXITCODE
@@ -155,11 +155,11 @@ Remove-Item Env:KIT_TRACKER_TYPE
 # (cap move) an unknown workflow arg is refused, never dropped (a coordinator's notes reached no tester)
 $ua = foreach ($w in @(@('buildy', "{ brief: 'b', agents: [{ id: 'X1', items: 'A1' }], notes: 'n' }"), @('testy', "{ runDir: 'r', notes: 'n' }"), @('testy', "{ skipClose: 1, driveParent: 'd' }"), @('tidy', "{ notes: 'n' }"))) { Invoke-Js "ua-$($w[0])" "run($($w[1]), _n, _n, _n).catch(_err)" (Join-Path $src "workflows/$($w[0]).js") }
 Expect "workflows refuse unknown args ($ua)" ("$ua" -match 'buildy\.js args refused: unknown notes;' -and "$ua" -match 'testy\.js args refused: unknown notes; free text for testers goes in args\.context' -and "$ua" -match 'tidy\.js args refused: unknown notes' -and "$ua" -notmatch 'unknown (skipClose|driveParent)')
-# (cap move) online check: every resolved address at once (localhost = ::1 + 127.0.0.1, only IPv4 listens); a closed port is offline
+# online check: every resolved address at once (localhost = ::1 + 127.0.0.1, only IPv4 listens); closed port = offline
 $onl = & { . $O; Remove-Item Env:KIT_OFFLINE -ErrorAction SilentlyContinue; $ls = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $ls.Start(); $lp = $ls.LocalEndpoint.Port
   try { "$(Test-KitOnline localhost 3000 $lp)|$(Test-KitOnline 127.0.0.1 3000 $lp)|$($env:KIT_PARAM_NET_PROBEPORT = $lp; Test-KitOnline 127.0.0.1 3000)" } finally { $ls.Stop(); Remove-Item Env:KIT_PARAM_NET_PROBEPORT }; "$(Test-KitOnline 127.0.0.1 1000 $lp)" }
 Expect "online check: any address counts, net.probePort sets the default port, a closed port is offline ($onl)" ("$onl" -eq 'True|True|True False')
-# (cap move) heartbeat (owner 2026-11-14: the sweep stopped with every session): one durable recurring cron, the OS timer's sweeps never count as the coordinator's
+# heartbeat (owner 2026-11-14): one durable recurring cron; OS timer sweeps never count as the coordinator's
 $hb = Invoke-PsTest beat-cron @'
 . $args[0]; $al = Get-KitBeatArmLine; "arm:$($al -match "^CronList has no heartbeat -> CronCreate cron '\*/\d+ \* \* \* \*', recurring: true, durable: true, prompt " -and (Get-KitBeatPrompt) -notmatch 're-arm|one-shot')"
 function Read-KitJsonFiles { @([pscustomobject]@{ status = 'working'; beat = (Get-Date).ToString('o') }) }; function Get-KitLastActivity { Get-Date }
@@ -173,6 +173,7 @@ $D = Join-Path $k 'skills/crafty/crafty.ps1'; $sr = Join-Path (Kd) 'scope-repo';
 'x' | Set-Content "$sr/src/Inv.java"; $c2 = pwsh @np $D wt commit -Dir $sr -Message 'fix: change the service' 2>&1 | Out-String; $e2 = $LASTEXITCODE
 $wid = "$(pwsh @np $O decide record -Gate scope -Item b1 -Question 'src in a spec area?' -Answer yes -Source chat 2>&1)" -replace '(?s)^.*RECORDED (\S+).*$', '$1'
 $null = pwsh @np $D wt commit -Dir $sr -Message 'fix: change the service' -ScopeOk $wid 2>&1; $e3 = $LASTEXITCODE
+'y' | Set-Content "$sr/src/Two.java"; $null = pwsh @np $D wt commit -Dir $sr -Message 'fix: two' 2>&1; $e3 += $LASTEXITCODE
 $ap = Invoke-Js area-paths @'
 const fn = async (p, o) => /^build/.test(o.label) ? _rep({ status: 'PASS', failing: [] }) : /^ship/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, _merged(1)) : undefined
 const m = _mock(fn, '[]'); await run({ ..._kl, brief: 'C:/b/w.md', mandate: ['m'], agents: [{ id: 'W2c', items: 'A1', area: 'specs', paths: ['specs/**'] }] }, m.agent, _n, _n, pipeline).catch(_err)
@@ -180,7 +181,7 @@ const p = (l) => (m.calls.find((c) => c.label.startsWith(l)) || {}).prompt || ''
 console.log([/AREA PATHS: wt lease -Scope 'specs\/\*\*'/.test(p('build')), /wt lease -Repo <its repo> -Branch <its source branch> -Agent \S+ .*merge <wt> <iid> --scope 'specs\/\*\*'; at the end .*wt release -Agent/.test(p('ship'))].join(' '))
 '@ (Join-Path $src 'workflows/buildy.js')
 Expect "buildy: agents[].paths reach the build (wt lease -Scope) and ship (lease, merge --scope, release) prompts ($ap)" ("$ap".Trim() -eq 'true true')
-Expect "wt commit: area files pass; a file outside is refused naming it; the owner's scope word (decide record -Gate scope) lets it through ($e1 $e2 $e3)" ($e1 -eq 0 -and $e2 -eq 1 -and $c2 -match 'commit refused: 1 file\(s\) outside the area \(specs/\*\*\): src/Inv\.java' -and $e3 -eq 0 -and (git -C $sr log -1 --format=%s) -eq 'fix: change the service')
+Expect "wt commit: area files pass; a file outside is refused naming it; the owner's scope word (decide record -Gate scope) lets it through, later commits too ($e1 $e2 $e3)" ($e1 -eq 0 -and $e2 -eq 1 -and $c2 -match 'commit refused: 1 file\(s\) outside the area \(specs/\*\*\): src/Inv\.java' -and $e3 -eq 0 -and (git -C $sr log -1 --format=%s) -eq 'fix: two')
 # (cap moves from guard) malformed hook input, a body file in the shared temp root, background loops
 $D = Join-Path $k 'skills/crafty/crafty.ps1'
 $gl = (@{ tool_name = 'Write'; tool_input = @{ file_path = "$(TkPath $k runtime)/work/x2/a.md" } } | ConvertTo-Json -Compress) | Px $D guard | Out-String
