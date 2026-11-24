@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L96 state · L177 config · L258 OS · L460 leases · L879 status · L1179 tracker · L1498 prior ·
-  L1517 ask bugs · L1703 git-host · L1890 kitlog · L2000 params · L2305 entry-scripts
+  L1517 ask bugs · L1703 git-host · L1889 kitlog · L1999 params · L2304 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -870,7 +870,7 @@ function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Header
   $p = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = (Get-KitNetTimeout) }
   if ($Method -eq 'GET') { $p.MaximumRetryCount = 2; $p.RetryIntervalSec = 3 }
   if ($null -ne $Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 20 -Compress)); $p.ContentType = 'application/json' }
-  try { Invoke-RestMethod @p } catch { $global:KitHostFailed = $true; Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; $null }
+  $global:KitHttpCode = 0; try { Invoke-RestMethod @p } catch { $global:KitHostFailed = $true; $global:KitHttpCode = [int]$_.Exception.Response.StatusCode; Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; $null }
 }
 function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   $t = [Environment]::GetEnvironmentVariable($Env); if (-not $t) { return @{} }
@@ -1076,7 +1076,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
     $cw = @(foreach ($x in @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) })) { & $waitOf $run @(LabelNames $x.label) })   # every running step waits = the run waits
     $rsNow = @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) }); $phNow = @($rsNow.phase | Where-Object { $_ } | Select-Object -Unique)   # Doing: phase · running steps; next: the phase after
     $wp = if ($paused) { [pscustomobject]@{ why = 'owner pause'; at = @($lr.paused)[0]; next = "bossy.ps1 resume -Run $run" } } elseif (-not $running.Count) { & $waitOf $run @() } elseif ($cw.Count -eq $running.Count) { [pscustomobject]@{ why = "$($cw[0].why)$(if ($cw.Count -gt 1) { ", $($cw.Count) steps" })"; at = @($cw.at | Sort-Object)[0]; next = $cw[0].next } }
-    # one run = one row: a resumed run's newer folder (oldest first) replaces its older one, a live one is never replaced by an ended one
+    # one row per run: a resumed run's newer folder replaces the older; never a live one by an ended one
     $prevW = @($rows | Where-Object { $_.name -eq "$run (workflow)" })[0]; if ($prevW) { if ([int]$prevW.left -and -not $live) { continue }; [void]$rows.Remove($prevW) }
     $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$run (workflow)"; run = $run; left = $(if ($live) { $running.Count } else { 0 })
           task = "$(@($lr.script | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf })[0]) $($w.Name) · steps $($res.Count)/$($started.Count)$(if ($spent) { " · $(& $tok $spent) tokens$(if ($cap) { " of $(& $tok $cap)" })" })"
@@ -1099,10 +1099,10 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
       if (-not $e.transcript -and $e.file) { try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { $x.transcript = $sa.tf; Write-KitState $e.file $x } } } catch { } } }   # lease grace and shell owners read it too
     # an older attempt whose name runs as a newer step (a retest): superseded
     $sup = if (-not $st -and $sa -and $e.status -ne 'left' -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -lt $sa.created.AddMinutes(-1) -and [datetime]$e.beat -le $sa.created.AddMinutes(1)) { $sa }
-    # N3: the area's running step (<phase>:<area>) of the run is its progress, whatever <role>-<nn> id it has
+    # N3: the run's running step (<phase>:<area>) is the area's progress, any <role>-<nn> id
     $ar = "$(if ($e.area) { $e.area } elseif ("$($e.agent)" -match '^(?<b>.+)-\d+$') { $Matches.b } else { $e.agent })" -replace '^area-'; $sr = if (-not ($st -or $sup) -and $e.status -ne 'left' -and $ar) { @($steps["$($e.run)/$ar"], $steps["$($e.run)/area-$ar"] | Where-Object { $_ })[0] }
     if ($sr.tx -and $sr.created) { if ([datetime]$e.joined -lt $sr.created.AddMinutes(-1) -and [datetime]$e.beat -le $sr.created.AddMinutes(1)) { $sup = $sr } else { $st = $sr } }
-    # a quiet "<agent>-<n>" row whose base agent of the run beats: a stale duplicate (pre-pause copy), never STUCK
+    # a quiet "<agent>-<n>" row whose run's base agent beats: a stale pre-pause copy, never STUCK
     $dupOf = if (-not $st -and $e.status -ne 'left' -and "$($e.agent)" -match '^(?<b>.+)-\d+$' -and ($Now - [datetime]$e.beat).TotalMinutes -ge $stuck) { $bn = $Matches.b; if (@($recent | Where-Object { $_.agent -eq $bn -and $_.run -eq $e.run -and $_.status -ne 'left' -and ($Now - [datetime]$_.beat).TotalMinutes -lt $stuck }).Count) { $bn } }
     if ($st) { $st.covered = $true }; $on = [bool]$st.tx
     $t = if ($on) { $st.tx } else { $tx = & $txOf $e; & $last $e.tool $(if ($tx) { $tx } elseif ($st) { $st.tf }) }
@@ -1751,8 +1751,7 @@ function __CiJob($Id, $Name, $Status, $FinishedAt = $null) { $o = [ordered]@{ id
 function __CiStat($Id, $Status) { if ($Status) { [pscustomobject]@{ id = $Id; status = $Status } } }
 function __CommitObj($Sha, $Date = $null) { if ($Sha) { $o = [ordered]@{ id = $Sha }; if ($Date) { $o.committed_date = $Date }; [pscustomobject]$o } }
 
-# git hosts: adapters/gitlab, github, bitbucket, azure-devops, gitea (.ps1)
-# MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (github, gitea)
+# MR objects (vendors: adapters/): __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (github, gitea)
 function __Mr([hashtable]$H) {
   $o = [ordered]@{ iid = $null; title = ''; state = ''; source_branch = ''; target_branch = ''; sha = ''; merge_commit_sha = $null; squash_commit_sha = $null; merged_at = $null; created_at = $null
     updated_at = $null; draft = $false; has_conflicts = $false; detailed_merge_status = ''; merge_when_pipeline_succeeds = $false; web_url = ''; head_pipeline = $null }
@@ -1762,7 +1761,7 @@ function __GhMr($p) {
   if (-not $p -or -not $p.number) { return $null }
   __Mr @{ iid = $p.number; title = $p.title; state = $(if ($p.merged_at -or $p.merged) { 'merged' } elseif ($p.state -eq 'open') { 'opened' } else { 'closed' }); source_branch = $p.head.ref; target_branch = $p.base.ref
     sha = $p.head.sha; merge_commit_sha = $p.merge_commit_sha; merged_at = $p.merged_at; created_at = $p.created_at; updated_at = $p.updated_at; draft = [bool]$p.draft; has_conflicts = ($p.mergeable -eq $false)
-    detailed_merge_status = $(if ($p.mergeable_state -eq 'dirty' -or $p.mergeable -eq $false) { 'conflict' } else { [string]$p.mergeable_state }); merge_when_pipeline_succeeds = [bool]$p.auto_merge; web_url = $p.html_url; author = $p.user.login }
+    detailed_merge_status = $(if ($p.mergeable_state -eq 'dirty' -or $p.mergeable -eq $false) { 'conflict' } else { [string]$p.mergeable_state }); merge_when_pipeline_succeeds = [bool]$p.auto_merge; web_url = $p.html_url; author = $p.user.login; description = [string]$p.body }
 }
 # adapter:git-host/command: gitHostApi.commands.<verb>
 Register-KitAdapter 'git-host' 'command' @{ '*' = { param($a, $v) Invoke-KitCommand 'git-host' (__HostSet 'commands' $null) $v $a } }
@@ -1985,7 +1984,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       if ($inline -eq '') { $inline = $null; if ($pm.SwitchParameter -and $i -lt $Tokens.Count -and ($Tokens[$i] -is [bool] -or "$($Tokens[$i])" -match '^(true|false)$')) { $inline = "$($Tokens[$i])"; $i++ } }
       if ($pm.SwitchParameter) { $named[$p[0]] = if ($null -ne $inline) { $inline -notmatch '^(\$?false|0)$' } else { $true }; continue }
       $vals = [Collections.Generic.List[object]]::new(); if ($null -ne $inline) { $vals.Add($inline) }
-      # a dash-leading value with a digit or inner dash that names no parameter (-Run '-hm-1121') is the value; a typo (-Agnet) still fails
+      # a dash-leading value with a digit or inner dash naming no parameter (-Run '-hm-1121') is a value; a typo (-Agnet) still fails
       if ($null -eq $inline -and $i -lt $Tokens.Count -and "$($Tokens[$i])" -match '^-([A-Za-z][\w-]*[\d-][\w-]*)$' -and -not @($own | Where-Object { $_ -like "$($Matches[1])*" -or @($meta[$_].Aliases) -contains $Matches[1] }).Count) { $vals.Add($Tokens[$i]); $i++ }
       while ($i -lt $Tokens.Count -and "$($Tokens[$i])" -notmatch '^-[A-Za-z][\w-]*(:.*)?$') { $vals.Add($Tokens[$i]); $i++ }
       $named[$p[0]] = if ($pm.ParameterType.IsArray) { @($vals) } elseif ($vals.Count -gt 1) { @($vals) -join ' ' } elseif ($vals.Count) { $vals[0] } else { '' }

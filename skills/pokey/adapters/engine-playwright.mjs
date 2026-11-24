@@ -29,3 +29,11 @@ export async function pwPage(eng, bo, VIEW, quiet = []) {
     cookies: () => ctx.cookies(), setCookie: (...c) => ctx.addCookies(c) })
   return { browser, page }
 }
+// registry (parity.json browser-engine; browser.mjs session() picks by browser.engine): chrome = a CDP session per login, reused
+// across calls (browser.mjs); the others a browser per process
+export const ADAPTERS = { 'browser-engine': {} }
+ADAPTERS['browser-engine']['chrome'] = { session: true, reuse: true }
+ADAPTERS['browser-engine']['chromium'] = { session: pwPage }
+ADAPTERS['browser-engine']['firefox'] = { session: pwPage }
+ADAPTERS['browser-engine']['webkit'] = { session: pwPage }
+export const engine = (eng) => ADAPTERS['browser-engine'][eng] || (() => { throw new Error(`browser.engine ${eng}: unknown (${Object.keys(ADAPTERS['browser-engine']).join(' | ')})`) })()

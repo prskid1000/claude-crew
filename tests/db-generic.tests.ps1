@@ -57,11 +57,17 @@ try {
   Expect "column model lists the column's values (keep marked); one-DB scopes = db.name ($cl | $sc)" ($cl -eq 'a*,b' -and $sc -eq 'shop')
   $il = & { . $L; function Get-EnvCfg { @{ tenants = @{ model = 'instance'; instances = @(@{ name = 'eu' }, @{ name = 'us' }); keep = @('us') } } }; @(Invoke-TenantModel c 'list' | ForEach-Object { "$($_.name)$(if ($_.keep) { '*' })" }) -join ',' }
   Expect "instance model lists tenants.instances names, keep marked ($il)" ($il -eq 'eu,us*')
-  # postgres: the engine adapter has no sql verb -> refused, the mysql client never runs (also not for a schema tenant model)
-  & $J @{ localEnv = @{ envs = @{ pg = @{ services = @(); db = @{ engine = 'postgresql'; user = 'u'; name = 'app' }; tenants = @{ model = 'schema'; schema = 'adm'; table = 'reg'; key = 'id'; name = 'name' } }; lite = @{ services = @(); db = @{ engine = 'sqlite'; name = 'app.db' } } } } } $cfg 8
-  $p = & { . $L; try { Invoke-DbSql pg 'SELECT 1'; 'ran' } catch { "$_" } }
-  $pt = Px $L tenant list -Env pg 2>&1 | Out-String
-  Expect "postgres: Invoke-DbSql refuses, tenant (schema model) refuses, mysql never called ($p)" ($p -eq 'engine postgres: verb sql not implemented' -and $pt -match 'tenant needs db\.engine mysql / mariadb' -and -not (Test-Path $hit))
+  # sql verb (parity): each engine's own client, the statement on stdin (mongodb: --eval), rows split on tabs; redis refuses; the
+  # mysql client never runs (also not for a schema tenant model on postgres)
+  & $J @{ localEnv = @{ envs = @{ pg = @{ services = @(); db = @{ engine = 'postgresql'; user = 'u'; name = 'app' }; tenants = @{ model = 'schema'; schema = 'adm'; table = 'reg'; key = 'id'; name = 'name' } }; lite = @{ services = @(); db = @{ engine = 'sqlite'; name = 'app.db' } }
+    ms = @{ services = @(); db = @{ engine = 'mssql'; user = 'sa'; name = 'app' } }; ora = @{ services = @(); db = @{ engine = 'oracle'; user = 'u'; name = 'XE' } }; mg = @{ services = @(); db = @{ engine = 'mongo'; name = 'app' } }; rd = @{ services = @(); db = @{ engine = 'redis' } } } } } $cfg 8
+  $p = & { . $L; $global:dbx = [Collections.Generic.List[string]]::new(); function Invoke-KitExe { param($Exe, $A, $TimeoutSec, $Raw, $Cwd, $In) $global:dbx.Add("$Exe|$($A -join ' ')|$In"); [pscustomobject]@{ code = 0; out = "a `tb`n`nc`td"; err = '' } }
+    $o = foreach ($en in 'pg', 'lite', 'ms', 'ora', 'mg') { $rows = @(Invoke-DbSql $en 'SELECT 1;'); "$en=$($rows.Count):$($rows[1][1])" }
+    $rr = try { Invoke-DbSql rd 'GET x'; 'ran' } catch { "$_" }; "$($o -join ',')|$rr" }
+  $dx = $global:dbx; $pt = Px $L tenant list -Env pg 2>&1 | Out-String
+  Expect "sql verb: postgres psql, sqlite3, sqlcmd, sqlplus, mongosh; 2 rows each; redis refuses; tenant (schema model) on postgres refuses; mysql never called ($p)" ($p -eq 'pg=2:d,lite=2:d,ms=2:d,ora=2:d,mg=2:d|engine redis: verb sql not implemented' -and
+    $dx[0] -match "^psql\|-h 127\.0\.0\.1 -p 5432 -U u -d app .*-F `t .*ON_ERROR_STOP=1\|SELECT 1;" -and $dx[1] -match "^sqlite3\|-batch -bail -noheader -separator `t app\.db\|SELECT 1;" -and $dx[2] -match "^sqlcmd\|-S 127\.0\.0\.1,1433 -U sa -d app -h -1 -W -s `t -b -I\|SET NOCOUNT ON;" -and
+    $dx[3] -match "^sqlplus\|-s -l /nolog\|WHENEVER SQLERROR EXIT 1\s+CONNECT u/`"`"@//127\.0\.0\.1:1521/XE" -and $dx[4] -eq 'mongosh|mongodb://127.0.0.1:27017/app --quiet --eval SELECT 1;|' -and $pt -match 'tenant needs db\.engine mysql / mariadb' -and -not (Test-Path $hit))
   # envy verbs: a local adapter registers one (ops checked); an unknown verb is refused with the list
   "Register-KitAdapter envy-verb hello @{ ops = @('wave'); run = { `"hello `$Op from `$e`" } }" | Set-Content (Join-Path $ad 'zz_hello.local.ps1')
   $h = Px $L hello wave -Env pg 2>&1 | Out-String; $hc = $LASTEXITCODE

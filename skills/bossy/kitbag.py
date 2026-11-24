@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L226 kitlog · L328 load · L821 lint · L1235 README graph · L1353 lint command · L1635 audit ·
-  L1783 registry · L1843 tools · L1931 parity · L2383 arch lint · L2656 prose · L2836 sections · L2966 budget · L2984 migrate ·
-  L3132 plugins · L3189 state lint · L3377 main
+  L1783 registry · L1843 tools · L1931 parity · L2384 arch lint · L2657 prose · L2837 sections · L2967 budget · L2985 migrate ·
+  L3133 plugins · L3190 state lint · L3378 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1935,6 +1935,7 @@ AD_KEY = re.compile(r"""(['"]?)([\w.*-]+)\1\s*(=(?!=)|:)""")   # a key of an ada
 AD_DELEGATE = re.compile(r"""\$KitAdapters(?:\.([\w-]+)|\[['"]([\w-]+)['"]\])(?:\.([\w-]+)|\[['"]([\w-]+)['"]\])""")   # '*' = another adapter's verbs
 ktext = lambda k, rel: k.texts.get(rel) or read(osp.join(k.dir, rel))   # port copies and settings.json: not in every k.texts
 HARNESS = ('codex', 'antigravity')
+AD_EXT, AD_COMMENT = ('.ps1', '.py', '.mjs'), r'(?m)^[ \t]*(#|//).*$'   # .mjs: ADAPTERS['<kind>']['<name>'] = {...} (browser.mjs)
 kebab = lambda v: re.sub('([A-Z])', r'-\1', v).lower()   # Test-KitCap: cap commentEdit = verb comment-edit
 
 def _braced(t, i):
@@ -1988,9 +1989,9 @@ def adapter_code(k, kind):
     comment lines excluded)."""
     out = {}
     for f, t in k.texts.items():
-        if not (f.startswith('skills/') and f.endswith(('.ps1', '.py'))) or '.local.' in f:
+        if not (f.startswith('skills/') and f.endswith(AD_EXT)) or '.local.' in f:
             continue
-        t = re.sub(r'(?m)^[ \t]*#.*$', '', t)
+        t = re.sub(AD_COMMENT, '', t)
         for m in AD_REG.finditer(t):
             kn, n = (m.group(1), m.group(2)) if m.group(1) else (m.group(3) or m.group(4), m.group(5))
             if kn != kind:
@@ -2002,8 +2003,8 @@ def adapter_code(k, kind):
 
 def adapter_kinds(k):
     """Every adapter kind the kit's code registers."""
-    return {kn for f, t in k.texts.items() if f.startswith('skills/') and f.endswith(('.ps1', '.py')) and '.local.' not in f
-            for m in AD_REG.finditer(re.sub(r'(?m)^[ \t]*#.*$', '', t)) for kn in [m.group(1) or m.group(3) or m.group(4)]}
+    return {kn for f, t in k.texts.items() if f.startswith('skills/') and f.endswith(AD_EXT) and '.local.' not in f
+            for m in AD_REG.finditer(re.sub(AD_COMMENT, '', t)) for kn in [m.group(1) or m.group(3) or m.group(4)]}
 
 def _gap_keys(gaps):
     """'a,b/v1,v2' keys -> {(name, verb): (key, why)}."""

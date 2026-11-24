@@ -50,3 +50,7 @@ export function laneTarget(name, targets, lanes) {
   }
   return null
 }
+// registry (parity.json login): the web surface (browser.mjs login()) reads users and profiles, no secret:<name> ref (a node
+// process gets no value from the store; pokey.ps1 api and ui login read every store)
+export const ADAPTERS = { login: {} }
+ADAPTERS['login']['web'] = { users: true, profiles: true }

@@ -24,11 +24,6 @@
       "vendors": "github gitlab bitbucket azure gitea",
       "fallback": {
         "mr.parseRef": "core ConvertFrom-KitMrRef (an MR URL or <repo>!<n>)"
-      },
-      "gaps": {
-        "bitbucket,azure,gitea/mr.update": "no PR edit verb yet: devtools.py prints 'edit it by hand' and the body stays",
-        "bitbucket,azure,gitea/branch.protect": "no protection verb yet: bossy.ps1 health prints the by-hand line",
-        "azure/whoami": "no user lookup yet: host-user filters see no user"
       }
     },
     "report": {
@@ -54,9 +49,6 @@
       "vendors": "github gitlab bitbucket azure gitea jenkins",
       "fallback": {
         "failure": "core Get-KitCiFailure (the failed job and its log)"
-      },
-      "gaps": {
-        "bitbucket,azure,gitea,jenkins/parseUrl": "no CI URL parser yet: supervise shows no job for a pasted CI link"
       }
     },
     "transcript": {
@@ -89,7 +81,7 @@
       "caps": "write list rotate",
       "names": "file env keychain command",
       "gaps": {
-        "env,keychain/write,set,delete,rotate": "read-only store: the owner sets the value in the store (UNSUPPORTED names it)",
+        "env/write,set,delete,rotate": "read-only by design: the environment comes from the owner's shell or CI, which a kit process cannot change (UNSUPPORTED names it; a written file would be a second store: use file or keychain)",
         "keychain/list": "no name listing: secrets are read by name only"
       }
     },
@@ -119,7 +111,7 @@
         "jdbc": "the env's db.jdbc line"
       },
       "gaps": {
-        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/sql": "no sql block: Invoke-DbSql refuses (db.schemasQuery, tenants column model); envy.ps1 sql runs the query preset",
+        "redis,elasticsearch,opensearch/sql": "no statement language with rows: Invoke-DbSql refuses (db.schemasQuery, tenants column model); envy.ps1 sql runs the query preset (raw commands, REST paths)",
         "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/marks": "no binlog marks: restore by seed",
         "mariadb,postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/temp": "no temp-space watchdog or pool check",
         "sqlserver,sqlite,oracle,mongodb/sizes": "no data-growth check",
@@ -163,6 +155,35 @@
       "verbs": "invoke",
       "names": "",
       "vendors": ""
+    },
+    "login": {
+      "config": "targets.<t>.users / profiles (targets.local.json)",
+      "file": "skills/pokey/pokey.ps1",
+      "verbs": "users secretRefs profiles",
+      "names": "api app web",
+      "gaps": {
+        "web/secretRefs": "a node process gets no value from the store: browser.mjs reads targets.local.json and names pokey.ps1 api; api and ui login read every store"
+      }
+    },
+    "device": {
+      "config": "devices.type",
+      "file": "skills/pokey/adapters/ui-android.ps1",
+      "verbs": "dump tap tapid tapxy type clear key swipe openurl shot shotmark wait photo log mic",
+      "names": "android ios none",
+      "gaps": {
+        "ios/dump,tap,tapid,tapxy,type,clear,key,swipe,shotmark,wait,photo,mic": "simctl has no UI driver: pokey.ps1 ui refuses, naming the ios actions; prove the rest on a web screen or in the app log",
+        "none/dump,tap,tapid,tapxy,type,clear,key,swipe,openurl,shot,shotmark,wait,photo,log,mic": "no device lanes (devices.type none): app checks are NOT_TESTED"
+      }
+    },
+    "browser-engine": {
+      "config": "browser.engine",
+      "file": "skills/pokey/adapters/engine-playwright.mjs",
+      "verbs": "session",
+      "caps": "reuse",
+      "names": "chrome chromium firefox webkit",
+      "gaps": {
+        "chromium,firefox,webkit/reuse": "a browser per process (Playwright, no CDP port to reattach): each call opens and logs in again"
+      }
     },
     "scheduler": {
       "config": "supervise.osTimer",

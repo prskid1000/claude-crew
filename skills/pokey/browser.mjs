@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L49 login · L133 browsers · L176 tabs · L264 session · L312 actions · L411 ui checks · L418 evidence
+// Sections: L17 config · L49 login · L133 browsers · L176 tabs · L264 session · L313 actions · L412 ui checks · L419 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -94,7 +94,7 @@ async function step(page, s, f) {
 }
 
 async function login(page, t, tenant, as) {
-  // profiles: a file-store secret reads that user; other stores: pokey.ps1 api only
+  // profiles: a file-store secret reads that user; other stores: pokey.ps1 api and ui login only
   const pf = (t.profiles || {})[as], pu = /^targets\/[^/]+\/([^/]+)\/password$/.exec(pf?.secret || '')
   const L = t.webLogin, type = L.type || 'form', [user0, pass, otp] = t.users[as] || (pu && t.users[pu[1]]) || [], user = pf?.login || user0
   if (!user) throw new Error(`no user "${as}" in this target`)
@@ -280,7 +280,8 @@ export async function session({ target, tenant, as } = {}) {
   BASE = t.web
   let browser, page, port = null
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
-  if (eng !== 'chrome') ({ browser, page } = await (await adapter('engine-playwright.mjs')).pwPage(eng, bo, VIEW, QUIET_ARGS))
+  const eg = (await adapter('engine-playwright.mjs')).engine(eng)
+  if (!eg.reuse) ({ browser, page } = await eg.session(eng, bo, VIEW, QUIET_ARGS))
   else {
     if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
     port = await sessionPort(tn, tenant, as)

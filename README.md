@@ -272,6 +272,8 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   tap opens the group as a full row: a tile per key, colour = learned / shadow / local / default, the value inside, changed in 7
   days outlined), keys changed in 7 days as a key + scope x day heatmap (latest change first; a cell = old→new, up slate,
   down plum, →default = a reset; the value now on the right; full key and reason in the tooltip), the rows as TSV on a tap.
+  Parity (folded): `kitbag.py parity --json` per kit commit: a family x adapter x verb table of the verbs some adapter lacks
+  natively (gap red, fallback amber, config slate; the reason in the tooltip), all-native families in one line, harness rows not ported.
 
 One self-contained file: inline CSS, JS and SVG, no request leaves it; every data value is HTML-escaped. Layout rule: every list of
 short items (tiles, cards, bars, key-value pairs) goes through one grid helper (`$grid`, CSS `.cg`: a wrapping row, a min width per item,
@@ -357,18 +359,21 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 | Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Not native (adapters) | Code |
 |---|---|---|---|---|---|---|
 | tracker | `tracker.type` | view url status comment comments create describe rename list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | fallback: checklist (8), dependencies (4), labels (4), statuses (2) | `skills/crafty/adapters/tracker-local.ps1` |
-| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect | command | github, gitlab, bitbucket, azure, gitea | fallback: mr.parseRef (5) · gap: branch.protect (3), mr.update (3), whoami (1) | `skills/crafty/lib.ps1` |
+| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect | command | github, gitlab, bitbucket, azure, gitea | fallback: mr.parseRef (5) | `skills/crafty/lib.ps1` |
 | report | `reports.type` | publish; caps: evidence | markdown, html, command | gdocs, pdf, confluence, notion | fallback: evidence (6) · gap: selftest (3) | `skills/crafty/devtools.py` |
-| ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | fallback: failure (6) · gap: parseUrl (4) | `skills/crafty/lib.ps1` |
+| ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | fallback: failure (6) | `skills/crafty/lib.ps1` |
 | transcript | `board tool` | root last; caps: agentMeta | claude, codex, antigravity, none |  | gap: agentMeta (3) | `skills/crafty/lib.ps1` |
 | deploy-kind | `repos[].deploys[] (kind)` | isDeployed; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | gap: deploy (3), isRunning (7), lastDeploy (7), plan (5), restart (7) | `skills/pokey/adapters/deployed-checks.ps1` |
-| secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | gap: delete (2), list (1), rotate (2), set (2), write (2) | `skills/crafty/adapters/secret-store.ps1` |
+| secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | gap: delete (1), list (1), rotate (1), set (1), write (1) | `skills/crafty/adapters/secret-store.ps1` |
 | process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | not walked: a built-in is one rule for its own gates (testingDocs: promote here, finish / merge / mrBody in devtools.py; reproRow: bugFix in devtools.py); an unset gate passes | `skills/crafty/adapters/process-gates.ps1` |
-| db-engine | `localEnv db.engine` | query exec jdbc sql; caps: marks temp sizes |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb, redis, elasticsearch, opensearch | fallback: exec (4), jdbc (7), query (1) · gap: binlogs (8), marks (8), pos (8), sizes (4), sql (8), temp (9) | `skills/envy/adapters/db-engines.ps1` |
+| db-engine | `localEnv db.engine` | query exec jdbc sql; caps: marks temp sizes |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb, redis, elasticsearch, opensearch | fallback: exec (4), jdbc (7), query (1) · gap: binlogs (8), marks (8), pos (8), sizes (4), sql (3), temp (9) | `skills/envy/adapters/db-engines.ps1` |
 | tenant-model | `localEnv tenants.model` | list drop import footprint scopes; caps: create drop snapshot |  | none, schema, database, column, instance | gap: create (5), drop (3), footprint (3), import (3), list (1), scopes (5), snapshot (5) | `skills/envy/adapters/tenant-models.ps1` |
 | migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes |  | liquibase |  | `skills/crafty/adapters/liquibase.ps1` |
 | envy-verb | `adapters/*.local.ps1` | ops run |  | tenant |  | `skills/envy/adapters/tenant-models.ps1` |
 | api-auth | `targets auth.type` | invoke |  |  |  | `skills/pokey/pokey.ps1` |
+| login | `targets.<t>.users / profiles (targets.local.json)` | users secretRefs profiles | api, app, web |  | gap: secretRefs (1) | `skills/pokey/pokey.ps1` |
+| device | `devices.type` | dump tap tapid tapxy type clear key swipe openurl shot shotmark wait photo log mic | android, ios, none |  | gap: clear (2), dump (2), key (2), log (1), mic (2), openurl (1), photo (2), shot (1), shotmark (2), swipe (2), tap (2), tapid (2), tapxy (2), type (2), wait (2) | `skills/pokey/adapters/ui-android.ps1` |
+| browser-engine | `browser.engine` | session; caps: reuse | chrome, chromium, firefox, webkit |  | gap: reuse (3) | `skills/pokey/adapters/engine-playwright.mjs` |
 | scheduler | `supervise.osTimer` | install uninstall status | windows, cron, launchd, none |  |  | `skills/bossy/adapters/os-timer.ps1` |
 | guard | `built-in guard rules` | check | local-env, deployed-env, large-writes, secrets, runtimes |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
 | stack | `repos[] stack detection` | detect | core, presets |  |  | `skills/crafty/adapters/stack-presets.ps1` |

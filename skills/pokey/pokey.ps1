@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L160 seat · L234 api · L487 users · L621 finalize · L1162 results · L1195 retest ·
-  L1252 prepare
+Sections: L29 lanes · L43 report · L160 seat · L234 api · L485 users · L597 login surfaces (parity.json login) · L630 finalize ·
+  L1171 results · L1204 retest · L1261 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -355,11 +355,9 @@ if (-not $As -and $kind -ne 'none') {
   if ($null -eq $who0) { $nu = "NO-USER target $Target has several users and none is chosen (not retried): pass -As <user>, or set targets.local.json targets.$Target.defaultUser or kit.local.json api.defaultUser. Known: $((Get-KitProps $t.users).Name -join ', ')"; if ($script:ApiNoExit) { throw $nu }; $nu; exit 2 }
   $As = $who0
 }
-$u = @((Get-KitMember $t.users $As) | ForEach-Object { Resolve-KitSecretRef $_ })   # secret:<name> = a secrets.store entry
-# profiles.<name> (README "Adapters" login profiles): login, secret (a secrets.store name), auth (over auth), fields (opaque
-# {field} placeholders; tenant = the -Tenant default)
-$pfFields = @{}; if (($pf = Get-KitMember $t.profiles $As)) {
-  $u = @($(if ($pf.login) { "$($pf.login)" } else { $As }), $(if ($pf.secret) { Get-KitSecret "$($pf.secret)" }))
+$lp = Get-KitLoginPair $t $As; $u = $lp.u
+# a profile's auth (over auth) and fields (opaque {field} placeholders; tenant = the -Tenant default)
+$pfFields = @{}; if (($pf = $lp.pf)) {
   if ($pf.auth) { $t | Add-Member -Force NoteProperty userAuth ([pscustomobject]@{ $As = $pf.auth }) }
   foreach ($fp in @(Get-KitProps $pf.fields)) { if ($fp.Name -ne 'tenant') { $pfFields[$fp.Name] = "$($fp.Value)" } elseif (-not $PSBoundParameters['Tenant']) { $Tenant = "$($fp.Value)" } }
 }
@@ -596,12 +594,23 @@ if ($rc.check) {
 "SETUP_CHANGE: test login $Name ($Role) $(if ($state -like 'EXISTS*') { 'reused' } else { 'created' }) on $Target/$Tenant; remove: pokey.ps1 user deactivate -Target $Target -Name $Name"
 if ($state -like '*LOGIN-FAIL') { exit 1 }
 }
+# ---- login surfaces (parity.json login): api and app read a target user the same way (Get-KitLoginPair); web: browser.mjs
+# a target user -> @{ u = login, password; pf = its profile }: profiles.<As> (login, secret = a secrets.store name) over users.<As>
+# (secret:<name> refs resolved through the store); README "Adapters" login profiles
+function Get-KitLoginPair($T, [string]$As) {
+  $pf = Get-KitMember $T.profiles $As
+  if ($pf) { return @{ u = @($(if ($pf.login) { "$($pf.login)" } else { $As }), $(if ($pf.secret) { Get-KitSecret "$($pf.secret)" })); pf = $pf } }
+  @{ u = @((Get-KitMember $T.users $As) | ForEach-Object { Resolve-KitSecretRef $_ }); pf = $null }
+}
+Register-KitAdapter login api @{ users = $true; secretRefs = $true; profiles = $true }
+Register-KitAdapter login app @{ users = $true; secretRefs = $true; profiles = $true }
 # type a stored login into the app's login screen (qa.userRecipes.<r>.app.steps); the password never reaches stdout
 function Invoke-UiLogin {
 param([Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$As, [string]$Serial, [string]$Tenant)
 if ($Serial) { $env:ANDROID_SERIAL = $Serial }
 $tf = Get-PokeyTargets; $t = $tf.data.targets[$Target]; if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ')" }
-$u = @($t.users[$As]); if (-not $t.users[$As]) { "NO-USER '$As' in target ${Target}: pokey.ps1 user list -Target $Target, or user create"; exit 2 }
+$lp = Get-KitLoginPair $t $As; $u = $lp.u; if (-not $u[0]) { "NO-USER '$As' in target ${Target}: pokey.ps1 user list -Target $Target, or user create"; exit 2 }
+if (-not $Tenant -and "$($lp.pf.fields.tenant)") { $Tenant = "$($lp.pf.fields.tenant)" }
 if (-not $Tenant) { $Tenant = if ($t.created -is [Collections.IDictionary] -and $t.created[$As].tenant) { [string]$t.created[$As].tenant } else { [string]$t.defaultTenant } }
 $app = (Get-UserRecipe $Target).app; if (-not $app.steps) { throw "kit.local.json qa.userRecipes entry for '$Target' has no app.steps ([{ into: <resource-id>, text: '{user}' | '{pass}' | '{tenant}', optional }, { key: <keycode> }, { tap: <resource-id> }, { wait: <text> }])" }
 $vars = @{ user = [string]$u[0]; pass = [string]$u[1]; tenant = $Tenant }; $android = (Get-KitSetting 'devices.type' 'none') -ne 'ios'

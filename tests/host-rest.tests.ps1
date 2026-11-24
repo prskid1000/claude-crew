@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 tests/host-rest.tests.ps1: the REST git hosts and CI (gitea, bitbucket, azure-devops, ci-jenkins) on recorded answers (Invoke-KitHttp
-mocked): one fixture table, one case per row, the call log reset per row; then the tracker order verbs (dependencies, labels) of
+mocked): one fixture table, one case per row, the call log reset per row (parity rows: mr.update, branch.protect, whoami,
+ci.parseUrl, CI task run order by created_at); then the tracker order verbs (dependencies, labels) of
 clickup, jira, gitlab, github on their own recorded answers.
 Usage: pwsh -NoProfile -File tests/host-rest.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
@@ -11,14 +12,28 @@ foreach ($a in 'gitea', 'bitbucket', 'azure-devops', 'ci-jenkins') { . (Join-Pat
 $__cfg = '{"gitHost":"git.example","repos":[{"name":"jkrepo","ci":"jenkins"}],"ci":{"url":"https://ci.example","job":"job/{repo}"}}' | ConvertFrom-Json
 $KitConf.GitHost = 'git.example'; $script:KitRoot = Join-Path ([IO.Path]::GetTempPath()) "extra-test-$PID"   # tracking.json of the test, not the kit's
 $fx = [ordered]@{
- 'GET .*bitbucket.*/pullrequests/12$' = '{"id":12,"title":"x","state":"OPEN","source":{"branch":{"name":"f/x"},"commit":{"hash":"abc123def456"}},"links":{"html":{"href":"https://bitbucket.org/ws/bbrepo/pull-requests/12"}}}'
+ 'GET .*bitbucket.*/pullrequests/12$' = '{"id":12,"title":"x","description":"D0","state":"OPEN","source":{"branch":{"name":"f/x"},"commit":{"hash":"abc123def456"}},"links":{"html":{"href":"https://bitbucket.org/ws/bbrepo/pull-requests/12"}}}'
  'GET .*bitbucket.*/commit/abc123def456/statuses' = '{"values":[{"state":"INPROGRESS","key":"build","url":"https://bitbucket.org/ws/bbrepo/pipelines/results/41"}]}'
  'GET .*bitbucket.*/pullrequests\?' = '{"values":[{"id":12,"title":"x","state":"OPEN","source":{"branch":{"name":"f/x"},"commit":{"hash":"abc123def456"}}}]}'
- 'GET .*bitbucket.*/pipelines\?' = '{"values":[{"uuid":"{p-1}","state":{"name":"COMPLETED","result":{"name":"FAILED"}},"target":{"commit":{"hash":"abc123def456"}}}]}'
+ 'GET .*bitbucket.*/pipelines\?' = '{"values":[{"uuid":"{p-1}","build_number":41,"state":{"name":"COMPLETED","result":{"name":"FAILED"}},"target":{"commit":{"hash":"abc123def456"}}}]}'
+ 'PUT .*bitbucket.*/pullrequests/12$' = '{"id":12,"title":"new","state":"OPEN","source":{"branch":{"name":"f/x"},"commit":{"hash":"abc123def456"}}}'
+ 'GET .*bitbucket.*/branch-restrictions\?pattern=main&' = '{"values":[{"kind":"force","pattern":"main"},{"kind":"delete","pattern":"main"}]}'
+ 'GET .*bitbucket.*/branch-restrictions\?pattern=dev&' = '{"values":[{"kind":"force","pattern":"dev"},{"kind":"delete","pattern":"dev2"}]}'
+ 'POST .*bitbucket.*/branch-restrictions$' = '{"id":3}'
+ 'GET .*/repos/o/gtrepo/branch_protections/main$' = '{"branch_name":"main","enable_force_push":false}'
+ 'GET .*/repos/o/gtrepo/branch_protections/dev$' = '{"branch_name":"dev","enable_force_push":true}'
+ 'POST .*/repos/o/gtrepo/branch_protections$' = '{"rule_name":"new"}'
+ 'GET .*/repos/o/gtrepo/actions/tasks' = '{"workflow_runs":[{"id":502,"run_number":7},{"id":501,"run_number":7},{"id":400,"run_number":6}]}'
+ 'GET .*/_apis/git/repositories/azrepo\?' = '{"id":"r-1","project":{"id":"p-1"}}'
+ 'GET .*accesscontrollists/2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87\?token=repoV2%2Fp-1%2Fr-1%2Frefs%2Fheads%2F720065006c00&' = '{"count":1,"value":[{"acesDictionary":{"d-1":{"allow":0,"deny":8}}}]}'
+ 'GET .*accesscontrollists/2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87\?token=repoV2%2Fp-1%2Fr-1%2Frefs%2Fheads%2F6d00610069006e00&' = '{"count":0,"value":[]}'
+ 'GET .*vssps.dev.azure.com/org/_apis/identities\?searchFilter=General&filterValue=%5Bproj%5D%5CContributors' = '{"value":[{"descriptor":"Microsoft.TeamFoundation.Identity;S-1-9-7"}]}'
+ 'POST .*/org/_apis/accesscontrolentries/2e9eb7ed' = '{"count":1}'
+ 'GET .*/org/proj/_apis/build/builds/77/timeline' = '{"records":[{"id":"11111111-2222-3333-4444-555555555555","type":"Job","log":{"id":9}}]}'
  'GET .*bitbucket.*/pipelines/%7Bp-1%7D/steps' = '{"values":[{"uuid":"{s-1}","name":"test","state":{"name":"COMPLETED","result":{"name":"FAILED"}}}]}'
- 'GET .*dev.azure.com/org/proj/_apis/git/repositories/azrepo/pullrequests/5\?' = '{"pullRequestId":5,"title":"t","status":"active","sourceRefName":"refs/heads/f/x","lastMergeSourceCommit":{"commitId":"aaa"},"mergeStatus":"conflicts","repository":{"webUrl":"https://dev.azure.com/org/proj/_git/azrepo"}}'
+ 'GET .*dev.azure.com/org/proj/_apis/git/repositories/azrepo/pullrequests/5\?' = '{"pullRequestId":5,"title":"t","description":"A0","status":"active","sourceRefName":"refs/heads/f/x","lastMergeSourceCommit":{"commitId":"aaa"},"mergeStatus":"conflicts","repository":{"webUrl":"https://dev.azure.com/org/proj/_git/azrepo"}}'
  'GET .*refs/pull/5/merge' = '{"count":1,"value":[{"id":77,"status":"completed","result":"succeeded"}]}'
- 'GET .*/org/_apis/connectionData' = '{"authenticatedUser":{"id":"u-1"}}'
+ 'GET .*/org/_apis/connectionData' = '{"authenticatedUser":{"id":"u-1","providerDisplayName":"A B","properties":{"Account":{"$value":"ab@example.test"}}}}'
  'PATCH .*pullrequests/5\?' = '{"pullRequestId":5,"status":"active","autoCompleteSetBy":{"id":"u-1"},"sourceRefName":"refs/heads/f/x","repository":{"webUrl":"https://dev.azure.com/org/proj/_git/azrepo"}}'
  'GET .*/repos/o/gtrepo/commits/ggg/status' = '{"state":"success","statuses":[{"status":"success","context":"ci"}]}'
  'GET .*/repos/o/gtrepo/compare/main...ggg' = '{"total_commits":0,"commits":[],"files":[]}'
@@ -27,9 +42,9 @@ $fx = [ordered]@{
 function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) {
  $script:http.Add([pscustomobject]@{ m = $Method; u = $Uri; b = $Body; h = $Headers })
  if ($Uri -match '/repos/o/gtrepo/pulls/3/merge') { $script:gtMerged = $true; return $null }
- if ($Uri -match '/repos/o/gtrepo/pulls/3$') { return ('{"number":3,"title":"t","state":"' + $(if ($script:gtMerged) { 'closed","merged":true,"merged_at":"2026-10-15T12:00:00Z"' } else { 'open","merged":false' }) + ',"head":{"ref":"f/x","sha":"ggg"},"base":{"ref":"main"},"mergeable":true,"html_url":"https://git.example/o/gtrepo/pulls/3"}') | ConvertFrom-Json }
- foreach ($k in $fx.Keys) { if ("$Method $Uri" -match $k) { return ($fx[$k] | ConvertFrom-Json) } }
- $null
+ if ($Uri -match '/repos/o/gtrepo/pulls/3$') { return ('{"number":3,"title":"t","body":"G0","state":"' + $(if ($script:gtMerged) { 'closed","merged":true,"merged_at":"2026-10-15T12:00:00Z"' } else { 'open","merged":false' }) + ',"head":{"ref":"f/x","sha":"ggg"},"base":{"ref":"main"},"mergeable":true,"html_url":"https://git.example/o/gtrepo/pulls/3"}') | ConvertFrom-Json }
+ $global:KitHttpCode = 0; foreach ($k in $fx.Keys) { if ("$Method $Uri" -match $k) { return ($fx[$k] | ConvertFrom-Json) } }
+ $global:KitHttpCode = if ($Uri -match 'locked') { 403 } else { 404 }; $null
 }
 $env:GITEA_TOKEN = 'tok'; $env:BITBUCKET_TOKEN = 'u:app'; $env:AZURE_DEVOPS_EXT_PAT = 'pat'
 function LastCall($m) { @($script:http | Where-Object m -eq $m)[-1] }
@@ -48,6 +63,28 @@ $rows = @(
  ,@('az-auto', { $r = Invoke-HostVerb 'mr.merge' ($az + @{ n = '5'; sha = 'aaa'; auto = $true }); $pb = (LastCall PATCH).b; $r.merge_when_pipeline_succeeds -and $pb.autoCompleteSetBy.id -eq 'u-1' -and $pb.completionOptions.mergeStrategy -eq 'squash' -and -not $pb.status })
  ,@('az-deploy-merge', { $null = Invoke-HostVerb 'mr.merge' ($az + @{ n = '5'; sha = 'aaa'; method = 'merge' }); (LastCall PATCH).b.completionOptions.mergeStrategy -eq 'noFastForward' })
  ,@('jk-status', { $s = Invoke-HostVerb 'ci.status' @{ repo = 'jkrepo'; sha = 'jjj'; ref = 'f/x' }; $s.status -eq 'running' -and $s.id -eq 'f/x#9' })
+ # parity (owner 2026-11-24): mr.update, branch.protect (ok | set | skip on 403 | failed), azure whoami + author filter, ci.parseUrl
+ ,@('mr-body', { "$((Invoke-HostVerb 'mr.get' ($bb + @{ n = '12' })).description)|$((Invoke-HostVerb 'mr.get' ($az + @{ n = '5' })).description)|$((Invoke-HostVerb 'mr.get' ($gt + @{ n = '3' })).description)" -eq 'D0|A0|G0' })   # devtools.py edits the body it read: never an empty one
+ ,@('bb-update', { $m = Invoke-HostVerb 'mr.update' ($bb + @{ n = '12'; title = 'new'; body = 'B' }); $u = LastCall PUT; $m.title -eq 'new' -and $u.b.description -eq 'B' -and $u.b.title -eq 'new' })
+ ,@('bb-protect', { $v = foreach ($b in 'main', 'dev', 'locked') { Invoke-HostVerb 'branch.protect' ($bb + @{ branch = $b }) -NoMemo }; $pb = LastCall POST; ($v -join ';') -eq 'ok;set;skip: no admin rights on ws/bbrepo' -and $pb.b.kind -eq 'delete' -and $pb.b.pattern -eq 'dev' })
+ ,@('bb-author', { @(Invoke-HostVerb 'mr.list' ($bb + @{ state = 'opened'; author_username = 'zed' })).Count -eq 0 -and @(Invoke-HostVerb 'mr.list' ($bb + @{ state = 'opened' })).Count -eq 1 })
+ ,@('bb-parseUrl', { $u = Invoke-HostVerb 'ci.parseUrl' ($bb + @{ text = 'failed: https://bitbucket.org/ws/bbrepo/pipelines/results/41/steps/%7B0f1e2d3c-1111-2222-3333-444455556666%7D' }); $u.run -eq '{p-1}' -and $u.job -eq '{p-1}/{0f1e2d3c-1111-2222-3333-444455556666}' -and $u.url -match '/results/41/steps/' })
+ ,@('gt-update', { $m = Invoke-HostVerb 'mr.update' ($gt + @{ n = '3'; title = 'T2'; body = 'B2' }); $u = LastCall PATCH; $m.iid -eq 3 -and $u.b.body -eq 'B2' -and $u.u -match '/repos/o/gtrepo/pulls/3$' })
+ ,@('gt-protect', { $v = foreach ($b in 'main', 'dev', 'new', 'locked') { Invoke-HostVerb 'branch.protect' ($gt + @{ branch = $b }) -NoMemo }; $pb = LastCall POST
+   ($v -join ';') -eq 'ok;failed: protected but force push allowed: turn it off by hand;set;skip: no admin rights on o/gtrepo' -and $pb.b.branch_name -eq 'new' -and $pb.b.enable_push -and -not $pb.b.enable_force_push })
+ ,@('gt-parseUrl', { $u = Invoke-HostVerb 'ci.parseUrl' ($gt + @{ text = 'see https://git.example/o/gtrepo/actions/runs/7/jobs/1 for the log' }); $r = Invoke-HostVerb 'ci.parseUrl' ($gt + @{ text = 'https://git.example/o/gtrepo/actions/runs/7' }); "$($u.run)/$($u.job) $($r.run)/$($r.job)" -eq '502/502 501/' })
+ ,@('az-update', { $m = Invoke-HostVerb 'mr.update' ($az + @{ n = '5'; title = 'T'; body = 'D' }); $u = LastCall PATCH; $m.iid -eq 5 -and $u.b.description -eq 'D' -and $u.b.title -eq 'T' })
+ ,@('az-whoami', { (Invoke-HostVerb 'whoami' $az -NoMemo) -eq 'ab@example.test' })
+ ,@('az-protect', { $v = foreach ($b in 'main', 'rel') { Invoke-HostVerb 'branch.protect' ($az + @{ branch = $b }) -NoMemo }; $pb = LastCall POST
+   ($v -join ';') -eq 'set;ok' -and $pb.b.token -eq 'repoV2/p-1/r-1/refs/heads/6d00610069006e00' -and $pb.b.accessControlEntries[0].deny -eq 8 -and $pb.b.accessControlEntries[0].descriptor -match 'S-1-9-7' -and $pb.b.merge })
+ ,@('az-parseUrl', { $u = Invoke-HostVerb 'ci.parseUrl' ($az + @{ text = 'https://dev.azure.com/org/proj/_build/results?buildId=77&view=logs&j=11111111-2222-3333-4444-555555555555' }); "$($u.run)|$($u.job)" -eq '77|77/9' })
+ ,@('jk-parseUrl', { $x = foreach ($tx in 'https://ci.example/job/jkrepo/job/f%252Fx/9/execution/node/12/', 'https://ci.example/blue/organizations/jenkins/jkrepo/detail/f%2Fx/9/pipeline/12', 'https://ci.example/job/jkrepo/job/main/4/console') { $u = Invoke-HostVerb 'ci.parseUrl' @{ repo = 'jkrepo'; text = $tx }; "$($u.run)|$($u.job)" }; ($x -join ' ') -eq 'f/x#9|f/x#9/12 f/x#9|f/x#9/12 main#4|' })
+ ,@('ci-task-order', { $fa = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Kit 'skills/bossy/adapters/supervise-resources.ps1'), [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Test-KitCiTaskJob' }, $true)[0]
+   & { . ([scriptblock]::Create($fa.Extent.Text)); function ProjPath($r) { "g/$r" }
+     function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}) { switch ($Verb) { 'mr.get' { [pscustomobject]@{ merge_commit_sha = 'm1' } } 'repo.base' { [pscustomobject]@{ id = 'm1' } }
+       'ci.runs' { @([pscustomobject]@{ id = 'main#5'; sha = 's5'; created_at = '2026-11-20T10:00:00Z' }, [pscustomobject]@{ id = 'main#4'; sha = 's4'; created_at = '2026-11-20T09:00:00Z' }) }
+       'ci.jobs' { @([pscustomobject]@{ id = "$($A.id)/1"; name = 'unit'; status = $(if ($A.id -eq 'main#5') { 'success' } else { 'failed' }) }) } } }
+     $r = Test-KitCiTaskJob ([pscustomobject]@{ job = 'main#4/1'; run = 'main#4'; branch = 'main'; url = 'https://ci.example/job/api/job/main/4/' }) @('api!5'); "$($r.state)|$($r.name)" -eq 'pass|unit' } })
 )
 $fail = 0
 foreach ($row in $rows) {

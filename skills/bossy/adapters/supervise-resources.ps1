@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1041 release · L1087 lines · L1119 cleanup · L1186 launch ·
-  L1303 pause · L1422 heartbeat · L1442 sessions · L1501 ci tasks ·
-  L1564 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1042 release · L1088 lines · L1120 cleanup · L1187 launch ·
+  L1304 pause · L1423 heartbeat · L1443 sessions · L1502 ci tasks ·
+  L1567 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -625,6 +625,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.gate = try { Get-KitGateStats $d.at @($d.resources) -StatsFrom $statsFrom } catch { $serr.Add("gate: $($_.Exception.Message)") }
   $stats.waits = try { Get-KitLeaseWaits $d.at -StatsFrom $statsFrom } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at -StatsFrom $statsFrom } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $serr.Add("cpu: $($_.Exception.Message)"); $prior.stats.cpu }   # adapters/supervise-stats.ps1
   $stats.writes = try { $wc = Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'supervise-writes.json') -Raw | ConvertFrom-Json; if ($wc.at) { Get-KitWriteView @($wc.samples) @(Get-Content -LiteralPath (Get-KitPath disk-writes) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } }) $d.at } } catch { $null }   # Get-KitSuperviseFlagsWrites; history: Update-KitWriteHistory
+  $stats.parity = try { Get-KitParityView } catch { $serr.Add("parity: $($_.Exception.Message)"); $prior.stats.parity }
   $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { $serr.Add("flag hours: $($_.Exception.Message)"); @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   # a failed source keeps its last data or none: the sweep says which, never a silent stale section
   if ($serr.Count) { $stats.errs = @($serr); $w2 = [pscustomobject]@{ level = 'WATCH'; what = "dashboard data not updated this sweep: $($serr -join '; ')"; action = 'Fix the named source (adapters/supervise-stats.ps1); its section shows its last data.' }
@@ -919,7 +920,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra '<button type=button class=ga data-tg=fl-hist aria-expanded=false>24 h history</button>') +
     (& $section 'runs' 'Runs' "$(if ($UP.nRunning) { "$($UP.nRunning) running · " })$(if ($UP.runsN) { $UP.runsN } else { 'none ended in 7 days' })" "<p class=fclr hidden>Runs: <b></b> <button type=button>Clear</button></p>$runsH" -Open) +   # a Trends day click filters the runs
     (& $section 'machine' 'Machine and resources' '' $machineHtml -Open) + (& $section 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open) +
-    (& $section 'internals' 'Kit internals' '' ((& $fold 'trends' 'Trends' '' $trends -Open -cls sub) + $setHtml)) +
+    (& $section 'internals' 'Kit internals' '' ((& $fold 'trends' 'Trends' '' $trends -Open -cls sub) + $setHtml + (Format-KitParityFold $st.parity))) +
     "<p id=nm class=empty hidden>No match.</p><footer>Written by bossy.ps1 supervise each sweep (no model tokens) · data: supervise-report.json · times local (UTC$($at.ToString('zzz')))</footer></main>"
   "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><noscript><meta http-equiv=refresh content=60></noscript><title>Supervisor $($at.ToString('HH:mm'))$(if ($nAct) { " · $nAct ACT" })</title>$fav<style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body>$(ConvertTo-KitLabelCase "$head$main")<script>$js</script><script>$(Get-KitStatsJs)</script><script>$popJs</script></body></html>"
 }
@@ -1522,7 +1523,9 @@ function Test-KitCiTaskJob($Ci, [string[]]$Mrs) {
   if (-not $name) { return @{ state = 'bad'; why = "job $($Ci.job) not found in run $($Ci.run) of $repo" } }
   $shas = @(foreach ($x in @($refs | Where-Object repo -eq $repo)) { $m = Invoke-HostVerb 'mr.get' @{ repo = $repo; n = $x.n }; @($m.merge_commit_sha, $m.squash_commit_sha, $m.sha | Where-Object { $_ })[0] })
   if (@($shas | Where-Object { -not $_ }).Count -or $shas.Count -ne @($refs | Where-Object repo -eq $repo).Count) { return @{ state = 'bad'; why = "an MR of $repo unreadable (no merge commit)" } }
-  foreach ($run in @(Invoke-HostVerb 'ci.runs' @{ repo = $repo; ref = $Ci.branch } | Where-Object { [long]$_.id -gt [long]$Ci.run } | Sort-Object { [long]$_.id } -Descending)) {
+  $runs = @(Invoke-HostVerb 'ci.runs' @{ repo = $repo; ref = $Ci.branch } | Where-Object { $_ }); $t0 = @($runs | Where-Object { "$($_.id)" -eq "$($Ci.run)" })[0]
+  $num = "$($Ci.run)" -match '^\d+$' -and -not @($runs | Where-Object { "$($_.id)" -notmatch '^\d+$' }).Count   # else uuids, <branch>#<n>: by created_at after the task's run (unlisted: all newer)
+  foreach ($run in @(if ($num) { $runs | Where-Object { [long]$_.id -gt [long]$Ci.run } | Sort-Object { [long]$_.id } -Descending } else { $runs | Where-Object { "$($_.id)" -ne "$($Ci.run)" -and (-not $t0.created_at -or [datetimeoffset]"$($_.created_at)" -gt [datetimeoffset]$t0.created_at) } | Sort-Object { "$($_.created_at)" } -Descending })) {
     if (@($shas | Where-Object { "$((Invoke-HostVerb 'repo.base' @{ repo = $repo; a = $_; b = $run.sha }).id)" -ne $_ }).Count) { continue }   # the fix not in this commit yet
     $jb = @(Invoke-HostVerb 'ci.jobs' @{ repo = $repo; id = $run.id }) | Where-Object name -eq $name | Select-Object -First 1; if (-not $jb -or (__CiWord "$($jb.status)") -in 'skipped', 'manual') { continue }   # not run there: an older run decides
     $url = if ($jb.web_url) { "$($jb.web_url)" } elseif ($jb.url) { "$($jb.url)" } else { "$($Ci.url)" }

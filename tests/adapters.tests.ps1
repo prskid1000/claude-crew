@@ -43,9 +43,15 @@ $secR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $cs = (Join-Path $k 'cs.txt').Replace('\', '/'); $pw = 'pwsh -NoProfile -Command'
   $__cfg = ([ordered]@{ secrets = @{ store = 'command'; command = @{ set = "$pw Set-Content -Path '$cs' -Value `$env:KIT_SECRET_VALUE -NoNewline"; get = "$pw Get-Content -Raw '$cs'" } } } | ConvertTo-Json -Depth 5 | ConvertFrom-Json)
   $null = Set-KitSecret 'targets/x/u/password' '{"p":1}'; $o.command = (Get-KitSecret 'targets/x/u/password') -eq '{"p":1}' -and -not (Test-KitCap 'secret-store' 'command' 'list')
+  # keychain writes (parity): Windows Credential Manager round trip on a test name (deleted after); macOS security -i gets the value on stdin
+  $__cfg = '{"secrets":{"store":"keychain"}}' | ConvertFrom-Json; $kn = "kit-test-keychain-$PID"; $kv = 'K "3\'
+  $o.keychain = if ($KitIsWindows) { try { $null = Set-KitSecret $kn $kv; (Get-KitSecret $kn) -eq $kv } finally { Remove-KitSecret $kn } } else { $true }
+  $o.keychain = $o.keychain -and -not $(if ($KitIsWindows) { & (Join-Path $KitLibDir 'flagged.ps1') credread -Text $kn })
+  $o.keychainMac = & { $KitIsWindows = $false; function security { }; function Invoke-KitExe { param($Exe, $A, $TimeoutSec, $Raw, $Cwd, $In) $global:kcx = "$Exe|$($A -join ' ')|$In"; [pscustomobject]@{ code = 0; out = ''; err = '' } }
+    $nl = try { $null = Set-KitSecret $kn "a`nb"; 'stored' } catch { "$_" }; $null = Set-KitSecret $kn 'v"1'; $nl -match 'line break is refused' -and $global:kcx -eq "security|-i|add-generic-password -U -a kit -s `"$kn`" -w `"v\`"1`"`n" }
   Remove-Item Env:KIT_SECRET_TARGETS_TQ_QA2_PASSWORD
   $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
-Expect-Each $secR 'secret store: #' @('set', 'get', 'shape', 'names', 'guardFile', 'env', 'envRO', 'missing', 'fake', 'guardStore', 'command') -Show 12
+Expect-Each $secR 'secret store: #' @('set', 'get', 'shape', 'names', 'guardFile', 'env', 'envRO', 'missing', 'fake', 'guardStore', 'command', 'keychain', 'keychainMac') -Show 14
 
 # deploy run: each deploys[] row of the target through its kind's deploy verb; command runs without a git host, manual
 # prints the steps, ssh without deployCmd and a kind with no deploy verb (probe) say a person deploys
@@ -87,6 +93,22 @@ $txR = & { $tdir = Join-Path $k 'tx'; New-Item -ItemType Directory -Force (Join-
     Select-String -Pattern 'ClaudeProjectDir|\.claude[/\\]projects|\.codex[/\\]sessions|antigravity-cli[/\\]brain' | Where-Object { -not ($_.Path -like '*crafty?lib.ps1' -and ($_.Line -match "^\s*(ClaudeProjectDir =|'root' =|'agent-meta' =)")) })
   "bypass:$(-not $by.Count)"; if ($by.Count) { $by | Select-Object -First 3 | ForEach-Object { "  $($_.Path):$($_.LineNumber)" } } }
 Expect-Each $txR 'transcript adapter: #' @('wfdirs', 'find', 'meta', 'unsupported', 'bypass') -Show 9
+# device registry (parity.json device): android every ui action, ios shot / openurl / log (the iOS refusal names the registry's), none none
+$dvS = Join-Path $k 'dv.ps1'; $dvA = Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/adapters'
+Set-Content $dvS ". '$k/skills/crafty/lib.ps1'; . '$dvA/ui-android.ps1'; . '$dvA/ui-ios.ps1'; function Get-KitSetting { 'ios' }; function Get-AndroidSdk { '.' }`n`"`$(`$KitAdapters.device.android.Count)|`$(`$KitAdapters.device.none.Count)`"; Invoke-UiIos tap Save"
+$dvO = (pwsh -NoProfile -File $dvS 2>&1 | Out-String); $dvC = $LASTEXITCODE
+Expect "device registry: android 15 actions, none 0; ios refuses tap naming log | openurl | shot (exit $dvC)" ($dvO -match '^15\|0' -and $dvO -match 'ios: no ui tap \(simctl has no UI driver\): use log \| openurl \| shot' -and $dvC -eq 2)
+# browser engines (parity.json browser-engine): chrome reuses its CDP session; the Playwright engines open one per process
+$egU = [Uri]::new((Join-Path $dvA 'engine-playwright.mjs')).AbsoluteUri
+$egR = "$(node -e "import('$egU').then((m) => { const e = m.ADAPTERS['browser-engine']; console.log(Object.keys(e).map((k) => k + ':' + (e[k].reuse ? 'reuse' : typeof e[k].session)).join(' ')) })" 2>&1)"
+Expect "browser engines: chrome reuse, chromium / firefox / webkit a session per process ($egR)" ($egR -eq 'chrome:reuse chromium:function firefox:function webkit:function')
+# login surfaces (parity.json login): api and app share Get-KitLoginPair: a secret:<name> ref resolved, a profile's login + store secret + tenant
+$lgR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
+  $fa = [Management.Automation.Language.Parser]::ParseFile((Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/pokey.ps1'), [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Get-KitLoginPair' }, $true)[0]; . ([scriptblock]::Create($fa.Extent.Text))
+  $__cfg = '{"secrets":{"store":"env"}}' | ConvertFrom-Json; $env:KIT_SECRET_TARGETS_T_QA_PASSWORD = 'S-1'
+  $tg = @{ users = @{ qa = @('qa', 'secret:targets/t/qa/password') }; profiles = @{ admin = @{ login = 'root'; secret = 'targets/t/qa/password'; fields = @{ tenant = 'acme' } } } }
+  $la = Get-KitLoginPair $tg 'qa'; $lb = Get-KitLoginPair $tg 'admin'; Remove-Item Env:KIT_SECRET_TARGETS_T_QA_PASSWORD; "$($la.u -join ',')|$($lb.u -join ',')|$($lb.pf.fields.tenant)" }
+Expect "login surfaces: api and app resolve a secret:<name> ref and a profile (login, store secret, tenant) alike ($lgR)" ($lgR -eq 'qa,S-1|root,S-1|acme')
 
 # local-env caps off (no localEnv, no devices, no tenants): supervise and health print no WATCH / ACT for lanes, marks, partitions, phones
 $k9 = New-TestKit adapters-lec; $env:KIT_TRACKER_TYPE = 'none'

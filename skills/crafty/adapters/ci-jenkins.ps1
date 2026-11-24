@@ -10,8 +10,12 @@ function __Jk([string]$Repo, [string]$Ref, [string]$Tail) {
 function __JkRun($b, [string]$Ref) { __CiRun "$Ref#$($b.number)" @($b.actions.lastBuiltRevision.SHA1 | Where-Object { $_ })[0] $(if ($b.building) { 'running' } else { __CiWord $b.result }) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$b.timestamp).UtcDateTime.ToString('o')) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$b.timestamp + [long]$b.duration).UtcDateTime.ToString('o')) }
 Register-KitAdapter 'ci' 'jenkins' @{
   'runs' = { param($a) @(@((__Jk $a.repo $a.ref "api/json?tree=builds[number,result,building,timestamp,duration,actions[lastBuiltRevision[SHA1]]]{0,$($a.per_page ?? 20)}").builds) | Where-Object { $_ } | ForEach-Object { __JkRun $_ $a.ref } | Where-Object { -not $a.sha -or $_.sha -eq $a.sha }) }
-  'jobs' = { param($a) $r, $n = "$($a.id)" -split '#', 2; @(@((__Jk $a.repo $r "$n/wfapi/describe").stages) | Where-Object { $_ } | ForEach-Object { __CiJob $a.id $_.name (__CiWord $_.status) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$_.startTimeMillis + [long]$_.durationMillis).UtcDateTime.ToString('o')) }) }
-  'log' = { param($a) $r, $n = "$($a.id)" -split '#', 2; __Jk $a.repo $r "$n/consoleText" }
+  'jobs' = { param($a) $r, $n = "$($a.id)" -split '#', 2; @(@((__Jk $a.repo $r "$n/wfapi/describe").stages) | Where-Object { $_ } | ForEach-Object { __CiJob "$($a.id)/$($_.id)" $_.name (__CiWord $_.status) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$_.startTimeMillis + [long]$_.durationMillis).UtcDateTime.ToString('o')) }) }
+  'log' = { param($a) $r, $n = "$($a.id)" -split '#', 2; __Jk $a.repo $r "$(($n -split '/')[0])/consoleText" }   # a stage id (<run>/<stage>): the build's log
+  # .../job/<branch>/<n>[/execution/node/<stage>] or Blue Ocean .../detail/<branch>/<n>[/pipeline/<stage>] in a text -> @{ url; run = <branch>#<n>; job = <run>/<stage> }
+  'parseUrl' = { param($a) $m = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/(?:job|detail)/(?<b>[^/\s]+)/(?<n>\d+)(?:/(?:execution/node|pipeline)/(?<s>\d+))?)'); if (-not $m.Success) { return @{} }
+    $run = "$([uri]::UnescapeDataString([uri]::UnescapeDataString($m.Groups['b'].Value)))#$($m.Groups['n'].Value)"
+    @{ url = $m.Groups['url'].Value; run = $run; job = $(if ($m.Groups['s'].Success) { "$run/$($m.Groups['s'].Value)" } else { '' }) } }
   'status' = { param($a) if (-not $a.ref -or -not $a.sha) { return $null }; $b = @(Invoke-KitAdapter 'ci' 'jenkins' 'runs' $a)[0]; if ($b) { __CiStat $b.id $b.status } }
   'config' = { param($a) [bool](Get-KitSetting 'ci.url' '') }
 }
