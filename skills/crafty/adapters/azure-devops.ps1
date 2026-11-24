@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # azure-devops: Azure DevOps Repos git host + Azure Pipelines CI (gitHostType / ci azure).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ when config selects azure; helpers come from lib.ps1.
-# Sections: L6 helpers · L14 git-host · L68 ci
+# Sections: L6 helpers · L14 git-host · L70 ci
 # ---- helpers: only this adapter uses them (kept out of the core lib.ps1)
 function __DiffFile($New, $Old = $null) { [pscustomobject]@{ new_path = "$New"; old_path = "$(if ($Old) { $Old } else { $New })" } }
 function __ProtectFail([string]$Repo) { if ($global:KitHttpCode -eq 403) { "skip: no admin rights on $Repo" } else { "failed: http $(if ($global:KitHttpCode) { $global:KitHttpCode } else { 'no answer' })" } }   # branch.protect: the failed call's status (Invoke-KitHttp)
@@ -45,6 +45,8 @@ Register-KitAdapter 'git-host' 'azure' @{
   }
   'mr.unauto' = { param($a) __AzMr (__Az $a.repo "git/repositories/{repo}/pullrequests/$($a.n)" 'PATCH' @{ autoCompleteSetBy = @{ id = '00000000-0000-0000-0000-000000000000' } }) }
   'mr.url' = { param($a) $o, $p, $r = "$($a.repo)" -split '/', 3; "$(__HostSet 'url' 'https://dev.azure.com')/$o/$p/_git/$r/pullrequest/$($a.n)" }
+  # mentions (learn.microsoft.com/en-us/azure/devops/project/wiki/markdown-guidance): !7 = a PR of $a.repo (#7 = a work item); URLs, proj/repo!7: core
+  'mr.parseRef' = { param($a) ConvertFrom-KitMrShortRef $a '^!(?<n>\d+)$' 'azure' }
   # the token's user (uniqueName = a PR's createdBy.uniqueName); no repo given: the first configured repo names the organization
   'whoami' = { param($a) $rr = if ($a.repo) { $a.repo } else { Get-HostProject "$(@(@(Get-KitValue 'repos' @()).name | Where-Object { $_ })[0])" -Raw }
     $u = (__Az $rr '/connectionData').authenticatedUser; $ac = [regex]::Match(($u | ConvertTo-Json -Depth 4 -Compress), '"Account":\{[^}]*"\$value":"([^"]+)"').Groups[1].Value; [string]$(if ($ac) { $ac } else { $u.providerDisplayName }) }
@@ -72,6 +74,13 @@ Register-KitAdapter 'ci' 'azure' @{
     @(@((__Az $a.repo "build/builds?repositoryId=$rid&repositoryType=TfsGit&branchName=refs/heads/$(__Enc $a.ref)&`$top=$($a.per_page ?? 20)").value) | Where-Object { $_ } | ForEach-Object { __CiRun $_.id $_.sourceVersion (__CiWord $(if ($_.status -eq 'completed') { $_.result } else { $_.status })) $_.queueTime $(if ($_.finishTime) { $_.finishTime } else { $_.queueTime }) } | Where-Object { -not $a.sha -or $_.sha -eq $a.sha }) }
   'jobs' = { param($a) @(@((__Az $a.repo "build/builds/$($a.id)/timeline").records) | Where-Object { $_ -and $_.type -eq 'Job' } | ForEach-Object { __CiJob "$($a.id)/$($_.log.id)" $_.name (__CiWord $(if ($_.state -eq 'completed') { $_.result } else { $_.state })) $_.finishTime }) }
   'log' = { param($a) $b, $l = "$($a.id)" -split '/', 2; __Az $a.repo "build/builds/$b/logs/$l" }
+  # the timeline's failed Job and the error issues of it and its tasks (learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline): reason from them, excerpt = the issues, else the log
+  'failure' = { param($a) $rc = @(@((__Az $a.repo "build/builds/$($a.id)/timeline").records) | Where-Object { $_ }); $j = @($rc | Where-Object { $_.type -eq 'Job' -and $_.result -eq 'failed' })[0]; if (-not $j) { return $null }
+    $er = @($rc | Where-Object { $_.id -eq $j.id -or $_.parentId -eq $j.id } | ForEach-Object { @($_.issues) } | Where-Object { $_.type -eq 'error' } | ForEach-Object { "$($_.message)" })
+    $why = switch -Regex ("$er") { 'ran longer than the maximum time|timed out|timeout' { 'timeout' } 'lost communication|no agent|agent.*(offline|request)' { 'infra' } default { 'script' } }
+    $lg = @(@($j) + @($rc | Where-Object { $_.parentId -eq $j.id -and $_.result -eq 'failed' }) | Where-Object { $_.log.id })[0].log.id   # no job log: its failed task's
+    $jb = [pscustomobject]@{ id = "$($a.id)/$lg"; name = $j.name; failure_reason = "$($j.result)"; reason = $why }
+    $f = if ($lg) { Get-KitCiFailure $a -Job $jb } else { [pscustomobject]@{ job = $j.name; id = "$($a.id)"; url = ''; reason = $why; raw = "$($j.result)"; excerpt = '' } }; if ($er) { $f.excerpt = ($er | Select-Object -Last 8) -join "`n" }; $f }
   # .../_build/results?buildId=<n>[&j=<job record id>] in a text -> @{ url; run = n; job = <n>/<that record's log id> (timeline) }
   'parseUrl' = { param($a) $m = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/(?<op>[^/\s]+/[^/\s]+)/_build/results\?[^\s)\]]*?buildId=(?<n>\d+)[^\s)\]]*)'); if (-not $m.Success) { return @{} }
     $n = $m.Groups['n'].Value; $j = [regex]::Match($m.Groups['url'].Value, '[?&]j=(?<j>[0-9a-fA-F-]{36})').Groups['j'].Value

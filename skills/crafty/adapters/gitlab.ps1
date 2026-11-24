@@ -24,7 +24,7 @@ Register-KitAdapter 'git-host' 'gitlab' @{
   'mr.unauto' = { param($a) __Gp $a "/merge_requests/$($a.n)/cancel_merge_when_pipeline_succeeds" 'POST' }
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/-/merge_requests/$($a.n)" }
   # GitLab references (docs.gitlab.com/user/markdown/#gitlab-specific-references): !<n> = an MR of $a.repo; URLs, [group/]project!<n>: core
-  'mr.parseRef' = { param($a) $r = "$($a.ref)".Trim(); if ($r -match '^!(?<n>\d+)$') { if ($a.repo) { @{ repo = (Get-HostProject $(if ("$($a.repo)".Contains('/')) { "$($a.repo)" } else { Get-KitRepoName "$($a.repo)" }) -Raw); n = $Matches.n; type = 'gitlab' } } } else { ConvertFrom-KitMrRef $r } }
+  'mr.parseRef' = { param($a) ConvertFrom-KitMrShortRef $a '^!(?<n>\d+)$' 'gitlab' }
   'whoami' = { param($a) __GlEnv; [string](__Cli glab 'user').username }
   'repo.base' = { param($a) __Gp $a "/repository/merge_base?refs[]=$(__Enc $a.a)&refs[]=$(__Enc $a.b)" }
   'repo.commit' = { param($a) __Gp $a "/repository/commits/$(__Enc $a.ref)" }

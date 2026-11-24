@@ -12,6 +12,12 @@ Register-KitAdapter 'ci' 'jenkins' @{
   'runs' = { param($a) @(@((__Jk $a.repo $a.ref "api/json?tree=builds[number,result,building,timestamp,duration,actions[lastBuiltRevision[SHA1]]]{0,$($a.per_page ?? 20)}").builds) | Where-Object { $_ } | ForEach-Object { __JkRun $_ $a.ref } | Where-Object { -not $a.sha -or $_.sha -eq $a.sha }) }
   'jobs' = { param($a) $r, $n = "$($a.id)" -split '#', 2; @(@((__Jk $a.repo $r "$n/wfapi/describe").stages) | Where-Object { $_ } | ForEach-Object { __CiJob "$($a.id)/$($_.id)" $_.name (__CiWord $_.status) ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$_.startTimeMillis + [long]$_.durationMillis).UtcDateTime.ToString('o')) }) }
   'log' = { param($a) $r, $n = "$($a.id)" -split '#', 2; __Jk $a.repo $r "$(($n -split '/')[0])/consoleText" }   # a stage id (<run>/<stage>): the build's log
+  # the FAILED stage and its error (Pipeline REST API wfapi/describe: stages[].error.message, .type); no stages (freestyle) + build FAILURE: the build itself
+  'failure' = { param($a) $r, $n = "$($a.id)" -split '#', 2; $d = __Jk $a.repo $r "$n/wfapi/describe"; $s = @(@($d.stages) | Where-Object { "$($_.status)" -eq 'FAILED' })[0]
+    if (-not $s -and (-not @($d.stages | Where-Object { $_ }).Count -and "$((__Jk $a.repo $r "$n/api/json?tree=result").result)" -eq 'FAILURE')) { $s = [pscustomobject]@{ id = ''; name = $r; error = $null } }
+    if (-not $s) { return $null }; $em = "$($s.error.message)"
+    $f = Get-KitCiFailure $a -Job ([pscustomobject]@{ id = "$($a.id)$(if ($s.id) { "/$($s.id)" })"; name = $s.name; failure_reason = "$($s.error.type)"; reason = $(if ("$em $($s.error.type)" -match '(?i)timeout') { 'timeout' } else { 'script' }) })
+    if ($em) { $f.excerpt = "$em`n$($f.excerpt)".Trim() }; $f }
   # .../job/<branch>/<n>[/execution/node/<stage>] or Blue Ocean .../detail/<branch>/<n>[/pipeline/<stage>] in a text -> @{ url; run = <branch>#<n>; job = <run>/<stage> }
   'parseUrl' = { param($a) $m = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/(?:job|detail)/(?<b>[^/\s]+)/(?<n>\d+)(?:/(?:execution/node|pipeline)/(?<s>\d+))?)'); if (-not $m.Success) { return @{} }
     $run = "$([uri]::UnescapeDataString([uri]::UnescapeDataString($m.Groups['b'].Value)))#$($m.Groups['n'].Value)"

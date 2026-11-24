@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # bitbucket: Bitbucket Cloud git host + Bitbucket Pipelines CI (gitHostType / ci bitbucket).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ when config selects bitbucket; helpers come from lib.ps1.
-# Sections: L6 helpers · L15 git-host · L51 ci
+# Sections: L6 helpers · L15 git-host · L53 ci
 # ---- helpers: only this adapter uses them (kept out of the core lib.ps1)
 function __DiffFile($New, $Old = $null) { [pscustomobject]@{ new_path = "$New"; old_path = "$(if ($Old) { $Old } else { $New })" } }
 function __KitAuto([string]$Repo, [string]$N, [switch]$Drop) { Update-KitTracking { param($t) if ($Drop) { $t.automerge.Remove("$Repo!$N") } else { $t.automerge["$Repo!$N"] = (Get-Date).ToString('s') } } }
@@ -36,6 +36,8 @@ Register-KitAdapter 'git-host' 'bitbucket' @{
   }
   'mr.unauto' = { param($a) __KitAuto $a.repo $a.n -Drop; __BbMr (__Bb "repositories/$($a.repo)/pullrequests/$($a.n)") }
   'mr.url' = { param($a) "https://bitbucket.org/$($a.repo)/pull-requests/$($a.n)" }
+  # markup references (support.atlassian.com/bitbucket-cloud/docs/markup-comments/): "pull request #7" in $a.repo (#7 alone = an issue); URLs, ws/repo#7: core
+  'mr.parseRef' = { param($a) ConvertFrom-KitMrShortRef $a '^pull request #(?<n>\d+)$' 'bitbucket' }
   'whoami' = { param($a) $u = __Bb 'user'; [string]$(if ($u.username) { $u.username } else { $u.nickname }) }
   'repo.base' = { param($a) $c = __Bb "repositories/$($a.repo)/merge-base/$(__Enc $a.a)..$(__Enc $a.b)"; __CommitObj $c.hash }
   'repo.commit' = { param($a) $c = __Bb "repositories/$($a.repo)/commit/$(__Enc $a.ref)"; __CommitObj $c.hash $c.date }
@@ -55,6 +57,10 @@ Register-KitAdapter 'ci' 'bitbucket' @{
   'runs' = { param($a) @(@((__Bb "repositories/$($a.repo)/pipelines?target.branch=$(__Enc $a.ref)&sort=-created_on&pagelen=$($a.per_page ?? 20)").values) | Where-Object { $_ } | ForEach-Object { __BbRun $_ } | Where-Object { -not $a.sha -or $_.sha -like "$($a.sha.Substring(0, [Math]::Min(12, $a.sha.Length)))*" }) }
   'jobs' = { param($a) @(@((__Bb "repositories/$($a.repo)/pipelines/$(__Enc $a.id)/steps?pagelen=100").values) | Where-Object { $_ } | ForEach-Object { __CiJob "$($a.id)/$($_.uuid)" $_.name (__BbRun $_).status $_.completed_on }) }
   'log' = { param($a) $p, $s = "$($a.id)" -split '/', 2; __Bb "repositories/$($a.repo)/pipelines/$(__Enc $p)/steps/$(__Enc $s)/log" }
+  # the step's own result (developer.atlassian.com/cloud/bitbucket/rest/api-group-pipelines): FAILED = script, ERROR = infra (a Pipelines error)
+  'failure' = { param($a) $s = @(@((__Bb "repositories/$($a.repo)/pipelines/$(__Enc $a.id)/steps?pagelen=100").values) | Where-Object { "$($_.state.result.name)" -in 'FAILED', 'ERROR' })[0]; if (-not $s) { return $null }
+    $f = Get-KitCiFailure $a -Job ([pscustomobject]@{ id = "$($a.id)/$($s.uuid)"; name = $s.name; failure_reason = "$($s.state.result.name)"; reason = $(if ($s.state.result.name -eq 'ERROR') { 'infra' } else { 'script' }) })
+    if ($s.state.result.error.message) { $f.excerpt = "$($s.state.result.error.message)`n$($f.excerpt)".Trim() }; $f }
   # .../pipelines/results/<build number>[/steps/{<step uuid>}] in a text -> @{ url; run = the pipeline uuid (recent 100 by build_number); job }
   'parseUrl' = { param($a) $m = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/(?<repo>[^/\s]+/[^/\s]+)/pipelines/results/(?<n>\d+)(?:/steps/(?:%7B|\{)?(?<s>[0-9a-fA-F-]{36})(?:%7D|\})?)?)'); if (-not $m.Success) { return @{} }
     $pl = @(@((__Bb "repositories/$($m.Groups['repo'].Value)/pipelines?sort=-created_on&pagelen=100").values) | Where-Object { "$($_.build_number)" -eq $m.Groups['n'].Value })[0]

@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # gitea: Gitea / Forgejo git host + Gitea Actions CI (gitHostType / ci gitea).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ when config selects gitea; helpers come from lib.ps1.
-# Sections: L6 helpers · L13 git-host · L41 ci
+# Sections: L6 helpers · L13 git-host · L47 ci
 # ---- helpers: only this adapter uses them (kept out of the core lib.ps1)
 function __ProtectFail([string]$Repo) { if ($global:KitHttpCode -eq 403) { "skip: no admin rights on $Repo" } else { "failed: http $(if ($global:KitHttpCode) { $global:KitHttpCode } else { 'no answer' })" } }   # branch.protect: the failed call's status (Invoke-KitHttp)
 function __Rest([string]$Base, [string]$Env, [string]$Auth, [string]$Method, [string]$Path, $Body, [switch]$Probe) {
@@ -26,6 +26,12 @@ Register-KitAdapter 'git-host' 'gitea' @{
     $m = __GhMr (__Gt "repos/$($a.repo)/pulls/$($a.n)"); if ($m -and $a.auto -and $m.state -eq 'opened') { $m.merge_when_pipeline_succeeds = $true }; $m }
   'mr.unauto' = { param($a) $null = __Gt "repos/$($a.repo)/pulls/$($a.n)/merge" 'DELETE'; __GhMr (__Gt "repos/$($a.repo)/pulls/$($a.n)") }
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/pulls/$($a.n)" }
+  # a PR is an issue: labels by name on its index (IssueLabelsOption, docs.gitea.com/api); a missing repo label is made first (as GitHub does)
+  'mr.labels' = { param($a) $have = @(); for ($pg = 1; $pg -le 20; $pg++) { $lb = @(@(__Gt "repos/$($a.repo)/labels?limit=50&page=$pg") | Where-Object { $_ }); $have += @($lb | ForEach-Object { "$($_.name)" }); if ($lb.Count -lt 50) { break } }   # MAX_RESPONSE_ITEMS = 50
+    foreach ($l in @($a.labels | Where-Object { $_ -and "$_" -notin $have })) { $null = __Gt "repos/$($a.repo)/labels" 'POST' @{ name = "$l"; color = '#ededed' } }
+    $null = __Gt "repos/$($a.repo)/issues/$($a.n)/labels" 'POST' @{ labels = @($a.labels) }; [pscustomobject]@{ labels = @($a.labels) } }
+  # automatically linked references (docs.gitea.com/usage/automatically-linked-references): #7, !7 in $a.repo; URLs, owner/repo#7: core
+  'mr.parseRef' = { param($a) ConvertFrom-KitMrShortRef $a '^[#!](?<n>\d+)$' 'gitea' }
   'whoami' = { param($a) [string](__Gt 'user').login }
   'repo.base' = { param($a) $c = __Gt "repos/$($a.repo)/compare/$(__Enc $a.b)...$(__Enc $a.a)"; if ($null -eq $c) { return $null }
     __CommitObj $(if (-not $c.total_commits) { $a.a } else { @(@($c.commits) | Sort-Object { $_.created })[0].parents[0].sha }) }

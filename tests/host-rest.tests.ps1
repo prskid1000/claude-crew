@@ -30,7 +30,20 @@ $fx = [ordered]@{
  'GET .*vssps.dev.azure.com/org/_apis/identities\?searchFilter=General&filterValue=%5Bproj%5D%5CContributors' = '{"value":[{"descriptor":"Microsoft.TeamFoundation.Identity;S-1-9-7"}]}'
  'POST .*/org/_apis/accesscontrolentries/2e9eb7ed' = '{"count":1}'
  'GET .*/org/proj/_apis/build/builds/77/timeline' = '{"records":[{"id":"11111111-2222-3333-4444-555555555555","type":"Job","log":{"id":9}}]}'
- 'GET .*bitbucket.*/pipelines/%7Bp-1%7D/steps' = '{"values":[{"uuid":"{s-1}","name":"test","state":{"name":"COMPLETED","result":{"name":"FAILED"}}}]}'
+ 'GET .*bitbucket.*/steps/%7Bs-1%7D/log' = '"ok\nERROR: bb boom"'
+ 'GET .*/org/proj/_apis/build/builds/78/timeline' = '{"records":[{"id":"j-1","type":"Job","name":"Build","result":"failed","log":{"id":9}},{"id":"t-1","parentId":"j-1","type":"Task","issues":[{"type":"warning","message":"w"},{"type":"error","message":"The job ran longer than the maximum time of 60 minutes"}]}]}'
+ 'GET .*/build/builds/78/logs/9' = '"plain log"'
+ 'GET .*/org/proj/_apis/build/builds/79/timeline' = '{"records":[{"id":"j-2","type":"Job","name":"Deploy","result":"failed"},{"id":"t-2","parentId":"j-2","type":"Task","result":"failed","log":{"id":4}}]}'
+ 'GET .*/build/builds/79/logs/4' = '"x\nERROR: az deploy failed"'
+ 'GET .*/org/proj/_apis/build/builds/80/timeline' = '{"records":[{"id":"j-3","type":"Job","name":"Pack","result":"failed","issues":[{"type":"error","message":"No agent found in pool"}]}]}'
+ 'GET .*bitbucket.*/pipelines/%7Bp-2%7D/steps\?' = '{"values":[{"uuid":"{s-2}","name":"deploy","state":{"name":"COMPLETED","result":{"name":"ERROR","error":{"message":"Container out of memory"}}}}]}'
+ 'GET .*/repos/o/gtrepo/labels\?limit=50&page=1$' = ('[' + ((1..49 | ForEach-Object { "{`"name`":`"l$_`"}" }) -join ',') + ',{"name":"api"}]')
+ 'GET .*/repos/o/gtrepo/labels\?limit=50&page=2$' = '[{"name":"bug"}]'
+ 'POST .*/repos/o/gtrepo/(labels|issues/3/labels)$' = '{"id":1}'
+ 'GET .*f%252Fx/9/wfapi/describe' = '{"stages":[{"id":"6","name":"Build","status":"SUCCESS"},{"id":"12","name":"Test","status":"FAILED","error":{"message":"script returned exit code 1","type":"hudson.AbortException"}}]}'
+ 'GET .*/(f%252Fx/9|main/4)/consoleText' = '"[Pipeline] sh\nERROR: tests failed"'
+ 'GET .*/main/4/api/json\?tree=result' = '{"result":"FAILURE"}'
+ 'GET .*bitbucket.*/pipelines/%7Bp-1%7D/steps' ='{"values":[{"uuid":"{s-1}","name":"test","state":{"name":"COMPLETED","result":{"name":"FAILED"}}}]}'
  'GET .*dev.azure.com/org/proj/_apis/git/repositories/azrepo/pullrequests/5\?' = '{"pullRequestId":5,"title":"t","description":"A0","status":"active","sourceRefName":"refs/heads/f/x","lastMergeSourceCommit":{"commitId":"aaa"},"mergeStatus":"conflicts","repository":{"webUrl":"https://dev.azure.com/org/proj/_git/azrepo"}}'
  'GET .*refs/pull/5/merge' = '{"count":1,"value":[{"id":77,"status":"completed","result":"succeeded"}]}'
  'GET .*/org/_apis/connectionData' = '{"authenticatedUser":{"id":"u-1","providerDisplayName":"A B","properties":{"Account":{"$value":"ab@example.test"}}}}'
@@ -79,6 +92,17 @@ $rows = @(
    ($v -join ';') -eq 'set;ok' -and $pb.b.token -eq 'repoV2/p-1/r-1/refs/heads/6d00610069006e00' -and $pb.b.accessControlEntries[0].deny -eq 8 -and $pb.b.accessControlEntries[0].descriptor -match 'S-1-9-7' -and $pb.b.merge })
  ,@('az-parseUrl', { $u = Invoke-HostVerb 'ci.parseUrl' ($az + @{ text = 'https://dev.azure.com/org/proj/_build/results?buildId=77&view=logs&j=11111111-2222-3333-4444-555555555555' }); "$($u.run)|$($u.job)" -eq '77|77/9' })
  ,@('jk-parseUrl', { $x = foreach ($tx in 'https://ci.example/job/jkrepo/job/f%252Fx/9/execution/node/12/', 'https://ci.example/blue/organizations/jenkins/jkrepo/detail/f%2Fx/9/pipeline/12', 'https://ci.example/job/jkrepo/job/main/4/console') { $u = Invoke-HostVerb 'ci.parseUrl' @{ repo = 'jkrepo'; text = $tx }; "$($u.run)|$($u.job)" }; ($x -join ' ') -eq 'f/x#9|f/x#9/12 f/x#9|f/x#9/12 main#4|' })
+ # parity natives (recorded answers, no account): mr.parseRef short refs, ci.failure from the vendor's own failure data, gitea mr.labels
+ ,@('short-refs', { $x = foreach ($c in @(($bb + @{ ref = 'pull request #4' }), ($az + @{ ref = '!5' }), ($gt + @{ ref = '#3' }), ($gt + @{ ref = '!3' }))) { $p = Invoke-HostVerb 'mr.parseRef' $c; "$($p.repo)|$($p.n)|$($p.type)" }
+   ($x -join ' ') -eq 'ws/bbrepo|4|bitbucket org/proj/azrepo|5|azure o/gtrepo|3|gitea o/gtrepo|3|gitea' -and $null -eq (Invoke-HostVerb 'mr.parseRef' @{ type = 'bitbucket'; ref = 'pull request #4' }) -and $null -eq (Invoke-HostVerb 'mr.parseRef' ($bb + @{ ref = '#4' })) })
+ ,@('bb-failure', { $f = Invoke-HostVerb 'ci.failure' ($bb + @{ id = '{p-1}' }); "$($f.job)|$($f.id)|$($f.reason)|$($f.raw)|$($f.excerpt)" -eq 'test|{p-1}/{s-1}|script|FAILED|ERROR: bb boom' -and
+   "$((Invoke-HostVerb 'ci.failure' ($bb + @{ id = '{p-2}' })) | ForEach-Object { "$($_.job)|$($_.reason)|$($_.excerpt)" })" -eq 'deploy|infra|Container out of memory' })
+ ,@('az-failure', { $x = foreach ($b in '78', '79', '80') { $f = Invoke-HostVerb 'ci.failure' ($az + @{ id = $b }); "$($f.job)|$($f.id)|$($f.reason)|$($f.excerpt -replace "`n", '~')" }
+   ($x -join ' ; ') -eq 'Build|78/9|timeout|The job ran longer than the maximum time of 60 minutes ; Deploy|79/4|script|ERROR: az deploy failed ; Pack|80|infra|No agent found in pool' })
+ ,@('jk-failure', { $f = Invoke-HostVerb 'ci.failure' @{ repo = 'jkrepo'; id = 'f/x#9' }; $g = Invoke-HostVerb 'ci.failure' @{ repo = 'jkrepo'; id = 'main#4' }
+   "$($f.job)|$($f.id)|$($f.reason)|$($f.excerpt -replace "`n", '~')" -eq 'Test|f/x#9/12|script|script returned exit code 1~ERROR: tests failed' -and "$($g.job)|$($g.id)" -eq 'main|main#4' })
+ ,@('gt-labels', { $r = Invoke-HostVerb 'mr.labels' ($gt + @{ n = '3'; labels = @('api', 'bug', 'new') }); $po = @($script:http | Where-Object m -eq 'POST')
+   ($r.labels -join ',') -eq 'api,bug,new' -and $po.Count -eq 2 -and $po[0].b.name -eq 'new' -and $po[1].u -match '/issues/3/labels$' -and ($po[1].b.labels -join ',') -eq 'api,bug,new' })
  ,@('ci-task-order', { $fa = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Kit 'skills/bossy/adapters/supervise-resources.ps1'), [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Test-KitCiTaskJob' }, $true)[0]
    & { . ([scriptblock]::Create($fa.Extent.Text)); function ProjPath($r) { "g/$r" }
      function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}) { switch ($Verb) { 'mr.get' { [pscustomobject]@{ merge_commit_sha = 'm1' } } 'repo.base' { [pscustomobject]@{ id = 'm1' } }

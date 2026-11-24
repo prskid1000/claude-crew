@@ -26,6 +26,9 @@
       "fallback": {
         "mr.parseRef": "core ConvertFrom-KitMrRef (an MR URL or <repo>!<n>)",
         "mr.labels": "a Tags: line in the MR body (devtools.py mr_labels)"
+      },
+      "gaps": {
+        "bitbucket/mr.labels": "no such feature: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/ Bitbucket Cloud pull requests have no labels; the Tags: body line (fallback) stands"
       }
     },
     "report": {

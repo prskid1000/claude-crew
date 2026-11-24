@@ -69,5 +69,17 @@ $null = . $args[0] 6>$null; . (Join-Path (Split-Path $args[0]) 'adapters/github.
 @(foreach ($tx in 'job `unit` of [run](https://github.com/o/r/actions/runs/77)', 'https://github.com/o/r/actions/runs/77/job/9') { $u = Invoke-KitAdapter ci github parseUrl @{ text = $tx }; "$($u.run)/$($u.job)" }) -join ' '
 '@ @(Join-Path $k 'skills/crafty/lib.ps1') | Select-Object -Last 1)"
 Expect "github ci.parseUrl: a run link alone gives the run, a job URL the run and the job ($gp)" ($gp -eq '77/ 77/9')
+# parity natives (recorded gh answers, no account): #7 / GH-7 refs in the repo; ci.failure by GitHub's job conclusion, failed step, annotations
+$gn = "$(Invoke-PsTest 'github-natives' @'
+$null = . $args[0] 6>$null; . (Join-Path (Split-Path $args[0]) 'adapters/github.ps1'); $script:HostType = 'github'
+function gh { $global:LASTEXITCODE = 0; switch -Regex ("$($args[1])") {
+  'runs/5/jobs' { '{"jobs":[{"id":30,"name":"lint","conclusion":"success"},{"id":31,"name":"unit","conclusion":"timed_out","html_url":"https://github.com/o/r/actions/runs/5/job/31","steps":[{"name":"setup","conclusion":"success"},{"name":"test","conclusion":"timed_out"}]}]}'; break }
+  'check-runs/31/annotations' { '[{"annotation_level":"warning","path":"a.js","start_line":1,"message":"w"},{"annotation_level":"failure","path":"t/x.test.js","start_line":9,"message":"expected 2"}]'; break }
+  'jobs/31/logs$' { "ok`nERROR: from log"; break }
+  default { '{}' } } }
+$f = Invoke-HostVerb 'ci.failure' @{ repo = 'o/r'; id = 5 }; $p = @('#7', 'GH-8', 'o/r2#9' | ForEach-Object { $x = Invoke-HostVerb 'mr.parseRef' @{ ref = $_; repo = 'o/r' }; "$($x.repo)!$($x.n)" })
+"$($f.job)|$($f.id)|$($f.reason)|$($f.step)|$($f.url)|$($f.excerpt)|$($p -join ',')|$($null -eq (Invoke-HostVerb 'mr.parseRef' @{ ref = '#7' }))"
+'@ @(Join-Path $k 'skills/crafty/lib.ps1') | Select-Object -Last 1)"
+Expect "github natives: ci.failure = the timed-out job, its step, the failure annotation; mr.parseRef #7 / GH-8 in the repo, owner/repo#9 as core, no repo = none ($gn)" ($gn -eq 'unit|31|timeout|test|https://github.com/o/r/actions/runs/5/job/31|t/x.test.js:9 expected 2|o/r!7,o/r!8,o/r2!9|True')
 Remove-TestKit $k
 Complete-Tests

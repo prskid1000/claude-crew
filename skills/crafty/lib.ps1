@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L96 state · L177 config · L258 OS · L467 leases · L886 status · L1083 tracker · L1402 prior ·
-  L1421 ask bugs · L1606 git-host · L1792 kitlog · L1902 params · L2207 entry-scripts
+  L1421 ask bugs · L1606 git-host · L1794 kitlog · L1904 params · L2209 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1716,6 +1716,8 @@ function Format-KitMrLink([string]$Ref) {
   $u = if ($r -match '^https?://') { $r } else { try { "$(Invoke-HostVerb 'mr.url' @{ repo = $p.repo; n = $p.n })".Trim() } catch { '' } }
   if ($u -notmatch '^https?://[^/\s]+/\S+$') { return $r }; "[$(if ($r -match '^https?://') { "$(($p.repo -split '/')[-1])!$($p.n)" } else { $r })]($u)"
 }
+# mr.parseRef of a vendor's short MR reference ($Pattern with an (?<n>) group, e.g. GitLab !7) in $A.repo; no repo: none; other refs: core
+function ConvertFrom-KitMrShortRef([hashtable]$A, [string]$Pattern, [string]$Type) { $r = "$($A.ref)".Trim(); if ($r -notmatch $Pattern) { return (ConvertFrom-KitMrRef $r) }; if ($A.repo) { @{ repo = (Get-HostProject $(if ("$($A.repo)".Contains('/')) { "$($A.repo)" } else { Get-KitRepoName "$($A.repo)" }) -Raw); n = $Matches.n; type = $Type } } }
 function ConvertFrom-KitMrRef([string]$Ref) { $r = "$Ref".Trim(); if ($u = ConvertFrom-MrUrl $r) { $u } elseif ($r -match '^(?<repo>[\w./-]+)[!#](?<n>\d+)$') { $rp = $Matches.repo; $rn = $Matches.n; @{ repo = (Get-HostProject $(if ($rp.Contains('/')) { $rp } else { Get-KitRepoName $rp }) -Raw); n = $rn; type = $script:HostType } } }   # an alias ref names its repo
 # page links: MR ref / URL or task id -> @{ text = <repo>!<n> | <repo>#<n> | id; url }; no web URL: url '' (plain text)
 function Get-KitMrLink([string]$Ref) {

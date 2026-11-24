@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L83 git-host · L120 ci
+# Sections: L6 gh · L17 tracker · L83 git-host · L122 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -105,6 +105,8 @@ Register-KitAdapter 'git-host' 'github' @{
   }
   'mr.unauto' = { param($a) $null = __Gh @('pr', 'merge', $a.n, '-R', $a.repo, '--disable-auto'); __GhPr $a }
   'mr.url' = { param($a) "https://$(__GhHost)/$($a.repo)/pull/$($a.n)" }
+  # autolinked references (docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/autolinked-references-and-urls): #7, GH-7 in $a.repo; URLs, owner/repo#7: core
+  'mr.parseRef' = { param($a) ConvertFrom-KitMrShortRef $a '^(?:#|GH-)(?<n>\d+)$' 'github' }
   'whoami' = { param($a) __GhEnv; [string](__Cli gh 'user').login }
   'repo.base' = { param($a) $c = __GhApi "repos/$($a.repo)/compare/$(__Enc $a.a)...$(__Enc $a.b)"; __CommitObj $c.merge_base_commit.sha }
   'repo.commit' = { param($a) $c = __GhApi "repos/$($a.repo)/commits/$(__Enc $a.ref)"; __CommitObj $c.sha $c.commit.committer.date }
@@ -123,6 +125,11 @@ Register-KitAdapter 'ci' 'github' @{
   'runs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs?branch=$(__Enc $a.ref)$(if ($a.sha) { "&head_sha=$($a.sha)" })&per_page=$($a.per_page ?? 20)").workflow_runs) | Where-Object { $_ } | ForEach-Object { __CiRun $_.id $_.head_sha (__CiWord ($_.conclusion ?? $_.status)) $_.created_at $_.updated_at }) }
   'jobs' = { param($a) @(@((__GhApi "repos/$($a.repo)/actions/runs/$($a.id)/jobs?per_page=100").jobs) | Where-Object { $_ } | ForEach-Object { __CiJob $_.id $_.name (__CiWord ($_.conclusion ?? $_.status)) $_.completed_at }) }
   'log' = { param($a) __GhApi "repos/$($a.repo)/actions/jobs/$($a.id)/logs" }
+  # GitHub's own job conclusion (docs.github.com/en/rest/actions/workflow-jobs) -> reason, its failed step; excerpt = the job's check-run failure annotations, else the log
+  'failure' = { param($a) $j = @(@((__GhApi "repos/$($a.repo)/actions/runs/$($a.id)/jobs?filter=latest&per_page=100").jobs) | Where-Object { $_ -and "$($_.conclusion)" -in 'failure', 'timed_out' })[0]; if (-not $j) { return $null }
+    $f = Get-KitCiFailure $a -Job ([pscustomobject]@{ id = $j.id; name = $j.name; web_url = $j.html_url; failure_reason = "$($j.conclusion)"; reason = $(if ($j.conclusion -eq 'timed_out') { 'timeout' } else { 'script' }) })
+    $an = @(@(__GhApi "repos/$($a.repo)/check-runs/$($j.id)/annotations?per_page=50") | Where-Object { $_.annotation_level -eq 'failure' } | ForEach-Object { "$($_.path):$($_.start_line) $($_.message)" })
+    if ($an) { $f.excerpt = ($an | Select-Object -Last 8) -join "`n" }; $f | Add-Member -Force NoteProperty step "$(@($j.steps | Where-Object { "$($_.conclusion)" -in 'failure', 'timed_out' })[0].name)" -PassThru }
   # .../actions/runs/<run>/job/<job> in a text -> @{ url; job; run }; a run link alone gives the run (a job named in the text, as gitlab's pipeline link)
   'parseUrl' = { param($a) $m = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/actions/runs/(?<run>\d+)/job(?:s)?/(?<id>\d+))'); @{ url = $m.Groups['url'].Value; job = $m.Groups['id'].Value; run = $(if ($m.Success) { $m.Groups['run'].Value } else { [regex]::Match("$($a.text)", '/actions/runs/(\d+)').Groups[1].Value }) } }
   'status' = { param($a) if (-not $a.sha) { return $null }
