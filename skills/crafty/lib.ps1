@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L908 status · L1105 tracker · L1424 prior ·
-  L1443 ask bugs · L1628 git-host · L1816 kitlog · L1926 params · L2231 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L915 status · L1112 tracker · L1431 prior ·
+  L1450 ask bugs · L1635 git-host · L1823 kitlog · L1933 params · L2238 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -842,7 +842,14 @@ function Resolve-Tool {
 function Get-KitStamp([ValidateSet('stored', 'file', 'day', 'display')][string]$Kind = 'stored', $At = [datetime]::UtcNow) {
   $u = if ($At -is [datetimeoffset]) { $At.UtcDateTime } else { ([datetime]$At).ToUniversalTime() }; $At = $u; switch ($Kind) { 'stored' { $u.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'") } 'file' { $u.ToString('yyyyMMdd-HHmmss') } 'day' { $u.ToString('yyyyMMdd') } 'display' { $At.ToLocalTime().ToString('yyyy-MM-dd HH:mm') } }
 }
-function Get-Python { if ($KitIsWindows) { 'python' } else { $p = Resolve-Tool python3 python; if ($p) { $p } else { 'python3' } } }
+function Get-Python {
+  if (-not $KitIsWindows) { $p = Resolve-Tool python3 python; if ($p) { return $p }; return 'python3' }
+  if ($script:KitPythonExe) { return $script:KitPythonExe }
+  # a .bat / .cmd shim (pyenv-win) runs through cmd.exe: an arg with ( ) & | broke it (exit 255, finalize evidence upload)
+  $exe = 'python'; $shim = Resolve-Tool python
+  if ($shim -match '\.(bat|cmd)$') { $real = "$(& $shim -c 'import sys; print(sys.executable)' 2>$null | Select-Object -Last 1)".Trim(); if ($real -and (Test-Path -LiteralPath $real)) { $exe = $real } }
+  $script:KitPythonExe = $exe; $exe
+}
 
 # -WarnSkip: a check that could not run (no kitbag.py, no python, no JSON) warns instead of passing silently
 function Test-KitProse([string]$Kind, [string]$Text, [string]$Path, [switch]$WarnSkip) {

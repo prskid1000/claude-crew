@@ -139,5 +139,13 @@ Expect "render cases: a goal mixing PASS and NOT_TESTED_LOCAL reads NOT_TESTED_L
 # finish: one loop checkpoint under the keyed item covers every item tracked on the same MR (retro 1124: siblings refused)
 $lp = & $py -X utf8 -c "import sys, os, json; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d, kitbag as kb; [kb.state_write(kb.task_file(t), {'task': t, 'track': {'mrs': m}}) for t, m in (('tA', ['g/w!1']), ('tB', ['g/w!1']), ('tC', ['g/w!2']))]; a = os.path.join(kb.kit_path('agents'), 'zz-dt'); os.makedirs(a, exist_ok=True); json.dump({'steps': [{'step': 'loop', 'item': 'tA', 'evidence': 'PASS local', 'at': '2026-11-24T10:00:00'}]}, open(os.path.join(a, 'resume-r.json'), 'w')); print(','.join(str(d.local_pass(t)[0]) for t in ('tA', 'tB', 'tC')))" 2>&1
 Expect "local_pass: a shared MR's sibling item reads the keyed item's loop checkpoint; an item on another MR does not ($lp)" ("$lp" -eq 'True,True,None')
+# Get-Python skips a .bat shim (pyenv-win): a run title with a quote and ( ) went through cmd.exe, finalize's upload exit 255
+if ($IsWindows) {
+  $shimDir = (New-Item -ItemType Directory -Force (Join-Path (Kd) 'pyshim')).FullName; $realPy = "$(& $py -c 'import sys; print(sys.executable)')".Trim()
+  [IO.File]::WriteAllText((Join-Path $shimDir 'python.bat'), "@echo off`r`nfor %%a in (x) do (`r`n  `"$realPy`" %* || goto :error`r`n  exit /b`r`n)`r`n:error`r`nexit /b 255`r`n")
+  $tq = 'run: a (x); "create a sale T4 - test evidence (2026-11-24)'; $oldPath = $env:PATH
+  try { $env:PATH = "$shimDir;$oldPath"; $gpR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); & (Get-Python) -c 'import sys; print(sys.argv[1])' $tq 2>&1 | Out-String } } finally { $env:PATH = $oldPath }
+  Expect "Get-Python: the real python.exe behind a .bat shim keeps an arg with a quote and ( ) ($gpR)" ("$gpR".Trim() -eq $tq)
+}
 Remove-TestKit $k
 Complete-Tests
