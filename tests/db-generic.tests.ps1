@@ -94,6 +94,47 @@ try {
   Expect "sizes: sqlserver dm_db_partition_stats, sqlite dbstat, oracle user_segments, mongodb listDatabases, each through its own client ($ssz)" ($ssz -eq "ms=app`t30`t2 lite=app`t30`t2 ora=app`t30`t2 mg=app`t30`t2" -and
     $szx -match '(?m)^sqlcmd\|[^|]*\|SET NOCOUNT ON;\s+SELECT s\.name.*sys\.dm_db_partition_stats' -and $szx -match '(?m)^sqlite3\|.*FROM dbstat d' -and $szx -match '(?m)^sqlplus\|[\s\S]*user_segments' -and $szx -match '(?m)^mongosh\|.*listDatabases' -and -not (Test-Path $hit))
   Expect "envy verbs: a registered verb runs, its ops checked; an unknown verb refused ($hc | $($h.Trim()))" ($hc -eq 0 -and $h -match 'hello wave from pg' -and $hb -match 'hello jump : unknown \(wave\)' -and $uc -ne 0 -and $u -match "unknown verb 'nosuchverb'.*hello")
+  # parity db-engine: sqlite snapshot marks for real (VACUUM INTO, .restore), a later mark dropped; refused over data.maxMB
+  $lite = Join-Path (Kd) 'marks.db'; $sq = Get-Command sqlite3 -ErrorAction SilentlyContinue
+  if ($sq) {
+    & $J @{ localEnv = @{ envs = @{ lt = @{ services = @(); db = @{ engine = 'sqlite'; name = $lite } } } } } $cfg 8
+    & $sq.Source $lite 'CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);'
+    $smR = & { . $L; $m1 = New-Mark lt 'm1' 'owner'; $null = Invoke-DbSql lt 'INSERT INTO t VALUES (2)'; $m2 = New-Mark lt 'm2' 'owner'; $null = Invoke-DbSql lt 'DELETE FROM t'
+      $st = Read-State lt; $m = Find-Mark $st 'm1' 0; $p = Get-RestorePlan lt $m @('main') 'x'; $txt = (RestorePlanText $p) -join ' '
+      $err = Invoke-RestoreDb lt $m @('main') $p; $rows = @(Invoke-DbSql lt 'SELECT a FROM t' | ForEach-Object { $_[0] }) -join ','
+      "$m1,$m2|$txt|$err|$rows|$(@((Read-State lt).marks.name) -join ',')|$(@(Invoke-DbEngine lt 'binlogs').Count)" }
+    Expect "sqlite marks: snapshot per mark, restore -> the rows at m1, later m2 and its file dropped ($smR)" ($smR -match '^m1,m2\|snapshot: main back whole to mark m1 \(kitsnap\d+:0\)\|\|1\|m1\|1$')
+  }
+  # temp per connection (dbtemp, watchdog) through each engine's tempSql + kill; sqlserver / elasticsearch snapshots, oracle SCN flashback,
+  # the query fallback (no db.query: the engine's sql verb), mongodb exec / jdbc presets (mocked SQL / REST)
+  & $J @{ localEnv = @{ envs = @{ pg = @{ services = @(); db = @{ engine = 'postgres'; name = 'app'; user = 'u' } }; ms = @{ services = @(); db = @{ engine = 'sqlserver'; name = 'app' } }
+        ora = @{ services = @(); db = @{ engine = 'oracle'; name = 'xe'; user = 'u' } }; es = @{ services = @(); db = @{ engine = 'elasticsearch'; schemas = @('orders') } }; mg = @{ services = @(); db = @{ engine = 'mongodb'; name = 'app' } } } } } $cfg 8
+  $tpR = & { . $L; $global:dbSqls = @(); function Invoke-DbCliRows { param($e, $Exe, $Argv, $In) $global:dbSqls += "$e|$(@($Argv) -join ' ')|$In"
+      if ("$In" -match 'pg_ls_tmpdir|dm_db_session_space_usage|tempseg_usage') { , @('7', '2.5', '30', 'select big') } elseif ("$In" -match 'sys\.database_files') { , @('app_data', 'C:\d\app.mdf') }
+      elseif ("$In" -match 'source_database_id') { , @('app_kitsnap1'); , @('app_kitsnap2') } elseif ("$In" -match 'TIMESTAMP_TO_SCN') { , @('4242') } elseif ("$In" -match 'FROM user_tables') { , @('ORDERS'); , @('ITEMS') } elseif ("$In" -match 'FROM user_objects') { , @('ITEMS') } elseif ("$In" -match 'SELECT 1 x') { , @('1', 'x') } }
+    $global:esCalls = @(); function Invoke-RestMethod { param($Uri, $Method = 'Get', $Body, $ContentType, $TimeoutSec) $global:esCalls += "$Method $Uri $Body"; if ($Uri -match '_snapshot/kit-marks/kitsnap5$') { [pscustomobject]@{ snapshots = @([pscustomobject]@{ indices = @('orders', '.kibana') }) } } elseif ($Uri -match '_cat/indices') { @([pscustomobject]@{ index = 'orders' }, [pscustomobject]@{ index = 'orders-new' }, [pscustomobject]@{ index = '.x' }) } }
+    $o = [ordered]@{}
+    $o.temp = @('pg', 'ms', 'ora' | Where-Object { (Get-DbTempUse $_)[0].gb -eq 2.5 }).Count -eq 3 -and (Test-DbTempUse 'es') -eq $false
+    Stop-DbConn pg 7; $o.kill = "$($global:dbSqls[-1])" -match 'pg_terminate_backend\(7\)' -and $(try { Stop-DbConn ora 7; $false } catch { "$_" -match 'sid,serial' })
+    Invoke-DbEngine ms 'snap' @{ pos = 'kitsnap9:0' }; $o.msSnap = "$($global:dbSqls[-1])" -match "CREATE DATABASE \[app_kitsnap9\] ON \(NAME = \[app_data\], FILENAME = 'C:\\d\\app\.kitsnap9\.ss'\) AS SNAPSHOT OF \[app\]"
+    $null = Invoke-DbEngine ms 'revert' @{ pos = 'kitsnap2:0' }; $o.msRevert = ($global:dbSqls -match 'DROP DATABASE \[app_kitsnap1\]').Count -eq 1 -and "$($global:dbSqls[-1])" -match '(?s)-d master .*RESTORE DATABASE \[app\] FROM DATABASE_SNAPSHOT = ''app_kitsnap2'''
+    $op = Invoke-DbEngine ora 'pos'; $fr = Invoke-DbEngine ora 'revert' @{ pos = $op }; $o.oracle = $op -eq 'scn:4242' -and "$($global:dbSqls[-1])" -match 'FLASHBACK TABLE "ORDERS" TO SCN 4242' -and $fr.fallback[0].table -eq 'ITEMS'
+    $null = Invoke-DbEngine es 'snap' @{ pos = 'kitsnap5:0'; scopes = @('orders') }; $null = Invoke-DbEngine es 'revert' @{ pos = 'kitsnap5:0'; scopes = @('orders') }
+    $o.es = $global:esCalls[0] -match '^Put \S+/_snapshot/kit-marks/kitsnap5\?wait_for_completion=true .*"indices":"orders"' -and ($global:esCalls -match '^Delete \S+/orders\s*$').Count -eq 1 -and $global:esCalls[-1] -match '^Post \S+/kitsnap5/_restore\?wait_for_completion=true .*"indices":"orders"'
+    $qe = Invoke-Hook ora 'query' @{ sql = 'SELECT 1 x FROM dual' }; $o.query = -not $qe -and "$($script:HookOut)" -eq "1`tx"
+    $o.mongo = "$((Get-EnvCfg mg).db.exec)" -match '^mongosh --nodb --quiet --eval "db = connect\(process\.env\.KIT_DB_URI \|\| ''mongodb://127\.0\.0\.1:27017/app''\);" "\{file\}"$' -and "$((Get-EnvCfg mg).db.jdbc)" -eq 'jdbc:mongodb://127.0.0.1:27017/app'
+    $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
+  Expect-Each $tpR 'db engine parity: #' @('temp', 'kill', 'msSnap', 'msRevert', 'oracle', 'es', 'query', 'mongo') -Show 9
+  # tenant model column (parity): footprint = rows per table with the column; drop deletes them, the registry table last, a FK refusal
+  # retried next pass; tenants.keep never dropped; dry run counts only
+  & $J @{ localEnv = @{ envs = @{ cl = @{ services = @(); db = @{ engine = 'postgres'; name = 'app' }; tenants = @{ model = 'column'; keep = @('base'); column = @{ table = 'public.orgs'; column = 'org_id' } } } } } } $cfg 8
+  $tcR = & { . $L; $global:tcSql = @(); $global:tcFk = 1
+    function Invoke-DbSql { param($e, $sql) $global:tcSql += $sql; if ($sql -match 'information_schema\.COLUMNS') { , @('public', 'orgs'); , @('public', 'orders') } elseif ($sql -match '^SELECT COUNT') { , @('2') }
+      elseif ($sql -match '^DELETE FROM public\.orgs' -and $global:tcFk-- -gt 0) { throw 'violates foreign key constraint' } }
+    $dry = @(Invoke-TenantModel cl 'drop' @{ names = @('acme', 'base'); dryRun = $true }) -join ' | '; $n0 = @($global:tcSql -match '^DELETE').Count
+    $run = @(Invoke-TenantModel cl 'drop' @{ names = @('acme') }) -join ' | '; $dels = @($global:tcSql -match '^DELETE')
+    "$dry#$n0#$run#$($dels -join ';')" }
+  Expect "tenant model column: dry run counts, keep refused, delete retried past a FK, registry last ($tcR)" ($tcR -match "would delete 2 row\(s\) from public\.orders, 2 row\(s\) from public\.orgs \| \[cl\] tenant base kept" -and $tcR -match "#0#\[cl\] tenant acme: rows deleted from 2 table\(s\)#DELETE FROM public\.orders WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme'$")
 } finally { $env:PATH = $oldPath }
 Remove-TestKit $k
 # the test helper: a read without the end marker is asked again; a write batch is never re-run (it may have run: a re-run hides the flake)

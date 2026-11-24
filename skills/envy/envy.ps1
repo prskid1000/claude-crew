@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L470 code · L481 migrations ·
-  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L770 hooks · L843 marks · L1024 seed ·
-  L1091 processes · L1477 daemon · L1939 cleanup · L2011 verbs
+  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L770 hooks · L844 marks · L1028 seed ·
+  L1095 processes · L1481 daemon · L1943 cleanup · L2015 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -796,10 +796,11 @@ function Get-HookCmd([string]$e, [string]$name, [hashtable]$vars = @{}) {
 }
 function Invoke-Hook([string]$e, [string]$name, [hashtable]$vars = @{}) {
   $cmd = Get-HookCmd $e $name $vars
+  if (-not $cmd -and $name -eq 'query' -and (Get-Command Invoke-DbQueryVerb -ErrorAction SilentlyContinue) -and (Get-DbEngine $e).sql -is [scriptblock]) { return Invoke-DbQueryVerb $e "$($vars.sql)" }
   if (-not $cmd) { return "no db.$name hook configured" }
   $log = LogFile $e 'db'
   Add-Content $log "== $(Now) $name : $cmd"
-  $hv = EnvVars $e ([pscustomobject]@{}); if ($name -eq 'query' -and "$($cmd)" -match 'KIT_DB_URI') { $hv['KIT_DB_URI'] = "$((Get-EnvCfg $e).db.uri)" }   # mongosh: db.uri off argv
+  $hv = EnvVars $e ([pscustomobject]@{}); if ("$($cmd)" -match 'KIT_DB_URI') { $hv['KIT_DB_URI'] = "$((Get-EnvCfg $e).db.uri)" }   # mongosh: db.uri off argv
   $code = Invoke-Shell $cmd $log $hv (HookTimeout $e $name)
   $script:HookOut = @($script:ShellOut)
   Event $e "db-$name" @{ code = $code; vars = $vars }
@@ -843,7 +844,8 @@ function Test-Smoke([string]$e) {
 # ---- marks: a named binlog position + the code live then (zero bytes); restore = the row changes after it flashed back, the
 # migrations recorded after it rolled back, its code started (db.engine mysql / mariadb: adapters/db-presets.ps1)
 $script:MarkMax = [int](Opt 'marks.max' 60)   # TODO-PARAM (fixed default)
-function MarksOn([string]$e) { [bool](Get-Command Test-DbMarks -ErrorAction SilentlyContinue) -and (Test-DbMarks $e) }
+function MarksOn([string]$e) { [bool](Get-Command Test-DbMarks -ErrorAction SilentlyContinue) -and ((Test-DbMarks $e) -or (SnapOn $e)) }
+function SnapOn([string]$e) { [bool](Get-Command Test-DbSnap -ErrorAction SilentlyContinue) -and (Test-DbSnap $e) }
 # the env's data scopes (schemas / databases): db.schemas (names) + db.schemasQuery (one name per row), else db.name; + the tenant
 # model's scopes verb (adapters/tenant-models.ps1), when it has one
 function Get-DataScopes([string]$e) {
@@ -887,7 +889,7 @@ function New-Mark([string]$e, [string]$name, [string]$kind, $repos, [int]$releas
     $last = @(@((Read-State $e).marks) | Where-Object { $_ -and @($_.schemas).Count } | Select-Object -Last 1)[0]
     if ($last -and @($sch | Where-Object { $_ -notin @($last.schemas) }).Count) { try { $null = Install-DbGuard $e } catch { Write-Warning "[$e] mark ${name}: cascade guard not reinstalled for the new scope(s): $("$_".Split("`n")[0])" } }
   }
-  $pos = Get-DbPos $e
+  $pos = Get-DbPos $e; if (SnapOn $e) { Add-DbSnap $e $pos $sch }
   Update-State $e { param($x)
     $code = if ($repos) { $repos } else { $x.release.repos }
     $m = @{ name = $name; kind = $kind; at = (Now); pos = $pos; schemas = $sch; release = $(if ($release -ge 0) { $release } else { [int]$x.release.n }); repos = ($code | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable) }
@@ -899,7 +901,7 @@ function New-Mark([string]$e, [string]$name, [string]$kind, $repos, [int]$releas
 }
 # daily: marks whose binlog file is gone expire; the binlog retention is kept for status and doctor
 function Update-Marks([string]$e) {
-  if (-not (MarksOn $e)) { return }
+  if (-not (MarksOn $e)) { return }; if (SnapOn $e) { return Update-SnapMarks $e }
   $logs = @(Get-DbBinlogs $e); $sec = [double]@(Invoke-DbSql $e "SHOW GLOBAL VARIABLES LIKE 'binlog_expire_logs_seconds'")[0][1]; $o = @{ gone = @() }
   Update-State $e { param($x)
     $o.gone = @(@($x.marks) | Where-Object { $_ -and ($_.pos -split ':(?=\d+$)')[0] -notin $logs })
@@ -918,6 +920,7 @@ function Find-Mark($st, [string]$mark, [int]$release) {
 # what a restore to mark $m changes (read-only): the row flashback plan, the tables whose structure changed (binlog DDL) and how
 # each comes back (the slices of a mark at or after $m taken before that DDL; created after $m: dropped; renamed: renamed back)
 function Get-RestorePlan([string]$e, $m, [string[]]$schemas, [string]$tag) {
+  if (SnapOn $e) { return Get-SnapRestorePlan $e $m $schemas }
   $st = Read-State $e; $to = Get-DbPos $e
   $p = Invoke-DbFlashback $e -From $m.pos -To $to -Schemas $schemas -Skip @($st.undone)
   $p.to = $to; $p.steps = @(); $p.drops = @(); $p.objects = @(); $p.objectDrops = @(); $p.renames = @(@($p.ddl | Where-Object { $_.kind -eq 'rename' }) | Sort-Object { DbPosKey $_.at } -Descending)
@@ -962,7 +965,7 @@ function Get-RestorePlan([string]$e, $m, [string[]]$schemas, [string]$tag) {
 }
 function RestorePlanText($p) {
   $t = @($p.tables.Keys | Sort-Object | ForEach-Object { $c = $p.tables[$_]; "  $_ : $($c.insert) insert(s) -> delete, $($c.update) update(s) -> back, $($c.delete) delete(s) -> back in" })
-  @("rows: $($p.statements) change(s) undone in $(@($p.tables.Keys).Count) table(s)") + $t +
+  @($(if ($p.snapshot) { "snapshot: $($p.snapshot)" } else { "rows: $($p.statements) change(s) undone in $(@($p.tables.Keys).Count) table(s)" })) + $t +
     @($p.renames | ForEach-Object { "structure: $($_.to) renamed back to $($_.schema).$($_.table)" }) +
     @($p.steps | ForEach-Object { "structure: $(@($_.tables) -join ', ') back to mark $($_.mark) (its CREATE text + slices)" }) +
     @($p.drops | ForEach-Object { "structure: $_ dropped (created after the mark)" }) +
@@ -973,6 +976,7 @@ function RestorePlanText($p) {
 # a restore's DB part (writers stopped): [db.rollback] renames, structure, created tables dropped, objects, row flashback; inexact
 # tables -> $script:RestoreFallback (seeded); range recorded undone, its marks dropped (unless no row written); $null = ok
 function Invoke-RestoreDb([string]$e, $m, [string[]]$schemas, $plan, [switch]$UseTool) {
+  if (SnapOn $e) { return Invoke-SnapRestoreDb $e $m $schemas }
   $st = Read-State $e; $db = (Get-EnvCfg $e).db; $script:RestoreFallback = @(@($plan.fallback) | Where-Object { $_ }); $noRows = $true   # until the row flashback runs
   if (-not @($schemas).Count) { return 'restore has no schemas' }
   $ev = @(Invoke-DbSql $e "SELECT EVENT_SCHEMA, EVENT_NAME FROM information_schema.EVENTS WHERE STATUS = 'ENABLED' AND EVENT_SCHEMA IN ($(@($schemas | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '))")
@@ -1460,7 +1464,7 @@ function Add-SeedBaseline([string]$e, [string]$by) {
 # while the env's own DB service is down (a lane's copy stopped idle or under memory pressure: no client errors, it starts on a lease)
 function Invoke-DbChores([string]$e, $st, [hashtable]$at) {
   if (DbSvcDown $e) { return }
-  if (((Get-Date) - $at.temp).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and (Test-DbTemp $e)) {
+  if (((Get-Date) - $at.temp).TotalSeconds -ge 60 -and (Get-Command Invoke-DbTempWatch -ErrorAction SilentlyContinue) -and ((Test-DbTemp $e) -or ((Get-Command Test-DbTempUse -ErrorAction SilentlyContinue) -and (Test-DbTempUse $e)))) {
     $at.temp = Get-Date   # the top temp user above db.tempMaxGB is killed; one gone before the KILL: said
     try { foreach ($k in @(Invoke-DbTempWatch $e)) { $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { "db temp watchdog: $("$_".Split("`n")[0])" }
   }
@@ -2199,7 +2203,7 @@ switch ($Action) {
     if (@($rows | Where-Object level -eq 'FAIL').Count) { exit 1 }
   }
   'mark' {   # -Name: a mark of the DB now (zero bytes); without: the env's marks
-    if (-not (MarksOn $e)) { throw "[$e] marks need db.engine mysql or mariadb (adapters/db-presets.ps1): this env has none" }
+    if (-not (MarksOn $e)) { throw "[$e] marks need db.engine with marks (adapters/db-engines.ps1): this env has none" }
     if ($Name) { $n = New-Mark $e $Name 'owner'; "[$e] mark $n at $(@((Read-State $e).marks | Where-Object name -eq $n)[0].pos): envy.ps1 restore -Env $e -Mark $n [-DryRun]"; return }
     $st = Read-State $e
     foreach ($m in @($st.marks | Where-Object { $_ })) { '  {0,-34} {1,-8} {2:yyyy-MM-dd HH:mm}  release {3,-4} {4}' -f $m.name, $m.kind, [datetime]$m.at, $m.release, $m.pos }
@@ -2207,7 +2211,7 @@ switch ($Action) {
     if ($st.binlog) { "  the binlog keeps $($st.binlog.days) d (oldest $($st.binlog.oldest))" }
   }
   'restore' {   # owner / coordinator: DB (flashback + rollbacks) and code back to a mark; -DryRun: the plan
-    if (-not (MarksOn $e)) { throw "[$e] restore needs marks: db.engine mysql or mariadb (adapters/db-presets.ps1)" }
+    if (-not (MarksOn $e)) { throw "[$e] restore needs marks: a marks engine (envy.ps1 mark says which)" }
     if (-not $Mark -and $Release -lt 0) { throw 'restore needs -Mark <name> or -Release <n> (envy.ps1 mark -Env <env> lists them)' }
     $st = Read-State $e; $m = Find-Mark $st $Mark $Release
     $sch = if ($Schemas.Count) { Test-RestoreScopes $e $Schemas } else { @(Get-MarkScopes $e $m) }
@@ -2413,7 +2417,7 @@ switch ($Action) {
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
   }
   'dbtemp' {   # '<id> <temp GB> <seconds> <query>' per connection (storage.db.use); -Kill <id> ends one (storage.db.kill)
-    if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTemp $e)) { throw "[$e] dbtemp needs db.engine mysql (adapters/db-presets.ps1)" }
+    if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Get-Command Test-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTempUse $e)) { throw "[$e] dbtemp needs an engine with tempSql (adapters/db-engines.ps1)" }
     # storage.db.use polls a resting lane DB every tick (11 refused errors): no connections, no temp
     if (DbSvcDown $e) { "[$e] dbtemp: $((DbSvc $e).name) rests (starts with a lease): no temp"; return }
     # a DB port no managed service owns (base server, a stale port): a hint, never the client's raw ERROR 2003 (retro 2026-11-20, 3x)

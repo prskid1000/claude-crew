@@ -4,7 +4,8 @@
 # exec / jdbc / passwordEnv an env leaves unset; an engine with supportsMarks (mysql / mariadb) gives marks (binlog positions),
 # flashback restores and the cascade guard (db_flashback.py; db.cascadeGuard true); other engines: marks unsupported.
 # Placeholders: {H} {P} {U} {N} {URI} = db.host (127.0.0.1), db.port (the engine's), db.user, db.name, db.uri
-# Sections: L18 engine dispatch · L29 marks · L77 temp · L119 pool
+# Sections: L19 engine dispatch · L34 marks · L82 snapshot marks (sqlserver, sqlite, oracle, elasticsearch, opensearch ·
+#   L118 temp · L161 pool
 $script:DbPresets = @{}   # engine -> { port, query, exec, jdbc, passwordEnv, marks } (envy.ps1 checks it is loaded)
 foreach ($__en in @($KitAdapters['db-engine'].Keys)) { $__a = $KitAdapters['db-engine'][$__en]; $script:DbPresets[$__en] = @{ port = $__a.defaultPort; query = $__a.query; exec = $__a.exec; jdbc = $__a.jdbc; passwordEnv = $__a.passwordEnv; marks = [bool]$__a.supportsMarks } }
 foreach ($n in $(if ($script:LE.envs) { @((Get-KitProps $script:LE.envs).Name) })) {
@@ -24,6 +25,10 @@ function Invoke-DbEngine([string]$e, [string]$Verb, [hashtable]$a = @{}) {
   $a.e = $e; & $ad[$Verb] $a $Verb
 }
 function Invoke-DbSql([string]$e, [string]$sql, [int]$Sec = 120) { Invoke-DbEngine $e 'sql' @{ sql = $sql; sec = $Sec } }
+# envy.ps1 Invoke-Hook query with no db.query line (oracle: no one-line client): the engine's sql verb -> $null | the error; rows in HookOut
+function Invoke-DbQueryVerb([string]$e, [string]$Sql) {
+  try { $script:HookOut = @(Invoke-DbSql $e $Sql (HookTimeout $e 'query') | ForEach-Object { @($_) -join "`t" }); $null } catch { $script:HookOut = @("$_"); "db.query (engine sql) failed: $("$_".Split("`n")[0])" }
+}
 function Get-DbPos([string]$e) { Invoke-DbEngine $e 'pos' }
 function Get-DbBinlogs([string]$e) { @(Invoke-DbEngine $e 'binlogs') }
 # ---- marks: binlog positions (mysql / mariadb); a mark costs zero bytes, the binlog keeps the changes after it
@@ -74,15 +79,52 @@ function Get-DbMarkDoctor([string]$e) {
   try { $g = Install-DbGuard $e; if ($g.installed -or $g.removed) { [pscustomobject]@{ level = 'OK'; what = "cascade guard: $($g.installed) trigger(s) installed, $($g.removed) removed, $($g.kept) kept on $($g.parents) parent table(s)" } } }
   catch { [pscustomobject]@{ level = 'WARN'; what = "cascade guard not installed: a restore past a cascading delete seeds the child tables ($("$_".Split("`n")[0]))" } }
 }
-# ---- temp: per connection temp on disk (mysql: session temp tablespaces + TempTable mmap files), the watchdog, server caps
-$script:DbTempSql = "SELECT p.ID, ROUND((IFNULL(s.b, 0) + IFNULL(m.b, 0)) / 1073741824, 3), p.TIME, IFNULL(REPLACE(REPLACE(REPLACE(LEFT(p.INFO, 300), '\r', ' '), '\n', ' '), '\t', ' '), CONCAT('(', p.COMMAND, ')')) FROM information_schema.PROCESSLIST p LEFT JOIN (SELECT ID, SUM(SIZE) b FROM information_schema.INNODB_SESSION_TEMP_TABLESPACES WHERE ID > 0 GROUP BY ID) s ON s.ID = p.ID LEFT JOIN (SELECT t.PROCESSLIST_ID id, SUM(m.CURRENT_NUMBER_OF_BYTES_USED) b FROM performance_schema.memory_summary_by_thread_by_event_name m JOIN performance_schema.threads t ON t.THREAD_ID = m.THREAD_ID WHERE m.EVENT_NAME = 'memory/temptable/physical_disk' GROUP BY t.PROCESSLIST_ID) m ON m.id = p.ID WHERE p.ID <> CONNECTION_ID() AND p.USER NOT IN ('system user', 'event_scheduler') ORDER BY 2 DESC, p.TIME DESC LIMIT 20"
+# ---- snapshot marks (sqlserver, sqlite, oracle, elasticsearch, opensearch: an engine with a revert verb): the mark's pos names its
+# snapshot (or SCN); restore = the engine's revert of the scopes, later marks dropped; marks of the binlog engines: above
+function Test-DbSnap([string]$e) { (Get-DbEngine $e).revert -is [scriptblock] }
+function New-DbSnapPos { "kitsnap$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()):0" }
+function Get-DbSnapFile([string]$e, [string]$Pos, [string]$Ext) { $d = Join-Path (MigRoot $e) 'snaps'; $null = New-Item -ItemType Directory -Force $d; Join-Path $d "$(($Pos -split ':')[0])$Ext" }
+function Invoke-DbSnapRest([string]$e, [string]$Method, [string]$Path, $Body) {
+  $c = DbConn $e; $p = @{ Method = $Method; Uri = "http://$($c.host):$($c.port)/_snapshot/kit-marks/$Path"; TimeoutSec = 900 }
+  if ($null -ne $Body) { $p.Body = $Body | ConvertTo-Json -Compress; $p.ContentType = 'application/json' }
+  try { Invoke-RestMethod @p } catch { throw "snapshot repository kit-marks: $("$_".Split("`n")[0]) (register it: PUT _snapshot/kit-marks { type: fs, settings: { location } } under path.repo)" }
+}
+function Add-DbSnap([string]$e, [string]$Pos, [string[]]$Scopes) { if ((Get-DbEngine $e).snap -is [scriptblock]) { Invoke-DbEngine $e 'snap' @{ pos = $Pos; scopes = $Scopes } } }
+# daily: marks whose snapshot is gone expire; snapshots no mark holds (pruned past marks.max) are dropped
+function Update-SnapMarks([string]$e) {
+  $ad = Get-DbEngine $e; if (-not ($ad.binlogs -is [scriptblock])) { return "[$e] marks: $(@((Read-State $e).marks).Count) kept (an SCN mark past the undo retention is refused at restore)" }
+  $live = @(Invoke-DbEngine $e 'binlogs'); $o = @{ gone = @(); held = @() }
+  Update-State $e { param($x) $o.gone = @(@($x.marks) | Where-Object { $_ -and ($_.pos -split ':')[0] -notin $live }); $o.held = @(@($x.marks) | Where-Object { $_ } | ForEach-Object { ($_.pos -split ':')[0] })
+    if ($o.gone.Count) { $x.expiredMarks = @(@($x.expiredMarks) + @($o.gone.name) | Where-Object { $_ } | Select-Object -Last 10); $x.marks = @(@($x.marks) | Where-Object { $_ -and $_.name -notin $o.gone.name }) } }
+  foreach ($t in @($live | Where-Object { $_ -like 'kitsnap*' -and $_ -notin $o.held })) { try { Invoke-DbEngine $e 'unsnap' @{ pos = "${t}:0" } } catch { } }
+  "[$e] marks: $(@((Read-State $e).marks).Count) kept$(if ($o.gone.Count) { ", expired (snapshot gone): $(@($o.gone.name) -join ', ')" })"
+}
+# a snapshot restore's plan (RestorePlanText shape): the scopes back whole; refused when its snapshot is gone
+function Get-SnapRestorePlan([string]$e, $m, [string[]]$Schemas) {
+  $p = @{ statements = 0; tables = @{}; steps = @(); drops = @(); renames = @(); objects = @(); objectDrops = @(); fallback = @(); warnings = @(); refused = @(); bytes = 0; to = ''; snapshot = "$(@($Schemas) -join ', ') back whole to mark $($m.name) ($($m.pos))" }
+  if ((Get-DbEngine $e).binlogs -is [scriptblock] -and ($m.pos -split ':')[0] -notin @(Invoke-DbEngine $e 'binlogs')) { $p.refused = @("mark $($m.name): its snapshot is gone") }
+  $p
+}
+# writers stopped: the engine's revert; its fallback tables seed (Invoke-RestoreFallback); marks after it dropped; $null = ok
+function Invoke-SnapRestoreDb([string]$e, $m, [string[]]$Schemas) {
+  $r = try { Invoke-DbEngine $e 'revert' @{ pos = $m.pos; scopes = $Schemas } } catch { return "snapshot revert failed: $("$_".Split("`n")[0])" }
+  $script:RestoreFallback = @(@($r.fallback) | Where-Object { $_ })
+  $later = @(@((Read-State $e).marks) | Where-Object { $_ -and (Test-DbPosBefore $m.pos $_.pos) })
+  foreach ($x in $later) { try { if ((Get-DbEngine $e).unsnap -is [scriptblock]) { Invoke-DbEngine $e 'unsnap' @{ pos = $x.pos } } } catch { } }
+  Update-State $e { param($x) $x.marks = @(@($x.marks) | Where-Object { $_ -and $_.name -notin @($later.name) }) }
+  Event $e 'restore-db' @{ mark = $m.name; snapshot = $true; fallback = @($script:RestoreFallback | ForEach-Object table); warnings = @($r.warnings) }
+  $null
+}
+# ---- temp: per connection temp on disk (the engine's tempSql: mysql session temp tablespaces + TempTable mmap files, mariadb
+# TMP_SPACE_USED, postgres pg_ls_tmpdir, sqlserver tempdb pages, oracle temp segments), the watchdog; server caps (mysql)
 function Test-DbTemp([string]$e) { [bool](Get-DbEngine $e).supportsTemp }
+function Test-DbTempUse([string]$e) { [bool](Get-DbEngine $e).tempSql }
 # -> { id, gb, secs, query } per connection, most temp first (sleeping ones too: a session keeps its temp tablespace until it ends)
 function Get-DbTempUse([string]$e) {
-  if (-not (Test-DbTemp $e)) { return @() }
-  @(Invoke-DbSql $e $script:DbTempSql | ForEach-Object { [pscustomobject]@{ id = $_[0]; gb = [double]$_[1]; secs = [int]$_[2]; query = "$($_[3])" } })
+  if (-not (Test-DbTempUse $e)) { return @() }
+  @(Invoke-DbSql $e ([string](Get-DbEngine $e).tempSql) | ForEach-Object { [pscustomobject]@{ id = "$($_[0])".Trim(); gb = [double]$_[1]; secs = [int]$_[2]; query = "$($_[3])" } })
 }
-function Stop-DbConn([string]$e, [string]$Id) { if ($Id -notmatch '^\d+$') { throw "kill needs a connection id, not '$Id'" }; $null = Invoke-DbSql $e "KILL $Id" }
+function Stop-DbConn([string]$e, [string]$Id) { Invoke-DbEngine $e 'kill' @{ id = $Id } }
 # the controller's watchdog: the connection using the most temp above db.tempMaxGB (default localEnv.db.tempMaxGB) is killed -> its line, else nothing
 function Invoke-DbTempWatch([string]$e) {
   $max = [double]$(if ((Get-EnvCfg $e).db.tempMaxGB) { (Get-EnvCfg $e).db.tempMaxGB } else { Get-KitParam 'localEnv.db.tempMaxGB' })

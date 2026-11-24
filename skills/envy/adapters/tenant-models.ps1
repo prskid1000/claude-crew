@@ -7,7 +7,7 @@
 # Verbs: list @{ e } -> { name, registry, keep, mb } · drop @{ e; names; dryRun } -> lines · import @{ e; from; tenant; as; mask;
 #   dryRun; refresh } -> lines · footprint @{ e; name } -> { steps, schema, mb } · scopes @{ e } -> extra data scopes (optional).
 # A model without a verb refuses it ("tenant-model <m>: verb <v> not implemented"). A local adapter adds a model the same way.
-# Sections: L11 models · L41 envy.ps1 tenant
+# Sections: L11 models · L59 envy.ps1 tenant
 # ---- models: the model lookup and each tenant-model registration
 function Get-TenantModel([string]$e) { $m = "$((Get-EnvCfg $e).tenants.model)".ToLower(); if ($m) { $m } else { 'none' } }
 function Invoke-TenantModel([string]$e, [string]$Verb, [hashtable]$a = @{}) {
@@ -16,7 +16,8 @@ function Invoke-TenantModel([string]$e, [string]$Verb, [hashtable]$a = @{}) {
   if (-not ($ad[$Verb] -is [scriptblock])) { throw "[$e] tenant-model ${m}: verb $Verb not implemented$(if ($m -eq 'none') { " (set envs.$e.tenants.model: $(@($KitAdapters['tenant-model'].Keys | Where-Object { $_ -ne 'none' } | Sort-Object) -join ' | '))" })" }
   $a.e = $e; & $ad[$Verb] $a $Verb
 }
-Register-KitAdapter tenant-model none @{}
+# none: no tenants (tenant verbs refuse, naming the models); no extra scopes
+Register-KitAdapter tenant-model none @{ scopes = { param($a) @() } }
 & { $schema = @{
     list      = { param($a) Get-TenantList $a.e }
     footprint = { param($a) Get-TenantPlan $a.e $a.name @() -NoUsers }
@@ -32,11 +33,28 @@ Register-KitAdapter tenant-model column @{
   list = { param($a) $e = $a.e; $t = (Get-EnvCfg $e).tenants; $c = $t.column
     if (-not $c.table -or -not $c.column -or "$($c.table)$($c.column)" -notmatch '^[\w.]+$') { throw "[$e] tenants.model column needs tenants.column { table, column } (plain names)" }
     @(Invoke-DbSql $e "SELECT DISTINCT $($c.column) FROM $($c.table)" | ForEach-Object { "$($_[0])" } | Where-Object { $_ -and $_ -ne 'NULL' } | ForEach-Object {
-        [pscustomobject]@{ name = $_; registry = $true; keep = $(if ($_ -in @($t.keep)) { 'tenants.keep' }); mb = 0 } }) } }
-# instance = one server per tenant: tenants.instances [{ name, db }] (list only: no drop, import or marks across servers)
+        [pscustomobject]@{ name = $_; registry = $true; keep = $(if ($_ -in @($t.keep)) { 'tenants.keep' }); mb = 0 } }) }
+  # footprint: rows per table holding the column; drop: those rows deleted, the registry table last, passes until foreign keys allow
+  footprint = { param($a) $c = (Get-EnvCfg $a.e).tenants.column; if ("$($c.column)" -notmatch '^\w+$') { throw "[$($a.e)] tenants.model column needs tenants.column { table, column } (plain names)" }; $v = "'$("$($a.name)".Replace("'", "''"))'"
+    @{ steps = @(Get-TenantColumnTables $a.e | ForEach-Object { @{ table = $_; where = "$($c.column) = $v"; rows = [long]@(Invoke-DbSql $a.e "SELECT COUNT(*) FROM $_ WHERE $($c.column) = $v")[0][0] } }); schema = $null; mb = 0 } }
+  drop = { param($a) $e = $a.e; $t = (Get-EnvCfg $e).tenants
+    foreach ($n in @($a.names)) {
+      if ($n -in @($t.keep)) { "[$e] tenant $n kept (tenants.keep): not dropped"; continue }
+      $fp = Invoke-TenantModel $e 'footprint' @{ name = $n }; $todo = @($fp.steps | Where-Object { $_.rows } | Sort-Object { $_.table -eq "$($t.column.table)" })
+      if ($a.dryRun) { "[$e] tenant ${n}: would delete $(@($todo | ForEach-Object { "$($_.rows) row(s) from $($_.table)" }) -join ', ')"; continue }
+      for ($pass = 0; $todo.Count -and $pass -lt 5; $pass++) { $todo = @($todo | Where-Object { $s = $_; try { $null = Invoke-DbSql $e "DELETE FROM $($s.table) WHERE $($s.where)" 600; $false } catch { $true } }) }
+      if ($todo.Count) { "[$e] tenant ${n}: rows left in $(@($todo.table) -join ', ') (foreign keys from tables without $($t.column.column)): delete them, then drop again" } else { "[$e] tenant ${n}: rows deleted from $(@($fp.steps | Where-Object { $_.rows }).Count) table(s)" } } }
+  scopes = { param($a) @() } }
+# the tables holding tenants.column.column: tenants.column.tables, else information_schema.COLUMNS (mysql, mariadb, postgres, sqlserver)
+function Get-TenantColumnTables([string]$e) {
+  $c = (Get-EnvCfg $e).tenants.column; if (@($c.tables | Where-Object { $_ }).Count) { return @($c.tables | Where-Object { "$_" -match '^[\w.$]+$' }) }
+  @(Invoke-DbSql $e "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.COLUMNS WHERE COLUMN_NAME = '$($c.column)' AND TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys', 'pg_catalog')" | ForEach-Object { "$($_[0]).$($_[1])" } | Where-Object { $_ -match '^[\w.$]+$' })
+}
+# instance = one server per tenant: tenants.instances [{ name, db }]; drop / import / footprint: on the tenant's own env (fallback)
 Register-KitAdapter tenant-model instance @{
   list = { param($a) $t = (Get-EnvCfg $a.e).tenants
-    @(@($t.instances) | Where-Object { $_.name } | ForEach-Object { [pscustomobject]@{ name = "$($_.name)"; registry = $true; keep = $(if ("$($_.name)" -in @($t.keep)) { 'tenants.keep' }); mb = 0 } }) } }
+    @(@($t.instances) | Where-Object { $_.name } | ForEach-Object { [pscustomobject]@{ name = "$($_.name)"; registry = $true; keep = $(if ("$($_.name)" -in @($t.keep)) { 'tenants.keep' }); mb = 0 } }) }
+  scopes = { param($a) @() } }
 
 # ---- envy.ps1 tenant: list = keep / drop with sizes; drop -Name a,b [-DryRun]; import -From -Tenant [-As] -Mask [-DryRun] [-Refresh]
 #      (runs inside Invoke-LocalEnv: its parameters and helpers are in scope)

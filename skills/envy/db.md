@@ -1,8 +1,9 @@
 # Local env DB (envy SKILL.md "Model" detail)
 Read by datay, the coordinator (`mark`, `restore`, `seed`, `tenant`, `teardown`, `dbtemp`), kitty wiring `db`, devy with a
-migration layer. `db.engine` = an `adapters/db-engines.ps1` adapter (kind db-engine: mysql, mariadb, postgres, sqlserver,
-sqlite, oracle, mongodb; a verb an engine lacks refuses, never another engine's client); marks, restore, the cascade guard and
-the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever dumped whole.
+migration layer. `db.engine` = an `adapters/db-engines.ps1` adapter (kind db-engine, README
+Adapters; a verb an engine lacks refuses, never another engine's client); the cascade
+guard and the schema tenant model need mysql / mariadb (`supportsMarks`); never a whole dump. Snapshot marks (sqlserver,
+sqlite, oracle, search engines) revert the scopes whole.
 - Scopes (`Get-DataScopes`): `db.schemas` + `db.schemasQuery`, else `db.name`; a mark records them, a restore uses the mark's.
 
 ## Migration tool (kind migration)
@@ -16,7 +17,7 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
   | none: what a tenant import runs after the load.
 
 ## DB marks, restore, seed
-- Mark = a binlog position + the code live then (zero bytes): `mark -Name <n>` by hand, `release-<n>` before each release's
+- Mark = a binlog position (or snapshot) + the code live then: `mark -Name <n>` by hand, `release-<n>` before each release's
   code first runs, `use-<agent>` at each new lease, `baseline-<nnnn>` after a green `seed`.
 - Slices: a release with migrations (layers or the target) also keeps the CREATE text of each table its migrations touch
   (`db.migrateSql` = the tool's dry-run SQL; unset: each migration set's pendingSql, e.g. `liquibase update-sql`; else the changed migration files'

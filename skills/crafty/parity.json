@@ -96,24 +96,30 @@
       "file": "skills/envy/adapters/db-engines.ps1",
       "verbs": "query exec jdbc sql",
       "names": "",
-      "caps": "marks temp sizes",
+      "caps": "marks temp sizes kill snap revert unsnap",
       "capKeys": {
-        "marks": "supportsMarks",
-        "temp": "supportsTemp",
+        "marks": "supportsMarks revert",
+        "temp": "supportsTemp tempSql",
         "sizes": "schemaSizes sizes"
       },
       "vendors": "mysql mariadb postgres sqlserver sqlite oracle mongodb redis elasticsearch opensearch",
       "fallback": {
-        "query": "the env's db.query line (db-presets.ps1 fills only what the env lacks)",
-        "exec": "the env's db.exec line",
-        "jdbc": "the env's db.jdbc line"
+        "query": "the engine's sql verb when the env sets no db.query line (envy.ps1 Invoke-Hook query: oracle's sqlplus has no one-line form)",
+        "snap": "none needed: the position (a binlog file:offset, an SCN) is the mark, zero bytes",
+        "unsnap": "none needed: a position mark holds no snapshot",
+        "revert": "the binlog flashback restore (db_flashback.py, mysql / mariadb)",
+        "binlogs": "no expiry list: a mark past the engine retention (oracle undo) is refused at restore"
       },
       "gaps": {
         "redis/sql": "no such feature: https://redis.io/docs/latest/commands/ commands on keys, no statement language with rows: Invoke-DbSql refuses (db.schemasQuery, tenants column model); envy.ps1 sql runs the query preset (raw commands)",
-        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/marks": "no binlog marks: restore by seed",
-        "mariadb,postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/temp": "no temp-space watchdog or pool check",
-        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/pos": "marks engines only (supportsMarks)",
-        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/binlogs": "marks engines only (supportsMarks)"
+        "redis/jdbc": "no such feature: https://redis.io/docs/latest/develop/clients/ Redis clients speak RESP, no JDBC driver or SQL: an app takes the env's redis URL from its own config",
+        "postgres/marks,pos,binlogs,snap,revert,unsnap": "no such feature: https://www.postgresql.org/docs/current/continuous-archiving.html point-in-time recovery replays WAL into a whole cluster from a base backup with the server stopped; no per-database restore point on a live server (a TEMPLATE copy is a full copy, never made by the kit): restore by seed",
+        "mongodb/marks,pos,binlogs,snap,revert,unsnap": "no such feature: https://www.mongodb.com/docs/manual/core/backups/ point-in-time restore needs Atlas / Ops Manager backup; the server alone has mongodump (a full dump, never made by the kit): restore by seed",
+        "redis/marks,pos,binlogs,snap,revert,unsnap": "no such feature: https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/ an RDB snapshot covers the whole instance and loads only at server start: no restore on a live server; restore by seed",
+        "sqlite/temp,kill": "no such feature: https://www.sqlite.org/serverless.html an embedded engine: no server connections to measure or end; the db file is the whole store (the storage guard sizes it)",
+        "mongodb/temp,kill": "no such feature: https://www.mongodb.com/docs/manual/reference/command/currentOp/ currentOp reports no per-operation temp disk (allowDiskUse spills are not counted per op): maxTimeMS bounds a query",
+        "redis/temp,kill": "no such feature: https://redis.io/docs/latest/commands/client-list/ an in-memory store: no temp disk per connection (CLIENT LIST shows memory only)",
+        "elasticsearch,opensearch/temp,kill": "no such feature: https://www.elastic.co/guide/en/elasticsearch/reference/current/tasks.html tasks report no per-search temp disk; search memory is bounded by circuit breakers"
       }
     },
     "tenant-model": {
@@ -123,10 +129,12 @@
       "names": "",
       "vendors": "none schema database column instance",
       "gaps": {
-        "none/list,drop,import,footprint": "no tenants: every verb works on the db scope",
-        "column/drop,import,footprint": "tenants are column values in one shared scope: list only",
-        "instance/drop,import,footprint": "one server per tenant: list only",
-        "none,column,instance/scopes": "no extra data scopes"
+        "none/list,drop,import,footprint": "no tenants (tenants.model none): each tenant verb refuses, naming the models to set; every other verb works on the db scope"
+      },
+      "fallback": {
+        "import": "the env's seed (envy.ps1 seed: the tenant's rows as seed items) or the app's own tenant import (column: rows share tables with every tenant; instance: the tenant's server is an env of its own)",
+        "drop": "instance: the tenant's server is an env of its own (envy.ps1 teardown / down there)",
+        "footprint": "instance: the tenant's server is an env of its own (envy.ps1 sql -Query schemaSizes there)"
       }
     },
     "migration": {
