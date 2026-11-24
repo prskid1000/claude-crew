@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L256 budget · L286 launch · L529 recover · L616 pause · L627 resume · L694 program · L722 param ·
   L728 track · L1117 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
-  L1734 decide · L1904 debate · L1948 health · L2016 setup · L2111 guard-sendmessage
+  L1734 decide · L1897 debate · L1941 health · L2009 setup · L2104 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1732,17 +1732,6 @@ function Invoke-Learn {
 }
 
 # ---- decide: decision pauses; only that item waits
-# the task's Decisions checklist (Format-KitDecisionItems), no comment
-function Publish-KitDecisions([string]$Task, [string]$Link) {
-  $rows = @(Get-KitTaskDecisionRows $Task); if (-not $rows.Count) { return "NONE $Task`: no decision records for it (decide ask / record -Task)" }
-  $tt = try { Get-TrackerTask $Task } catch { $null }; if (-not $tt.name) { return "SKIP $Task`: no readable tracker task (an item code?): nothing published" }   # -Item A2 resolves to task A2
-  if (-not $Link) { $Link = "$((Read-KitState (Get-KitTaskFile $Task)).decisions.link)" }
-  $items = @(Format-KitDecisionItems $rows $Link $Task)
-  $null = Test-KitProse -Kind decisions -Text (@($items.text) -join "`n")   # warnings only: the records are the facts
-  $r = Set-KitTaskChecklist $Task 'Decisions' $items; $null = Set-KitTaskTags $Task @("decision=$(if (@($items | Where-Object { -not $_.done }).Count) { 'needs-owner' } else { '-needs-owner' })") -Soft
-  Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-KitStamp) } }
-  "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
-}
 function Invoke-Decide {
   param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check', 'publish', 'rules')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
@@ -1820,13 +1809,17 @@ function Invoke-Decide {
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
       # a scope ask (-Gate scope, or naming `decide record -Gate scope`) answered by a recording pick: the scope word (wt commit -ScopeOk)
-      $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope' -or "$($o.question)" -match '(?i)\boutside (the )?(area|scope)\b') { "$($o.item)" }
-      $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
+      # dec-37: "outside the web-payments paths" / "(scope-ok ...)" was a scope ask the old wording test missed
+      $isScope = $o.gate -eq 'scope' -or "$($o.question) $(@($o.options | ForEach-Object label) -join ' ')" -match '(?i)\boutside\b[^.?]{0,60}\b(area|paths?|scope)\b|\bscope[- ]?(ok|word|record)\b'
+      $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($isScope) { "$($o.item)" }
+      $scBr = @(if ($scItem -or $isScope) { Get-KitAgentBranches $o.agent $o.run }); if (-not $scItem -and $scBr.Count) { $scItem = $scBr[0] }
+      $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]; $said = if ($pick) { "$($pick.label)" } else { $Answer }
       if ($scItem -and $By -notmatch $crewRx) {
-        if ($pick -and "$($pick.label)" -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept)\b' -and "$($pick.label)" -notmatch "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep|drop|skip|remove|exclude|decline|undo|without|narrow)\b") {
+        $denyRx = "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep|drop|skip|remove|exclude|decline|undo|without|narrow)\b"
+        if (($said -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept|change|extend)\b' -or $Answer -match '(?i)\bscope[- ]?ok\b') -and $said -notmatch $denyRx -and $Answer -notmatch $denyRx) {
           $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
             kind = 'decision'; run = $o.run; agent = 'coordinator'; item = $scItem; gate = 'scope'; question = $o.question; options = @(); blocking = $false; status = 'answered'; at = $now
-            task = "$($o.task)"; mrs = @($o.mrs); answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }
+            task = "$($o.task)"; mrs = @($o.mrs); branches = $scBr; answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }
           & $save $sc; $o | Add-Member -Force scopeId $sc.id; & $save $o; & $note $o.contracts "DECISION $Id SCOPE WORD $($sc.id) ($scItem)"; "SCOPE RECORDED $($sc.id) (scope $scItem, from $Id): pass it to the agent (wt commit -ScopeOk $($sc.id))"
         } else { "scope ask $Id answered without a record / approve pick: no scope word (decide record -Gate scope -Item $scItem when the owner allows it)" }
       }
@@ -1872,7 +1865,7 @@ function Invoke-Decide {
         Where-Object { $_.status -eq 'answered' -and $_.kind -ne 'envfix' } |
         Where-Object {
           # every key given matches: a staging yes never serves production
-          $rec = $_; $itemOk = -not $items.Count -or $rec.item -in $items -or ($rec.task -and $rec.task -in $wantTasks) -or @($rec.mrs | Where-Object { $_ -in $items }).Count -or
+          $rec = $_; $itemOk = -not $items.Count -or $rec.item -in $items -or ($rec.task -and $rec.task -in $wantTasks) -or @(@($rec.mrs) + @($rec.branches) | Where-Object { $_ -and $_ -in $items }).Count -or
             ($rec.gate -eq 'scope' -and @($items | Where-Object { $bt = $_ -split '[/_.-]'; @("$($rec.task)", "$($rec.item)" | Where-Object { $_.Length -ge 6 -and $_ -in $bt }).Count }).Count)   # an item's scope word serves its branch
           $mrOk = -not $wantMrs.Count -or -not @($wantMrs | Where-Object { $_ -notin @($rec.mrs) }).Count
           $gateOk = if ($Id) { $rec.id -eq $Id -and ($rec.gate -or $Item -or $wantMrs.Count) -and $(if ($gates.Count -gt 1) { $rec.gate -in $gates } else { -not $rec.gate -or $Gate -notin $kitGates -or $rec.gate -eq $Gate }) } else { $rec.gate -in $gates }

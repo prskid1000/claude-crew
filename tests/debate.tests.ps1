@@ -2,7 +2,7 @@
 <#
 debate.tests.ps1: bossy.ps1 decide ask / answer / envfix (a bare ask refused: specs.tests), debate (1 per run, -Owner, A/B options, each role's
 Character, the owner's table + decide ask) and the
-buildy sims of the review rebuttal (disputes) and the trigger debates (brief, dispute, rejected twice, low confidence); board join of
+buildy sims of the review rebuttal (disputes), the trigger debates and the phases (code, loop, docs; a handoff before the loop) (brief, dispute, rejected twice, low confidence); board join of
 one id spawned twice (PARALLEL, REJOIN only with claims or -Session); bugbrief (repos from MRs, else configured; Migration range).
 Usage: pwsh -NoProfile -File <kit>/tests/debate.tests.ps1 (or tests/kit-tests.ps1 -Area debate).
 Exit codes: 0 pass · 1 a check failed.
@@ -146,11 +146,52 @@ $siC, $siN = foreach ($b in 'itm4321x', 'oth99') { pwsh @np $O decide check -Gat
 $sdA = pwsh @np $O decide ask -Run r -Agent devy -Item itm5 -Question 'Fix in Svc.java, outside the area.' -Context 'today: saves fail' -Options 'A: drop Svc.java, add a test — saves fail', 'B: no — x' -Recommend A | Out-String
 $sdR = pwsh @np $O decide answer -Id $(if ($sdA -match 'DECISION (\S+)') { $Matches[1] }) -Answer 'A' | Out-String
 Expect "decide answer: an item's scope word is found for a branch naming the item, not another; a 'drop ..., add' pick records none ($siR | $siC | $sdR)" ($siR -match 'SCOPE RECORDED' -and $siC -match '^WORD ' -and $siN -notmatch '^WORD ' -and $sdR -match 'no scope word')
+# dec-37: "outside the <area> paths" wording, a branch not naming the item: the record carries the asking agent's checkpoint branch
+$sbRepo = Join-Path (Kd) 'scbr'; git init -q -b feat/PAY-1-methods $sbRepo; git -C $sbRepo commit -q --allow-empty -m init
+$null = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') checkpoint -Agent devy-pay -Run r -Step worktree -Dir $sbRepo
+$sbA = pwsh @np $O decide ask -Run r -Agent devy-pay -Item G9-methods -Question 'Angular needs the card registered in app.module.ts, which is outside the web-payments paths. How do we wire it?' -Context 'today: the card is not shown' -Options 'A: add one import line to app.module.ts (scope-ok for that file) — the card shows', 'B: build the card inline in the page — a bigger page' -Recommend A | Out-String
+$sbR = pwsh @np $O decide answer -Id $(if ($sbA -match 'DECISION (\S+)') { $Matches[1] }) -Answer 'A: one import line (scope ok)' | Out-String
+$sbC = pwsh @np $O decide check -Gate scope -Item feat/PAY-1-methods | Out-String
+$scA = pwsh @np $O decide ask -Run r -Agent devy-pay -Item 5jet-T4 -Question 'The old assertion in lib.spec.ts sits outside the web-orders paths: change it?' -Context 'today: one test pins the old rule' -Options 'A: change it — the test pins the new rule', 'B: leave it red — the MR ships a red test' -Recommend A | Out-String
+$scR = pwsh @np $O decide answer -Id $(if ($scA -match 'DECISION (\S+)') { $Matches[1] }) -Answer 'A (scope ok)' | Out-String
+# a declining pick records none: the recommended B "build it inline" and "B (no scope ok needed)"
+$sxR = foreach ($sxAns in 'B', 'B (no scope ok needed)') { $sxA = pwsh @np $O decide ask -Run r -Agent devy-pay -Item G9x -Question 'The card needs app.module.ts, outside the web-payments paths: how?' -Context 'today: the card is not shown' -Options 'A: register it in app.module.ts — the card shows', 'B: build the card inline in the page — a bigger page' -Recommend B | Out-String
+  pwsh @np $O decide answer -Id $(if ($sxA -match 'DECISION (\S+)') { $Matches[1] }) -Answer $sxAns | Out-String }
+Expect "decide answer: a recommended decline pick and a 'no scope ok' answer record no scope word ($sxR)" (@($sxR | Where-Object { $_ -match 'no scope word' -and $_ -notmatch 'SCOPE RECORDED' }).Count -eq 2)
+Expect "decide answer: a scope ask worded 'outside the <area> paths' records the agent's branch, a 'change it' pick too (dec-42); check finds the word by that branch ($sbR | $sbC | $scR)" ($sbR -match 'SCOPE RECORDED' -and $sbC -match '^WORD ' -and $scR -match 'SCOPE RECORDED')
 # decide.neverAuto adds an org's words to the kit's never-auto list (deploy, prod, data ... stay)
 $nvq = { (Invoke-PsTest never-auto @'
 $null = . $args[0] 6>$null; "$(Test-KitRuleSensitive 'scope' 'Send the invoice batch?')|$(Test-KitRuleSensitive 'scope' 'Deploy it now?')|$(Test-KitRuleSensitive 'scope' 'Sort by name?')"
 '@ @($O) | Select-Object -Last 1) }
 $nv0 = & $nvq; $kcf = Join-Path $k 'skills/crafty/kit.local.json'; $kco = if (Test-Path $kcf) { Get-Content $kcf -Raw | ConvertFrom-Json -AsHashtable } else { @{} }; $kco.decide = @{ neverAuto = @('invoice\w*') }; Set-JsonFile $kcf $kco; $nv1 = & $nvq
 Expect "decide.neverAuto: org words join the built-in list ($nv0 -> $nv1)" ("$nv0" -eq 'False|True|False' -and "$nv1" -eq 'True|True|False')
+# buildy phases (T2): code -> loop -> docs, each a fresh devy; the ship phase keeps the loop's localTest; phases:false = one devy
+$jsph = @'
+const lt = (status) => ({ status, env: status === 'NONE' ? 'phase code' : 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' })
+const mk = (mode) => _mock((prompt, o) => {
+ if (/^build:/.test(o.label)) return o.label === 'build:X1' && /PHASE code/.test(prompt) ? _rep(lt('NONE'), { mrs: [], ...(mode === 'codehandoff' ? { handoff: 'C:/b/c.md' } : {}) }) : _rep(lt('PASS'))
+ if (/^loop:/.test(o.label)) return mode === 'nullloop' ? null : mode === 'loophandoff' ? _rep(lt('NONE'), { mrs: [], handoff: 'C:/b/l.md' }) : _rep(lt('PASS'), { mrs: [] })
+ if (/^handoff:/.test(o.label)) return _rep(lt('NONE'))
+ if (/^docs:/.test(o.label)) return _rep(lt('NONE'), mode === 'handoff' ? { handoff: 'C:/b/h.md' } : {})
+ if (/^review:/.test(o.label)) return { findings: [] }
+ if (/^ship:/.test(o.label)) return _rep(lt('PASS'), _merged(1))
+}, '[]')
+const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl }
+const p = mk(), q = mk(), h = mk('handoff'), n = mk('nullloop'), c = mk('codehandoff'), lh = mk('loophandoff')
+run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }, q.agent, _n, _n, pipeline).then(() => run(args, h.agent, _n, _n, pipeline)).then(() => run(args, n.agent, _n, _n, pipeline)).then(() => run(args, c.agent, _n, _n, pipeline)).then(() => run(args, lh.agent, _n, _n, pipeline)).then(() => {
+ const L = p.calls.map((c) => c.label), d = p.calls.find((c) => c.label === 'docs:X1')
+ console.log(`order:${L.indexOf('build:X1') < L.indexOf('loop:X1') && L.indexOf('loop:X1') < L.indexOf('docs:X1') && L.indexOf('docs:X1') < L.indexOf('review:X1')}`)
+ console.log(`prompts:${/PHASE local/.test(p.calls.find((c) => c.label === 'loop:X1').prompt) && /PHASE ship/.test(d.prompt) && /ship\.md/.test(d.prompt) && d.model === 'sonnet'}`)
+ console.log(`kept:${p.calls.some((c) => c.label === 'ship:X1') && !op.blocked.length}`)
+ const hc = h.calls.find((c) => c.label === 'handoff:X1'), nd = n.calls.find((c) => c.label === 'docs:X1')
+ console.log(`handoff:${!!hc && /resume brief C:\/b\/h\.md/.test(hc.prompt) && /PHASE ship/.test(hc.prompt) && !/LOOP FIRST/.test(hc.prompt)}`)
+ // a loop-phase handoff with no passing loop: the resume starts with it; a code-phase one keeps PHASE code (the loop phase follows)
+ const cc = c.calls.find((x) => x.label === 'handoff:X1'), lc = lh.calls.find((x) => x.label === 'handoff:X1'), hl = (x) => x.prompt.split('\n').find((l) => /LOOP FIRST|HANDOFF/.test(l)) || ''
+ console.log(`loopfirst:${!!cc && !!lc && /^LOOP FIRST: .*local test loop/.test(hl(lc)) && /^HANDOFF/.test(hl(cc))}`)
+ console.log(`held:${!!nd && /Draft MRs only/.test(nd.prompt) && !/Draft MRs only/.test(p.calls.find((c) => c.label === 'docs:X1').prompt)}`)
+ console.log(`off:${!q.calls.some((c) => /^(loop|docs):/.test(c.label)) && !/PHASE code/.test(q.calls.find((c) => c.label === 'build:X1').prompt)}`)
+})).catch(_err)
+'@
+Expect-Each (Invoke-Js dw-phases $jsph $wfd) 'buildy phases: # (code, loop, docs as fresh devy; phases:false = one devy)' 'order', 'prompts', 'kept', 'off', 'handoff', 'held', 'loopfirst' -Show 7
 Remove-TestKit $k
 Complete-Tests

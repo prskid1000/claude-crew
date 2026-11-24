@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy · L441 collisions
+Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy · L441 collisions · L451 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -447,3 +447,23 @@ function Test-KitCollision([string]$Text) {
 function Get-KitAreaKey([string]$Label) { ("$Label" -split ':')[-1] -replace '@.*$' -replace '^area-' }
 # collisions still open: no later run (created after) delivered MRs for that area
 function Select-KitOpenCollisions($Collisions, [hashtable]$DeliveredAt) { @($Collisions | Where-Object { -not ($DeliveredAt[(Get-KitAreaKey $_.label)] -gt $_.created) }) }
+
+# ---- decisions: the Decisions checklist, scope-word branches (from bossy.ps1: its token cap)
+# the task's Decisions checklist (Format-KitDecisionItems), no comment
+function Publish-KitDecisions([string]$Task, [string]$Link) {
+  $rows = @(Get-KitTaskDecisionRows $Task); if (-not $rows.Count) { return "NONE $Task`: no decision records for it (decide ask / record -Task)" }
+  $tt = try { Get-TrackerTask $Task } catch { $null }; if (-not $tt.name) { return "SKIP $Task`: no readable tracker task (an item code?): nothing published" }   # -Item A2 resolves to task A2
+  if (-not $Link) { $Link = "$((Read-KitState (Get-KitTaskFile $Task)).decisions.link)" }
+  $items = @(Format-KitDecisionItems $rows $Link $Task)
+  $null = Test-KitProse -Kind decisions -Text (@($items.text) -join "`n")   # warnings only: the records are the facts
+  $r = Set-KitTaskChecklist $Task 'Decisions' $items; $null = Set-KitTaskTags $Task @("decision=$(if (@($items | Where-Object { -not $_.done }).Count) { 'needs-owner' } else { '-needs-owner' })") -Soft
+  Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-KitStamp) } }
+  "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
+}
+# an agent's branches (its leased pool slots, its checkpoint worktrees): an answered scope ask records them (wt commit checks by branch)
+function Get-KitAgentBranches([string]$Agent, [string]$Run = '') {
+  if (-not $Agent) { return @() }
+  $ck = Get-KitCheckpoint $Agent $Run
+  @(@(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.agent -eq $Agent -and -not $_.parked } | ForEach-Object branch) +
+    @(@($ck.worktrees) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { "$(git -C $_ branch --show-current 2>$null)".Trim() }) | Where-Object { $_ } | Select-Object -Unique)
+}

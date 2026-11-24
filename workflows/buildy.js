@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L267 ship-prompt · L284 plan · L303 spike ·
-//   L315 local-loop · L405 stages · L559 ship · L599 debate · L708 deploy · L723 learn
+//   L315 local-loop · L408 stages · L562 ship · L602 debate · L711 deploy · L726 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -367,17 +367,19 @@ async function noneWordOk(a, r, id) {
  return /^WORD /.test(out)
 }
 const mergeHeld = async (lt, a, r) => holdsMerge(lt, a, r) || (noneGated(lt, a, r) && !(await noneWordOk(a, r, lt.decisionId)))
-// a run stopped before Learn lost its signals (4 runs, retro tidy-3): each handoff records the previous devy's first
+// each handoff records the previous devy's signals first (tidy-3)
 const LEARN_NOW = LEARN === false ? '' : ` First record its notable events (failures, rounds, blockers, decisions) as signals: & ${ORCH} learn -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref ${RUN} -Source workflow.`
+// tidy-5: a code handoff before a passing loop resumes with it
+const LOOPED = new Set(), loopFirst = (a, x) => (['doc', 'spike', 'repro'].includes(a.kind) || LOOPED.has(a.id) || (x.localTest || {}).status === 'PASS' ? '' : 'LOOP FIRST: finish the open code, then the local test loop (step 5). ')
 async function localLoop(a, r, retries, stage) {
  for (let h = 0; r && r.handoff && h < 3; h++) {
   log(`${a.id}: HANDOFF at its budget (${r.handoff}): a fresh devy continues`)
-  const r2 = await agent(continuePrompt(a, r, `HANDOFF: the previous devy reached its budget; read its resume brief ${r.handoff} first and continue from there.${LEARN_NOW}`), dvo(a, 'handoff', stage))
+  const r2 = await agent(continuePrompt(a, r, `${loopFirst(a, r)}HANDOFF: read the previous devy's resume brief ${r.handoff} first, continue.${LEARN_NOW}`), dvo(a, 'handoff', stage))
   r = mergeReports({ ...r, handoff: '' }, r2, 'Handoff')
  }
  r = normLocal(r)
  if ((r.needsEnvFix || []).length) return r
- // done with no local loop (19 fix rounds, retro 1124): one local round before review, never a fix round
+ // done with no local loop (1124): one local round before review, never a fix round
  if (retries && (r.mrs || []).length && (r.localTest || { status: 'NONE' }).status === 'NONE' && await mergeHeld({ status: 'NONE', ...r.localTest }, a, r)) {
   if (!(await gate(stage))) return { ...r, budgetStopped: true }
   log(`${a.id}: reported done with no local loop - local round before review`)
@@ -399,6 +401,7 @@ From the evidence (logs, DB state, the reproduction): root cause, fix, redeploy,
 (THE DEV FLOW step 3), never a reason to stop.`), { ...dvo(a, 'local-strong', stage), model: MODELS.retest, effort: MODELS.retestEffort || 'high' })
   r = normLocal(mergeReports(r, r2, 'Stronger fix round'))
  }
+ if ((r.localTest || {}).status === 'PASS') LOOPED.add(a.id)
  return r
 }
 
@@ -424,7 +427,7 @@ const results = await pipeline(
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
   // a HANDOFF stays in its phase; no report after a redo: the phase before stands
   const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)
-  const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `HANDOFF: read your resume brief ${x.handoff} first, continue.${LEARN_NOW} ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
+  const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `${text === PH.code ? '' : loopFirst(a, x)}HANDOFF: read your resume brief ${x.handoff} first, continue.${LEARN_NOW} ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
   const phase = async (x, text, l, more) => ((await gate('Build')) ? goOnIn(mergeReports(x, asRep(await agentOrRedo(continuePrompt(a, x, text), { ...dvo(a, l, 'Build'), ...more })), `Phase ${l}`), text) : { ...x, budgetStopped: true })
   const phaseNext = (x) => ph && !x.budgetStopped && !(x.mrs || []).length && !(x.needsDecision || []).length && !(x.needsEnvFix || []).length
   r = await goOnIn(r, PH.code)

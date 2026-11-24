@@ -8,31 +8,6 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit workflows-generic; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $wfd = Join-Path $src 'workflows/buildy.js'; $wf = Join-Path $src 'workflows/testy.js'
-# buildy phases (T2): code -> loop -> docs, each a fresh devy; the ship phase keeps the loop's localTest; phases:false = one devy
-$jsph = @'
-const lt = (status) => ({ status, env: status === 'NONE' ? 'phase code' : 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' })
-const mk = (mode) => _mock((prompt, o) => {
- if (/^build:/.test(o.label)) return o.label === 'build:X1' && /PHASE code/.test(prompt) ? _rep(lt('NONE'), { mrs: [] }) : _rep(lt('PASS'))
- if (/^loop:/.test(o.label)) return mode === 'nullloop' ? null : _rep(lt('PASS'), { mrs: [] })
- if (/^handoff:/.test(o.label)) return _rep(lt('NONE'))
- if (/^docs:/.test(o.label)) return _rep(lt('NONE'), mode === 'handoff' ? { handoff: 'C:/b/h.md' } : {})
- if (/^review:/.test(o.label)) return { findings: [] }
- if (/^ship:/.test(o.label)) return _rep(lt('PASS'), _merged(1))
-}, '[]')
-const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl }
-const p = mk(), q = mk(), h = mk('handoff'), n = mk('nullloop')
-run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }, q.agent, _n, _n, pipeline).then(() => run(args, h.agent, _n, _n, pipeline)).then(() => run(args, n.agent, _n, _n, pipeline)).then(() => {
- const L = p.calls.map((c) => c.label), d = p.calls.find((c) => c.label === 'docs:X1')
- console.log(`order:${L.indexOf('build:X1') < L.indexOf('loop:X1') && L.indexOf('loop:X1') < L.indexOf('docs:X1') && L.indexOf('docs:X1') < L.indexOf('review:X1')}`)
- console.log(`prompts:${/PHASE local/.test(p.calls.find((c) => c.label === 'loop:X1').prompt) && /PHASE ship/.test(d.prompt) && /ship\.md/.test(d.prompt) && d.model === 'sonnet'}`)
- console.log(`kept:${p.calls.some((c) => c.label === 'ship:X1') && !op.blocked.length}`)
- const hc = h.calls.find((c) => c.label === 'handoff:X1'), nd = n.calls.find((c) => c.label === 'docs:X1')
- console.log(`handoff:${!!hc && /resume brief C:\/b\/h\.md/.test(hc.prompt) && /PHASE ship/.test(hc.prompt)}`)
- console.log(`held:${!!nd && /Draft MRs only/.test(nd.prompt) && !/Draft MRs only/.test(p.calls.find((c) => c.label === 'docs:X1').prompt)}`)
- console.log(`off:${!q.calls.some((c) => /^(loop|docs):/.test(c.label)) && !/PHASE code/.test(q.calls.find((c) => c.label === 'build:X1').prompt)}`)
-})).catch(_err)
-'@
-Expect-Each (Invoke-Js dw-phases $jsph $wfd) 'buildy phases: # (code, loop, docs as fresh devy; phases:false = one devy)' 'order', 'prompts', 'kept', 'off', 'handoff', 'held' -Show 6
 # buildy deploy batch: skipped without adapters/deploys.ps1, else parsed
 $jsdp = @'
 const mk = (out, seen) => async (p, o) => { if (o.label === 'deploy-batch') { seen.push(p); return { ok: true, output: out } }
