@@ -1421,9 +1421,9 @@ function Show-KitPause {
 
 # ---- heartbeat: the E1 cron call, an overdue coordinator (health), collision words in agent results (supervise)
 # a coordinator beat within one interval = a heartbeat cron fires: never a second CronCreate (owner 2026-11-24: two supervise crons at once)
-function Get-KitBeatArmLine([datetime]$Now = (Get-Date)) {
-  $bmin = [double](Get-KitParam 'supervise.heartbeatMinutes'); $ca = try { (Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json).coordAt } catch { $null }
-  if ($ca -and ($Now - [datetime]$ca).TotalMinutes -le $bmin + 2) { return "heartbeat present (last beat $(([datetime]$ca).ToString('HH:mm'))): no CronCreate; CronList shows 2+ heartbeat crons -> CronDelete all but one" }
+function Get-KitBeatArmLine([datetime]$Now = (Get-Date), [switch]$Arm) {   # -Arm: overdue, the CronCreate text always
+  $bmin = [double](Get-KitParam 'supervise.heartbeatMinutes'); $ca = try { [datetime](Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json).coordAt } catch { $null }
+  if (-not $Arm -and $ca -and ($Now - $ca).TotalMinutes -le $bmin + 2) { return "heartbeat present (last beat $($ca.ToString('HH:mm'))): no CronCreate; CronList shows 2+ heartbeat crons -> CronDelete all but one" }
   "CronList has no heartbeat -> CronCreate cron '*/$([int]$bmin) * * * *', recurring: true, durable: true, prompt ""$(Get-KitBeatPrompt)"""
 }
 # health: the coordinator's beat passed while agents live (coordAt: not the OS timer's)
@@ -1433,7 +1433,7 @@ function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
   $last = [datetime]$(if ($s.coordAt) { $s.coordAt } else { $s.report.at }); $due = $last.AddMinutes([double](Get-KitParam 'supervise.heartbeatMinutes')); $late = [int]($Now - $due).TotalMinutes
   $bm = [double](Get-KitParam 'idle.beatMinutes')
   $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
-  if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now; $(Get-KitBeatArmLine)" }
+  if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now; $(Get-KitBeatArmLine -Arm)" }
 }
 # 'another agent' alone appears in normal fix reports (false ACT)
 function Test-KitCollision([string]$Text) {

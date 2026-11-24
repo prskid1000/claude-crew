@@ -56,14 +56,18 @@ $wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-It
 # progress past the beat (a long phase): a fresh file in its agent dir, its worktree or its QA run dir keeps it ACTIVE; S3 (all idle) stays STUCK
 $pw = Join-Path (Kd) 'pw-wt'; git init -q $pw; 'x' | Set-Content "$pw/edit.txt"; & $se P10 @{ beat = (& $ago 30); worktrees = @($pw) }
 & $se P11 @{ beat = (& $ago 30) }; $null = New-Item -ItemType Directory -Force (Join-Path (TkPath $k agents -Create) 'P11'); 'n' | Set-Content (Join-Path (TkPath $k agents) 'P11/notes.md')
-& $se P12 @{ beat = (& $ago 30); run = 'qa-p12' }; $null = New-Item -ItemType Directory -Force (Join-Path (TkPath $k qa-runs -Create) 'qa-p12/T1'); '{}' | Set-Content (Join-Path (TkPath $k qa-runs) 'qa-p12/T1/results.json')
+& $se P12 @{ beat = (& $ago 30); run = 'qa-p12'; items = 'T1' }; $null = New-Item -ItemType Directory -Force (Join-Path (TkPath $k qa-runs -Create) 'qa-p12/T1'); '{}' | Set-Content (Join-Path (TkPath $k qa-runs) 'qa-p12/T1/results.json')
+# not progress: an old file in its own agent dir (P13), a sibling's item in the same run dir (P14 tests T2)
+& $se P13 @{ beat = (& $ago 30) }; $p13 = Join-Path (TkPath $k agents) 'P13/old.md'; $null = New-Item -ItemType Directory -Force (Split-Path $p13); 'o' | Set-Content $p13; (Get-Item $p13).LastWriteTime = (Get-Date).AddMinutes(-40)
+& $se P14 @{ beat = (& $ago 30); run = 'qa-p12'; items = 'T2' }
 $st = Invoke-PsTest 'status' '. $args[0]; $r = Get-KitStatusRows; Format-KitStatusTable $r (Get-Date) $script:KitTxVersions; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object { "[$($_.level)] $($_.what)" }' @($O)
 $sv = { param($n, $rx) [bool]@($st | Where-Object { $_ -match "^\| $([regex]::Escape($n)) \|[^|]*\| $rx" }).Count }
 Expect "status: a beat 30 min old with a fresh worktree edit, agent dir file or QA run dir file = ACTIVE, no STUCK flag; S3 (all idle) still STUCK" ((& $sv 'P10 (devy)' 'ACTIVE') -and (& $sv 'P11 (devy)' 'ACTIVE') -and (& $sv 'P12 (devy)' 'ACTIVE') -and -not @($st -match '\[WATCH\] STUCK P1[012]').Count -and @($st -match '\[WATCH\] STUCK S3 ').Count)
+Expect "status: an old file in its agent dir or a sibling's fresh item in its run dir is no progress: STUCK" ((& $sv 'P13 (devy)' 'STUCK') -and (& $sv 'P14 (devy)' 'STUCK') -and @($st -match '\[WATCH\] STUCK P1[34] ').Count -eq 2)
 # a coordinator beat within one interval: health says the heartbeat is present, never a second CronCreate (two supervise crons, 2026-11-24)
 $hp = Invoke-PsTest 'beat-one' '. $args[0]; $sf = Get-KitPath supervise-state -Create; $was = if (Test-Path $sf) { [IO.File]::ReadAllText($sf) }
-Write-KitAtomic $sf (@{ coordAt = (Get-Date).AddMinutes(-3).ToString("o") } | ConvertTo-Json); Get-KitBeatArmLine; if ($was) { [IO.File]::WriteAllText($sf, $was) } else { Remove-Item $sf }' @($O)
-Expect "heartbeat arm line with a recent coordinator beat: 'heartbeat present', no CronCreate ($hp)" ("$hp" -match '^heartbeat present \(last beat \d\d:\d\d\): no CronCreate')
+try { foreach ($cm in 3, 30) { Write-KitAtomic $sf (@{ coordAt = (Get-Date).AddMinutes(-$cm).ToString("o") } | ConvertTo-Json); Get-KitBeatArmLine; if ($cm -eq 3) { $a3 = Get-KitBeatArmLine -Arm } }; $a3 } finally { if ($was) { [IO.File]::WriteAllText($sf, $was) } else { Remove-Item $sf } }' @($O)
+Expect "heartbeat arm line: a beat 3 min ago = 'heartbeat present', no CronCreate; 30 min ago or -Arm (overdue) = the CronCreate call ($($hp -join ' | '))" (@($hp)[0] -match '^heartbeat present \(last beat \d\d:\d\d\): no CronCreate' -and @($hp)[1] -match '^CronList has no heartbeat -> CronCreate' -and @($hp)[2] -match '^CronList has no heartbeat -> CronCreate')
 Expect "status: a workflow with no step in 10 min (failed at its args) = FINISHED, not STUCK" ((& $sv 'sv (workflow)' 'FINISHED') -and -not @($st -match 'STUCK.*\bsv\b').Count)
 $lt = Invoke-PsTest 'livetx' '. $args[0]; @(Get-KitLiveTranscripts (Get-Date) 10).Name -join ","' @($O)
 Expect "status: a stale beat but a fresh transcript (found by its SESSION line, kept in the entry) = ACTIVE; NEXT counts it ($lt)" ((& $sv 'S9 (devy)' 'ACTIVE') -and (Read-Json "$bd/s-S9.json").transcript -match 'agent-a9' -and "$lt" -match 'agent-a9')
