@@ -277,7 +277,7 @@ run(args, agent, _n, _n, null).then(() => {
 '@
 $res = Invoke-Js tc-flaky $js6 $wf
 Expect-Each $res 'testy verify: #' 'flaky', 'no-evidence' -Show 5
-# budget: over the cap -> refused + split; handoff -> its brief; testy at 80% returns the rest
+# budget: over cap -> refused + split; handoff -> brief + learn; testy at 80%: the rest
 $jsb = @'
 const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: async (p, o) => { calls.push({ label: o.label, prompt: p })
   if (/^record-args/.test(o.label)) return { ok: true, output: `RECORDED x\nBUDGET ${out}` }
@@ -290,8 +290,8 @@ const ba = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }, { id: 'X2',
 $jsbB = @'
 const m1 = mk('{"cap":100000,"estimate":500000,"stopAt":0.8}'); const o1 = await run(ba, m1.agent, _n, _n, pipeline)
 console.log(`refuse:${o1.refused === true && o1.batch === 1 && o1.next.args.batch === 1 && !m1.calls.some((c) => /^build:/.test(c.label))}`)
-const m2 = mk('{"cap":10000000,"estimate":100000,"stopAt":0.8}', 42, 'C:/b/handoff-X1.md'); const o2 = await run({ ...ba, agents: [ba.agents[0]] }, m2.agent, _n, _n, pipeline)
-console.log(`handoff:${m2.calls.some((c) => c.label === 'handoff:X1' && /resume brief C:\/b\/handoff-X1\.md/.test(c.prompt)) && !o2.next && o2.budget.spent === 42}`)
+const m2 = mk('{"cap":10000000,"estimate":100000,"stopAt":0.8}', 42, 'C:/b/h1.md'); const o2 = await run({ ...ba, learn: 1, agents: [ba.agents[0]] }, m2.agent, _n, _n, pipeline)
+console.log(`handoff:${m2.calls.some((c) => c.label === 'handoff:X1' && /brief C:\/b\/h1\.md[^]*learn -Sk/.test(c.prompt)) && !o2.next && o2.budget.spent === 42}`)
 '@
 $jsbT = @'
 const items = ['W1', 'W2', 'W3'].map((c) => _item(c, 'web', { skipClose: true }))

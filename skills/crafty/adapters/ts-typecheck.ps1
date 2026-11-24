@@ -100,7 +100,7 @@ function Set-GateSampleOk([string]$GateCmd, [DateTimeOffset]$Since) {
   $hf = Join-Path (Get-KitGateLedger) 'history.json'
   if (-not (Test-Path -LiteralPath $hf)) { return }
   $pre = if ($GateCmd.Length -gt 60) { $GateCmd.Substring(0, 60) } else { $GateCmd }
-  $fromUtc = $Since.UtcDateTime.AddSeconds(-2)
+  $fromUtc = $Since.UtcDateTime.AddSeconds(-[double](Get-KitParam 'gate.sampleSlackSec'))
   $mx = New-Object System.Threading.Mutex($false, 'Global\claude-build-gate'); $got = $false
   try {
     $got = Lock-Gate $mx

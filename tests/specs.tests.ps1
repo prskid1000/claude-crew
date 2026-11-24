@@ -160,6 +160,7 @@ Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty
 # Wave brief: orders-sort, 2026-11-13
 **Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
 **Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).
+**User-visible change** the items do not ask for -> ``bossy.ps1 decide ask`` first (crafty D1); that item waits.
 **Local env:** r3 · **Test env after deploy:** stg (never production).
 ## Repos
 | Repo | Main checkout | Target | Link deps from | Migrations |

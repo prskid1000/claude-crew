@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L264 kitlog · L366 load · L859 lint · L1273 README graph · L1391 lint command · L1673 audit ·
-  L1821 registry · L1881 tools · L1969 parity · L2478 arch lint · L2751 prose · L2933 sections · L3063 budget · L3081 migrate ·
-  L3229 plugins · L3286 state lint · L3474 main
+  L1821 registry · L1881 tools · L1969 parity · L2478 arch lint · L2751 prose · L2933 sections · L3065 budget · L3083 migrate ·
+  L3231 plugins · L3288 state lint · L3476 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2955,11 +2955,12 @@ def sec_parse(lines):
         while j + 1 < len(lines) and (body.rstrip().endswith('·') or re.match(r'\s*L\d+ \S', strip(lines[j + 1]))):
             j += 1
             body += ' ' + strip(lines[j]).strip()
-        ents = [x.strip() for x in re.split(r'·|\s(?=L\d+ )', body) if x.strip()]
-        return i, j, pre, [(int(e.group(1)), e.group(2)) if (e := re.match(r'L(\d+) (.+)$', x)) else (0, x) for x in ents]
+        tail = (q.group(0) if (q := re.search(r'\s*("""|\'\'\'|#>)\s*$', body)) else '')   # a docstring / comment closer on the map line stays (retro tidy-3)
+        ents = [x.strip() for x in re.split(r'·|\s(?=L\d+ )', body[:len(body) - len(tail)]) if x.strip()]
+        return i, j, pre, [(int(e.group(1)), e.group(2)) if (e := re.match(r'L(\d+) (.+)$', x)) else (0, x) for x in ents], tail
     return None
 
-def sec_render(pre, ents):
+def sec_render(pre, ents, tail=''):
     out = [pre + 'Sections:']
     for n, (ln, name) in enumerate(ents):
         item = f'L{ln} {name}' + (' ·' if n + 1 < len(ents) else '')
@@ -2967,6 +2968,7 @@ def sec_render(pre, ents):
             out.append(pre + '  ' + item)
         else:
             out[-1] += ' ' + item
+    out[-1] += tail
     return out
 
 def sec_verbs(ext, lines):
@@ -3000,7 +3002,7 @@ def sec_check(f, text):
         return [('SECTION-MAP', f, f'no section markers: a `{cm} ---- <name>: <what>` line opens each part (README "Extending")')], None
     if not mp:
         return [('SECTION-MAP', f, 'no "Sections:" line in the first 40 lines: add one to the header, then kitbag.py sections --fix')], None
-    i, j, pre, have = mp
+    i, j, pre, have, tail = mp
     dup = [(ln, nm) for n, (ln, nm) in enumerate(marks) if nm in [x for _, x in marks[:n]]]
     if dup:
         return [('SECTION-MAP', f'{f}:{ln}', f'section name "{nm}" repeats: rename one marker') for ln, nm in dup], None
@@ -3013,7 +3015,7 @@ def sec_check(f, text):
               for ln, nm in have if nm not in named]
     rows = n = j - i + 1
     for _ in range(4):   # the map's own length shifts every line below it
-        want = sec_render(pre, [(ln + rows - n if ln > j + 1 else ln, nm) for ln, nm in marks])
+        want = sec_render(pre, [(ln + rows - n if ln > j + 1 else ln, nm) for ln, nm in marks], tail)
         if len(want) == rows:
             break
         rows = len(want)

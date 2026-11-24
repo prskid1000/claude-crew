@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1556 publish · L2065 render · L2652 spec · L3197 plugins · L3211 keepboth · L3230 selftest · L3973 CLI
+  L1556 publish · L2065 render · L2675 spec · L3220 plugins · L3234 keepboth · L3253 selftest · L4019 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -49,7 +49,7 @@ KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 os.environ['GIT_OPTIONAL_LOCKS'] = '0'   # git probes never rewrite a repo's index (lib.ps1, kitbag.py too)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, kit_stamp, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog   # one path map, lock, call log for all kit scripts
+from kitbag import kit_path, kit_stamp, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog, board_live   # one path map, lock, call log for all kit scripts
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -2217,6 +2217,24 @@ def cases_file(tid, kind):
     return out
 
 
+def cases_fill_checks(c):
+    """finish: a NOT_TESTED_LOCAL case no human check carries gets one from its steps + expected (the deployed run tests it). -> [notes]"""
+    ids, notes = {str(h.get('id')) for key in ('checks', 'qualities', 'unchanged') for h in c.get(key) or [] if isinstance(h, dict)}, []
+    for k in c.get('cases') or []:
+        if isinstance(k, dict) and str(k.get('result') or '').upper().startswith('NOT_TESTED') and str(k.get('check') or '') not in ids:
+            n = len(ids) + 1
+            while f'T{n}' in ids:
+                n += 1
+            ids.add(f'T{n}')
+            api = not k.get('steps') or API_WORDS.search(f'{k.get("steps")} {k.get("expected", "")}')   # the UI-only gate: no endpoint in a human check
+            c.setdefault('checks', []).append({'id': f'T{n}', 'area': k.get('area') or '', **({'steps': f'where case {k.get("id")} shows its effect', 'expected': f'as case {k.get("id")} expects',
+                                              'noUi': f'no UI trigger: case {k.get("id")}'} if api else {'steps': k['steps'], 'expected': k.get('expected') or ''}),
+                                              **({'by': me_agent()} if me_agent() else {})})
+            k['check'] = f'T{n}'
+            notes.append(f'{k.get("id")} -> T{n}')
+    return notes
+
+
 def me_agent():
     return os.environ.get('CLAUDE_AGENT') or os.environ.get('KIT_AGENT') or ''
 
@@ -2230,8 +2248,12 @@ def own_spec(old, new, replace=False):
     for k in ('cases', 'checks', 'qualities', 'unchanged') if me else ():
         es = [e for e in new.get(k) or [] if isinstance(e, dict)]
         theirs = {str(e.get('id')): e['by'] for e in old.get(k) or [] if isinstance(e, dict) and e.get('by') not in (None, me)}
+        gone = {i: a for i, a in theirs.items() if a not in board_live('agent') and i in {str(e.get('id')) for e in es}} if replace else {}
+        theirs = {i: a for i, a in theirs.items() if i not in gone}   # a finished agent's rows: the fixer replaces them (retro tidy-3)
         if clash := [f'{e["id"]} ({theirs[str(e["id"])]})' for e in es if str(e.get('id')) in theirs]:
-            raise SystemExit(f'cases add: {k} id(s) {", ".join(clash)} belong to another agent: use your own ids ({me}-<id>). Nothing was written.')
+            raise SystemExit(f'cases add: {k} id(s) {", ".join(clash)} belong to another agent: use your own ids ({me}-<id>) (its owner left the board: --replace). Nothing was written.')
+        if gone:
+            print(f'cases add: {k} {", ".join(f"{i} ({a})" for i, a in gone.items())}: owner left the board, taken over by {me} (--replace)', file=sys.stderr)
         for e in es:
             e.setdefault('by', me)
     if me and not by:
@@ -2608,6 +2630,7 @@ def render_wave_brief(s):
         f'# Wave brief: {s["name"]}, {s.get("date") or time.strftime("%Y-%m-%d")}',
         f'**Read first:** `{s.get("kitDir") or "<kit>"}/skills/crafty/SKILL.md`; this brief wins where they differ.',
         f'**Items:** {s.get("items") or "—"} · **Decisions:** {s.get("decisions") or "none"}; final, don\'t re-ask (a NEW choice -> crafty D1).',
+        '**User-visible change** the items do not ask for -> `bossy.ps1 decide ask` first (crafty D1); that item waits.',   # retro tidy-3: shipped unasked
         f'**Local env:** {s.get("localEnv") or "none"} · **Test env after deploy:** {s.get("testEnv") or "—"} (never production).',
         '## Repos', _table(['Repo', 'Main checkout', 'Target', 'Link deps from', 'Migrations'], rows(('repo', 'checkout', 'target', 'linkFrom', 'migrations'), s.get('repos') or [])),
         '## Agents', _table(['Agent', 'Items', 'Area (screens / packages / files)', 'Paths (enforced)', 'Repos', 'Migration range', 'Services (leased, nothing else)', 'Complex?'],
@@ -3303,6 +3326,29 @@ def selftest():
     finally:
         os.environ.update({n: v for n, v in agent_env.items() if v})
     expect('cases add: no CLAUDE_AGENT on a spec holding agents\' rows is refused', 'holds rows of AA, BB: set CLAUDE_AGENT' in anon)
+    bl_real, agent_env = globals()['board_live'], {n: os.environ.get(n) for n in ('CLAUDE_AGENT', 'KIT_AGENT')}
+    globals()['board_live'], os.environ['CLAUDE_AGENT'] = (lambda field: {'BB'}), 'CC'
+    own_old = {'by': 'AA', 'checks': [{'id': 'S2', 'by': 'BB'}, {'id': 'S4', 'by': 'DD'}]}
+    def own_try(new, rep):
+        try:
+            with _c.redirect_stderr(io.StringIO()):
+                own_spec(own_old, new, rep)
+            return new
+        except SystemExit as e:
+            return str(e)
+    try:
+        own_gone, own_plain, own_live = own_try({'checks': [{'id': 'S4'}]}, True), own_try({'checks': [{'id': 'S4'}]}, False), own_try({'checks': [{'id': 'S2'}]}, True)
+    finally:
+        globals()['board_live'] = bl_real
+        for n, v in agent_env.items():
+            os.environ.pop(n, None) if v is None else os.environ.__setitem__(n, v)
+    expect('cases add --replace: a row of an agent that left the board is taken over (by = caller); without --replace, or a live owner\'s row, refused',
+           isinstance(own_gone, dict) and own_gone['checks'][0]['by'] == 'CC' and 'S4 (DD)' in str(own_plain) and 'S2 (BB)' in str(own_live))
+    fc = {'checks': [{'id': 'T1'}], 'qualities': [{'id': 'Q1'}], 'cases': [{'id': 'A1', 'check': 'T1', 'result': 'NOT_TESTED_LOCAL'}, {'id': 'A2', 'steps': 'open Help', 'expected': 'Help shows', 'result': 'NOT_TESTED_LOCAL: stub'},
+                                              {'id': 'A3', 'result': 'PASS'}, {'id': 'A4', 'check': 'Q1', 'result': 'NOT_TESTED_LOCAL'}, {'id': 'A5', 'steps': 'POST /api/x', 'result': 'NOT_TESTED_LOCAL'}]}
+    expect('finish: a NOT_TESTED_LOCAL case no check / quality carries gets a human check (free T id; its steps, an API case noUi); carried or PASS: none',
+           cases_fill_checks(fc) == ['A2 -> T3', 'A5 -> T4'] and fc['cases'][1]['check'] == 'T3' and fc['checks'][1]['steps'] == 'open Help' and fc['checks'][2].get('noUi')
+           and not [g for g in cases_gaps(fc) if g.startswith('check ')] and not cases_fill_checks(fc))
 
     fd, path = tempfile.mkstemp(suffix='.json')
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -4026,6 +4072,11 @@ def _cli():
         print(comment(a[1], _text(a[2]), a[3] if len(a) > 3 else 'comment-status'))
     elif cmd == 'finish':
         prior_gate(a[1], '', f'devtools.py finish {a[1]}')
+        if 'cases' in (a[2], opt.get('--ai')) and (state_read(task_file(a[1])) or {}).get('cases'):   # retro tidy-3: refusals for a missing human check row
+            filled = []
+            task_index(a[1], lambda x: filled.extend(cases_fill_checks(x.get('cases') or {})))
+            if filled:
+                print(f'finish {a[1]}: human check(s) added for NOT_TESTED_LOCAL case(s) {", ".join(filled)}: UI steps from the case; edit with cases add --replace', file=sys.stderr)
         # 'cases' = rendered from the task's cases spec, only for a doc process.docs lists (one command fits any doc set)
         rc = lambda p, k, key: (cases_file(a[1], k) if key in {d['key'] for d in docs()} else None) if p == 'cases' else p
         sol = spec_text(a[3], 'comment-solution', a[1]) if a[3].endswith('.json') else _body(a[3])   # a .json = the comment spec

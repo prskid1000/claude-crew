@@ -36,7 +36,8 @@ For kitty / the coordinator editing `localEnv` or running owner verbs; any agent
   `localEnv.lanes.openAfterMinutes` (learned) and free RAM minus the keep-free floor holds its services; `-Env <lane id>` /
   `-Lane <k>` opens or pins one; owner verbs: the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
   N of M (why)`.
-- API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1; old `<target><k>` accepted with a warning). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
+- API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
+- `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first; `Unknown column` = a guessed name (`uuid`).
 - `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).
 - A lane's own DB service (port = `db.port`) down: marks wait for its start (an init's fresh copy marks `baseline-<nnnn>`; no
   baseline yet: a green SQL-only seed check at its start marks one); db checks, pool, mark expiry and the temp watchdog rest.
@@ -98,8 +99,8 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 - `stageLinks` (true): a release copies nothing: the artifact is moved out of the build (copied when another service
   stages the same one); unpacked and static files are kept once per content hash in `_lib` and hard-linked (a served file
   is never written in place); another release's files hard-linked.
-- `reuseBuilds` (false): a lane re-stages its own copy of the same tree + config instead of building; only for builds that
-  read nothing outside the worktree (a SNAPSHOT dependency from the local repository would go stale).
+- `reuseBuilds` (false): a lane re-stages its own copy of the same tree + config, no build; only for builds that read
+  nothing outside the worktree (a local SNAPSHOT dependency goes stale).
 - `aotTrain` ({aotFile}): one gated background run per artifact after it is up; `{aot}` in `start` = `aotUse`
   (`-XX:AOTCache="{aotFile}"`) once it exists.
 - `classpathFile` (off): thin jar + this classpath: per-release argfile; `start`: `@"{javaArgs}" <main>`.
@@ -109,9 +110,8 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 - `readyPattern`: a ready log line checks health at once (else every 5 s; fail lines every 1 s).
 - `logClasses` { expected, startup, connection, 5xx, dependency }: regexes replacing the generic log classes (supervise's
   ERROR SPIKE classes; `dependency` = a start failed on a dependency that was down: wait, retry once). `expectedErrors`
-  (`localEnv.` or `envs.<env>.`; a lane uses its env's): regexes of lines that never flag (a job calling an outside system the
-  machine cannot reach). `defaultService`:
-  the service `logs` shows without `-Service` (else the env's only one).
+  (`localEnv.` or `envs.<env>.`; a lane uses its env's): regexes of lines that never flag (a job calling an unreachable
+  system). `defaultService`: what `logs` shows without `-Service` (else the only one).
 - `mvnd` on PATH replaces mvn / mvnw in gated builds. Events `build`, `stage`, `up`, `aot-train` carry seconds.
 
 ## Cleanup

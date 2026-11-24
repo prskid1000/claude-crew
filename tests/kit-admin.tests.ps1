@@ -236,4 +236,10 @@ Expect "templates: MR spec limits = the table ($tplLim)" ($tplLim -eq '260w each
 $stSnap = Join-Path (Kd) 'stale-snap'; $null = New-Item -ItemType Directory -Force $stSnap
 $stOut = pwsh -NoProfile -Command "`$env:KIT_TESTS_SNAPSHOT = '$stSnap'; . '$(Join-Path $src 'tests/harness.ps1')' 3>&1; 'SNAP=' + `$env:KIT_TESTS_SNAPSHOT; 'OWN=' + (Get-Content (Join-Path `$env:KIT_TESTS_SNAPSHOT '.owner')) + '/' + `$PID" 2>&1 | Out-String
 Expect "harness: a snapshot with no live suite is refused, the run makes its own (owner = its pid) ($($stOut.Trim() -replace '\s+', ' '))" ($stOut -match 'no live suite' -and $stOut -match 'SNAP=.*kit-tests-\d+[\\/]src' -and $stOut -match 'OWN=(\d+)/\1')
+# kitbag.py sections (moved from kitbag.tests: room); $KT's copy is gone with $root: the source copy
+$KS = Join-Path $src 'skills/bossy/kitbag.py'; $sf = Join-Path (Kd) 'sec.ps1'; [IO.File]::WriteAllText($sf, "<#`r`nSections: L4 a`r`n#>`r`n`r`n# ---- a: x`r`n")
+$null = & $py -X utf8 $KS sections $sf (Join-Path (Kd) 'none.ps1') 2>$null; $c1 = $LASTEXITCODE; $null = & $py -X utf8 $KS sections --fix $sf
+Expect 'sections: a shifted map or a missing file exits 1; --fix rewrites only the map, keeps CRLF' ($c1 -eq 1 -and $LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($sf) -eq "<#`r`nSections: L5 a`r`n#>`r`n`r`n# ---- a: x`r`n")
+$sq = Join-Path (Kd) 'secq.py'; [IO.File]::WriteAllText($sq, "`"`"`"Doc.`nSections: L9 a`"`"`"`nimport os`n# ---- a: x`n"); $null = & $py -X utf8 $KS sections --fix $sq
+Expect 'sections --fix: a docstring closer on the map line stays (the file still parses)' ([IO.File]::ReadAllText($sq) -eq "`"`"`"Doc.`nSections: L4 a`"`"`"`nimport os`n# ---- a: x`n")
 Complete-Tests

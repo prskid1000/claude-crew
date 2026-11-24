@@ -146,7 +146,7 @@ function Get-KitScopeRoles([string]$Scope, [switch]$Refresh) {
   $Scope = "$Scope".Trim(); if (-not $Scope) { return $null }
   $key = "$__trType|$Scope"; if (-not $Refresh -and $script:KitScopeRoles.ContainsKey($key)) { return $script:KitScopeRoles[$key] }
   $f = Join-Path (Get-KitPath tracker-statuses -Create) "$("$__trType-$Scope" -replace '[^\w.-]', '_').json"
-  $c = if (-not $Refresh -and (Test-Path -LiteralPath $f) -and ((Get-Date) - [IO.File]::GetLastWriteTime($f)).TotalHours -lt 24) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
+  $c = if (-not $Refresh -and (Test-Path -LiteralPath $f) -and ((Get-Date) - [IO.File]::GetLastWriteTime($f)).TotalHours -lt [double](Get-KitParam 'tracker.statusCacheHours')) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null } }
   $live = if ($c) { @($c.statuses) } else { $null }; $ad = $KitAdapters['tracker'][$__trType]
   if (-not $c -and -not $__trDry -and $ad -and ((__TrCan statuses) -or ($ad.ContainsKey('*') -and $__trType -ne 'command'))) {
     $live = try { @(__TrA 'statuses' @{ scope = $Scope } | Where-Object { "$($_.name)".Trim() } | ForEach-Object { [pscustomobject]@{ name = "$($_.name)".Trim(); type = "$($_.type)".ToLower() } }) } catch { Write-Warning "tracker ($__trType): statuses of $Scope not read ($("$_".Split("`n")[0])): default names"; $null }

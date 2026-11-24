@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L267 ship-prompt · L284 plan · L303 spike ·
-//   L315 local-loop · L403 stages · L557 ship · L597 debate · L706 deploy · L721 learn
+//   L315 local-loop · L405 stages · L559 ship · L599 debate · L708 deploy · L723 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -367,10 +367,12 @@ async function noneWordOk(a, r, id) {
  return /^WORD /.test(out)
 }
 const mergeHeld = async (lt, a, r) => holdsMerge(lt, a, r) || (noneGated(lt, a, r) && !(await noneWordOk(a, r, lt.decisionId)))
+// a run stopped before Learn lost its signals (4 runs, retro tidy-3): each handoff records the previous devy's first
+const LEARN_NOW = LEARN === false ? '' : ` First record its notable events (failures, rounds, blockers, decisions) as signals: & ${ORCH} learn -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref ${RUN} -Source workflow.`
 async function localLoop(a, r, retries, stage) {
  for (let h = 0; r && r.handoff && h < 3; h++) {
   log(`${a.id}: HANDOFF at its budget (${r.handoff}): a fresh devy continues`)
-  const r2 = await agent(continuePrompt(a, r, `HANDOFF: the previous devy reached its budget; read its resume brief ${r.handoff} first and continue from there.`), dvo(a, 'handoff', stage))
+  const r2 = await agent(continuePrompt(a, r, `HANDOFF: the previous devy reached its budget; read its resume brief ${r.handoff} first and continue from there.${LEARN_NOW}`), dvo(a, 'handoff', stage))
   r = mergeReports({ ...r, handoff: '' }, r2, 'Handoff')
  }
  r = normLocal(r)
@@ -422,7 +424,7 @@ const results = await pipeline(
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
   // a HANDOFF stays in its phase; no report after a redo: the phase before stands
   const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)
-  const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `HANDOFF: read your resume brief ${x.handoff} first, continue. ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
+  const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `HANDOFF: read your resume brief ${x.handoff} first, continue.${LEARN_NOW} ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
   const phase = async (x, text, l, more) => ((await gate('Build')) ? goOnIn(mergeReports(x, asRep(await agentOrRedo(continuePrompt(a, x, text), { ...dvo(a, l, 'Build'), ...more })), `Phase ${l}`), text) : { ...x, budgetStopped: true })
   const phaseNext = (x) => ph && !x.budgetStopped && !(x.mrs || []).length && !(x.needsDecision || []).length && !(x.needsEnvFix || []).length
   r = await goOnIn(r, PH.code)

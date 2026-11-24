@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L321 stack · L420 gate · L751 check · L1077 pipes · L1139 guard · L2064 dir · L2074 checkpoint ·
-  L2114 prior · L2153 tracker · L2175 task spec · L2381 scope · L2429 host
+Sections: L25 init · L34 wt · L321 stack · L420 gate · L751 check · L1077 pipes · L1139 guard · L2067 dir · L2077 checkpoint ·
+  L2117 prior · L2156 tracker · L2178 task spec · L2384 scope · L2432 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1350,6 +1350,7 @@ if ($SelfTest) {
   @('B', 'cd / && find . -name x', $true, $dr), @('B', 'cd /c; grep -rn x', $true, $dr), @('P', 'Set-Location C:\; gci -Recurse -Filter x', $true, $dr), @('B', 'find . -name "*.md" -exec grep -rl x / \;', $true, $dr),
   @('B', 'cd / && ls; cd ~/src && find . -name x; find . -exec grep -l x {} +; cd /d/repo && rg x', $false, $dr), @('P', 'Set-Location C:\; where.exe git; Get-ChildItem', $false, $dr)
   )
+  $cases += @(@('B', 'gws --format x drive files delete', $true, 'gws: add'), @('P', 'gws files export -o D:/w/a; gws drive files get', $false, 'gws: add'))
   $gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
   if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
   $cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # tracked CRLF, tracked LF, untracked CRLF
@@ -1729,6 +1730,8 @@ function Split-CommandSegments([string]$text, [string]$tool) {
 if (($mp = Find-MsysPath $raw $tn)) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code." }
 # Git for Windows opens help in the owner's browser
 if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(help\s+(?!-[ag]\b)\S|[\w-]+\s+([^|;&\r\n]*\s)?--help\b)') { Deny "git help <cmd> / git <cmd> --help opens the manual in the owner's browser on Windows: use git <cmd> -h (usage in the terminal)" }
+# retro tidy-3: download.<ext> in the kit root
+if ($cmd -match '\bgws\b[^|;&\r\n]*\bfiles\s+(export|delete)\b' -and $cmd -notmatch '\s(-o|--output)[\s=]') { Deny "gws: add --output <& $($KitCmd.dev) dir -Agent <id> -Name <file>> (else download.<ext> lands in the cwd)" }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
 # a whole-drive search outlives its agent at full CPU (an orphaned find / starved every local-env start)
 function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
