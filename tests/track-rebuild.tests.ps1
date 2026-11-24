@@ -204,8 +204,13 @@ $rv = @(Get-KitStatusRows (Get-Date) | Where-Object name -eq 'RV (revy)')[0]
 "ended:$($rv.done -eq 'turn complete' -and $rv.tx -eq $tf.ToString() -and $rv.state -ne 'STUCK')"
 $pz = { param($kd) [pscustomobject]@{ run = '*'; kind = $kd; state = 'paused'; at = (Get-Date).ToString('o'); released = @() } }   # pause -Kind: product spares kit runs, kit spares product runs
 "pausekind:$((Test-KitPauseCovers (& $pz product) 'buildy-0042') -and -not (Test-KitPauseCovers (& $pz product) 'kitty-fix-0011') -and -not (Test-KitPauseCovers (& $pz kit) 'testy-0001') -and (Test-KitPauseCovers (& $pz $null) 'kitty-fix-0011') -and -not @(Get-KitPauseFlags @(& $pz product) @([pscustomobject]@{ run = 'kitty-fix-0011' }) 0).Count)"
+# a launch's paused = its pause file path (pause-0001 or pause-all); an old kind-less '*' pause covers kitty runs until resume -Run releases one
+$pd = Get-KitPath pauses -Create; foreach ($pn in 'pause-0001', 'pause-all') { @{ run = '*'; state = 'paused'; at = '2026-11-24T15:50:03.688+05:30'; reason = 'owner pause' } | ConvertTo-Json | Set-Content (Join-Path $pd "$pn.json") }
+$pa = @('pause-0001', 'pause-all' | ForEach-Object { Get-KitPauseAt (Join-Path $pd "$_.json") })
+$po = [pscustomobject]@{ run = '*'; state = 'paused'; released = @('kitty-7') }
+"pauseat:$($pa.Count -eq 2 -and -not @($pa | Where-Object { ([datetimeoffset]$_).ToString('HH:mm') -ne (([datetimeoffset]'2026-11-24T15:50:03.688+05:30').ToLocalTime().ToString('HH:mm')) }).Count -and (Get-KitPauseAt '2026-11-24T10:00:00Z') -and $null -eq (Get-KitPauseAt $null) -and (Test-KitPauseCovers $po 'kitty-8') -and -not (Test-KitPauseCovers $po 'kitty-7'))"
 '@
-Expect-Each (Invoke-PsTest 'false-flags' $sfTest @($O, (Kd))) 'supervise false flags: # (heir: same-area new agent id continues a handoff; collision: a later delivery clears it; ended: a finished workflow agent row is no STUCK)' @('heir', 'collision', 'ended', 'pausekind') 4
+Expect-Each (Invoke-PsTest 'false-flags' $sfTest @($O, (Kd))) 'supervise false flags: # (heir: same-area new agent id continues a handoff; collision: a later delivery clears it; ended: a finished workflow agent row is no STUCK)' @('heir', 'collision', 'ended', 'pausekind', 'pauseat') 4
 Expect 'supervise: retro due only with no open workflow (paused, or between agents, counts as open)' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*if (-not `$done) { `$wfOpen++ }*Phase 'retro'; if (-not `$runTotal -and -not `$wfOpen -and -not `$pausedRuns.Count)*")
 Expect 'supervise: a stale planned-area HOLD line is an ACT, other HOLD lines INFO' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*-match '^HOLD \S+: .*\(stale: ') { Flag 'ACT'*")
 $tbr = Invoke-PsTest release-tabrow @'

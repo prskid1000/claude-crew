@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L463 leases · L882 status · L1079 tracker · L1398 prior ·
-  L1417 ask bugs · L1602 git-host · L1788 kitlog · L1898 params · L2203 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L467 leases · L886 status · L1083 tracker · L1402 prior ·
+  L1421 ask bugs · L1606 git-host · L1792 kitlog · L1902 params · L2207 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -460,6 +460,10 @@ function Test-KitHolder($o) { if (-not $o -or -not $o.holderPid) { return $null 
 # a pause's scope: its run, or '*' minus released runs; kind product spares kit runs (kitty-*, tidy-*), kind kit spares the rest
 function Test-KitPauseCovers($P, [string]$Run) { if ("$($P.run)" -ne '*') { return "$($P.run)" -eq $Run }; $kr = $Run -match '^(kitty|tidy|kit)-'
   $Run -notin @($P.released) -and -not ("$($P.kind)" -eq 'product' -and $kr) -and -not ("$($P.kind)" -eq 'kit' -and -not $kr) }
+# a launch record's paused = its pause file (any name: pause-0001, pause-all); older records hold a time
+function Get-KitPauseAt($Ref) { $v = "$(@($Ref | Where-Object { $_ })[0])"; if (-not $v) { return $null }
+  $p = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { (Split-Path "$($_.file)" -Leaf) -eq (Split-Path $v -Leaf) })[0]
+  if ($p) { $p.at } elseif ($v -as [datetimeoffset]) { $v } }
 # ---- leases: README "Leases"; one rule for env services, browsers, phones, builds
 function Set-KitProp($o, [string]$k, $v) { if ($o -is [Collections.IDictionary]) { $o[$k] = $v } else { $o | Add-Member -Force NoteProperty $k $v } }
 function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes = 0, [int]$ProcessId = 0) {
