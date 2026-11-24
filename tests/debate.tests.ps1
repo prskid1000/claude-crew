@@ -72,6 +72,8 @@ $jq = pwsh @np $O board join -Agent BQ -Run rq -Claims $bqw | Out-String; $jq2 =
 $js = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $fc = Join-Path $bd "$(($js -csplit 'SESSION ')[-1].Split(' ')[0]).json"
 $ec = Read-Json $fc; $ec.holderPid = $PID; $ec.holderStart = & { . (Lib); Get-KitPidStart $PID }; & $J $ec $fc   # both kittys share the coordinator's process
 $js2 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc | Out-String; $js3 = pwsh @np $O board join -Type kitty -Agent kitty-kc -Run kc -Session $ec.session | Out-String
+# js3's REJOIN wrote its own holder (none under Git Bash timeout: the chain breaks): a live one again
+$ec = Read-Json $fc; $ec.holderPid = $PID; $ec.holderStart = & { . (Lib); Get-KitPidStart $PID }; & $J $ec $fc
 $jo = pwsh @np $O board join -Agent kitty-kc -Run other | Out-String; $joc = $LASTEXITCODE   # the id live in run kc: refused
 Expect "board join: an id live in another run -> REFUSED, exit 2 ($($jo.Trim()))" ($joc -eq 2 -and $jo -match 'REFUSED: agent id kitty-kc is live in run kc')
 Expect "board: parallel joins of one id without claims -> 2 rows, 2 sessions ($($pa -join ',')); one after the other -> the second is PARALLEL kitty-kc-2; same claims or its -Session within 2 min -> REJOIN" ($ps.Count -eq 2 -and $ps[0] -ne $ps[1] -and $pa.Count -eq 2 -and $js2 -match 'PARALLEL: kitty-kc runs .*you are kitty-kc-2' -and $jq2 -match 'REJOIN' -and $js3 -match "REJOIN: .*reusing session $($ec.session)")
