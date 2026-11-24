@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L279 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L282 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -226,12 +226,15 @@ Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-De
 # lastDeploy: the lane APK stamp's build time (phones get it on their next acquire); deploy: phoney.ps1 build in the repo checkout
 Register-KitAdapter 'deploy-kind' 'laneApk' @{ isDeployed = { param($a) Test-LaneApkDeployed $a.d }; plan = { param($a) 'phoney.ps1 build from a branch holding the merge; phones get it on their next phoney.ps1 acquire' }
   lastDeploy = { param($a) $ai = LaneApk $a.d; if ($ai.built) { @{ at = [datetime]$ai.built; source = "lane APK $($ai.commit)" } } }
-  # restart: the app force-stopped on each leased phone that is up (phoney.ps1 launch -Stop); its next launch starts it fresh
-  restart = { param($a) $sv = @(& pwsh -NoProfile -File $KitCmd.swarm status 2>$null | ForEach-Object { if ("$_" -match '^\S+\s+(\S+)\s+up\s+leased by') { $Matches[1] } })
-    if (-not $sv.Count) { return 'no leased phone is up: nothing to stop' }
+  # restart: the app force-stopped on each phone up that is free or leased by the deploying agent(s) (deploy restart -Agent; phoney.ps1
+  # launch -Stop): a phone another holder tests on is never touched (coordinator 2026-11-25); its next launch starts it fresh
+  restart = { param($a) $mine = @(Split-KitList @($a.agent) | Where-Object { $_ }); $other = 0
+    $sv = @(& pwsh -NoProfile -File $KitCmd.swarm status 2>$null | ForEach-Object { if ("$_" -match '^\S+\s+(\S+)\s+up\s+(?:free\b|leased by (\S+))') { if (-not $Matches[2] -or $Matches[2] -in $mine) { $Matches[1] } else { $other++ } } })
+    $left = if ($other) { "; $other phone(s) of other holders left alone" } else { '' }
+    if (-not $sv.Count) { return "no free or own phone is up: nothing to stop$left" }
     $bad = @(foreach ($sn in $sv) { $null = & pwsh -NoProfile -File $KitCmd.swarm launch -Serial $sn -Stop 2>&1; if ($LASTEXITCODE) { $sn } })
     if ($bad.Count) { $global:KitHostFailed = $true }
-    "app stopped on $($sv.Count - $bad.Count) of $($sv.Count) leased phone(s): $($sv -join ', ')$(if ($bad.Count) { "; failed: $($bad -join ', ')" })" }
+    "app stopped on $($sv.Count - $bad.Count) of $($sv.Count) free or own phone(s): $($sv -join ', ')$(if ($bad.Count) { "; failed: $($bad -join ', ')" })$left" }
   deploy = { param($a) if (-not $a.repo.checkout) { return @{ note = "repos[].checkout of $($a.repo.name) unset: phoney.ps1 build -AppDir <checkout> by hand" } }
     $o = & pwsh -NoProfile -File $KitCmd.swarm build -AppDir $a.repo.checkout 2>&1 | Out-String; if ($LASTEXITCODE) { return @{ note = "phoney.ps1 build failed (exit $LASTEXITCODE): $(@($o.Trim() -split "`r?`n")[-1])" } }
     $ai = LaneApk $a.d; @{ id = "lane APK $($ai.commit)"; note = 'phones get it on their next phoney.ps1 acquire' } } }

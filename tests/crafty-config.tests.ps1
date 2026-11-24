@@ -78,6 +78,9 @@ Expect-Each (Invoke-PsTest 'churn' $churnTest @((Lib), (Kd))) 'churn #: Write-Ki
 # usage errors carry one worked example (retro 2026-11-17: cases 31x, evidence 7x)
 $dtU = Join-Path $k 'skills/crafty/devtools.py'; $evU = & $py -X utf8 $dtU evidence 2>&1 | Out-String; $caU = & $py -X utf8 $dtU cases 2>&1 | Out-String; $crU = & $py -X utf8 $dtU cases result T1 2>&1 | Out-String
 Expect 'devtools.py: evidence / cases usage errors print a worked example per verb' ($evU -match 'e\.g\. python -X utf8 devtools\.py evidence "T1' -and $caU -match 'cases add T1 ' -and $caU -match 'cases round T1 --fix' -and $crU -match 'e\.g\. python -X utf8 devtools\.py cases result T1 A1 PASS')
+# retro tidy-6: mr usage names the body caps (a test kit without templates.md has none)
+$mrU = & $py -X utf8 $dtU mr --help 2>&1 | Out-String
+Expect 'devtools.py mr --help: the mr-title / mr-body limits follow the usage line' ($mrU -match 'devtools\.py mr <worktree>' -and (-not (Test-Path (Join-Path $k 'skills/crafty/templates.md')) -or ($mrU -match 'mr-body: .* limits .*\d+b' -and $mrU -match 'mr-title: .* limits ')))
 # K32: cases add on a shared task merges a second agent's goals / env per item; title / change stay first-wins; a repeat adds nothing
 $sw2 = Join-Path (Kd) 'shared'; New-Item -ItemType Directory -Force $sw2 | Out-Null
 Set-JsonFile "$sw2/a.json" @{ title = 'a'; change = 'ca'; env = 'rm'; plan = @{ unit = 'x' }; checks = @(@{ id = 'S1'; goal = 'g1' }) }

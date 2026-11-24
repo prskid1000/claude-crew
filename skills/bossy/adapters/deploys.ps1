@@ -5,7 +5,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy-merge.ps1
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
-  bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
+  bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated] [-Agent <ids> (laneApk: phones free or leased by them only)]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
 Sections: L15 helpers · L106 intest · L284 deploy · L489 restart · L569 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
@@ -285,11 +285,11 @@ function Format-KitInTestSummary([int]$Total, [int]$FromKit, [int]$FromLists, [i
 function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest', 'restart', 'run')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
     [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
-    [string]$Service, [int]$RecheckSeconds = 120, [switch]$Ungated,
+    [string]$Service, [int]$RecheckSeconds = 120, [switch]$Ungated, [string]$Agent,
     [switch]$Apply, [switch]$Quiet, [Alias('Item')][string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
   if ($Action -eq 'restart') {
-    if (-not $Env) { 'usage: deploy restart -Env <target>[,<target>..] [-Service <a,b>] [-WaitMinutes 20] [-Ungated]'; exit 2 }
-    Invoke-DeployRestart @(Split-KitList @($Env)) $Service $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 20 }) $RecheckSeconds -Ungated:$Ungated; return
+    if (-not $Env) { 'usage: deploy restart -Env <target>[,<target>..] [-Service <a,b>] [-WaitMinutes 20] [-Ungated] [-Agent <ids>]'; exit 2 }
+    Invoke-DeployRestart @(Split-KitList @($Env)) $Service $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 20 }) $RecheckSeconds -Ungated:$Ungated -Agent $Agent; return
   }
   if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <env|deploy branch> [-From <branch>] -Mr [-Mrs <refs>] [-Decision <id>] (tag deploys: -Push)" }
   if ($Action -eq 'merge') { Invoke-DeployMerge -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -Mr:$Mr -Mrs $Mrs -Decision $Decision -WaitMinutes $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 8 }) -History $History; return }   # 8 min: one call fits an agent shell (10 min); a re-run resumes the open MR
@@ -488,7 +488,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 
 # ---- restart: services of an ssh deploy, gated by its busy check in the same shell, right before each restart
 # deploys[].ssh.busy: a host shell command whose output = live work (e.g. a running agent turn); busy -> wait, re-check, bounded
-# a row's command.restart first, else its deploy kind's restart (ssh: below; awsStack: ecsService; laneApk: leased phones), else its
+# a row's command.restart first, else its deploy kind's restart (ssh: below; awsStack: ecsService; laneApk: free or own phones), else its
 # ssh block; none of them = refused
 # deploy run (README "Adapters" deploy-kind deploy): only on a person's word (deploy.trigger); a kind without a deploy verb prints
 # UNSUPPORTED + its plan line (a person deploys, then deploy record); DEPLOY / FAILED per row
@@ -513,13 +513,13 @@ function Test-KitDeployRunning([string]$To) {
   $pr = if ($j) { Get-Process -Id ([int]$j.pid) -ErrorAction SilentlyContinue }   # a reused pid started after the marker is not it
   [bool]($pr -and (-not $pr.StartTime -or -not $j.start -or $pr.StartTime -le ([datetimeoffset]"$($j.start)").LocalDateTime.AddSeconds(1)))
 }
-function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated) {
+function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated, [string]$Agent) {
   foreach ($t in $Targets) {
     $d = @(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -eq $t } | Select-Object -First 1
     $kd = if ($d) { Get-KitDeployKind $d }
     # the kind's own restart, unless the row names its command.restart (that wins); @{ skip } = not set up on this row: the fallbacks below
     if ($d -and $kd -ne 'ssh' -and ($kd -eq 'command' -or -not $d.command.restart) -and $KitAdapters['deploy-kind'][$kd].restart) {
-      $global:KitHostFailed = $false; $o = Invoke-KitDeployKind $d 'restart' @{ service = $Service }
+      $global:KitHostFailed = $false; $o = Invoke-KitDeployKind $d 'restart' @{ service = $Service; agent = $Agent }
       if (-not ($o -is [hashtable] -and $o.skip)) {
         if ($null -eq $o -or $global:KitHostFailed) { "FAILED deploy restart ${t}: deploy kind $kd restart$(if ($o) { ": $o" } else { ' gave no answer' })"; exit 1 }
         Write-KitLog deploy-log restart ([ordered]@{ target = $t; services = @(Split-KitList @($Service)); gated = $false; kind = $kd }); "RESTARTED ${t} (deploy kind $kd): $o"; continue

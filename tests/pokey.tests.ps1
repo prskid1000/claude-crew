@@ -58,9 +58,9 @@ Expect "finalize publish: over prose limits exits 1 like -Check, nothing publish
 $tm = New-Run 'TM' @(@{ code = 'M1'; task = 'TM1'; checks = , @('C1', 'PASS') }); $rj = Read-Json "$tm/run.json"; $rj.items[0].subtasks[0].name = "really $((1..14 | % { "name$_" }) -join ' ')"; $rj.items[0].subtasks[0] | Add-Member mrs ((1..13 | % { "repo!$_" }) -join ', '); & $J $rj "$tm/run.json"
 $tmo = Fin $tm M1 -Check; $tmc = $LASTEXITCODE; $null = Fin $tm M1; $tmr = "$(Get-Content "$tm/M1/report.md" -Raw -ErrorAction Ignore)"
 Expect "report Tasks row: a 15-word name with 13 MRs -> [id](link) · 13 MRs; a tracker name's filler is no prose finding ($tmc)" ($tmc -eq 0 -and $tmr -match '\| Tasks \| \[TM1\]\([^)]*\) · 13 MRs \|' -and $tmr -notmatch 'repo!')
-$ltRun = New-Run 'LTT' @(@{ code = 'L1'; task = 'TL'; checks = , @('C1', 'PASS') }); $rj = Read-Json "$ltRun/run.json"; $rj | Add-Member -Force title ((1..30 | % { "tw$_" }) -join ' '); & $J $rj "$ltRun/run.json"
-$lto = Fin $ltRun L1 -Check; $ltc = $LASTEXITCODE
-Expect "finalize -Check: a 30-word run title (report H1, the lead's) is no prose finding ($ltc)" ($ltc -eq 0 -and $lto -notmatch 'prose check')
+$ltRun = New-Run 'LTT' @(@{ code = 'L1'; task = 'TL'; checks = , @('C1', 'PASS') }); $rj = Read-Json "$ltRun/run.json"; $rj | Add-Member -Force title ("$(1..28 | % { "tw$_" }) `"q`" (p&y)"); & $J $rj "$ltRun/run.json"
+$lto = Fin $ltRun L1 -Check; $ltc = $LASTEXITCODE; $ltu = Fin $ltRun L1 -Check -Report nosuchtype
+Expect "finalize -Check: a 30-word run title (quotes, parens) is no prose finding and passes the upload dry run ($ltc); an unknown report type fails it" ($ltc -eq 0 -and $lto -notmatch 'prose check|upload check' -and $ltu -match 'L1 upload check \(nosuchtype dry run, exit 3\)')
 $s12 = "$(1..12) ."; $note = "$s12 $s12 $s12"; $bg = New-Run 'BG' @(@{ code = 'G1'; task = 'TG'; checks = @(1..44 | % { , @("C$_", 'PASS') }) }); $sm = New-Run 'SM' @(@{ code = 'S1'; task = 'TS'; checks = , @('C1', 'PASS') })
 $rj = Read-Json "$bg/G1/results.json"; foreach ($x in $rj.checks) { $x.observed = $x.what_was_done = $note }; foreach ($i in 0, 1) { $rj.checks[$i].result = 'FAIL'; $rj.checks[$i] | Add-Member verify "confirmed | $(1..(300 - 270 * $i))" }; $rj.checks[0].evidence = @(10..39 | % { $e = "G1-C1_$($_)_e.json"; $null = New-Item "$bg/G1/shots/$e" -Force -Value 1; $e }); & $J $rj "$bg/G1/results.json"; $rj = Read-Json "$sm/S1/results.json"; $rj.findings = @(1..14 | % { "$note $note" }); & $J $rj "$sm/S1/results.json"
 $go = Fin $bg G1 -Check; $gc = $LASTEXITCODE; $so = Fin $sm S1 -Check
@@ -100,13 +100,11 @@ $n = New-Run 'N' @(@{ code = 'N1'; task = 'TA2'; checks = , @('X1', 'FAIL') })
 $null = Fin $n 'N1'
 $na = (Task $i).description
 Expect 'a later run joins the open [Bug] of the ask as its own section, name and the earlier section kept' (@(Bugs | Where-Object { $_.parent -eq 'PA' }).Count -eq 1 -and (Task $i).name -eq '[Bug] mine' -and $na.StartsWith($bd) -and $na -match '(?m)^Source: qa-N \[kit:bug:qa-N\]$')
-# another agent's open collector [Bug] (watchy's section) under the ask: joined; a known signature (file:line) = a duplicate line
 New-Task 'PW' 'Ask W'; New-Task 'TW' 'Task W' 'PW'; New-Task 'BW' '[Bug] Ask W — help links' 'PW' 'open' "Source: watch-s [kit:bug:watch-s]`n`nwatch: plain mode searches the whole index (vector.py:120)"
 $wr = New-Run 'W' @(@{ code = 'W1'; task = 'TW'; checks = @(@('X1', 'FAIL'), @('X2', 'FAIL')) }); $rw = Read-Json "$wr/W1/results.json"
 $rw.checks[0].observed = 'answer links HM pages; vector.py:120 plain mode'; $rw.checks[1].observed = 'GET https://h.example/api/help/42 gives 500'; & $J $rw "$wr/W1/results.json"
 $null = Fin $wr 'W1'; $null = Fin $wr 'W1'; $dw = (Task 'BW').description; $bw = @(Bugs | Where-Object { $_.parent -eq 'PW' })
 Expect "finalize: another agent's open [Bug] under the ask gets one section; the known defect is a duplicate line ($($bw.Count))" (-not $bw.Count -and $dw.StartsWith('Source: watch-s') -and ([regex]::Matches($dw, '\[kit:bug:qa-W\]')).Count -eq 1 -and $dw -match '### X2 ' -and $dw -notmatch '### X1 ' -and $dw -match 'Duplicates.*W1 X1 \(`vector\.py:120`\)' -and (Task 'BW').name -eq '[Bug] Ask W — help links' -and (Rec $wr 'W1').closed)
-# knownBug: a FAIL tracked by another task: FAIL (known: id) in the report, no [Bug], the task closes, one "Seen again" line on the known task
 New-Task 'PK' 'Ask K'; New-Task 'TK' 'Task K' 'PK'; New-Task 'KB1' '[Bug] quick create 500' 'PK'; New-Task 'TK2' 'Task K2' 'PK' 'in test'; New-Task 'KBC' '[Bug] done' 'PK' 'closed'
 $kr = New-Run 'KR' @(@{ code = 'K1'; task = 'TK'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL')) }, @{ code = 'K2'; task = 'TK2'; checks = @(@('C1', 'FAIL'), @('X1', 'FAIL')) }, @{ code = 'K3'; task = 'TK3'; checks = @(@('C1', 'PASS'), @('X1', 'FAIL'), @('X2', 'FAIL'), @('X3', 'FAIL', 'own')) })
 foreach ($kc in 'K1', 'K2', 'K3') { $rj = Read-Json "$kr/$kc/results.json"; $kn = @(if ($kc -eq 'K3') { 'NOPE9', 'KBC', 'KB1' } else { 'KB1' }); for ($ki = 0; $ki -lt $kn.Count; $ki++) { $rj.checks[$ki + 1] | Add-Member knownBug $kn[$ki] }; & $J $rj "$kr/$kc/results.json" }

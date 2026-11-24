@@ -113,9 +113,12 @@ $dkR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pok
   $dkK.ecs = (Invoke-KitDeployKind @{ awsStack = 's'; ecsService = 'api'; ecsCluster = 'main'; region = 'eu-west-1'; target = 't' } 'restart') -eq 'ecs service api: new deployment ecs-svc/123' -and
     $global:dkAws -match '^ecs update-service --region eu-west-1 --cluster main --service api --force-new-deployment' -and (Invoke-KitDeployKind $st 'restart').skip -match 'ecsService'
   $fph = Join-Path (Kd) 'fakephoney.ps1'; $env:FAKE_PH_LOG = Join-Path (Kd) 'phoney.log'; $KitCmd.swarm = $fph
-  Set-Content $fph "if (`$args[0] -eq 'status') { 'lane1    emulator-5554  up       leased by t-1 since x'; 'lane2    emulator-5556  down     free'; 'lane3    emulator-5558  up       free' } else { Add-Content `$env:FAKE_PH_LOG `"`$args`" }"
-  $ra = Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'restart'
-  $dkK.phones = $ra -eq 'app stopped on 1 of 1 leased phone(s): emulator-5554' -and (Get-Content $env:FAKE_PH_LOG) -join '|' -eq 'launch -Serial emulator-5554 -Stop'
+  Set-Content $fph "if (`$args[0] -eq 'status') { 'lane1    emulator-5554  up       leased by t-1 since x'; 'lane2    emulator-5556  down     free'; 'lane3    emulator-5558  up       free'; 'lane4    emulator-5560  up       leased by opsy-1 since x' } else { Add-Content `$env:FAKE_PH_LOG `"`$args`" }"
+  # two holders: the deploying agent's phone and a free one stop; another agent's phone (t-1 tests on it) is never touched
+  $ra = Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'restart' @{ agent = 'opsy-1' }; $rl = (Get-Content $env:FAKE_PH_LOG) -join '|'; Remove-Item $env:FAKE_PH_LOG
+  $rn = Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'restart'
+  $dkK.phones = $ra -eq 'app stopped on 2 of 2 free or own phone(s): emulator-5558, emulator-5560; 1 phone(s) of other holders left alone' -and
+    $rl -eq 'launch -Serial emulator-5558 -Stop|launch -Serial emulator-5560 -Stop' -and $rn -match '^app stopped on 1 of 1 .*: emulator-5558; 2 phone' -and (Get-Content $env:FAKE_PH_LOG) -join '|' -eq 'launch -Serial emulator-5558 -Stop'
   # ssh: deploy holds the host lock (its shell's pid, removed on exit); isRunning reads it: a live pid = yes, none = no, no answer = unknown
   function Invoke-BoundedSsh($A, $Sec) { $global:dkSsh = $A[-1]; if ($A -contains 'dead') { return @() }; if ($A[-1] -match 'base64') { return 'KIT_DEPLOY_OK' }; if ($A -contains 'busy') { 'KIT_RUN=yes' } else { 'KIT_RUN=no' } }
   $sl = @{ ssh = @{ host = 'busy'; deployCmd = './ship.sh' }; target = 'Stage 1' }; $dp = Invoke-KitDeployKind $sl 'deploy' @{ repo = @{ name = 'a' } }

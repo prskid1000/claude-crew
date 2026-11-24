@@ -22,6 +22,9 @@ $ib = & { . $Bo 6>$null; $n = Get-Date; $r0 = Send-KitBuildsRule 'wt9' 27 8 $n; 
   "$r0|$r1|$r2|$(@(Get-Content (Get-InboxFile 'W9')).Count)|$(@(Read-KitInboxNew 'W9').Count)|$(Test-Path (Get-InboxFile 'wt9'))" }
 $gt = @(& { $env:CLAUDE_AGENT = 'W9b'; . $Bo 6>$null; Send-BoardMsg 'supervise' 'W9b' 'batch your fixes' 'rule' 'gate.buildsPerHour'; foreach ($gi in 1, 2) { pwsh @np $D gate -Dir $k -Cmd 'echo built' -WaitMinutes 0 2>&1 }; $env:CLAUDE_AGENT = $null } | Out-String)
 Expect "inbox: the rule sent once an hour per owner; the owner's next gated build prints it once ($ib; $(([regex]::Matches($gt, '\[gate\] MESSAGE for W9b')).Count))" ("$ib" -match '^\|sent \d\d:\d\d\|sent \d\d:\d\d\|1\|1\|False$' -and ([regex]::Matches($gt, '\[gate\] MESSAGE for W9b .*batch your fixes')).Count -eq 1)
+# retro tidy-6: a ledger entry swept while the build runs (supervise, cleanup) ends quietly, no Get-Content error
+$glS = TkPath $k build-gate -Create; $gsO = pwsh @np $D gate -Dir $k -Cmd "pwsh -NoProfile -Command Remove-Item $glS/[0-9]*.json" -WaitMinutes 5 2>&1 | Out-String; $gsC = $LASTEXITCODE
+Expect "gate: its swept ledger entry is no error ($gsC $(@($gsO -split "`n" | Select-Object -Last 2) -join ' / '))" ($gsC -eq 0 -and $gsO -notmatch 'Cannot find path|PathNotFound')
 
 # stack presets: detect finds Android Gradle, .NET, Go, Rust, CMake and Make projects (crafty.ps1 Invoke-Stack helpers, as there)
 $cases = [ordered]@{ 'android-gradle' = @('build.gradle', 'android { productFlavors { create("store") } }'); dotnet = @('a.csproj', '<Project Sdk="Microsoft.NET.Sdk"></Project>'); go = @('go.mod', 'module x'); rust = @('Cargo.toml', '[package]')

@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L264 kitlog · L366 load · L859 lint · L1273 README graph · L1391 lint command · L1673 audit ·
-  L1821 registry · L1881 tools · L1969 parity · L2533 arch lint · L2806 prose · L2988 sections · L3120 budget · L3138 migrate ·
-  L3286 plugins · L3343 state lint · L3531 main
+  L1821 registry · L1881 tools · L1969 parity · L2570 arch lint · L2843 prose · L3025 sections · L3157 budget · L3175 migrate ·
+  L3323 plugins · L3380 state lint · L3568 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2009,13 +2009,49 @@ def adapter_calls(k):
                     add(m.group(3), c.group(1) or c.group(2), f, t, m.end() + c.start())
     return out
 
-def _braced(t, i):
-    """t from its first { at or after i to the matching } (kit adapter code keeps braces in strings balanced)."""
-    j, d = t.find('{', i), 0
-    for x in range(j, len(t) if j >= 0 else j):
-        d += {'{': 1, '}': -1}.get(t[x], 0)
-        if not d:
-            return t[j:x + 1]
+def _str_end(t, x, py):
+    """Index of the closing quote of the string opening at t[x]: py / js backslash escapes; ps1 '..' literal, "..." with ` and ""
+    escapes and $( ) code inside (nested strings), @' / @" here-strings to their '@ / "@ line."""
+    q = t[x]
+    if not py and t[x - 1:x] == '@' and t[x + 1:x + 2] in '\r\n':
+        e = t.find('\n' + q + '@', x)
+        return e + 1 if e >= 0 else len(t)
+    x += 1
+    while x < len(t):
+        c = t[x]
+        if (py and c == '\\') or (not py and q == '"' and c == '`'):
+            x += 1
+        elif c == q and not py and t[x + 1:x + 2] == q:
+            x += 1
+        elif c == q:
+            return x
+        elif not py and q == '"' and t[x:x + 2] == '$(':
+            x, d = x + 2, 1
+            while x < len(t) and d:
+                d += {'(': 1, ')': -1}.get(t[x], 0)
+                x = (_str_end(t, x, py) if t[x] in '\'"' else x) + 1
+            x -= 1
+        x += 1
+    return x
+
+def _braced(t, i, py=False):
+    """t from its first { at or after i to the matching }; braces in strings and trailing comments skipped (a regex '@\\{' in a
+    string broke the match, retro tidy-6)."""
+    j, d, x = t.find('{', i), 0, t.find('{', i)
+    while 0 <= x < len(t):
+        c = t[x]
+        if c in '\'"':
+            x = _str_end(t, x, py)
+        elif not py and t[x:x + 2] == '<#':   # a ps1 block comment
+            e = t.find('#>', x + 2)
+            x = e + 1 if e >= 0 else len(t)
+        elif (c == '#' or (py and t[x:x + 2] == '//')) and t[x - 1:x] in ' \t\n':
+            x = (t.find('\n', x) + 1 or len(t)) - 1
+        else:
+            d += {'{': 1, '}': -1}.get(c, 0)
+            if not d:
+                return t[j:x + 1]
+        x += 1
     return t[j:] if j >= 0 else ''
 
 def _var_code(t, name, before, depth=0):
@@ -2028,9 +2064,9 @@ def _var_code(t, name, before, depth=0):
     base = _var_code(t, c.group(1), d.start(), depth + 1) if c else _braced(t, d.end())
     return base + '\n' + '\n'.join(x.group(0) for x in re.finditer(r'\$' + name + r'\.\w+\s*=\s*[^;\n]+', t[d.end():before]))
 
-def _top_keys(b):
-    """{key: its value is code} at brace depth 1 of an adapter's hashtable / dict (scriptblock bodies, nested tables and
-    depth-1 strings skipped); `$var.<key> = ...` lines after it count too."""
+def _top_keys(b, py=False):
+    """{key: its value is code} at brace depth 1 of an adapter's hashtable / dict (scriptblock bodies, nested tables, strings and
+    comments skipped); `$var.<key> = ...` lines after it count too."""
     out, d, i, last = {}, 0, 0, ''
     while i < len(b):
         c = b[i]
@@ -2039,14 +2075,15 @@ def _top_keys(b):
             out[m.group(2)] = nx[:1] == '{' if m.group(3) == '=' else bool(re.match(r'lambda|[A-Za-z_]', nx))
             i, last = m.end(), '='
             continue
-        if d == 1 and c == '#':   # a trailing comment (an apostrophe in it is no string)
+        if not py and b[i:i + 2] == '<#':   # a ps1 block comment
+            e = b.find('#>', i + 2)
+            i = e + 2 if e >= 0 else len(b)
+            continue
+        if c == '#' and (d == 1 or b[i - 1:i] in ' \t\n'):   # a trailing comment (an apostrophe in it is no string)
             i = b.find('\n', i) if '\n' in b[i:] else len(b)
             continue
-        if d == 1 and c in '\'"':   # skip a string (ps: `" and '' escapes)
-            j = i + 1
-            while j < len(b) and not (b[j] == c and b[j - 1] != '`' and b[j + 1:j + 2] != c):
-                j += 2 if b[j] == c and b[j - 1] != '`' else 1
-            i, last = j + 1, c
+        if c in '\'"':   # a string at any depth: a brace in it is no code (retro tidy-6: '@\{')
+            i, last = _str_end(b, i, py) + 1, c
             continue
         d += (c == '{') - (c == '}')
         if c not in ' \t\r':
@@ -2068,7 +2105,7 @@ def adapter_code(k, kind):
             if kn != kind:
                 continue
             v = re.match(r'\s+\$(\w+)', t[m.end():])
-            b = _var_code(t, v.group(1), m.start()) if v else _braced(t, m.end())
+            b = _var_code(t, v.group(1), m.start()) if v else _braced(t, m.end(), not f.endswith('.ps1'))
             out[n] = (out.get(n, ('', f))[0] + b, f)
     return out
 
@@ -2115,7 +2152,7 @@ def adapter_matrix(k, fam, a, bad=None):
         ct = _braced(b, cm.end()) if cm else ''
         cs = dict((x, y == 'true') for x, y in re.findall(r'(\w+)\s*=\s*\$(true|false)', ct)) if re.match(r'\s*@', b[cm.end():] if cm else '') else None
         body = b.replace(ct, '') if ct else b
-        tops = _top_keys(body)
+        tops = _top_keys(body, not f.endswith('.ps1'))
         star = '*' in tops
         dl = AD_DELEGATE.search(body) if star else None
         if dl and (dl.group(1) or dl.group(2)) == fam:

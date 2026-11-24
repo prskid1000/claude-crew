@@ -12,7 +12,7 @@ question back:
    green; a call waits `-WaitMinutes` (8), a re-run resumes the open deploy MR. Never a push to the deploy branch (`-Push` there is refused, the guard denies it) or a release-job trigger. A
    service restart by hand only through `deploy restart -Env <target>` (busy check re-run on the host right before it;
    REFUSED -> `decide ask`; ssh rows: `ssh.manager` systemd | docker | pm2 | custom restartCmd, `ssh.sudo`; awsStack: `ecsService` (`ecsCluster`):
-   a new ECS deployment; laneApk: the app stopped on leased phones; a row's `command.restart` wins over its kind), never a bare service restart.
+   a new ECS deployment; laneApk: the app stopped on phones free or leased by -Agent, never another holder's; a row's `command.restart` wins over its kind), never a bare service restart.
    ssh deploys hold `ssh.lockFile` (default `/tmp/kit-deploy-<target>.lock`: the pid) while they run: the plan's DEPLOYING; a CI deploy may write it too.
    Any kind: `deploy run -To <env> -Mrs <refs> -Decision <id>` runs each row's kind `deploy` verb (branch-mr / ci-job / tag: deploy
    merge; command, or any row's `command.deploy`; ssh: `ssh.deployCmd`; awsStack: `template` (repo path) at the deploy head; laneApk: phoney.ps1 build;

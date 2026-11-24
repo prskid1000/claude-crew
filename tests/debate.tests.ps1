@@ -119,8 +119,8 @@ $gk = Join-Path (Get-KitPath work -Create) 'wfix'; $null = git init -q $gk; git 
 '@ @($O)
 Expect-Each $wz 'waste: # (tags: fixable first by tokens, open, ignored; why: the reason; raised: one signal per 2-run pattern, once, then open; fixed: its commit; cells: one item per role + kind, per role fixable / open / fixed counts, items + reasons per cell, ignored apart; heat: waste columns of the role · context map, the window in its legend, no own panel; closed: /tidy''s reason -> ignored; refix: runs after the fix re-measure it; trailer: a Waste-Fix: commit fixes it)' @('tags', 'why', 'raised', 'fixed', 'cells', 'heat', 'closed', 'refix', 'trailer') -Show 10
 # retro tidy-20261124-01 (moved here: room): usage errors, decision ids in answers, prior wave siblings, log slack
-$tSt = Px $O track status 2>&1 | Out-String; $tStc = $LASTEXITCODE
-Expect "usage: track status names the read verb (show), exit 2 ($tStc)" ($tStc -eq 2 -and $tSt -match 'Did you mean: show\?')
+$tSt = Px $O track status 2>&1 | Out-String; $tSh = Px $O track show 2>&1 | Out-String
+Expect "track status = track show (retro tidy-6)" ($tSt -eq $tSh -and $tSt -notmatch 'Did you mean|usage')
 $dShow = (Px $O decide show 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $dShowc = $LASTEXITCODE; $tRm = Px $O track remove -Task X1 2>&1 | Out-String; $tRmc = $LASTEXITCODE
 Expect "usage: decide show names its verbs + the read verb (list); track remove without -Mrs prints its params, exit 2 ($dShowc $tRmc)" ($dShowc -eq 2 -and $dShow -match 'ask,list,answer' -and $dShow -match 'Did you mean: list\?' -and $tRmc -eq 2 -and $tRm -match 'track remove -Task <id> -Mrs')
 $sup = Invoke-PsTest supersede @'
@@ -159,17 +159,21 @@ $sxR = foreach ($sxAns in 'B', 'B (no scope ok needed)') { $sxA = pwsh @np $O de
   pwsh @np $O decide answer -Id $(if ($sxA -match 'DECISION (\S+)') { $Matches[1] }) -Answer $sxAns | Out-String }
 Expect "decide answer: a recommended decline pick and a 'no scope ok' answer record no scope word ($sxR)" (@($sxR | Where-Object { $_ -match 'no scope word' -and $_ -notmatch 'SCOPE RECORDED' }).Count -eq 2)
 Expect "decide answer: a scope ask worded 'outside the <area> paths' records the agent's branch, a 'change it' pick too (dec-42); check finds the word by that branch ($sbR | $sbC | $scR)" ($sbR -match 'SCOPE RECORDED' -and $sbC -match '^WORD ' -and $scR -match 'SCOPE RECORDED')
+# dec-47 (retro tidy-6): an 'allow scope exception — merge as is' pick records the word though the owner's why names the revert side
+$s47 = foreach ($s47Ans in 'A: allow it: reverting would drop the approved menu entry', 'B', 'A split is cleaner, do not merge as is') { $s47A = pwsh @np $O decide ask -Run r -Agent devy-pay -Item web!77 -Question 'MR 77 changes two nav files outside the area: allow or revert?' -Context 'today: held by scope' -Options 'A: allow scope exception — merge 77 as is', 'B: revert the two nav files — merge 77 without them' -Recommend B | Out-String
+  pwsh @np $O decide answer -Id $(if ($s47A -match 'DECISION (\S+)') { $Matches[1] }) -Answer $s47Ans | Out-String }
+Expect "decide answer: an allow-exception pick records the scope word; its revert sibling and a free-text decline starting 'A ' none ($s47)" ($s47[0] -match 'SCOPE RECORDED' -and @($s47[1], $s47[2] | Where-Object { $_ -match 'no scope word' -and $_ -notmatch 'SCOPE RECORDED' }).Count -eq 2)
 # decide.neverAuto adds an org's words to the kit's never-auto list (deploy, prod, data ... stay)
 $nvq = { (Invoke-PsTest never-auto @'
 $null = . $args[0] 6>$null; "$(Test-KitRuleSensitive 'scope' 'Send the invoice batch?')|$(Test-KitRuleSensitive 'scope' 'Deploy it now?')|$(Test-KitRuleSensitive 'scope' 'Sort by name?')"
 '@ @($O) | Select-Object -Last 1) }
 $nv0 = & $nvq; $kcf = Join-Path $k 'skills/crafty/kit.local.json'; $kco = if (Test-Path $kcf) { Get-Content $kcf -Raw | ConvertFrom-Json -AsHashtable } else { @{} }; $kco.decide = @{ neverAuto = @('invoice\w*') }; Set-JsonFile $kcf $kco; $nv1 = & $nvq
 Expect "decide.neverAuto: org words join the built-in list ($nv0 -> $nv1)" ("$nv0" -eq 'False|True|False' -and "$nv1" -eq 'True|True|False')
-# buildy phases (T2): code -> loop -> docs, each a fresh devy; the ship phase keeps the loop's localTest; phases:false = one devy
+# buildy phases (T2): code -> loop -> docs, a fresh devy each unless one goes on under 80% budget (goon, tidy-6); the ship phase keeps the loop's localTest; phases:false = one devy
 $jsph = @'
 const lt = (status) => ({ status, env: status === 'NONE' ? 'phase code' : 'shop r1', rounds: 1, failing: [], goalsDoc: 'g.md' })
 const mk = (mode) => _mock((prompt, o) => {
- if (/^build:/.test(o.label)) return o.label === 'build:X1' && /PHASE code/.test(prompt) ? _rep(lt('NONE'), { mrs: [], ...(mode === 'codehandoff' ? { handoff: 'C:/b/c.md' } : {}) }) : _rep(lt('PASS'))
+ if (/^build:/.test(o.label)) return o.label === 'build:X1' && /PHASE code/.test(prompt) && mode !== 'goon' ? _rep(lt('NONE'), { mrs: [], ...(mode === 'codehandoff' ? { handoff: 'C:/b/c.md' } : {}) }) : _rep(lt('PASS'))
  if (/^loop:/.test(o.label)) return mode === 'nullloop' ? null : mode === 'loophandoff' ? _rep(lt('NONE'), { mrs: [], handoff: 'C:/b/l.md' }) : _rep(lt('PASS'), { mrs: [] })
  if (/^handoff:/.test(o.label)) return _rep(lt('NONE'))
  if (/^docs:/.test(o.label)) return _rep(lt('NONE'), mode === 'handoff' ? { handoff: 'C:/b/h.md' } : {})
@@ -177,8 +181,8 @@ const mk = (mode) => _mock((prompt, o) => {
  if (/^ship:/.test(o.label)) return _rep(lt('PASS'), _merged(1))
 }, '[]')
 const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl }
-const p = mk(), q = mk(), h = mk('handoff'), n = mk('nullloop'), c = mk('codehandoff'), lh = mk('loophandoff')
-run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }, q.agent, _n, _n, pipeline).then(() => run(args, h.agent, _n, _n, pipeline)).then(() => run(args, n.agent, _n, _n, pipeline)).then(() => run(args, c.agent, _n, _n, pipeline)).then(() => run(args, lh.agent, _n, _n, pipeline)).then(() => {
+const p = mk(), q = mk(), h = mk('handoff'), n = mk('nullloop'), c = mk('codehandoff'), lh = mk('loophandoff'), g = mk('goon')
+run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }, q.agent, _n, _n, pipeline).then(() => run(args, h.agent, _n, _n, pipeline)).then(() => run(args, n.agent, _n, _n, pipeline)).then(() => run(args, c.agent, _n, _n, pipeline)).then(() => run(args, lh.agent, _n, _n, pipeline)).then(() => run(args, g.agent, _n, _n, pipeline)).then(() => {
  const L = p.calls.map((c) => c.label), d = p.calls.find((c) => c.label === 'docs:X1')
  console.log(`order:${L.indexOf('build:X1') < L.indexOf('loop:X1') && L.indexOf('loop:X1') < L.indexOf('docs:X1') && L.indexOf('docs:X1') < L.indexOf('review:X1')}`)
  console.log(`prompts:${/PHASE local/.test(p.calls.find((c) => c.label === 'loop:X1').prompt) && /PHASE ship/.test(d.prompt) && /ship\.md/.test(d.prompt) && d.model === 'sonnet'}`)
@@ -189,9 +193,10 @@ run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }
  const cc = c.calls.find((x) => x.label === 'handoff:X1'), lc = lh.calls.find((x) => x.label === 'handoff:X1'), hl = (x) => x.prompt.split('\n').find((l) => /LOOP FIRST|HANDOFF/.test(l)) || ''
  console.log(`loopfirst:${!!cc && !!lc && /^LOOP FIRST: .*local test loop/.test(hl(lc)) && /^HANDOFF/.test(hl(cc))}`)
  console.log(`held:${!!nd && /Draft MRs only/.test(nd.prompt) && !/Draft MRs only/.test(p.calls.find((c) => c.label === 'docs:X1').prompt)}`)
+ console.log(`goon:${/go on yourself; at 80%: checkpoint, HANDOFF/.test(p.calls.find((c) => c.label === 'build:X1').prompt) && !g.calls.some((c) => /^(loop|docs|handoff):/.test(c.label))}`)
  console.log(`off:${!q.calls.some((c) => /^(loop|docs):/.test(c.label)) && !/PHASE code/.test(q.calls.find((c) => c.label === 'build:X1').prompt)}`)
 })).catch(_err)
 '@
-Expect-Each (Invoke-Js dw-phases $jsph $wfd) 'buildy phases: # (code, loop, docs as fresh devy; phases:false = one devy)' 'order', 'prompts', 'kept', 'off', 'handoff', 'held', 'loopfirst' -Show 7
+Expect-Each (Invoke-Js dw-phases $jsph $wfd) 'buildy phases: # (code, loop, docs as fresh devy; phases:false = one devy)' 'order', 'prompts', 'kept', 'off', 'handoff', 'held', 'loopfirst', 'goon' -Show 8
 Remove-TestKit $k
 Complete-Tests

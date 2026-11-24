@@ -94,8 +94,8 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
   loop|mr|review|ci|doc|tracker|merge> -Evidence "<sha|url|result>" -Dir <wt>`, and a WIP commit (`chore(wip): <step>`) after
   steps 1-5. `board join` prints CHECKPOINT: start at that step; verify the done ones, never redo them; keep an uncommitted
   diff. `board beat` prints PAUSE (do what it says; a gate line `stopped by the kit: PAUSE` = that build or test is not done:
-  checkpoint `-Next 'redo: <step>'`, never a fix round). Hand off at a phase end (code + unit, local loop, ship), never carry
-  one context through all three: checkpoint, then HANDOFF as the beat says.
+  checkpoint `-Next 'redo: <step>'`, never a fix round). Phases (code + unit, local loop, ship): under 80% of your
+  budget go on into the next one yourself; at 80% hand off: checkpoint, then HANDOFF as the beat says.
 - **Big modules:** a module too big to read: spawn a short read-only reader (`rechy` kind question: the question, the
   paths, "facts only, <= 30 lines"); it returns `file:line`, signatures and callers, never file dumps.
 - **Scope:** your items, in the brief's area `paths` (`wt commit`, `devtools.py mr / merge` refuse others; exception: owner's

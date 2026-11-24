@@ -100,6 +100,10 @@
   "supervise.transcriptLeftMinutes": "config default=360 unit=min",
   "supervise.transcriptRetryMinutes": "config default=10 unit=min",
   "reports.pdfTimeoutSec": "config default=180 unit=s",
+  "reports.commandTimeoutSec": "config default=300 unit=s",
+  "reports.evidenceTimeoutSec": "config default=600 unit=s",
+  "merge.rereadSec": "config default=3 unit=s",
+  "merge.ciPollSec": "config default=15 unit=s",
   "gate.ruleEveryMinutes": "config default=60 unit=min",
   "gate.flushEveryMinutes": "config default=30 unit=min",
   "proc.startSlackSec": "config default=5 unit=s",
@@ -157,6 +161,10 @@
   "storage.topCacheMinutes": "config default=5 unit=min",
   "tracker.duplicateScore": "config default=0.6 unit=share",
   "prior.validHours": "config default=12 unit=h",
+  "prior.lookbackDays": "config default=30 unit=d",
+  "scope.logDays": "config default=30 unit=d",
+  "scope.probeBudgetSec": "config default=20 unit=s",
+  "scope.probeCacheMinutes": "config default=30 unit=min",
   "qa.seatGB": "config default=1.5 unit=GB",
   "qa.packageMinutes": "quantile q=.9 k=1.5 default=60 floor=10 ceil=240 unit=min",
   "qa.parentsKeepDays": "config default=30 unit=d",
@@ -183,6 +191,8 @@
   "gate.maxHours": "config default=24 unit=h",
   "gate.gradleWorkers": "config default=4",
   "gate.heapMinGB": "config default=4 unit=GB",
+  "gate.queuePollSec": "config default=20 unit=s",
+  "gate.peakPollSec": "config default=5 unit=s",
   "gate.buildsPerHour": "config default=8 unit=builds",
   "track.holdCheckMinutes": "config default=30 unit=min",
   "track.rollupMinutes": "config default=30 unit=min",
@@ -217,5 +227,5 @@
   "kitTests.retryHours": "config default=24 unit=h",
   "phone.uiDumpRetryMs": "config default=1500 unit=ms"
  },
- "_literals": {"skills/bossy/adapters/storage.ps1": 3, "skills/bossy/bossy.ps1": 32, "skills/bossy/kitbag.py": 4, "skills/crafty/crafty.ps1": 9, "skills/crafty/devtools.py": 6, "skills/crafty/lib.ps1": 29, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
+ "_literals": {"skills/bossy/adapters/storage.ps1": 3, "skills/bossy/bossy.ps1": 30, "skills/bossy/kitbag.py": 4, "skills/crafty/crafty.ps1": 7, "skills/crafty/devtools.py": 5, "skills/crafty/lib.ps1": 29, "skills/pokey/browser.mjs": 9, "skills/pokey/pokey.ps1": 3, "workflows/testy.js": 1}
 }

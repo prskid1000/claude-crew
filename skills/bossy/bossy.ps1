@@ -11,7 +11,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   param show|history|learn|pin|unpin|freeze|reset|approve [<key>] [<value>] [-Context] [-Json]   learned parameters
   budget [-Model] [-Plan 'role/model:n,..'] [-Run <run>] [-Usage] [-Json]   agent budget, run cap + spend; -Usage: page usage
   usage -Context [-Agent <id> | -Run <run> | -Type <role>] [-Since 24h|7d] [-Json] [-Refresh]   context per agent: start, peak, sources, waste
-  track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
+  track add -Task -Mrs [-MergeAfter] [-Discover] [-HoldPromotion] | run [-Detail] | show|status [-Task] | ignore -Mrs -Reason   task <-> MRs; promoted when all merged and every launched area delivered (add: at once; -HoldPromotion '' releases)
     | rollup -Task <parent> [-From <brief dir>]   parent's delivery + triage sections, subtask Items checklists
     | rollup -Status (-Task <parent> | -All) [-Apply]   parent status = its least advanced open subtask (dry run unless -Apply)
     | forget-item -Task -Item <codes>   items removed from a task's checklist on purpose: never written back
@@ -33,8 +33,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L256 budget · L286 launch · L529 recover · L616 pause · L627 resume · L694 program · L722 param ·
-  L728 track · L1117 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
-  L1734 decide · L1897 debate · L1941 health · L2009 setup · L2104 guard-sendmessage
+  L728 track · L1118 supervise · L1465 report · L1545 audit · L1605 storage · L1608 bugbrief · L1610 cleanup · L1697 learn ·
+  L1735 decide · L1901 debate · L1945 health · L2013 setup · L2108 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -754,9 +754,10 @@ function NormRef($r) {
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' } }   # group/repo!n too
 function Invoke-Track {
-param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item', 'route')][string]$Action = 'show', [string]$Reason, [string]$From, [string]$To, [Alias('Items')][string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
+param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'status', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item', 'route')][string]$Action = 'show', [string]$Reason, [string]$From, [string]$To, [Alias('Items')][string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
 $ErrorActionPreference = 'SilentlyContinue'
 if ($Rebuild) { $Action = 'rebuild' }
+if ($Action -eq 'status') { $Action = 'show' }   # agents typed status 3x (retro tidy-6)
 # throw is swallowed under SilentlyContinue
 function Fail([string]$m) { Stop-KitVerb "track: $m" 1 }
 if ($Action -eq 'ignore') { Add-KitMrIgnore @(Split-KitList $Mrs) $Reason
@@ -1813,10 +1814,13 @@ function Invoke-Decide {
       $isScope = $o.gate -eq 'scope' -or "$($o.question) $(@($o.options | ForEach-Object label) -join ' ')" -match '(?i)\boutside\b[^.?]{0,60}\b(area|paths?|scope)\b|\bscope[- ]?(ok|word|record)\b'
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($isScope) { "$($o.item)" }
       $scBr = @(if ($scItem -or $isScope) { Get-KitAgentBranches $o.agent $o.run }); if (-not $scItem -and $scBr.Count) { $scItem = $scBr[0] }
-      $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]; $said = if ($pick) { "$($pick.label)" } else { $Answer }
+      # a pick = its key alone or before : . ) ( or a dash ("A split is cleaner" is free text, not pick A)
+      $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))(\s*[:.)(—-]|\s*$)" })[0]; $said = if ($pick) { "$($pick.label)" } else { $Answer }
       if ($scItem -and $By -notmatch $crewRx) {
         $denyRx = "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep|drop|skip|remove|exclude|decline|undo|without|narrow)\b"
-        if (($said -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept|change|extend)\b' -or $Answer -match '(?i)\bscope[- ]?ok\b') -and $said -notmatch $denyRx -and $Answer -notmatch $denyRx) {
+        # a pick is judged by its own label (its description: only "merge .. as is"): the owner's why may name the other side (dec-47)
+        $asIs = $pick -and "$($pick.description)" -match '(?i)\bmerge\b.{0,30}\bas is\b'
+        if ($said -notmatch $denyRx -and ((($said -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept|change|extend)\b' -or $asIs) -and ($pick -or $Answer -notmatch $denyRx)) -or ($Answer -match '(?i)\bscope[- ]?ok\b' -and $Answer -notmatch $denyRx))) {
           $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
             kind = 'decision'; run = $o.run; agent = 'coordinator'; item = $scItem; gate = 'scope'; question = $o.question; options = @(); blocking = $false; status = 'answered'; at = $now
             task = "$($o.task)"; mrs = @($o.mrs); branches = $scBr; answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }

@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L315 stack · L414 gate · L745 check · L1068 pipes · L1130 guard · L2058 dir · L2068 checkpoint ·
-  L2108 prior · L2147 tracker · L2169 task spec · L2375 scope · L2423 host
+Sections: L25 init · L34 wt · L315 stack · L414 gate · L746 check · L1069 pipes · L1131 guard · L2059 dir · L2069 checkpoint ·
+  L2109 prior · L2148 tracker · L2170 task spec · L2376 scope · L2424 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -680,7 +680,7 @@ while ((Get-Date) -lt $deadline) {
     Write-Host $msg
     }
   } finally { $gate.ReleaseMutex() }
-  Start-Sleep -Seconds 20
+  Start-Sleep -Seconds (Get-KitParam 'gate.queuePollSec')
 }
 } finally { Remove-Item $myTicket -ErrorAction SilentlyContinue }
 if (-not $proc) { if ($waitLearned) { Add-KitParamObs 'gate.waitMinutes' $WaitMinutes '' 'timeout' 90 }; Write-Host "[gate] could not start within $WaitMinutes min"; exit 3 }
@@ -692,13 +692,14 @@ try {
   while (-not $proc.HasExited -and $sw.Elapsed.TotalHours -lt $gateMaxHours) {
     $peak = [math]::Max($peak, (Get-KitTreeGB $proc.Id))
     if ($null -ne $c0 -and ($tick++ % 3) -eq 2 -and $null -ne ($cn = Get-GateContainerGB)) { $ctrPeak = [math]::Max($ctrPeak, $cn - $c0) }
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds (Get-KitParam 'gate.peakPollSec')
   }
   $proc.WaitForExit(); $code = $proc.ExitCode
   if ($null -ne $c0 -and $null -ne ($cn = Get-GateContainerGB)) { $ctrPeak = [math]::Max($ctrPeak, $cn - $c0) }   # compose up -d: its containers outlive the command
   $peak += $ctrPeak
 } finally {
-  $why = try { "$((Get-Content $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' }   # supervise -AutoFix marks the build it stops
+  # supervise -AutoFix marks the build it stops; a swept entry is gone (Get-Content printed an error, retro tidy-6)
+  $why = if ($entry -and (Test-Path -LiteralPath $entry)) { try { "$((Get-Content -LiteralPath $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' } } else { '' }
   Remove-Item $entry -ErrorAction SilentlyContinue; Write-KitLeaseLog release build "$kind $(Split-Path $Dir -Leaf)" $buildLease $(if ($why) { $why } else { "ended, exit $code" })
 }
 if ($why) { Write-Host "[gate] stopped by the kit: $why (exit $code)" }   # a killed build teaches neither time nor peak
@@ -2109,7 +2110,7 @@ if ($Brief) { $briefOld = if (Test-Path -LiteralPath $Brief) { [IO.File]::ReadAl
 function Invoke-Prior {
 param([Alias('Item')][string]$Task, [string]$Repo, [string]$Query, [string]$Symbol, [switch]$Json)
   if (-not $Task) { 'usage: crafty.ps1 prior -Task <id> [-Repo <r>] [-Query <words>] [-Symbol <s>] [-Json]'; exit 2 }
-  $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-30); $priorHits = [Collections.Generic.List[object]]::new()
+  $tag = "$($KitConf.TrackerTag)$Task"; $since = (Get-Date).AddDays(-(Get-KitParam 'prior.lookbackDays')); $priorHits = [Collections.Generic.List[object]]::new()
   $claimed = @((Read-KitState (Get-KitTaskFile $Task)).prior.claimed)   # branches wt lease / new made for this task
   $add = { param($k, $r, $ref, $ti, [bool]$tg, $br) $priorHits.Add([ordered]@{ kind = $k; repo = $r; ref = $ref; title = "$ti"; tagged = $tg; proj = $(if ($r) { ((Get-HostProject $r -Raw) -split '/')[-1] }); branches = @($br | Where-Object { $_ }) }) }   # branches: MR source / commit's (wt new reusing one passes)
   $idRx = "(?i)$([regex]::Escape($tag))(?![A-Za-z0-9])"   # CU-12 is no hit for CU-123
@@ -2384,7 +2385,7 @@ function Get-KitScopeOutside([string[]]$Files, [string[]]$Globs) {   # no globs:
 }
 $script:KitTestPathRx = '(?i)(^|/)(tests?|__tests__|specs?|cypress|e2e|fixtures?)/|[._-](test|spec|cy)\.\w+$|Tests?\.\w+$|(^|/)test_[^/]+\.py$'
 function Invoke-Scope([Alias('Mr')][string]$Mrs, [int]$Days = 7, [switch]$Json) {
-  $now = Get-Date; $log = @(Read-KitLog scope-log $now.AddDays(-30)); $areas = [ordered]@{}; $seen = @{}
+  $now = Get-Date; $log = @(Read-KitLog scope-log $now.AddDays(-(Get-KitParam 'scope.logDays'))); $areas = [ordered]@{}; $seen = @{}
   foreach ($x in $log) { if ($x.event -eq 'area' -and $x.mr) { $areas["$($x.mr)"] = $x } elseif ($x.event -eq 'checked') { $seen["$($x.mr)"] = $x } }
   $crew = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).BaseName
   $words = @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object { $_.gate -eq 'scope' -and $_.status -eq 'answered' -and ("$($_.by)" -split '[-_ :]')[0] -notin $crew })
@@ -2403,10 +2404,10 @@ function Invoke-Scope([Alias('Mr')][string]$Mrs, [int]$Days = 7, [switch]$Json) 
   }
   # post-hoc: MRs merged within -Days with a logged area, each checked once
   # an open MR re-asked after 30 min, host calls cut at 20 s
-  $pf = Join-Path (Get-KitPath cache -Create) 'scope-probes.json'; $probed = try { Read-KitText $pf | ConvertFrom-Json -AsHashtable } catch { @{} }; if ($probed -isnot [hashtable]) { $probed = @{} }; $stopAt = $now.AddSeconds(20)
+  $pf = Join-Path (Get-KitPath cache -Create) 'scope-probes.json'; $probed = try { Read-KitText $pf | ConvertFrom-Json -AsHashtable } catch { @{} }; if ($probed -isnot [hashtable]) { $probed = @{} }; $stopAt = $now.AddSeconds((Get-KitParam 'scope.probeBudgetSec'))
   $hits = foreach ($a in @($areas.Values | Where-Object { [datetime]$_.at -ge $now.AddDays(-$Days) } | Sort-Object { if ($probed["$($_.mr)"]) { [datetime]$probed["$($_.mr)"] } else { [datetime]::MinValue } })) {   # least recently asked first: the 20 s cut never starves one
     if (-not ($c = $seen["$($a.mr)"])) {
-      if ((Get-Date) -gt $stopAt -or ($probed["$($a.mr)"] -and ($now - [datetime]$probed["$($a.mr)"]).TotalMinutes -lt 30)) { continue }
+      if ((Get-Date) -gt $stopAt -or ($probed["$($a.mr)"] -and ($now - [datetime]$probed["$($a.mr)"]).TotalMinutes -lt (Get-KitParam 'scope.probeCacheMinutes'))) { continue }
       $rn, $iid = "$($a.mr)" -split '!', 2; $m = try { Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject $rn -Raw); n = $iid } } catch { $null }
       if ($m.state -and $m.state -ne 'merged') { $probed["$($a.mr)"] = (Get-KitStamp stored $now) }   # open or closed; unknown: next round
       if ($m.state -ne 'merged' -or -not ($f = @(& $filesOf "$($a.mr)")).Count) { continue }   # open: devtools.py merge checks it; unknown: next round

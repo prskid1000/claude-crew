@@ -298,6 +298,10 @@ print(f'parity-kit:{not p0} {p0[:3]}')
 print(f'parity-nested:{any("tracker/linear/status: a required verb" in x for x in p6) and len(p7) == 2}')
 print(f'parity-sibling:{any("tracker/github: verb tag-add is in no family list" in x for x in p1) and sum("/tagAdd: an optional verb" in x for x in p2) == 7 and not any("tagAdd" in x for x in p3)}')
 print(f'parity-gaps:{any("clickup/view: declared gap" in x for x in p3) and any("nosuch/view" in x for x in p3)}')
+# retro tidy-6: a brace in a string ('@\{', "a}b", py '\'{') or a comment is no code: every verb after it is still read
+rb = "Register-KitAdapter 'x' 'y' @{ list = { $a -match '@\\{' }   # it's\n  view = { <# it's { #> \"$(\"a}\" + 'b')\" }; edit = { 1 } }"
+pb = "ADAPTERS['x']['y'] = {'list': lambda a: re.match('\\'{', a),  # don't\n 'view': lambda a: 1}"
+print(f'parity-strings:{sorted(kt._top_keys(kt._braced(rb, 0))) == ["edit", "list", "view"] and sorted(kt._top_keys(kt._braced(pb, 0, True), True)) == ["list", "view"]}')
 print(f'parity-harness:{len(p4) == 2 and all("not in the" in x for x in p4) and not p5}')
 # parity next (owner 2026-11-24): the org's adapters first, then code uses, then native siblings; native / config / none cells and
 # `no such feature: <link>` gaps left out; a no-such-feature gap without its link fails lint

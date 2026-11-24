@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
 Sections: L30 lanes · L44 report · L161 seat · L310 api · L573 users · L705 login surfaces (parity.json login) · L738 finalize ·
-  L1279 results · L1312 retest · L1369 prepare
+  L1284 results · L1317 retest · L1374 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -952,6 +952,11 @@ if ($Check) {
   $pr = @(& $prose)
   if ($pr.Count) { $fail = $true; "${prWhy}:"; $pr | ForEach-Object { "  $_" } }
   $prRun = @(& $proseRun); if ($prRun.Count) { "$Code prose WARN (run.json / bugs.json, shared by every package: fix there; does not hold this close):"; $prRun | ForEach-Object { "  $_" } }
+  # the publish's upload launch, dry: a title the launcher or a CLI shim mangles fails here, not after the checks (retro tidy-6)
+  $upTitle = "$(if ($run.title) { $run.title } else { Split-Path $RunDir -Leaf }) $Code - Test Results ($Date)"
+  $upOut = @(& (Get-Python) -X utf8 $KitCmd.devtools doc $upTitle (Join-Path $D $Results) --type $rtype --dry-run 2>&1 | ForEach-Object { "$_" }); $upRc = $LASTEXITCODE
+  $upGot = try { ((@($upOut) -match '^\{')[-1] | ConvertFrom-Json).title } catch { $null }
+  if ($upRc -or $upGot -cne $upTitle) { $fail = $true; "$Code upload check ($rtype dry run, exit $upRc): $(if (-not $upRc -and $null -ne $upGot) { "title arrived as '$upGot', sent '$upTitle'" } else { (@($upOut) | Select-Object -Last 3) -join ' | ' }) - fix run.json title or the CLI, then re-run" }
   if ($fail) { "next: $(if ($pr.Count -or $noClass.Count -or $preEx.Count -or $dups.Count -or $kbBad.Count -or $oosBad.Count -or ($gaps.Count -and -not $docSib)) { "fix the text above in $Results$(if ($renamed.Count) { ' (renamed files already in it)' }), then " })ONE run: $checkCmd"; 'EXIT=1'; exit 1 }
   "$Code evidence check: OK ($($files.Count) files, standard names, supported types, none empty, unique check ids, note classes, prose$(if ($hDoc) { ', every human doc row covered, each with a screenshot' }))"
   if ($publishAfter) { $pass = @{} + $PSBoundParameters; foreach ($k in 'FixNames', 'Check') { $pass.Remove($k) }; Invoke-Finalize @pass; return }

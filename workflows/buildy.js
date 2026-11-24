@@ -13,14 +13,14 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L267 ship-prompt · L284 plan · L303 spike ·
-//   L315 local-loop · L408 stages · L562 ship · L602 debate · L711 deploy · L726 learn
+// Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L268 ship-prompt · L285 plan · L304 spike ·
+//   L316 local-loop · L409 stages · L563 ship · L603 debate · L712 deploy · L727 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
   migrations (datay reviews), debate: { item, question, options: [A, B], owner } }], debateModels: [A, B], openQuestions: [q] (rechy first),
  mandate: [owner words], mode: feature | bugfix | resume, resume: { X1: { state, skip: [STEPS], mrs, doc, worktrees, uncommitted } } (bossy.ps1 recover),
- complex: [ids], phases: true (devy per phase) | false, holdMerge: [repo] | true, learn: true | false | 'auto', batch: <areas per run>,
+ complex: [ids], phases: true | false, holdMerge: [repo] | true, learn: true | false | 'auto', batch: <areas per run>,
  kitDir: '<abs .claude>', runtimeDir, run: '<board run>' }
 Returns { resumedDone } or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch | taskGaps, next } or { spikeOpen, next }. */
 const A0 = args || {}   // as given (resume); A = this run's batch
@@ -65,7 +65,7 @@ if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words)
 const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave
 const LEARN = A.learn === undefined ? true : A.learn
 const LOCAL_RETRIES = 1
-const PHASED = A.phases !== false && MODE !== 'resume'   // a fresh devy per phase: no context carries 300+ calls
+const PHASED = A.phases !== false && MODE !== 'resume'
 // 9-minute wait slices: 34 = ~5 h
 const WAIT_SLICES = 34
 const ENV_FIX_CYCLES = 2
@@ -195,10 +195,11 @@ const isFnd = (a) => (a || {}).kind === 'foundation'   // no human-facing change
 const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : '') + (AREA_TASK[a.id] ? `TRACKER TASK: ${AREA_TASK[a.id]} (subtask of ${a.task || A.task}) = <task> in every tracker step (status, MR title, track add); never the parent's status.\n` : '')
 const IBW = 'your agent definition\'s "In a /buildy wave"', SW = `${K}/ship.md "In a /buildy wave"`
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules with ${IBW} commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
-// args.phases: a fresh devy per phase; branch, checkpoints, cases spec carry state
+// args.phases: a devy goes on under 80% budget (tidy-6: 20x a fresh one wasted)
+const GO = ' Under 80% of your budget (beat) go on yourself; at 80%: checkpoint, HANDOFF.'
 const PH = {
- code: `\nPHASE code (1 of 3): crafty steps 0-4 only (code, cases spec, unit tests, commit, push), checkpoint -Step commit; no MR. Report localTest NONE (env "phase code") and stop: a fresh devy runs step 5.`,
- local: `PHASE local (2 of 3): crafty step 5 only on your pushed branch (a fix: steps 3-4 again), checkpoint -Step loop; no MR. Report localTest and stop: a fresh devy ships.`,
+ code: `\nPHASE code (1 of 3): crafty steps 0-4 (code, cases spec, unit tests, commit, push), checkpoint -Step commit; then step 5, its PASS: ${K}/ship.md steps 6-9.${GO}`,
+ local: `PHASE local (2 of 3): crafty step 5 on your pushed branch (a fix: steps 3-4 again), checkpoint -Step loop; its PASS: ${K}/ship.md steps 6-9.${GO}`,
  ship: `PHASE ship (3 of 3): ${K}/ship.md steps 6-9 only (MR, docs, tracker, deploy batch); code changes only when a check fails. Report.`,
  held: ' The local loop is held (FAIL, BLOCKED or not run): Draft MRs only; no finish, tracker step or deploy request.' }
 
@@ -431,7 +432,7 @@ const results = await pipeline(
   const phase = async (x, text, l, more) => ((await gate('Build')) ? goOnIn(mergeReports(x, asRep(await agentOrRedo(continuePrompt(a, x, text), { ...dvo(a, l, 'Build'), ...more })), `Phase ${l}`), text) : { ...x, budgetStopped: true })
   const phaseNext = (x) => ph && !x.budgetStopped && !(x.mrs || []).length && !(x.needsDecision || []).length && !(x.needsEnvFix || []).length
   r = await goOnIn(r, PH.code)
-  if (phaseNext(r)) r = await phase(r, PH.local, 'loop', {})
+  if (phaseNext(r) && ['NONE', undefined].includes((r.localTest || {}).status)) r = await phase(r, PH.local, 'loop', {})
   let o = await localLoop(a, r, LOCAL_RETRIES, 'Build')
   if (phaseNext(o)) o = { ...(await phase(o, PH.ship + (holdsMerge(o.localTest, a) ? PH.held : ''), 'docs', pick('docs'))), localTest: o.localTest }
   return dbt ? debated(o, a.debate.item, await dbt, a.debate.question) : o

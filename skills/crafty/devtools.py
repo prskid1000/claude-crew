@@ -23,12 +23,12 @@
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
   whose AI testing doc has no local reproduction; --override passes, logged); --no-docs: an area with no human-facing change
   (brief kind foundation) passes the testing-docs gate, logged
- python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]]
+ python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]] [--dry-run]
   publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
   (same text: none; human doc: earlier rounds no env run tested show as one "Replaced drafts (not tested): <dates>" line)
-  --run <cells.json> [--run-id <id>] (pokey finalize, key <task>:testing-doc): fills each human doc row's Result / Evidence from the
-  checks that cover it (id, `case`, or a screen starting with the row id) over every run (the newest PASS / FAIL decides, each env
-  named) + a dated "<env> run" section (same --run-id: replaced)
+  --run <cells.json> [--run-id <id>] (pokey finalize, key <task>:testing-doc): each human doc row's Result / Evidence from its
+  checks (id, `case`, a screen starting with the row id) over every run (newest PASS / FAIL decides, envs named) + a dated
+  "<env> run" section (same --run-id: replaced)
  python -X utf8 devtools.py docgaps --key <task>:testing-doc --run <cells.json> [--run-id <id>]   human doc row ids neither this run nor an earlier one covers
  python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout (cell-fit images): same rows and link
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1556 publish · L2107 render · L2717 spec · L3262 plugins · L3276 keepboth · L3295 selftest · L4044 CLI
+Sections: L55 config · L110 run · L198 tracker · L394 process · L605 git host · L678 scope · L770 MR · L985 merge · L1316 docs ·
+  L1553 publish · L2104 render · L2714 spec · L3259 plugins · L3273 keepboth · L3292 selftest · L4041 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -49,7 +49,7 @@ KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
 os.environ['GIT_OPTIONAL_LOCKS'] = '0'   # git probes never rewrite a repo's index (lib.ps1, kitbag.py too)
 sys.path.insert(0, os.path.join(KIT_DIR, 'skills', 'bossy'))
-from kitbag import kit_path, kit_stamp, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog, board_live   # one path map, lock, call log for all kit scripts
+from kitbag import kit_path, kit_param, kit_stamp, locked, audited, state_read, state_write, task_index, task_file, read_tracking, kitlog, board_live   # one path map, lock, call log for all kit scripts
 
 
 # ---- config: kit.local.json (a kit worktree reads the main clone's), report adapters, plugin verbs
@@ -265,10 +265,7 @@ def prose(kind, text, tool=None):
     return found
 
 
-PROSE_OK = ''   # --prose-ok "<why>": a format the brief fixes; the findings still print
-OVERRIDE = ''   # --override "<why>": past the prior-work gate, logged
-NO_DOCS = ''   # merge --no-docs "<why>": a foundation area (no human-facing change) passes the testing-docs gate, logged
-SCOPE, SCOPE_OK = '', ''   # --scope "<globs>" (mr, merge): the area; --scope-ok <decision id>: a person's scope word, logged
+PROSE_OK = OVERRIDE = NO_DOCS = SCOPE = SCOPE_OK = ''   # CLI flags (the docstring)
 def vendor():
     """The tracker vendor's built-in vocabulary (vocab.json trackers.<tracker.type>)."""
     return (VOCAB.get('trackers') or {}).get(TRACKER_TYPE) or {}
@@ -300,7 +297,7 @@ def prior_gate(task, repo, what):
     if not task:
         return
     p = (state_read(os.path.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', task) + '.json')) or {}).get('prior') or {}
-    try:   # validUntil: crafty.ps1 prior stores it from prior.validHours (pins and learned values included)
+    try:   # validUntil: crafty.ps1 prior stores it (prior.validHours)
         fresh = datetime.now().astimezone() < datetime.fromisoformat(p['validUntil']).astimezone()
     except (KeyError, TypeError, ValueError):
         fresh = False
@@ -722,7 +719,7 @@ def scope_refusal(files, globs, branch, ref='', what='mr'):
     out = scope_outside(files, globs)
     if not out:
         return ''
-    # --scope-ok <id>, else any scope word recorded for this branch / MR (K73: a recorded gate was refused without the id)
+    # --scope-ok <id>, else a scope word recorded for this branch / MR (K73)
     orch = os.path.join(KIT_DIR, 'skills', 'bossy', 'bossy.ps1')
     for k in [['-Item', branch]] + ([['-Mrs', ref]] if ref else []):
         word = _run([PWSH, '-NoProfile', '-NonInteractive', '-File', orch, 'decide', 'check', *(['-Id', SCOPE_OK] if SCOPE_OK else []), '-Gate', 'scope', '-MaxHours', '720', *k], write=False)
@@ -1042,7 +1039,7 @@ def _final(H, iid, put, st, proj):
         if m.get('state') == 'merged' or m.get('merge_when_pipeline_succeeds') or i == 3:
             break
         _progress(f're-reading !{iid} ({m.get("detailed_merge_status") or m.get("state")})')
-        time.sleep(3)
+        time.sleep(kit_param('merge.rereadSec'))
     put = put if isinstance(put, dict) else {}
     hp = (m.get('head_pipeline') or {}).get('status')
     if m.get('state') == 'merged':
@@ -1195,7 +1192,7 @@ def _repro_gap(m, proj, iid):
 def _merge_docs(m, proj, iid, H, body):
     """builtin:testingDocs for merge -> NOT_MERGED text or '': a task MR (a tracker task link in its body) links every required doc
     (written here from the published records), and its first doc line never says "none"; --no-docs passes, logged."""
-    if NO_DOCS:   # 2026-11-21: a foundation area's MR was refused, its 5 consumer areas never started
+    if NO_DOCS:   # 2026-11-21: a refused foundation MR stalled 5 areas
         kitlog('calls', 'docs-exempt', {'mr': f'{proj}!{iid}', 'branch': m.get('source_branch') or '', 'reason': NO_DOCS})
         _progress(f'!{iid}: testing-docs gate passed by --no-docs ({NO_DOCS}), logged')
         return ''
@@ -1238,7 +1235,7 @@ def _auto_merge(worktree, iid, max_wait):
         m = raw if isinstance(raw, dict) else {}
         if m.get('state') or i:
             break
-        time.sleep(3)
+        time.sleep(kit_param('merge.rereadSec'))
     if m.get('state') == 'merged':
         return f'already merged !{iid}\nMERGED'
     if not m.get('state'):
@@ -1294,11 +1291,11 @@ def _auto_merge(worktree, iid, max_wait):
             when = m.get('updated_at') or m.get('created_at') or ''
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(when.replace('Z', '+00:00'))).total_seconds() if when else 0
             none_yet, has = _no_ci()
-            waited = 0
-            while none_yet and age + waited <= 300 and waited + 15 <= max_wait:   # progress: a tool timeout kills a silent sleep
-                _progress(f'no pipeline on !{iid} yet; checking again in 15 s ({int(300 - age - waited)} s until it counts as no CI)')
-                time.sleep(15)
-                waited += 15
+            waited, poll = 0, kit_param('merge.ciPollSec')
+            while none_yet and age + waited <= 300 and waited + poll <= max_wait:   # progress: a tool timeout kills a silent sleep
+                _progress(f'no pipeline on !{iid} yet; checking again in {poll:g} s ({int(300 - age - waited)} s until it counts as no CI)')
+                time.sleep(poll)
+                waited += poll
                 none_yet, has = _no_ci()
             if has:
                 st = 'running'
@@ -1381,7 +1378,7 @@ def col_widths(headers):
     return [round(x * 100 / sum(w), 1) for x in w]
 
 
-PAGE_PT = 468   # Google Doc text width (8.5 in page, 1 in margins): measured Evidence cells 76 / 85 / 90 pt = their % less padding
+PAGE_PT = 468   # Google Doc text width (8.5 in page, 1 in margins); Evidence cells measured 76 / 85 / 90 pt
 
 
 def cell_img_px(pct):
@@ -1457,7 +1454,7 @@ def md_to_html(md, title=''):
             out.append(f'<p>{inline(l)}</p>')
         i += 1
     close()
-    # a phone (ui-check 390 px: 62 px cells): each row stacks, a cell under its column name
+    # a phone (390 px): each row stacks, a cell under its column name
     narrow = ('<style>@media (max-width:640px){table,tbody,tr,td{display:block;width:auto!important}td{overflow-wrap:anywhere}tr:first-child{display:none}'
               'td::before{content:attr(data-l);display:block;font-weight:bold}}</style>')
     return f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>{narrow}</head><body>' + '\n'.join(out) + '</body></html>'
@@ -2074,7 +2071,7 @@ def _command(a):
     c = RCFG.get('command') or sys.exit('reports.type command needs reports.command')
     for k, v in (('title', a['title']), ('path', a['path']), ('parent', a['parent'] or a['keep'] or ''), ('url', a.get('url') or ''), ('tags', ','.join(a.get('tags') or []))):
         c = c.replace('{' + k + '}', _q(v))
-    r = subprocess.run(c, shell=True, capture_output=True, text=True, errors='replace', timeout=300)
+    r = subprocess.run(c, shell=True, capture_output=True, text=True, errors='replace', timeout=kit_param('reports.commandTimeoutSec'))
     u = (r.stdout.split() or [''])[-1]
     return u if u and not r.returncode else sys.exit(f'reports.command failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}')
 
@@ -2096,7 +2093,7 @@ ADAPTERS['report']['command'] = {'publish': _command, 'evidence': _command_evide
 def _evidence_command(a):
     c = RCFG.get('evidenceCommand') or sys.exit('reports.evidence command needs reports.evidenceCommand')
     c = c.replace('{name}', _q(a['name'])).replace('{parent}', _q(a.get('parent') or '')).replace('{files}', ' '.join(_q(f) for f in a['files']))
-    r = subprocess.run(c, shell=True, capture_output=True, text=True, errors='replace', timeout=600)
+    r = subprocess.run(c, shell=True, capture_output=True, text=True, errors='replace', timeout=kit_param('reports.evidenceTimeoutSec'))
     if r.returncode:
         print(f'reports.evidenceCommand failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}; evidence stays in the run folder', file=sys.stderr)
         return {}
@@ -2683,7 +2680,7 @@ def render_wave_brief(s):
             f'{t} v{r.get("version")} {r.get("url")}' for t in s['specs'] if (r := spec_rec(t)).get('url') and not r.get('retired'))] if s.get('specs') else []),
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
-        # wrapped: one 340-char line failed the brief's own 130ch prose check (briefys 2026-11-23)
+        # wrapped: a 340-char line failed the 130ch prose check
         *__import__('textwrap').wrap(f'**MR limits** (`devtools.py mr` refuses over them; `devtools.py mr <worktree> --spec <mr.json> --check` first: the same gates, nothing opened): {prose_limits("mr-title") or "mr-title"}; '
                                      f'{prose_limits("mr-body") or "mr-body"}', 128, break_long_words=False, break_on_hyphens=False),
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
@@ -2766,7 +2763,7 @@ SPEC_LABELS = {'howMany': 'How many', 'costOfNothing': 'Cost of doing nothing', 
                'cause': 'Root cause', 'whys': '5 whys', 'i18n': 'i18n', 'compatibility': 'Backward compatibility', 'tell': 'Who is told', 'enable': 'How to enable',
                'theme': 'Theme rule', 'env': 'Env / build', 'security': 'Security and privacy', 'performance': 'Performance budget', 'test': 'Regression test added'}
 SPEC_DIAGRAMS = ('design', 'dataModel')   # feature / subject: at least one diagram here unless n/a with a reason
-MMDC_PIN = '12.2.0'   # @mermaid-js/mermaid-cli, installed by spec setup into <runtime>/tools/mmdc (reversy-style pin)
+MMDC_PIN = '12.2.0'   # mermaid-cli, installed by spec setup into <runtime>/tools/mmdc
 SPEC_FIELDS = """spec JSON (devtools.py spec write; merged into the stored spec: lists by key, objects by part, a list part whole): kind feature|bug|subject · title
  · change (what changed and why: every version after v1) · the kind's sections (spec template <kind> prints them with purpose and
  questions): a value, an object of its parts, or {"na": "<why>"}; a missing one is open (rendered as its question; the spec stays draft).
@@ -3309,7 +3306,7 @@ def selftest():
             fn(); expect(what, False)
         except SystemExit as e:
             expect(what, text in str(e))
-    g0 = globals()   # today's two-doc process = the legacy config rows (kit.local.json process.gates, mr.footer); neutral checks below
+    g0 = globals()   # the legacy process.gates / mr.footer rows; neutral checks below
     LEGACY_GATES = {'promote': 'builtin:testingDocs', 'merge': 'builtin:testingDocs', 'finish': 'builtin:testingDocs', 'mrBody': 'builtin:testingDocs', 'bugFix': 'builtin:reproRow'}
     CFG['process'] = {'gates': dict(LEGACY_GATES)}; g0['FOOTER'] = '\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)'
     refused('a missing body file is refused', lambda: _body('no-such-body.md'), 'file not found')
@@ -3477,7 +3474,7 @@ def selftest():
         expect(f'merge: a task MR without doc lines (or "none") gets them from the published docs and merges; finish writes them into tracked open MRs; a doc not published: NOT_MERGED naming it ({rf}, {miss})',
                rf == 'MERGED' and rfin and up and '## Links\n- Testing doc: https://d/testing-doc\n- Testing doc (AI): https://d/testing-ai\n' in up[0] and 'pending' not in up[0]
                and merge_word(rn) == 'NOT_MERGED' and 'testing-ai' in rn and nm and miss == ['testing-ai'] and 'Testing doc: https://d/testing-doc' in wl and 'pending' not in wl and '- Testing doc: https://d/T8-doc' in wm and 'pending' not in wm)   # several tasks: lines merged
-        # neutral: process.gates unset -> no doc lines, no "none" refusal, no repro gate; a hook gate refuses with its stdout
+        # neutral: no process.gates -> no doc lines or refusals; a hook gate refuses with its stdout
         g['CFG']['process'] = {}; g['TRACKER_TYPE'] = 'clickup'; g['TAG'] = 'CU-'
         g['_pub_read'] = lambda key: {}
         calls.clear(); g['_host'] = tb('https://app.clickup.com/t/T7\n- Testing doc: none'); n1 = merge_word(auto_merge('.', '7')); n1u = [v for v, _ in calls if v == 'mr.update']
@@ -4048,7 +4045,7 @@ def _cli():
     cmd = a[0] if a else ''
     if cmd in VERBS:   # a plugin verb parses its own arguments
         sys.exit(VERBS[cmd](a[1:]) or 0)
-    if cmd == 'cases':   # cases and render parse their own arguments; one arm each: lint's flow finds the verb
+    if cmd == 'cases':   # they parse their own arguments; one arm each (lint flow)
         sys.exit(cases_cmd(a[1:]))
     if cmd == 'render':
         sys.exit(render_cmd(a[1:]))
@@ -4056,10 +4053,13 @@ def _cli():
         sys.exit(spec_cmd(a[1:]))
     # --help never becomes an id; unknown flags and missing args are usage errors
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
+    if cmd == 'mr':   # the caps: guessed ones cost refusals (tidy-6)
+        use += [f'  {lim}' for lim in (prose_limits('mr-title'), prose_limits('mr-body')) if lim]
     ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'docgaps': 0, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
     CHECK = cmd == 'mr' and '--check' in a   # the body gates before the push (retro 2026-11-22: 9 mr-body refusals after it)
-    a = [x for x in a if not (CHECK and x == '--check')]
+    DRY = cmd == 'doc' and '--dry-run' in a   # pokey finalize -Check (tidy-6)
+    a = [x for x in a if not (CHECK and x == '--check') and not (DRY and x == '--dry-run')]
     for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--run-id', '--override') if cmd in ('doc', 'evidence', 'docgaps') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok', '--no-docs') if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
@@ -4102,7 +4102,7 @@ def _cli():
             task_index(a[1], lambda x: filled.extend(cases_fill_checks(x.get('cases') or {})))
             if filled:
                 print(f'finish {a[1]}: human check(s) added for NOT_TESTED_LOCAL case(s) {", ".join(filled)}: UI steps from the case; edit with cases add --replace', file=sys.stderr)
-        # 'cases' = rendered from the task's cases spec, only for a doc process.docs lists (one command fits any doc set)
+        # 'cases': rendered from the cases spec, for a doc process.docs lists
         rc = lambda p, k, key: (cases_file(a[1], k) if key in {d['key'] for d in docs()} else None) if p == 'cases' else p
         sol = spec_text(a[3], 'comment-solution', a[1]) if a[3].endswith('.json') else _body(a[3])   # a .json = the comment spec
         finish(a[1], rc(a[2], 'human', 'testing-doc'), sol, *(a[4:5] or ['review']), ai=rc(opt.get('--ai'), 'ai', 'testing-ai'))
@@ -4130,6 +4130,9 @@ def _cli():
         sys.exit(keepboth(a[1:]))
     elif cmd == 'selftest':
         sys.exit(selftest())
+    elif cmd == 'doc' and DRY:   # the adapter and the title as received
+        ADAPTERS['report'].get(REPORT_TYPE) or no_report_adapter()
+        print(json.dumps({'dryRun': 'ok', 'type': REPORT_TYPE, 'title': a[1]}))
     elif cmd == 'doc':
         title, path = a[1], a[2]
         if path == 'cases' and (dk := (opt.get('--key') or '').rpartition(':')[2]) in ('testing-doc', 'testing-ai') and dk not in {d['key'] for d in docs()}:
