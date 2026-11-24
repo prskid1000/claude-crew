@@ -147,7 +147,7 @@ $fgL = Join-Path $fgD 'LESSONS-fg.md'
 [IO.File]::WriteAllText($fgL, "## alpha`n- a hot case -> keep it (seen) (3×)`n- a cold case -> drop it (once)`n- (fixed in kit) an old case -> gone (fixed)`n- an owner case -> keep (owner, 2026-01-01)`n## Decisions`n- an ADR line`n")
 $fo = & $fgRun --target $fgL --section alpha --to 2 --apply; $fgT = [IO.File]::ReadAllText($fgL)
 Expect "forget: lessons over cap lose the fixed-in-kit line, then the lowest hits; owner lines and Decisions stay ($($fo.Trim()))" ($fgT -notmatch 'an old case|a cold case' -and $fgT -match 'a hot case' -and $fgT -match 'an owner case' -and $fgT -match 'an ADR line' -and $fo -match 'FORGOT .*2 item')
-$fgId = [regex]::Match($fo, 'lessons-\d{4}\b').Value; $ro = & $fgRun --restore $fgId
+$fgId = [regex]::Match($fo, 'lessons-\d+\b').Value; $ro = & $fgRun --restore $fgId
 $fgRet = Get-Content (Join-Path (TkPath $kc forgotten) 'retention.json') -Raw | ConvertFrom-Json
 Expect "forget --restore puts the line back after its anchor and doubles the kind's retention 7 -> 14 d ($($ro.Trim()))" ($ro -match "restored $fgId" -and [IO.File]::ReadAllText($fgL) -match '(cold|old) case' -and $fgRet.kinds.lessons.days -eq 14)
 [IO.File]::WriteAllText((Join-Path $fgD 'doc.md'), "# Doc`n## Used part`nkept: named elsewhere`n## Old notes`nnobody names this`n## Hard rules`nnever cut`n")
@@ -172,7 +172,7 @@ $fgK = 'zq' + 'key'; $fgJ = Join-Path $fgD 'c.json'; [IO.File]::WriteAllText($fg
 $jo = & $fgRun --target $fgJ --to 1
 Expect "forget: a config key is the top-level one, never a nested key of the same name ($($jo.Trim()))" ($jo -match "CONFIRM fg/c\.json:6 `"$fgK`"" -and $jo -notmatch 'c\.json:3 ')
 $fgQ = '```'; $fgM = Join-Path $fgD 'fence.md'; [IO.File]::WriteAllText($fgM, "# F`n## A`n$fgQ`n## never cut: not a heading`n$fgQ`n`n## Zq bee`nb text`n`n## Zq sea`nc text`n")
-$fo = & $fgRun --target $fgM --to 1 --apply --unused-days 0; $fgC = [regex]::Matches($fo, 'doc-\d{4}\b') | ForEach-Object Value
+$fo = & $fgRun --target $fgM --to 1 --apply --unused-days 0; $fgC = [regex]::Matches($fo, 'doc-\d+\b') | ForEach-Object Value
 $null = & $fgRun --restore $fgC[0]; $fgT = [IO.File]::ReadAllText($fgM) -split "`n"
 Expect "forget --restore with a repeated anchor line (a code fence) lands after the nearest one, never inside the block ($($fgT -join '|'))" ($fgT[4] -eq '```' -and ($fgT[5..7] -join '|') -match '## Zq (bee|sea)')
 $fgA = Join-Path (TkPath $kc forgotten) 'doc'; $null = New-Item -ItemType Directory -Force $fgA; 'x' | Set-Content (Join-Path $fgA '2026-01-01.md')
@@ -231,7 +231,7 @@ $hk = @(Invoke-KitHooks Get-KitSetupLines); $null = Set-KitBrowserPolicy -Undo; 
 $tplMd = Get-Content (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/templates.md') -Raw
 $tplLim = "$(@('mr-body', 'mr-title', 'commit') | ForEach-Object { if ($tplMd -match "(?m)^\| $_ \|[^|]*\|[^|]*\| ([^|]+) \|") { $Matches[1].Trim() } })"
 $tplSpec = if ($tplMd -match '(?s)## MR spec.*?\nLimits (.*?)\n```') { $Matches[1] -replace '\s+', ' ' } else { '' }
-Expect "templates: MR spec limits = the table ($tplLim)" ($tplLim -eq '260w each:3b Summary:40w 1l 90ch first:72ch 12l 100ch' -and $tplSpec -match 'body 260 words, 3 bullets per section, Summary 40 words; title 90 chars; commit subject 72 chars, lines 100 chars')
+Expect "templates: MR spec limits = the table ($tplLim)" ($tplLim -eq '260w each:3b Links:9b Summary:40w 1l 90ch first:72ch 12l 100ch' -and $tplSpec -match 'body 260 words, \*\*max 3 bullets per section\*\* \(.*Links 9\), Summary 40 words; title 90 chars; commit subject 72 chars, lines 100 chars')
 # a direct area run with a finished suite's KIT_TESTS_SNAPSHOT left set: refused, a fresh snapshot (retro 1709: stale copies tested)
 $stSnap = Join-Path (Kd) 'stale-snap'; $null = New-Item -ItemType Directory -Force $stSnap
 $stOut = pwsh -NoProfile -Command "`$env:KIT_TESTS_SNAPSHOT = '$stSnap'; . '$(Join-Path $src 'tests/harness.ps1')' 3>&1; 'SNAP=' + `$env:KIT_TESTS_SNAPSHOT; 'OWN=' + (Get-Content (Join-Path `$env:KIT_TESTS_SNAPSHOT '.owner')) + '/' + `$PID" 2>&1 | Out-String

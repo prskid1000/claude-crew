@@ -98,7 +98,7 @@ $cs = @{ title = 'Sort orders'; checks = @(@{ id = 'T1'; area = 'Orders'; steps 
   cases = @(@{ id = 'A1'; type = 'positive'; check = 'T1'; steps = 'open'; expected = 'newest first'; spec = @('S1') }, @{ id = 'A2'; type = 'negative'; steps = 'bad sort'; expected = '400'; spec = 'X9' }) }
 Set-JsonFile "$wd/c1.json" $cs; $ca = Dt cases add T1 "$wd/c1.json"
 Expect 'cases add: a spec ref that is no S-id is a spec gap' ($ca.out -match "spec 'X9' is no S-id")
-$cs.cases[1].spec = 'S1'; Set-JsonFile "$wd/c1.json" $cs; $ca = Dt cases add T1 "$wd/c1.json"
+$cs.cases[1].spec = 'S1'; Set-JsonFile "$wd/c1.json" $cs; $ca = Dt cases add T1 "$wd/c1.json" --replace
 $hu = Get-Content -Raw (Dt cases render T1 human).out; $ai = Get-Content -Raw (Dt cases render T1 ai).out; $g = Dt spec trace T1
 Expect "cases cite S-ids (human + AI rows); spec trace + cases add WARN name S2 ($($g.code))" ($hu -match '\| T1 \| Open Orders \| newest first \[S1\] \|' -and $ai -match '\| A1 \(T1\) \| positive \| open \| newest first \[S1\] \|' -and
   $ca.out -match 'WARN cases T1: spec S-id\(s\) S2' -and $g.code -eq 1 -and $g.out -match 'T1: S2 has no test case')
@@ -147,7 +147,7 @@ Expect "decide ask: the owner reads today (said once) + the question + its defau
 # ---- MR body + commit cite S-ids; usage
 Set-JsonFile "$wd/mr.json" @{ type = 'feat'; change = 'sort orders'; summary = 'Orders sort by date'; specIds = 'S1,S2'; changes = @(@{ text = 'sort by date' }) }
 $mb = Dt render mr-body "$wd/mr.json"; $cm = Dt render commit "$wd/mr.json"
-Expect 'MR body Links: Spec S-ids line; commit body: Spec line' ($mb.out -match '(?m)^- \*\*Spec S-ids:\*\* S1, S2$' -and $cm.out -match '(?m)^- Spec: S1, S2$')
+Expect 'MR body Links: Spec S-ids line; commit body: Spec line' ($mb.out -match '(?m)^- .* · \*\*Spec S-ids:\*\* S1, S2$' -and $cm.out -match '(?m)^- Spec: S1, S2$')
 $hp = Dt spec --help
 Expect 'spec --help: verbs and the JSON fields, exit 0' ($hp.code -eq 0 -and $hp.out -match 'rules \[\{id: S1, text,' -and $hp.out -match 'spec write T1')
 # ---- wave brief (moved from render.tests: room): one spec -> brief + contracts + /buildy args; empty sections n/a — <why> (A3)
