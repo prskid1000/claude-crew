@@ -3,7 +3,7 @@ records, the UNTRUSTED fence, capped output, safe unzip, a PE parser.
 Usage: imported by reversy.py and its verb modules (python -X utf8 <kit>/skills/reversy/reversy.py <verb> ...).
 Inputs: REVERSY_TOOLS (tools folder, default ~/.rea-tools), REVERSY_OFFLINE=1 (never download), GHIDRA_INSTALL_DIR, JAVA_HOME.
 Exit codes: none here (reversy.py exits 0 ok · 1 problem · 2 usage).
-Sections: L8 imports · L25 output · L99 cache · L168 evidence · L189 runs · L215 tools · L368 unzip · L427 pe
+Sections: L8 imports · L25 output · L99 cache · L168 evidence · L189 runs · L215 tools · L392 unzip · L451 pe
 """
 # ---- imports: kit paths through kitbag (tempfile lands in <runtime>/tmp)
 import hashlib
@@ -242,7 +242,7 @@ TOOLS = {
     'ifrextractor': (['ifrextractor'], None, 'ifrextractor/ifrextractor' + EXE, {'release': 'LongSoft/IFRExtractor-RS', 'asset': r'.*win.*\.zip$', 'into': 'ifrextractor'}),
     'adb': (['adb'], ('ANDROID_HOME', 'platform-tools/adb' + EXE), None, None),
     'node': (['node'], None, None, None),
-    'babel': ([], None, 'node/node_modules/@babel/parser/package.json', {'npm': ['@babel/parser@7']}),
+    'babel': ([], None, 'node/node_modules/@babel/parser/package.json', {'npm': '@babel/parser'}),
     'frida': ([], None, 'frida-venv/Scripts/frida' + EXE if os.name == 'nt' else 'frida-venv/bin/frida', {'pip': 'frida-tools', 'adopt': False}),   # a venv does not move: reinstalled
     'tshark': (['tshark'], None, None, None),
     'wsl': (['wsl'], None, None, None),
@@ -307,38 +307,62 @@ def _get(url, dest=None, timeout=60):
             shutil.copyfileobj(r, fh, 1 << 20)
     return dest
 
+def pins():
+    """pins.json next to this file; kit.local.json reverse.pins entries override per tool ({version, asset, sha256})."""
+    with open(osp.join(osp.dirname(osp.abspath(__file__)), 'pins.json'), encoding='utf-8') as fh:
+        base = json.load(fh)
+    own = (local_config(KIT_DIR, 'kit.local.json').get('reverse') or {}).get('pins') or {}
+    return {k: v for k, v in {**base, **own}.items() if not k.startswith('_')}
+
+def check_sha256(path, want):
+    """Refuse a download whose sha256 is not the pinned one (the file is deleted)."""
+    got = sha256_file(path)
+    if got.lower() != (want or '').lower():
+        os.remove(path)
+        raise ToolMissing(f'{osp.basename(path)}: sha256 {got} is not the pinned {want}: refused, deleted')
+
 def _install(name, recipe):
-    """One upstream install into TOOLS_DIR: a release asset (zip / tar.gz / jar), npm, pip or a dotnet tool."""
-    os.makedirs(TOOLS_DIR, exist_ok=True)
-    print(f'reversy: installing {name} into {TOOLS_DIR} (first need)', file=sys.stderr)
+    """One pinned upstream install into TOOLS_DIR: a release asset (zip / tar.gz / jar; version + sha256), npm, pip or a
+    dotnet tool (version). No pin: refused."""
     if 'same' in recipe:
         return tool(recipe['same'])
+    pin = pins().get(name)
+    if not pin or not pin.get('version') or (recipe.get('asset') and not (pin.get('asset') and pin.get('sha256'))):
+        raise ToolMissing(f'{name}: no pin in reverse.pins (version' + (', asset, sha256' if recipe.get('asset') else '') +
+                          '): add one to kit.local.json; nothing downloaded')
+    os.makedirs(TOOLS_DIR, exist_ok=True)
+    print(f'reversy: installing {name} {pin["version"]} into {TOOLS_DIR} (first need)', file=sys.stderr)
     if 'npm' in recipe:
         npm = shutil.which('npm')
         if npm:
-            run([npm, 'install', '--prefix', osp.join(TOOLS_DIR, 'node'), '--no-audit', '--no-fund', *recipe['npm']], timeout=300)
+            run([npm, 'install', '--prefix', osp.join(TOOLS_DIR, 'node'), '--no-audit', '--no-fund', f'{recipe["npm"]}@{pin["version"]}'], timeout=300)
         return
     if 'pip' in recipe:
         venv = osp.join(TOOLS_DIR, 'frida-venv')
         run([sys.executable, '-m', 'venv', venv], timeout=300)
         pip = osp.join(venv, 'Scripts' if os.name == 'nt' else 'bin', 'pip' + EXE)
-        run([pip, 'install', recipe['pip']], timeout=600)
+        run([pip, 'install', f'{recipe["pip"]}=={pin["version"]}'], timeout=600)
         return
     if 'dotnet' in recipe:
         dn = shutil.which('dotnet')
         if dn:
-            run([dn, 'tool', 'install', recipe['dotnet'], '--tool-path', osp.join(TOOLS_DIR, recipe['dotnet'])], timeout=600)
+            run([dn, 'tool', 'install', recipe['dotnet'], '--version', pin['version'], '--tool-path', osp.join(TOOLS_DIR, recipe['dotnet'])], timeout=600)
         return
     if not recipe.get('asset'):
         return
-    rel = _get(f'https://api.github.com/repos/{recipe["release"]}/releases/latest')   # arch-ok: upstream tool releases, not the kit's git host
-    asset = next((a for a in rel.get('assets', []) if re.search(recipe['asset'], a['name'], re.I)), None)
+    rel = _get(f'https://api.github.com/repos/{recipe["release"]}/releases/tags/{pin["version"]}')   # arch-ok: upstream tool releases, not the kit's git host
+    asset = next((a for a in rel.get('assets', []) if a['name'] == pin['asset']), None)
     if not asset:
-        return
+        raise ToolMissing(f'{name}: release {pin["version"]} has no asset {pin["asset"]}')
     dl = osp.join(TOOLS_DIR, '_downloads', f'{name}-{int(time.time())}')   # a new empty folder per download (untrusted data)
     os.makedirs(dl)
     file = _get(asset['browser_download_url'], osp.join(dl, asset['name']), timeout=1800)
-    into = osp.join(TOOLS_DIR, recipe.get('into') or f'{name}-{rel.get("tag_name", "latest")}'.replace('/', '_'))
+    try:
+        check_sha256(file, pin['sha256'])
+    except ToolMissing:
+        shutil.rmtree(dl, ignore_errors=True)
+        raise
+    into = osp.join(TOOLS_DIR, recipe.get('into') or f'{name}-{pin["version"]}'.replace('/', '_'))
     if file.endswith('.jar'):
         os.makedirs(into, exist_ok=True)
         shutil.copy(file, into)

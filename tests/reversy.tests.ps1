@@ -96,6 +96,42 @@ Expect 'reversy runtime sqlite: read-only snapshot, 2 rows' ($sq.text -match 'us
 Expect 'reversy: every summary within 2k tokens (8000 bytes)' (@($b, $m, $a, $w, $fw, $pc, $sq | Where-Object { $_ -and [Text.Encoding]::UTF8.GetByteCount($_.text) -gt 8200 }).Count -eq 0)
 $ev = @(Get-ChildItem "$fx/kit" -Recurse -Filter evidence.jsonl)
 Expect "reversy: evidence.jsonl records (id, confidence, coverage) under work/agents/<id>/reversy ($($ev.Count) files)" ($ev.Count -ge 5 -and (Get-Content $ev[0].FullName -First 1 | ConvertFrom-Json).confidence)
+# pinned downloads (offline: _get serves a local jar): the pinned sha256 installs, a mismatch is refused and deleted, no pin = no fetch
+$pinPy = @'
+import hashlib, json, os, shutil, sys
+sys.path.insert(0, sys.argv[1]); import lib
+src = os.path.join(sys.argv[2], 'apktool_9.9.9.jar'); open(src, 'wb').write(b'jar bytes')
+good = hashlib.sha256(b'jar bytes').hexdigest(); calls = []
+def fake_get(url, dest=None, timeout=60):
+    calls.append(url)
+    if not dest:
+        return {'tag_name': 'v9.9.9', 'assets': [{'name': 'apktool_9.9.9.jar', 'browser_download_url': 'local'}]}
+    shutil.copy(src, dest); return dest
+lib._get = fake_get
+recipe = lib.TOOLS['apktool'][3]
+def attempt(pin):
+    lib.pins = lambda: {'apktool': pin} if pin else {}
+    try:
+        lib._install('apktool', recipe); return 'ok'
+    except lib.ToolMissing as e:
+        return str(e)
+bad = attempt({'version': 'v9.9.9', 'asset': 'apktool_9.9.9.jar', 'sha256': '0' * 64})
+print('pin-bad:' + str('refused' in bad and not os.path.exists(os.path.join(lib.TOOLS_DIR, 'apktool-v9.9.9'))))
+n = len(calls); none = attempt(None)
+print('pin-none:' + str('no pin' in none and len(calls) == n))
+ok = attempt({'version': 'v9.9.9', 'asset': 'apktool_9.9.9.jar', 'sha256': good})
+print('pin-ok:' + str(ok == 'ok' and os.path.exists(os.path.join(lib.TOOLS_DIR, 'apktool-v9.9.9', 'apktool_9.9.9.jar')) and calls[-2].endswith('/releases/tags/v9.9.9')))
+# the shipped defaults: every release tool pinned with version, asset and a 64-hex sha256
+import importlib; importlib.reload(lib)
+rel = [k for k, v in lib.TOOLS.items() if v[3] and v[3].get('asset')]
+print('pin-defaults:' + str(all(len((lib.pins().get(k) or {}).get('sha256', '')) == 64 and lib.pins()[k].get('asset') for k in rel)))
+'@
+Set-Content "$fx/pin.py" $pinPy -Encoding utf8
+$pinOut = @(& $py -X utf8 "$fx/pin.py" (Join-Path $fx 'kit/skills/reversy') $fx 2>&1 | ForEach-Object { "$_" })
+Expect "reversy pins: a sha256 mismatch is refused and deleted ($($pinOut -join ' '))" ($pinOut -contains 'pin-bad:True')
+Expect 'reversy pins: no pin = refused before any network call' ($pinOut -contains 'pin-none:True')
+Expect 'reversy pins: the pinned tag and sha256 install' ($pinOut -contains 'pin-ok:True')
+Expect 'reversy pins: pins.json pins every release tool (version, asset, sha256)' ($pinOut -contains 'pin-defaults:True')
 # tools: REA's old folder is copied in on first need (no download, the old copy stays); the default folder is <runtime>/tools
 $tj = Invoke-Reversy tools --install jadx; $tg = Invoke-Reversy tools --install ghidra
 Expect "reversy tools: jadx and Ghidra copied from the old folder into the tools folder, originals kept ($($tj.code)/$($tg.code))" (

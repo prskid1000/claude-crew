@@ -76,7 +76,7 @@
  "devices": { "type": "none" },
  "kitAudit": { "_readme": "everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off).", "everyDays": 7 },
  "build": { "_readme": "mavenOffline: Maven -o when ~/.m2/repository exists (default false).", "mavenOffline": false },
- "reverse": { "_readme": "toolsDir: the reversy engines (Ghidra, JADX, apktool, ilspycmd, WABT, frida, ...); default <runtime>/tools, never pruned by cleanup; relative = from the kit.", "toolsDir": "" },
+ "reverse": { "_readme": "toolsDir: the reversy engines (Ghidra, JADX, apktool, ilspycmd, WABT, frida, ...); default <runtime>/tools, never pruned by cleanup; relative = from the kit. pins: <tool> {version, asset, sha256} overrides one entry of skills/reversy/pins.json (no pin = no download).", "toolsDir": "" },
  "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}." },
  "supervise": { "ramActPct": 90, "minDiskFreeGB": 30,"briefSeconds": 40, "heartbeatMinutes": 15, "finishedMinutes": 30 },
  "storage": { "_readme": "storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (>= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop >= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: <id> <GB> <s> <query>; db.kill {id}; db.maxGB. TODO-PARAM.",

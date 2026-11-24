@@ -13,6 +13,7 @@ description: "Load when: reverse-engineering a shipped app or binary without its
 | `<kit>/LESSONS.md` | step 0: `bossy.ps1 learn -Read -Skill reversy` |
 | `reversy.py` | steps 1-3: the entry (`--help` per verb) |
 | `lib.py`, `binary.py`, `managed.py`, `android.py`, `web.py`, `firmware.py`, `runtime.py` | imported by `reversy.py` (nothing to study) |
+| `pins.json` | the only tool downloads allowed (tag, asset, sha256); a mismatch is refused |
 
 ## Steps
 `R` = `python -X utf8 <kit>/skills/reversy/reversy.py --agent <your RUN-ID>`.

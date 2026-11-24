@@ -321,7 +321,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `memory` | {"keepDefault": false} | false = auto memory off (settings.json); true = on (settings.local.json). |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
 | `build` | {"mavenOffline": false} | mavenOffline: Maven -o when ~/.m2/repository exists (default false). |
-| `reverse` | {"toolsDir": ""} | toolsDir: the reversy engines (Ghidra, JADX, apktool, ilspycmd, WABT, frida, ...); default &lt;runtime&gt;/tools, never pruned by cleanup; relative = from the kit. |
+| `reverse` | {"toolsDir": ""} | toolsDir: the reversy engines (Ghidra, JADX, apktool, ilspycmd, WABT, frida, ...); default &lt;runtime&gt;/tools, never pruned by cleanup; relative = from the kit. pins: &lt;tool&gt; {version, asset, sha256} overrides one entry of skills/reversy/pins.json (no pin = no download). |
 | `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
 | `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (&gt;= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop &gt;= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: &lt;id&gt; &lt;GB&gt; &lt;s&gt; &lt;query&gt;; db.kill {id}; db.maxGB. TODO-PARAM. |
 | `watch` | {"windows": ["15m", "2h", "24h"], "rising": {"factor": 3, "hits": 10}} | watchy after a deploy: windows = one-shot timers (default 15m, 2h, 24h; bossy E15); rising = a signature at factor x its baseline and at least hits (default 3, 10) |
@@ -628,5 +628,6 @@ flowchart LR
   skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_web_py["web.py"]
   skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_firmware_py["firmware.py"]
   skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_runtime_py["runtime.py"]
+  skills_reversy_SKILL_md -->|"the only tool downloads allowed (tag, asset,…"| skills_reversy_pins_json["pins.json"]
 ```
 <!-- kit-graph:end -->

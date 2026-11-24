@@ -1,0 +1,13 @@
+{
+ "_readme": "reversy download pins: the only release (tag) and asset a tool installs from; its sha256 must match, else the file is refused and deleted. npm / pip / dotnet: version only. kit.local.json reverse.pins.<tool> overrides one entry. Update: tag, asset name and the asset digest from the release page.",
+ "ghidra": {"version": "Ghidra_12.1.4_build", "asset": "ghidra_12.1.4_PUBLIC_20260921.zip", "sha256": "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"},
+ "jadx": {"version": "v1.5.7", "asset": "jadx-1.5.7.zip", "sha256": "1755e4242ade71a077438723689f404079592ec7764a3a0572f98fef94ebcbf3"},
+ "apktool": {"version": "v3.0.3", "asset": "apktool_3.0.3.jar", "sha256": "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"},
+ "rizin": {"version": "v0.9.1", "asset": "rizin-windows-shared64-v0.9.1.zip", "sha256": "45ffa004e26653eaee8d262b8e6eeae09402a7d319c1f20a2ba794bd6af1cc28"},
+ "wasm-objdump": {"version": "1.0.42", "asset": "wabt-1.0.42-windows-x64.tar.gz", "sha256": "62f1eb2b51aa57cf0f0b8ba333bf2c72a049930aa9c5de01dcad271c4fe48c88"},
+ "uefiextract": {"version": "A76", "asset": "UEFIExtract_NE_A76_win64.zip", "sha256": "0e723a7c57526e1d872d8caa3ff33f1220b1102844d19ec75ebbfb30fb351621"},
+ "ifrextractor": {"version": "v1.6.1", "asset": "ifrextractor_1.6.1_windows.zip", "sha256": "3a0d93ecd3a4cb092d210c499d125ffd782982311f5f8dc40a8b180b58c4ffe7"},
+ "babel": {"version": "7.29.15"},
+ "frida": {"version": "14.13.2"},
+ "ilspycmd": {"version": "11.1.0.9782"}
+}
