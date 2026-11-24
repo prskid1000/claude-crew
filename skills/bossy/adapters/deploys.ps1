@@ -7,7 +7,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L15 helpers · L106 intest · L284 deploy · L489 restart · L564 supervise
+Sections: L15 helpers · L106 intest · L284 deploy · L489 restart · L565 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -502,14 +502,15 @@ function Invoke-DeployRun([string]$To, [string]$Repo, [Alias('Mr')][string[]]$Mr
     if (-not (Test-KitCap 'deploy-kind' $kd 'deploy') -and -not $cmdDeploy) { "UNSUPPORTED deploy-kind/$kd/deploy $($x.r.name) -> ${To}: a person deploys ($(Invoke-KitDeployKind $x.d 'plan')), then deploy record -Env $To"; continue }
     $rf = Join-Path (Get-KitPath deploys -Create) "running-$(ConvertTo-KitSlug $To).json"   # isRunning fallback (Test-KitDeployRunning)
     @{ pid = $PID; start = (Get-Date).ToString('o'); kind = $kd; repo = "$($x.r.name)" } | ConvertTo-Json -Compress | Set-Content -LiteralPath $rf -Encoding utf8
-    $o = try { if (-not (Test-KitCap 'deploy-kind' $kd 'deploy')) { @{ id = "$(__DkCmd $x.d 'deploy' @{ sha = (__DkHead $x.r $x.d); repo = "$($x.r.name)"; mr = (@($Mrs) -join ',') })".Trim() } } else { Invoke-KitDeployKind $x.d 'deploy' @{ repo = $x.r; env = $To; mrs = $Mrs; decision = $Decision } } } catch { @{ note = "$_" } } finally { Remove-Item -LiteralPath $rf -Force -ErrorAction SilentlyContinue }
+    $o = try { if (-not (Test-KitCap 'deploy-kind' $kd 'deploy')) { $global:KitHostFailed = $false; $co = "$(__DkCmd $x.d 'deploy' @{ sha = (__DkHead $x.r $x.d); repo = "$($x.r.name)"; mr = (@($Mrs) -join ',') })".Trim(); if ($global:KitHostFailed) { @{ note = 'command.deploy failed' } } else { @{ id = $(if ($co) { $co } else { 'command.deploy' }) } } } else { Invoke-KitDeployKind $x.d 'deploy' @{ repo = $x.r; env = $To; mrs = $Mrs; decision = $Decision } } } catch { @{ note = "$_" } } finally { Remove-Item -LiteralPath $rf -Force -ErrorAction SilentlyContinue }
     "$(if ($o.id) { 'DEPLOY' } else { 'FAILED' }) $($x.r.name) -> $To ($kd)$(if ($o.id) { ": $(@($o.url, $o.id) | Where-Object { $_ } | Select-Object -First 1)" })$(if ($o.note) { " · $($o.note)" })"
   }
 }
 # a deploy run of the target in flight (its marker's process alive): the plan's DEPLOYING for a kind with no isRunning of its own
 function Test-KitDeployRunning([string]$To) {
   $j = try { Get-Content -LiteralPath (Join-Path (Get-KitPath deploys) "running-$(ConvertTo-KitSlug $To).json") -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
-  [bool]($j -and (Get-Process -Id ([int]$j.pid) -ErrorAction SilentlyContinue))
+  $pr = if ($j) { Get-Process -Id ([int]$j.pid) -ErrorAction SilentlyContinue }   # a reused pid started after the marker is not it
+  [bool]($pr -and (-not $pr.StartTime -or $pr.StartTime -le ([datetimeoffset]"$($j.start)").LocalDateTime.AddSeconds(1)))
 }
 function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMinutes = 20, [int]$RecheckSeconds = 120, [switch]$Ungated) {
   foreach ($t in $Targets) {

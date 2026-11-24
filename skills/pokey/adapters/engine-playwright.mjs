@@ -39,7 +39,7 @@ export async function pwPage(eng, bo, VIEW, quiet = [], ws = '') {
 // reuse: one Playwright browser server per login key and port (a detached `node engine-playwright.mjs serve`), each call connects
 // with a fresh context (the saved login restores it); the server exits after KIT_PW_IDLE_MS (30 min) without a client touching
 // <used>, within 5 s once <used> is gone (browser.mjs killSession). Its ws path is a random token per server (pw-<port>.token, owner-only),
-// never a fixed path another local process could guess.
+// never a fixed path another local process could guess (0600 on Unix; on Windows the user's kit runtime folder guards it).
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const touch = (f) => { try { writeFileSync(f, String(Date.now())) } catch {} }
 const readTok = (f) => { try { return readFileSync(f, 'utf8').trim() } catch { return '' } }
@@ -52,7 +52,8 @@ export async function pwServed(eng, bo, VIEW, quiet, port, dir) {
     spawn(process.execPath, [fileURLToPath(import.meta.url), 'serve', eng, String(port), used, JSON.stringify(eng === 'chromium' ? quiet : [])], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, KIT_PW_TOKEN: tok } }).unref()
     // a racing caller's server may win the port: its token file then names the live one
     for (let i = 0; i < 60 && !s && !err; i++) { await sleep(500); const t2 = readTok(tokF); s = await go(tok) || (t2 && t2 !== tok ? await go(t2) : null); try { err = readFileSync(used + '.err', 'utf8') } catch {} }
-    if (!s) throw new Error(err || `browser.engine ${eng}: no browser server came up on port ${port}`)
+    // an older server on a fixed path holds the port: <used> gone, it exits within a minute
+    if (!s) { try { unlinkSync(used) } catch {}; throw new Error(err || `browser.engine ${eng}: no browser server came up on port ${port} (an older server there exits within a minute: retry)`) }
   }
   touch(used); setInterval(() => touch(used), 60000).unref()
   return s

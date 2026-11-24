@@ -127,14 +127,16 @@ try {
   Expect-Each $tpR 'db engine parity: #' @('temp', 'kill', 'msSnap', 'msRevert', 'oracle', 'es', 'query', 'mongo') -Show 9
   # tenant model column (parity): footprint = rows per table with the column; drop deletes them, the registry table last, a FK refusal
   # retried next pass; tenants.keep never dropped; dry run counts only
-  & $J @{ localEnv = @{ envs = @{ cl = @{ services = @(); db = @{ engine = 'postgres'; name = 'app' }; tenants = @{ model = 'column'; keep = @('base'); column = @{ table = 'public.orgs'; column = 'org_id' } } } } } } $cfg 8
+  & $J @{ localEnv = @{ envs = @{ cl = @{ services = @(); db = @{ engine = 'postgres'; name = 'app' }; tenants = @{ model = 'column'; keep = @('base'); column = @{ table = 'public.orgs'; column = 'org_id' } } }
+    cm = @{ services = @(); db = @{ engine = 'mysql'; name = 'app' }; tenants = @{ model = 'column'; column = @{ table = 'orgs'; column = 'org_id' } } } } } } $cfg 8
   $tcR = & { . $L; $global:tcSql = @(); $global:tcFk = 1
     function Invoke-DbSql { param($e, $sql) $global:tcSql += $sql; if ($sql -match 'information_schema\.COLUMNS') { , @('public', 'orgs'); , @('public', 'orders') } elseif ($sql -match '^SELECT COUNT') { , @('2') }
       elseif ($sql -match '^DELETE FROM public\.orgs' -and $global:tcFk-- -gt 0) { throw 'violates foreign key constraint' } }
     $dry = @(Invoke-TenantModel cl 'drop' @{ names = @('acme', 'base'); dryRun = $true }) -join ' | '; $n0 = @($global:tcSql -match '^DELETE').Count
     $run = @(Invoke-TenantModel cl 'drop' @{ names = @('acme') }) -join ' | '; $dels = @($global:tcSql -match '^DELETE')
-    "$dry#$n0#$run#$($dels -join ';')" }
-  Expect "tenant model column: dry run counts, keep refused, delete retried past a FK, registry last ($tcR)" ($tcR -match "would delete 2 row\(s\) from public\.orders, 2 row\(s\) from public\.orgs \| \[cl\] tenant base kept" -and $tcR -match "#0#\[cl\] tenant acme: rows deleted from 2 table\(s\)#DELETE FROM public\.orders WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme'$")
+    $global:tcSql = @(); $null = Invoke-TenantModel cm 'footprint' @{ name = 'acme' }
+    "$dry#$n0#$run#$($dels -join ';')#$(@($global:tcSql -match 'information_schema') -join '')" }
+  Expect "tenant model column: dry run counts, keep refused, delete retried past a FK, registry last ($tcR)" ($tcR -match "would delete 2 row\(s\) from public\.orders, 2 row\(s\) from public\.orgs \| \[cl\] tenant base kept" -and $tcR -match "#0#\[cl\] tenant acme: rows deleted from 2 table\(s\)#DELETE FROM public\.orders WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme'#.* AND TABLE_SCHEMA IN \('app'\)$")
 } finally { $env:PATH = $oldPath }
 Remove-TestKit $k
 # the test helper: a read without the end marker is asked again; a write batch is never re-run (it may have run: a re-run hides the flake)

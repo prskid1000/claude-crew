@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L246 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L247 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -183,7 +183,8 @@ Register-KitAdapter 'deploy-kind' 'manual' @{ isDeployed = { param($a) Test-Depl
 function __DkStack($d) { $ra = if ($d.region) { @('--region', $d.region) } else { @() }
   $o = "$(aws cloudformation describe-stacks @ra --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null)".Trim()
   if ($o) { $at, $st, $cr = $o -split '\s+'; @{ at = $(if ($at -eq 'None') { $cr } else { $at }); status = $st } } }
-# deploy: aws cloudformation deploy of deploys[].template (a repo path) at the deploy head; no template: a person updates it
+# deploy: aws cloudformation deploy of deploys[].template (a repo path) at the deploy head, deploys[].capabilities (e.g. CAPABILITY_IAM)
+# granted per row only; no template: a person updates it
 Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) if ($a.d.template) { "aws cloudformation deploy of $($a.d.template) to stack $($a.d.awsStack) (bossy.ps1 deploy run -To $($a.d.target))" } else { "a person updates stack $($a.d.awsStack), then bossy.ps1 deploy record" } }
   lastDeploy = { param($a) $s = __DkStack $a.d; if ($s.at) { @{ at = ([datetimeoffset]$s.at).LocalDateTime; source = "stack $($a.d.awsStack)" } } }
   isRunning = { param($a) $s = __DkStack $a.d; if ($s) { "$($s.status)" -match '_IN_PROGRESS$' } }
@@ -191,8 +192,8 @@ Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-De
     $sha = __DkHead $a.repo $d; $tf = Join-Path (Get-KitTemp) "kit-stack-$PID-$([IO.Path]::GetFileName("$($d.template)"))"
     $body = git -C $a.repo.checkout show "${sha}:$("$($d.template)".TrimStart('/'))" 2>$null; if ($LASTEXITCODE -or -not $body) { return @{ note = "template $($d.template) not in $($a.repo.name) at $sha" } }
     [IO.File]::WriteAllLines($tf, [string[]]@($body))
-    $ra = if ($d.region) { @('--region', $d.region) } else { @() }
-    try { $o = @(aws cloudformation deploy @ra --stack-name $d.awsStack --template-file $tf --no-fail-on-empty-changeset --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND 2>&1); $rc = $LASTEXITCODE } finally { Remove-Item -LiteralPath $tf -Force -ErrorAction SilentlyContinue }
+    $ra = if ($d.region) { @('--region', $d.region) } else { @() }; $cap = @($d.capabilities | Where-Object { $_ }); if ($cap.Count) { $cap = @('--capabilities') + $cap }
+    try { $o = @(aws cloudformation deploy @ra --stack-name $d.awsStack --template-file $tf --no-fail-on-empty-changeset @cap 2>&1); $rc = $LASTEXITCODE } finally { Remove-Item -LiteralPath $tf -Force -ErrorAction SilentlyContinue }
     if ($rc) { return @{ note = "aws cloudformation deploy failed (exit $rc): $((@($o) | Select-Object -Last 2) -join ' / ')" } }
     @{ id = "stack $($d.awsStack) at $("$sha".Substring(0, [math]::Min(8, "$sha".Length)))"; note = "$(@($o) | Select-Object -Last 1)" } } }
 # adapter:deploy-kind/laneApk

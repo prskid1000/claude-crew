@@ -26,7 +26,7 @@ $kl = Join-Path $k 'skills/crafty/kit.local.json'
 & $J @{ repos = @(@{ name = 'svc'; deploys = @(@{ target = 'svc-stage'; ssh = @{ host = 'u@h1'; key = 'k.pem'; service = 'app,app-worker'; busy = 'pgrep -fa agent-turn' } }, @{ target = 'nobusy'; ssh = @{ host = 'u@h2'; service = 'app' } },
   @{ target = 'dock'; ssh = @{ host = 'u@h3'; service = 'web'; manager = 'docker'; sudo = $false } }, @{ target = 'bare'; ssh = @{ host = 'u@h4'; service = 'web'; manager = 'none' } },
   @{ target = 'kube'; production = $false; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output rolled-{service}" } },
-  @{ target = 'probed'; probe = 'echo x'; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output bounced-{service}"; deploy = "`"$pwshExe`" -NoProfile -Command Write-Output shipped-{repo}" } }) }); deploy = @{ ssh = @{ manager = 'systemd'; sudo = $true } } } $kl   # LEGACY deploy.ssh
+  @{ target = 'probed'; probe = 'echo x'; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output bounced-{service}"; deploy = "`"$pwshExe`" -NoProfile -Command Write-Output shipped-{repo}" } }, @{ target = 'quiet'; probe = 'echo x'; command = @{ deploy = "`"$pwshExe`" -NoProfile -Command exit 0" } }) }); deploy = @{ ssh = @{ manager = 'systemd'; sudo = $true } } } $kl   # LEGACY deploy.ssh
 $logs = { @(Get-ChildItem (Kd) -Filter 'ssh.log.*' | Sort-Object Name | ForEach-Object { Get-Content $_.FullName -Raw }) }
 $clear = { Get-ChildItem (Kd) -Filter 'ssh.log.*' | Remove-Item }
 
@@ -59,7 +59,8 @@ Expect "deploy restart: an unknown target or one without ssh = usage, exit 2 ($(
 $rp = Px $O deploy restart -Env probed -Service api 2>&1 | Out-String; $rpc = $LASTEXITCODE
 $pW = if ((Px $O decide record -Gate deploy -Item probed -Question 'deploy probed?' -Answer 'yes, deploy probed' -Source chat 2>&1 | Out-String) -match 'RECORDED (\S+)') { $Matches[1] }
 $pd = Px $O deploy run -To probed -Decision $pW 2>&1 | Out-String
-Expect "deploy kinds: probe restarts and deploys through its command.restart / command.deploy lines, no ssh ($($rp.Trim()) $rpc | $($pd.Trim()))" ($rpc -eq 0 -and $rp -match 'RESTARTED probed \(deploy kind probe, command\.restart\): bounced-api' -and $pd -match 'DEPLOY svc -> probed \(probe\): shipped-svc' -and @(& $logs).Count -eq 1 -and -not (Test-Path (Join-Path (TkPath $k 'deploys') 'running-probed.json')))
+$qW = if ((Px $O decide record -Gate deploy -Item quiet -Question 'deploy quiet?' -Answer 'yes, deploy quiet' -Source chat 2>&1 | Out-String) -match 'RECORDED (\S+)') { $Matches[1] }; $pq = Px $O deploy run -To quiet -Decision $qW 2>&1 | Out-String
+Expect "deploy kinds: probe restarts and deploys through its command.restart / command.deploy lines, no ssh ($($rp.Trim()) $rpc | $($pd.Trim()))" ($rpc -eq 0 -and $rp -match 'RESTARTED probed \(deploy kind probe, command\.restart\): bounced-api' -and $pd -match 'DEPLOY svc -> probed \(probe\): shipped-svc' -and $pq -match 'DEPLOY svc -> quiet \(probe\): command\.deploy' -and @(& $logs).Count -eq 1 -and -not (Test-Path (Join-Path (TkPath $k 'deploys') 'running-probed.json')))
 # isRunning: branch-mr = an open MR into its branch, tag = the newest matching tag's CI run, else a live deploy run marker; deploy: awsStack
 # from its template at the deploy head, laneApk refused without a checkout (fixtures: no host, AWS or phone here)
 $dkI = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1'); . (Join-Path $k 'skills/bossy/adapters/deploys.ps1')
