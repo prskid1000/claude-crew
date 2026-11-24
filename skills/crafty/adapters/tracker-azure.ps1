@@ -75,6 +75,12 @@ Register-KitAdapter 'tracker' 'azure' @{
   # tags: System.Tags ('a; b'), the whole set written back
   'labels' = { param($a) $h = @("$((__TrAz 'GET' "wit/workitems/$($a.id)?fields=System.Tags" $null).fields.'System.Tags')" -split ';\s*' | Where-Object { $_ -and $_ -notin @($a.remove) })
     $null = __TrAzSet $a.id @{ 'System.Tags' = (@($h + @($a.add | Where-Object { $_ -and $_ -notin $h })) -join '; ') } }
+  # waits on = a Predecessor link (Dependency-Reverse); on = ids to add (missing only, one PATCH); returns what it waits on now
+  'dependencies' = { param($a)
+    $have = @(@((__TrAz 'GET' "wit/workitems/$($a.id)?`$expand=relations" $null).relations) | Where-Object { $_.rel -eq 'System.LinkTypes.Dependency-Reverse' } | ForEach-Object { "$($_.url -replace '^.*/')" })
+    $new = @($a.on | ForEach-Object { "$_" } | Where-Object { $_ -and $_ -notin $have } | Select-Object -Unique)
+    if ($new) { $null = __TrAz 'PATCH' "wit/workitems/$($a.id)" @($new | ForEach-Object { @{ op = 'add'; path = '/relations/-'; value = @{ rel = 'System.LinkTypes.Dependency-Reverse'; url = "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '')/_apis/wit/workItems/$_" } } }) 'application/json-patch+json' }
+    @($have) + $new }
   # move (K54): the old parent link out (top or a new parent), the new one in; -List = area path
   'move' = { param($a)
     $rels = @((__TrAz 'GET' "wit/workitems/$($a.id)?`$expand=relations" $null).relations)

@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/tracker-adapters.tests.ps1: the tracker adapters (jira, jira-server, linear, youtrack, azure, gitlab, clickup) and the gitlab
-git host on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails): one prelude, a block per adapter, the parent sync per adapter.
+git host on recorded answers (CLIs and Invoke-RestMethod mocked; an unknown call fails): one prelude, a block per adapter, the parent sync per adapter (linear / youtrack / azure moves and caps: tracker-adapters-2).
 Usage: pwsh -NoProfile -File tests/tracker-adapters.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -55,21 +55,11 @@ Run linear ([ordered]@{ 'identifier title url description' = '{"data":{"issue":{
  'users\(filter' = '{"data":{"users":{"nodes":[{"id":"u1"}]}}}'; '"parentId":"uuid-1"' = '{"data":{"issueCreate":{"issue":{"identifier":"E-9"}}}}'
  '"eqIgnoreCase":"in test"' = '{"data":{"issues":{"nodes":[{"identifier":"E-3","title":"A","assignee":{"id":"u1","name":"Ann"}}]}}}' }) E-1 E { param($r, $l) & $v $r u1 E-9 }
 Cmt linear ([ordered]@{ 'comments\(first: 200\)' = '{"data":{"issue":{"comments":{"nodes":[{"id":"cm-7","body":"old","createdAt":"2026-01-01T00:00:00Z","user":{"name":"A"}}]}}}}'; '(?=.*commentUpdate)(?=.*cm-7)(?=.*new words)' = '{"data":{"commentUpdate":{"success":true}}}'; '(?=.*commentDelete)(?=.*cm-7)' = '{"data":{"commentDelete":{"success":true}}}' }) E-1 'cm-7'
-# K54 move: team (from its key) and parent in one issueUpdate; top-level = parentId null
-try { Initialize-KitTracker -Type linear; $global:fx = [ordered]@{ 'teams\(filter' = '{"data":{"teams":{"nodes":[{"id":"t1"}]}}}'; 'issue\(id: \$id\) \{ id' = '{"data":{"issue":{"id":"uuid-0"}}}'; 'issueUpdate' = '{"data":{"issueUpdate":{"success":true}}}' }; $global:log.Clear()
-  $m1 = Move-TrackerTask E-1 -Parent E-0 -List OPS; $m2 = Move-TrackerTask E-1 -Top; $ml = $global:log -join "`n"
-  $pass = $m1 -eq 'moved E-1 to team OPS under E-0' -and $ml -match '(?=.*issueUpdate)(?=.*"teamId":"t1")(?=.*"parentId":"uuid-0")' -and $ml -match '(?=.*issueUpdate)(?=.*"parentId":null)' } catch { $pass = $false; "  linear move error: $_" }
-if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker linear: move to a team and under a parent (one issueUpdate), top-level = parentId null"
 # ---- youtrack
 Run youtrack ([ordered]@{ 'GET https://yt.test/api/issues/D-1\?' = '{"idReadable":"D-1","summary":"Bug","subtasks":{"issues":[{"idReadable":"D-2","summary":"Sub"}]},"customFields":[{"name":"State","value":{"name":"In Progress"}}]}'
  'commands .*State \{in test\}' = '{}'; 'D-1/comments.*two words' = '{"id":"c"}'; 'admin/projects' = '[{"id":"0-1","shortName":"OPS"},{"id":"0-2","shortName":"D"}]'; 'POST .*issues\?fields.*"0-2"' = '{"idReadable":"D-9"}'
  'commands .*subtask of D-1 for Ann Lee Priority Major' = '{}'; 'GET .*issues\?query=project%3A%20%7BD%7D' = '[{"idReadable":"D-3","summary":"A","customFields":[{"name":"Assignee","value":{"login":"ann"}}]}]' }) D-1 D { param($r, $l) (& $v $r ann D-9) -and $l -match 'Bearer y' }
 Cmt youtrack ([ordered]@{ 'GET .*issues/D-1/comments\?fields=id' = '[{"id":"4-7","text":"old","created":1767225600000,"author":{"login":"a"}}]'; 'POST .*issues/D-1/comments/4-7\?fields=id .*new words' = '{"id":"4-7"}'; 'DELETE .*issues/D-1/comments/4-7' = '' }) D-1 '4-7'
-# K54 move: project, the old parent's link out, the new one in; top-level: only the old link out
-try { Initialize-KitTracker -Type youtrack; $global:fx = [ordered]@{ 'admin/projects' = '[{"id":"0-2","shortName":"D"}]'; 'GET .*issues/D-5\?fields' = '{"idReadable":"D-5","summary":"S","parent":{"issues":[{"idReadable":"D-1"}]}}'; 'POST .*issues/D-5\?fields=idReadable .*"0-2"' = '{"idReadable":"D-5"}'; 'commands ' = '{}' }; $global:log.Clear()
-  $m1 = Move-TrackerTask D-5 -Parent D-2 -List D; $m2 = Move-TrackerTask D-5 -Top; $ml = $global:log -join "`n"
-  $pass = $m1 -eq 'moved D-5 to D under D-2' -and $ml -match 'remove subtask of D-1' -and $ml -match '"query":"subtask of D-2"' -and @($global:log -match 'commands ').Count -eq 3 } catch { $pass = $false; "  youtrack move error: $_" }
-if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker youtrack: move to a project and a new parent (old link out), top-level"
 # ---- azure
 Run azure ([ordered]@{ 'GET .*/acme/Shop/_apis/wit/workitems/42\?\$expand' = '{"id":42,"fields":{"System.Title":"Bug","System.State":"In Progress","System.Description":"<div>a<br>b</div>"},"relations":[{"rel":"System.LinkTypes.Hierarchy-Forward","url":"https://dev.azure.com/acme/_apis/wit/workItems/43"}]}'
  'ids=43&' = '{"value":[{"id":43,"fields":{"System.Title":"Sub"}}]}'; 'PATCH .*workitems/42.*json-patch\+json Basic .*System.State' = '{"id":42}'; 'comments\?api-version=7.1-preview.4 .*two words' = '{"id":1}'
@@ -80,13 +70,6 @@ $okHtml = $html -match '<table><tr><th>Subtask</th><th>MRs</th></tr><tr><td><a h
 if (-not $okHtml) { $global:failed++; "  html: $html`n  back: $back" }
 "$(if ($okHtml) { 'PASS' } else { 'FAIL' }) tracker azure: Markdown tables, links, breaks, lists -> HTML; read back to the same Markdown (markers kept)"
 Cmt azure ([ordered]@{ 'GET .*workItems/42/comments\?' = '{"comments":[{"id":7,"createdBy":{"displayName":"A"},"createdDate":"2026-01-01T00:00:00Z","text":"<div>old</div>"}]}'; 'PATCH .*workItems/42/comments/7\?.*new words' = '{"id":7}'; 'DELETE .*workItems/42/comments/7\?' = '' }) 42 '7'
-# K54 move: old parent link removed by index, new one added, area path set; top-level: removal only
-try { Initialize-KitTracker -Type azure; $global:fx = [ordered]@{ 'GET .*workitems/42\?\$expand=relations' = '{"id":42,"relations":[{"rel":"System.LinkTypes.Related","url":"u"},{"rel":"System.LinkTypes.Hierarchy-Reverse","url":"p"}]}'; 'PATCH .*workitems/42\?' = '{"id":42}' }; $global:log.Clear()
-  $m1 = Move-TrackerTask 42 -Parent 7 -List 'Shop\Team'; $m2 = Move-TrackerTask 42 -Top; $pl = @($global:log -match '^PATCH')
-  $o0 = @(($pl[0] -replace '^[^\[]*') | ConvertFrom-Json); $o1 = @(($pl[1] -replace '^[^\[]*') | ConvertFrom-Json)   # key order differs per process
-  $pass = $m1 -eq 'moved 42 to Shop\Team under 7' -and "$($o0.op -join ',')|$($o0.path -join ',')" -eq 'remove,add,add|/relations/1,/relations/-,/fields/System.AreaPath' -and $o0[1].value.url -match 'workItems/7$' -and
-    "$($o1.op -join ',')|$($o1.path -join ',')" -eq 'remove|/relations/1' } catch { $pass = $false; "  azure move error: $_" }
-if (-not $pass) { $global:failed++ }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker azure: move swaps the parent link (old one out by index), sets the area path; top-level removes the link"
 # ---- gitlab
 Run gitlab ([ordered]@{ 'PUT projects/g%2Fp/issues/5 .*status:in test' = '{"iid":5}'; 'POST projects/g%2Fp/issues/5/notes .*two words' = '{"id":1}'; 'GET projects/g%2Fp/issues/5 ' = '{"iid":5,"title":"Bug","state":"opened","labels":["status:In Progress"],"description":"- [ ] #6"}'
  'GET projects/g%2Fp/issues/6' = '{"iid":6,"title":"Sub","state":"closed","labels":[]}'; 'users\?username=Ann' = '[{"id":3}]'; 'POST projects/g%2Fp/issues .*"assignee_ids":\[3\]' = '{"iid":12}'; 'PUT projects/g%2Fp/issues/5 .*#12' = '{"iid":5}'

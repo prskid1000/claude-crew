@@ -2,7 +2,8 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # tracker-linear: Linear tracker (tracker.type linear).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ when tracker.type is linear; helpers come from lib.ps1.
-# helpers only this adapter uses (kept out of the core lib.ps1)
+# Sections: L6 helpers · L18 graphql · L33 tracker
+# ---- helpers: only this adapter uses them (kept out of the core lib.ps1)
 function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$File, [string]$CType) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $Uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($File) { "  file=$File" })"; return $null }
   if (-not ($File -or $CType)) {
@@ -14,6 +15,7 @@ function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$
   else { $p.Body = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $Body -Depth 20 -Compress)); $p.ContentType = $CType }
   Invoke-RestMethod @p
 }
+# ---- graphql: calls, issue / label / user ids
 # adapter:tracker/linear: GraphQL (LINEAR_API_KEY); ids = identifiers (ENG-12), list = team key, status = workflow state name
 function __TrLin([string]$Q, [hashtable]$v = @{}) {
   if (-not $__trDry -and -not $env:LINEAR_API_KEY) { throw 'tracker (linear): set LINEAR_API_KEY' }
@@ -21,15 +23,31 @@ function __TrLin([string]$Q, [hashtable]$v = @{}) {
   if ($r.errors) { throw "tracker (linear): $($r.errors[0].message)" }; $r.data
 }
 function __TrLinSet([string]$Id, [hashtable]$In) { $null = __TrLin 'mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }' @{ id = $Id; in = $In } }
+function __TrLinId([string]$Id) { $u = (__TrLin 'query($id: String!) { issue(id: $id) { id } }' @{ id = $Id }).issue.id; if ($u) { $u } elseif ($__trDry) { "<uuid of $Id>" } else { throw "tracker (linear): no issue $Id" } }
+function __TrLinLabel([string]$N, [switch]$Make) {
+  $l = @((__TrLin 'query($n: String!) { issueLabels(filter: { name: { eqIgnoreCase: $n } }) { nodes { id } } }' @{ n = $N }).issueLabels.nodes.id)[0]
+  if ($l -or -not $Make) { return $l }; $l = (__TrLin 'mutation($n: String!) { issueLabelCreate(input: { name: $n }) { issueLabel { id } } }' @{ n = $N }).issueLabelCreate.issueLabel.id
+  if ($l) { $l } elseif ($__trDry) { "<label $N>" } else { throw "tracker (linear): label '$N' not created" }
+}
 function __TrLinUser([string]$N) { @((__TrLin 'query($n: String!) { users(filter: { or: [{ name: { eqIgnoreCase: $n } }, { displayName: { eqIgnoreCase: $n } }, { email: { eqIgnoreCase: $n } }] }) { nodes { id } } }' @{ n = $N }).users.nodes.id)[0] }
+# ---- tracker: the linear verbs
 Register-KitAdapter 'tracker' 'linear' @{
   'url' = { param($a) "https://linear.app/$(Get-KitSetting 'tracker.org' '<tracker.org>')/issue/$($a.id)" }
   'view' = { param($a)
-    $i = (__TrLin 'query($id: String!) { issue(id: $id) { identifier title url description state { name } assignee { name } parent { identifier } team { key } children { nodes { identifier title url state { name } } } } }' @{ id = $a.id }).issue
+    $i = (__TrLin 'query($id: String!) { issue(id: $id) { identifier title url description state { name } assignee { name } parent { identifier } team { key } labels { nodes { name } } children { nodes { identifier title url state { name } } } } }' @{ id = $a.id }).issue
     if (-not $i) { return }
-    [pscustomobject]@{ id = $i.identifier; name = $i.title; status = [string]$i.state.name; url = $i.url; parent = $i.parent.identifier; assignees = @($i.assignee.name | Where-Object { $_ }); list = $i.team.key
-      subtasks = @($i.children.nodes | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $_.identifier; name = $_.title; status = [string]$_.state.name; url = $_.url } }); description = [string]$i.description }
+    Add-KitTags ([pscustomobject]@{ id = $i.identifier; name = $i.title; status = [string]$i.state.name; url = $i.url; parent = $i.parent.identifier; assignees = @($i.assignee.name | Where-Object { $_ }); list = $i.team.key
+      subtasks = @($i.children.nodes | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $_.identifier; name = $_.title; status = [string]$_.state.name; url = $_.url } }); description = [string]$i.description }) @($i.labels.nodes.name)
   }
+  # waits on = a "blocks" relation from the blocker (read: inverseRelations); on = ids to add (missing only); returns what it waits on now
+  'dependencies' = { param($a)
+    $have = @(@((__TrLin 'query($id: String!) { issue(id: $id) { inverseRelations(first: 100) { nodes { type issue { identifier } } } } }' @{ id = $a.id }).issue.inverseRelations.nodes) | Where-Object { "$($_.type)" -eq 'blocks' -and $_.issue.identifier } | ForEach-Object { "$($_.issue.identifier)" })
+    foreach ($on in @($a.on | Where-Object { $_ -and $_ -notin $have })) { $null = __TrLin 'mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }' @{ in = @{ issueId = (__TrLinId $on); relatedIssueId = (__TrLinId $a.id); type = 'blocks' } }; $have += $on }
+    $have }
+  # labels by name (workspace label made when missing); add / remove one at a time
+  'labels' = { param($a) $iid = __TrLinId $a.id
+    foreach ($l in @($a.add | Where-Object { $_ })) { $null = __TrLin 'mutation($id: String!, $l: String!) { issueAddLabel(id: $id, labelId: $l) { success } }' @{ id = $iid; l = (__TrLinLabel $l -Make) } }
+    foreach ($l in @($a.remove | Where-Object { $_ })) { $lid = __TrLinLabel $l; if ($lid) { $null = __TrLin 'mutation($id: String!, $l: String!) { issueRemoveLabel(id: $id, labelId: $l) { success } }' @{ id = $iid; l = $lid } } } }
   'status' = { param($a)
     $s = @((__TrLin 'query($id: String!) { issue(id: $id) { team { states { nodes { id name } } } } }' @{ id = $a.id }).issue.team.states.nodes | Where-Object { $_.name -ieq $a.status })[0]
     if (-not $s -and -not $__trDry) { throw "tracker (linear): no workflow state '$($a.status)' in the team of $($a.id)" }
