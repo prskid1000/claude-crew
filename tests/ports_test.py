@@ -126,6 +126,8 @@ cfg = tomllib.loads(pt.codex_config_text('D:/w/.claude'))
 pt.write_codex('r', {'description': 'd', 'tools': 'Read, Bash'}, 'body'); pt.write_codex('k', {'description': 'd', 'tools': 'Read, Edit, Write'}, 'body')
 rv, kv = (tomllib.loads((tmp / 'c' / f'{n}.toml').read_text(encoding='utf-8')) for n in ('r', 'k'))
 ok_cx = cfg['approval_policy'] == 'never' and cfg['sandbox_mode'] == 'workspace-write' and cfg['sandbox_workspace_write']['network_access'] is True \
+    and cfg['features']['memories'] is False and 'prefix_rule(pattern=["git", ["commit", "push", "merge"], "--no-verify"], decision="forbidden"' in pt.CODEX_RULES_TEXT \
+    and 'prefix_rule(pattern=["git", "commit", ["-n",' in pt.CODEX_RULES_TEXT and not re.search(r'"push"[^\n]*"-n"', pt.CODEX_RULES_TEXT) \
     and rv['sandbox_mode'] == kv['sandbox_mode'] == 'workspace-write' and 'edit no file outside' in rv['developer_instructions'] and 'edit no file' not in kv['developer_instructions']
 lg = (ws2 / '.agents/rules/kit-test-logins.md').read_text(encoding='utf-8')
 ok_logins = lg.startswith('---\ntrigger: always_on\n---\n') and 'targets.local.json' in lg \
