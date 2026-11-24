@@ -73,7 +73,7 @@ Register-KitAdapter 'secret-store' 'keychain' @{ caps = @{ write = $true; list =
   list = { param($a)
     if ($KitIsWindows) { return @(& (Join-Path $KitLibDir 'flagged.ps1') credlist) }
     if (Get-Command security -ErrorAction SilentlyContinue) { $r = Invoke-KitNetExe 'security' @('dump-keychain')
-      return @("$($r.out)" -split '(?m)^keychain: ' | ForEach-Object { if ($_ -match '"acct"<blob>="kit"' -and $_ -match '"svce"<blob>="([^"]*)"') { $Matches[1] } }) }
+      return @("$($r.out)" -split '(?m)^class: ' | ForEach-Object { if ($_ -match '"acct"<blob>="kit"' -and $_ -match '"svce"<blob>="([^"]*)"') { $Matches[1] } }) }
     $r = Invoke-KitNetExe 'secret-tool' @('search', '--all', 'account', 'kit'); @([regex]::Matches("$($r.out)", '(?m)^attribute\.service = (.+?)\r?$') | ForEach-Object { $_.Groups[1].Value }) }
 }
 # adapter:secret-store/command: secrets.command.get|set|list|delete = CLI lines ({name}, {prefix}); set reads the value from env

@@ -86,10 +86,10 @@ $secR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $o.keychain = if ($KitIsWindows) { try { $null = Set-KitSecret $kn $kv; (Get-KitSecret $kn) -eq $kv -and $kn -in @(Get-KitSecretNames 'kit-test-keychain-') } finally { Remove-KitSecret $kn } } else { $true }
   # keychain list (parity): macOS dump-keychain attributes and libsecret search (fixtures: no Mac or Linux keyring here), kit items only
   $o.keychainList = & { $KitIsWindows = $false; function security { }
-    function Invoke-KitNetExe { param($Exe, $A) [pscustomobject]@{ code = 0; err = ''; out = "keychain: `"/k.db`"`nclass: `"genp`"`nattributes:`n    `"acct`"<blob>=`"kit`"`n    `"svce`"<blob>=`"targets/t/u/password`"`nkeychain: `"/k.db`"`n    `"acct`"<blob>=`"me`"`n    `"svce`"<blob>=`"other`"" } }
+    function Invoke-KitNetExe { param($Exe, $A) [pscustomobject]@{ code = 0; err = ''; out = "keychain: `"/k.db`"`nversion: 512`nclass: `"genp`"`nattributes:`n    `"acct`"<blob>=`"kit`"`n    `"svce`"<blob>=`"targets/t/u/password`"`nclass: `"genp`"`nattributes:`n    `"acct`"<blob>=`"me`"`n    `"svce`"<blob>=`"other`"`nclass: `"genp`"`nattributes:`n    `"acct`"<blob>=`"kit`"`n    `"svce`"<blob>=`"targets/t/u/login`"" } }
     $mac = @(Get-KitSecretNames) -join ','; Remove-Item Function:security   # no security binary off macOS: libsecret
     function Invoke-KitNetExe { param($Exe, $A) $script:kcl = "$Exe $($A -join ' ')"; [pscustomobject]@{ code = 0; err = ''; out = "[/1]`nlabel = a`nsecret = s3cret`nattribute.service = targets/t/u/login`nattribute.account = kit" } }
-    $lnx = @(Get-KitSecretNames) -join ','; $mac -eq 'targets/t/u/password' -and $lnx -eq 'targets/t/u/login' -and $script:kcl -eq 'secret-tool search --all account kit' }
+    $lnx = @(Get-KitSecretNames) -join ','; $mac -eq 'targets/t/u/password,targets/t/u/login' -and $lnx -eq 'targets/t/u/login' -and $script:kcl -eq 'secret-tool search --all account kit' }
   $o.keychain = $o.keychain -and -not $(if ($KitIsWindows) { & (Join-Path $KitLibDir 'flagged.ps1') credread -Text $kn })
   $o.keychainMac = & { $KitIsWindows = $false; function security { }; function Invoke-KitExe { param($Exe, $A, $TimeoutSec, $Raw, $Cwd, $In) $global:kcx = "$Exe|$($A -join ' ')|$In"; [pscustomobject]@{ code = 0; out = ''; err = '' } }
     $nl = try { $null = Set-KitSecret $kn "a`nb"; 'stored' } catch { "$_" }; $null = Set-KitSecret $kn 'v"1'; $nl -match 'line break is refused' -and $global:kcx -eq "security|-i|add-generic-password -U -a kit -s `"$kn`" -w `"v\`"1`"`n" }
@@ -112,6 +112,20 @@ Expect "deploy run: no person's word = REFUSED, nothing runs; with one the comma
 Expect "deploy run: manual waits for a person, probe is UNSUPPORTED ($(($dr2 -split "`n" | Where-Object { $_ }) -join ' | '))" ($dr2 -match 'DEPLOY svc -> t2 \(manual\): manual · waiting for a person: open the console' -and $dr2 -match 'UNSUPPORTED deploy-kind/probe/deploy svc -> t2')
 Expect "deploy run: ssh without deployCmd fails naming it; no row = exit 2 ($($dr3.Trim()))" ($dr3 -match 'FAILED svc -> t3 \(ssh\) · no deploys\[\]\.ssh\.deployCmd' -and $dr4c -eq 2)
 Remove-Item $kl
+# deploy kinds (parity): a plan hint on every kind; lastDeploy from the stack, the lane APK stamp and the deploy branch head (fixtures:
+# no AWS, phone lane or git host here); isRunning = a stack update in progress
+$dkR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/pokey/adapters/deployed-checks.ps1')
+  function aws { "2026-11-20T10:00:00.000Z`tUPDATE_IN_PROGRESS`t2026-01-01T00:00:00Z" }
+  function LaneApk { [pscustomobject]@{ commit = 'abc1234'; built = '2026-11-21T09:00:00' } }
+  function Invoke-HostVerb { param($Verb, $A) if ($Verb -eq 'repo.commit' -and $A.ref -eq 'release') { [pscustomobject]@{ id = 'f00'; committed_date = '2026-11-22T08:00:00Z' } } }
+  $o = [ordered]@{}; $st = @{ awsStack = 'shop-api'; target = 't' }; $ld = Invoke-KitDeployKind $st 'lastDeploy'
+  $o.stack = $ld.source -eq 'stack shop-api' -and $ld.at.ToUniversalTime().Hour -eq 10 -and (Invoke-KitDeployKind $st 'isRunning') -eq $true
+  $o.apk = (Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'lastDeploy').source -eq 'lane APK abc1234'
+  $o.branch = (Invoke-KitDeployKind @{ kind = 'branch-mr'; branch = 'release'; target = 't' } 'lastDeploy' @{ repo = 'g/shop' }).source -eq 'branch release head'
+  $dks = @(@{ command = @{ deploy = 'x' }; target = 't' }, @{ ssh = @{ host = 'h1' }; target = 't' }, @{ probe = 'echo x'; target = 't' }, $st, @{ laneApk = $true; target = 't' })
+  $o.plan = @($dks | Where-Object { -not "$(Invoke-KitDeployKind $_ 'plan')" }).Count -eq 0 -and "$(Invoke-KitDeployKind $dks[1] 'plan')" -match 'a person deploys on h1'
+  $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
+Expect-Each $dkR 'deploy kind: #' @('stack', 'apk', 'branch', 'plan') -Show 5
 
 # data stores: redis and search engines answer schemaSizes rows from their own APIs (no SQL); no marks / temp caps
 $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/envy/adapters/db-engines.ps1')
@@ -119,7 +133,8 @@ $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/e
   function Invoke-KitExe { [pscustomobject]@{ code = 0; out = "used_memory:20971520`ndb0:keys=30,expires=0`ndb1:keys=10,expires=0"; err = '' } }
   function Get-DbEngineName { $script:dsEng }
   function Invoke-RestMethod { param($Uri, $Method, $ContentType, $Body, $TimeoutSec)
-    if ($Method -eq 'Post') { $script:dsSql += @("$Uri $Body"); return '{"columns":[{"name":"org"}],"rows":[["a",1],["b",2]],"schema":[{"name":"org"}],"datarows":[["c",3]]}' | ConvertFrom-Json }
+    if ($Method -eq 'Post') { $script:dsSql += @("$Uri $Body"); if ($Body -match '"cursor":"c1"') { return '{"rows":[["d",4]]}' | ConvertFrom-Json }
+      return '{"columns":[{"name":"org"}],"rows":[["a",1],["b",2]],"cursor":"c1","schema":[{"name":"org"}],"datarows":[["c",3]]}' | ConvertFrom-Json }
     @([pscustomobject]@{ index = 'orders'; 'docs.count' = '12'; 'store.size' = '3' }, [pscustomobject]@{ index = '.kibana'; 'docs.count' = '1'; 'store.size' = '1' }) }
   $script:dsEng = 'redis'; $rd = @(& $KitAdapters['db-engine'].redis.sizes @{ e = 'x' }) -join '|'
   $script:dsEng = 'opensearch'; $os = @(& $KitAdapters['db-engine'].opensearch.sizes @{ e = 'x' }) -join '|'
@@ -127,7 +142,7 @@ $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/e
   # SQL over REST (parity): elasticsearch _sql rows, opensearch SQL plugin datarows; redis has none
   $script:dsSql = @(); $script:dsEng = 'elasticsearch'; $esq = @(& $KitAdapters['db-engine'].elasticsearch.sql @{ e = 'x'; sql = 'SELECT org FROM orders;' } | ForEach-Object { $_ -join ':' }) -join ','
   $script:dsEng = 'opensearch'; $osq = @(& $KitAdapters['db-engine'].opensearch.sql @{ e = 'x'; sql = 'SELECT org FROM orders' } | ForEach-Object { $_ -join ':' }) -join ','
-  "searchSql:$($esq -eq 'a:1,b:2' -and $osq -eq 'c:3' -and $script:dsSql[0] -eq 'http://h:1/_sql?format=json {"query":"SELECT org FROM orders"}' -and $script:dsSql[1] -like 'http://h:1/_plugins/_sql *' -and -not $KitAdapters['db-engine'].redis.sql)"
+  "searchSql:$($esq -eq 'a:1,b:2,d:4' -and $osq -eq 'c:3' -and $script:dsSql[0] -like 'http://h:1/_sql?format=json *"query":"SELECT org FROM orders"*' -and $script:dsSql[1] -eq 'http://h:1/_sql?format=json {"cursor":"c1"}' -and $script:dsSql[2] -like 'http://h:1/_plugins/_sql *' -and -not $KitAdapters['db-engine'].redis.sql)"
   "nocaps:$(-not $KitAdapters['db-engine'].redis.supportsMarks -and -not $KitAdapters['db-engine'].elasticsearch.supportsTemp)" }
 Expect-Each $dsR 'data store: #' @('redis', 'search', 'searchSql', 'nocaps') -Show 5
 

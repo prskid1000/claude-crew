@@ -9,7 +9,7 @@
 # Verbs: sql @{ e; sql; sec } -> rows (string[] each; mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb: mongosh
 #   JavaScript, elasticsearch / opensearch: SQL over REST; redis: none) · pos @{ e } -> "<file>:<pos>" · binlogs @{ e } -> names.
 # An engine without a verb refuses it ("engine <x>: verb <v> not implemented"); never another engine's client.
-# Sections: L13 engines · L65 mysql / mariadb · L87 other clients (postgres, sqlserver, sqlite, oracle, mongodb)
+# Sections: L13 engines · L70 mysql / mariadb · L92 other clients (postgres, sqlserver, sqlite, oracle, mongodb)
 # ---- engines: one registration each (parity.json db-engine)
 & { $q = '-h {H} -p {P} -U {U}'; $my = '-h {H} -P {P} -u {U}'; $ss = 'sqlcmd -S {H},{P} -U {U}'
 $mysql = @{ defaultPort = 3306; passwordEnv = 'MYSQL_PWD'; supportsMarks = $true; supportsTemp = $true
@@ -29,8 +29,10 @@ Register-KitAdapter db-engine sqlserver @{ defaultPort = 1433; passwordEnv = 'SQ
   sizes = { param($a) Get-DbSizeRows $a.e 'SELECT s.name, SUM(CASE WHEN ps.index_id IN (0, 1) THEN ps.row_count ELSE 0 END), CAST(ROUND(SUM(ps.reserved_page_count) * 8 / 1024.0, 0) AS bigint) FROM sys.dm_db_partition_stats ps JOIN sys.objects o ON o.object_id = ps.object_id JOIN sys.schemas s ON s.schema_id = o.schema_id WHERE o.is_ms_shipped = 0 GROUP BY s.name' } }
 Register-KitAdapter db-engine sqlite @{ query = "sqlite3 `"{N}`" `"{sql}`""; exec = "sqlite3 `"{N}`" `".read {file}`""; jdbc = 'jdbc:sqlite:{N}'
   sql = { param($a) Invoke-DbCliRows $a.e 'sqlite3' @('-batch', '-bail', '-noheader', '-separator', "`t", (DbConn $a.e).name) "$($a.sql.TrimEnd().TrimEnd(';'));`n" $a.sec }
-  # one scope (main): rows = leaf cells of the table b-trees (dbstat, in the sqlite3 shell's build), MB = page_count x page_size
-  sizes = { param($a) Get-DbSizeRows $a.e "SELECT 'main', COALESCE((SELECT SUM(d.ncell) FROM dbstat d JOIN sqlite_master m ON m.name = d.name AND m.type = 'table' WHERE d.pagetype = 'leaf'), 0), CAST(ROUND((SELECT page_count FROM pragma_page_count()) * (SELECT page_size FROM pragma_page_size()) / 1048576.0) AS INTEGER)" } }
+  # one scope (main): rows = leaf cells of the table b-trees (dbstat, in the sqlite3 shell's build; a build without it: 0), MB = page_count x page_size
+  sizes = { param($a) $mb = 'CAST(ROUND((SELECT page_count FROM pragma_page_count()) * (SELECT page_size FROM pragma_page_size()) / 1048576.0) AS INTEGER)'
+    try { Get-DbSizeRows $a.e "SELECT 'main', COALESCE((SELECT SUM(d.ncell) FROM dbstat d JOIN sqlite_master m ON m.name = d.name AND m.type = 'table' WHERE d.pagetype = 'leaf'), 0), $mb" }
+    catch { if ("$_" -notmatch 'no such table: dbstat') { throw }; Get-DbSizeRows $a.e "SELECT 'main', 0, $mb" } } }
 # oracle: the password (db.passwordEnv ORACLE_PWD in the env file) goes in on stdin with CONNECT, never on the command line
 Register-KitAdapter db-engine oracle @{ defaultPort = 1521; passwordEnv = 'ORACLE_PWD'; exec = "sqlplus -s -l {U}@{H}:{P}/{N} @{file}"; jdbc = 'jdbc:oracle:thin:@//{H}:{P}/{N}'
   sql = { param($a) $c = DbConn $a.e; $pw = (EnvVars $a.e ([pscustomobject]@{}))["$((Get-EnvCfg $a.e).db.passwordEnv)"]
@@ -52,11 +54,14 @@ Register-KitAdapter db-engine redis @{ defaultPort = 6379; passwordEnv = 'REDISC
     foreach ($m in $ks) { "$($m.Groups[1].Value)`t$($m.Groups[2].Value)`t$(if ($all) { [math]::Round($mb * [long]$m.Groups[2].Value / $all) } else { 0 })" } } }
 $search = @{ defaultPort = 9200; query = 'curl -s http://{H}:{P}/{sql}'; exec = 'curl -s -H "Content-Type: application/x-ndjson" -X POST http://{H}:{P}/_bulk --data-binary "@{file}"'
   sizes = { param($a) $c = DbConn $a.e; foreach ($ix in @(Invoke-RestMethod "http://$($c.host):$($c.port)/_cat/indices?format=json&bytes=mb" -TimeoutSec 30 | Where-Object { "$($_.index)" -notlike '.*' })) { "$($ix.index)`t$($ix.'docs.count')`t$($ix.'store.size')" } }
-  # SQL over REST: elasticsearch _sql (json: columns, rows), opensearch the SQL plugin (jdbc: schema, datarows)
+  # SQL over REST: elasticsearch _sql (json: columns, rows), opensearch the SQL plugin (jdbc: schema, datarows); pages followed by cursor
   sql = { param($a) $c = DbConn $a.e; $os = (Get-DbEngineName $a.e) -eq 'opensearch'
-    $r = Invoke-RestMethod -Method Post "http://$($c.host):$($c.port)/$(if ($os) { '_plugins/_sql' } else { '_sql?format=json' })" -ContentType 'application/json' -Body (@{ query = $a.sql.TrimEnd().TrimEnd(';') } | ConvertTo-Json -Compress) -TimeoutSec $(if ($a.sec) { $a.sec } else { 120 })
-    $rows = if ($os) { , $r.datarows } else { , $r.rows }   # the comma keeps one row a row (an if result unrolls)
-    @(foreach ($row in @($rows)) { if ($null -ne $row) { , @($row | ForEach-Object { "$_" }) } }) } }
+    $u = "http://$($c.host):$($c.port)/$(if ($os) { '_plugins/_sql' } else { '_sql?format=json' })"; $body = @{ query = $a.sql.TrimEnd().TrimEnd(';'); fetch_size = 1000 }
+    @(for ($pg = 0; $body -and $pg -lt 100; $pg++) {
+      $r = Invoke-RestMethod -Method Post $u -ContentType 'application/json' -Body ($body | ConvertTo-Json -Compress) -TimeoutSec $(if ($a.sec) { $a.sec } else { 120 })
+      $rows = if ($os) { , $r.datarows } else { , $r.rows }   # the comma keeps one row a row (an if result unrolls)
+      foreach ($row in @($rows)) { if ($null -ne $row) { , @($row | ForEach-Object { "$_" }) } }
+      $body = if ($r.cursor) { @{ cursor = $r.cursor } } }) } }
 $osearch = $search.Clone(); $search.jdbc = 'jdbc:es://http://{H}:{P}'; $osearch.jdbc = 'jdbc:opensearch://http://{H}:{P}'
 Register-KitAdapter db-engine elasticsearch $search; Register-KitAdapter db-engine opensearch $osearch
 }

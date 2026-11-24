@@ -44,7 +44,7 @@ export async function pwServed(eng, bo, VIEW, quiet, port, dir) {
   let s = await go().catch(() => null), err = ''
   if (!s) {
     await pwType(eng); touch(used); try { unlinkSync(used + '.err') } catch {}   // no Playwright module: its hint now
-    spawn(process.execPath, [fileURLToPath(import.meta.url), 'serve', eng, String(port), used, JSON.stringify(eng === 'chromium' ? quiet : [])], { detached: true, stdio: 'ignore', env: process.env }).unref()
+    spawn(process.execPath, [fileURLToPath(import.meta.url), 'serve', eng, String(port), used, JSON.stringify(eng === 'chromium' ? quiet : [])], { detached: true, stdio: 'ignore', windowsHide: true, env: process.env }).unref()
     for (let i = 0; i < 60 && !s && !err; i++) { await sleep(500); s = await go().catch(() => null); try { err = readFileSync(used + '.err', 'utf8') } catch {} }
     if (!s) throw new Error(err || `browser.engine ${eng}: no browser server came up on port ${port}`)
   }
@@ -55,7 +55,7 @@ if (process.argv[2] === 'serve' && resolve(process.argv[1] || '') === fileURLToP
   const [, , , eng, port, used, args] = process.argv
   // the failure (no browser installed: the install hint) goes to <used>.err for the waiting client
   const srv = await pwType(eng).then((pw) => pw.launchServer({ headless: true, host: '127.0.0.1', port: Number(port), wsPath: '/kit', args: JSON.parse(args || '[]') }))
-    .catch((e) => { writeFileSync(used + '.err', `browser.engine ${eng}: ${String(e.message).split('\n')[0]} - npx playwright install ${eng}`); process.exit(1) })
+    .catch((e) => { if (!/EADDRINUSE/.test(e.message)) writeFileSync(used + '.err', `browser.engine ${eng}: ${String(e.message).split('\n')[0]} - npx playwright install ${eng}`); process.exit(1) })   // port taken: another caller's server won
   setInterval(async () => { let at = 0; try { at = statSync(used).mtimeMs } catch {}; if (Date.now() - at > SERVE_IDLE_MIN * 60000) { await srv.close().catch(() => {}); process.exit(0) } }, 60000)
 }
 // registry (parity.json browser-engine; browser.mjs session() picks by browser.engine): chrome = a CDP session per login, reused

@@ -69,14 +69,16 @@
     "deploy-kind": {
       "config": "repos[].deploys[] (kind)",
       "file": "skills/pokey/adapters/deployed-checks.ps1",
-      "verbs": "isDeployed",
+      "verbs": "isDeployed plan",
       "caps": "deploy",
       "names": "command ci-job branch-mr ssh tag probe manual awsStack laneApk",
       "gaps": {
         "probe,awsStack,laneApk/deploy": "check-only kinds: a person deploys, then bossy.ps1 deploy record",
-        "branch-mr,ssh,tag,probe,manual,awsStack,laneApk/isRunning,lastDeploy": "no deploy history read: the deploy board shows no in-flight state or last time",
-        "ci-job,branch-mr,tag,probe,manual,awsStack,laneApk/restart": "no service restart: deploy restart refuses (ssh and command kinds restart)",
-        "command,ssh,probe,awsStack,laneApk/plan": "no hint line: the UNSUPPORTED line names the kind"
+        "branch-mr,ssh,tag,probe,manual,laneApk/isRunning": "no in-flight state: the deploy board shows none for the target",
+        "ci-job,branch-mr,tag,probe,manual,awsStack,laneApk/restart": "no service restart: deploy restart refuses (ssh and command kinds restart)"
+      },
+      "fallback": {
+        "lastDeploy": "the kit's deploy log (bossy.ps1 deploy run / record) of the target: the deploy board's last time"
       }
     },
     "secret-store": {

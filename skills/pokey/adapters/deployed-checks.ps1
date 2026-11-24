@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L218 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L230 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -120,6 +120,7 @@ Register-KitAdapter 'deploy-kind' 'command' @{
   isRunning = { param($a) $o = "$(__DkCmd $a.d 'isRunning' @{})".Trim(); if ($o -match '^(?i)(yes|true|running)\b') { $true } elseif ($o) { $false } else { $null } }
   restart = { param($a) __DkCmd $a.d 'restart' @{ service = "$($a.service)" } }
   deploy = { param($a) @{ id = "$(__DkCmd $a.d 'deploy' @{ sha = (__DkHead $a.repo $a.d); repo = "$($a.repo.name)"; mr = (@($a.mrs) -join ',') })".Trim() } }
+  plan = { param($a) "deploys[].command.deploy runs (bossy.ps1 deploy run -To $($a.d.target))" }
 }
 # the commit a deploy ships: the deploy branch's remote head in the checkout, else its HEAD
 function __DkHead($r, $d) { if (-not $r.checkout) { return '' }; $h = git -C $r.checkout rev-parse --verify --quiet "origin/$(if ($d.branch) { $d.branch } else { 'HEAD' })" 2>$null; if (-not $h) { $h = git -C $r.checkout rev-parse HEAD 2>$null }; "$h" }
@@ -153,6 +154,8 @@ Register-KitAdapter 'deploy-kind' 'branch-mr' @{
   isDeployed = { param($a) $d = $a.d; if (OnRef $p $mr $sha $d.branch) { Row $d 'DEPLOYED' "on $($d.branch)" } else { NotLiveRow $p $ref $d "not on $($d.branch) yet" } }
   plan = { param($a) "deploy MR into $($a.d.branch) (bossy.ps1 deploy merge -To $($a.d.target) -Mr)" }
   deploy = { param($a) @{ id = "$(__DkMerge $a)" } }
+  # on the branch = live: its head commit's time is the last deploy
+  lastDeploy = { param($a) $c = Invoke-HostVerb 'repo.commit' @{ repo = $a.repo; ref = $a.d.branch }; if ($c.committed_date) { @{ at = ([datetime]$c.committed_date).ToLocalTime(); source = "branch $($a.d.branch) head" } } }
 }
 # adapter:deploy-kind/ssh
 # deploy: deploys[].ssh.deployCmd ({sha} {branch}) runs on the host; none = UNSUPPORTED (a person deploys)
@@ -161,19 +164,28 @@ Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-Deploye
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($c)); $o = @(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash && echo KIT_DEPLOY_OK")) 900)
     # the marker proves the command ran and exited 0 (the bounded ssh drops exit codes, a timeout returns nothing)
     if ($o -notcontains 'KIT_DEPLOY_OK') { return @{ note = "ssh deploy failed or timed out: $(($o | Select-Object -Last 3) -join ' / ')" } }
-    @{ id = "ssh $($s.host)"; note = ($o | Where-Object { $_ -ne 'KIT_DEPLOY_OK' } | Select-Object -Last 3) -join ' / ' } } }
+    @{ id = "ssh $($s.host)"; note = ($o | Where-Object { $_ -ne 'KIT_DEPLOY_OK' } | Select-Object -Last 3) -join ' / ' } }
+  plan = { param($a) if ($a.d.ssh.deployCmd) { "deploys[].ssh.deployCmd on $($a.d.ssh.host) (bossy.ps1 deploy run -To $($a.d.target))" } else { "a person deploys on $($a.d.ssh.host), then bossy.ps1 deploy record" } } }
 # adapter:deploy-kind/tag
 Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" }; deploy = { param($a) @{ id = "$(__DkMerge $a -Push)" } } }
 # adapter:deploy-kind/probe
-Register-KitAdapter 'deploy-kind' 'probe' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
+Register-KitAdapter 'deploy-kind' 'probe' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "a person deploys, then bossy.ps1 deploy record; the probe $($a.d.probe) checks it" } }
 # adapter:deploy-kind/manual
 # deploy: prints the steps (deploys[].manual: text or a link); a person deploys, then bossy.ps1 deploy record
 Register-KitAdapter 'deploy-kind' 'manual' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "a person deploys: $($a.d.manual)" }
   deploy = { param($a) @{ id = 'manual'; note = "waiting for a person: $($a.d.manual); then bossy.ps1 deploy record -Env $($a.env)" } } }
 # adapter:deploy-kind/awsStack
-Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-DeployedExtra $a.d } }
+# lastDeploy / isRunning: describe-stacks (LastUpdatedTime, else CreationTime; a *_IN_PROGRESS status = a deploy in flight)
+function __DkStack($d) { $ra = if ($d.region) { @('--region', $d.region) } else { @() }
+  $o = "$(aws cloudformation describe-stacks @ra --stack-name $d.awsStack --query 'Stacks[0].[LastUpdatedTime,StackStatus,CreationTime]' --output text 2>$null)".Trim()
+  if ($o) { $at, $st, $cr = $o -split '\s+'; @{ at = $(if ($at -eq 'None') { $cr } else { $at }); status = $st } } }
+Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "a person updates stack $($a.d.awsStack), then bossy.ps1 deploy record" }
+  lastDeploy = { param($a) $s = __DkStack $a.d; if ($s.at) { @{ at = ([datetimeoffset]$s.at).LocalDateTime; source = "stack $($a.d.awsStack)" } } }
+  isRunning = { param($a) $s = __DkStack $a.d; if ($s) { "$($s.status)" -match '_IN_PROGRESS$' } } }
 # adapter:deploy-kind/laneApk
-Register-KitAdapter 'deploy-kind' 'laneApk' @{ isDeployed = { param($a) Test-LaneApkDeployed $a.d } }
+# lastDeploy: the lane APK stamp's build time (phones get it on their next acquire)
+Register-KitAdapter 'deploy-kind' 'laneApk' @{ isDeployed = { param($a) Test-LaneApkDeployed $a.d }; plan = { param($a) 'phoney.ps1 build from a branch holding the merge; phones get it on their next phoney.ps1 acquire' }
+  lastDeploy = { param($a) $ai = LaneApk $a.d; if ($ai.built) { @{ at = [datetime]$ai.built; source = "lane APK $($ai.commit)" } } } }
 # adapter-end:deploy-kind
 # isDeployed of ssh, awsStack, probe, tag, manual
 function Test-DeployedExtra($d) {

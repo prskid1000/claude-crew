@@ -12,7 +12,9 @@ if (-not $KitAdapters.device.ios.ContainsKey($Action)) { "ios: no ui $Action (a 
 $idbUdid = if ($env:KIT_DEVICE) { @('--udid', $env:KIT_DEVICE) } else { @() }
 function Invoke-Idb([string[]]$IdbArgs) {
   if (-not (Get-Command idb -ErrorAction SilentlyContinue)) { throw 'ios ui: idb not found (pip install fb-idb; brew install facebook/fb/idb-companion)' }
-  $out = & idb @IdbArgs 2>&1; if ($LASTEXITCODE) { throw "idb $($IdbArgs[0..1] -join ' ') failed (exit $LASTEXITCODE): $(@($out)[0])" }; $out
+  # stderr apart: a companion warning must not break describe-all's JSON
+  $errs = $null; $out = & idb @IdbArgs 2>&1 | Where-Object { if ($_ -is [Management.Automation.ErrorRecord]) { $errs = "$_"; $false } else { $true } }
+  if ($LASTEXITCODE) { throw "idb $($IdbArgs[0..1] -join ' ') failed (exit $LASTEXITCODE): $(if ($errs) { $errs } else { @($out)[0] })" }; $out
 }
 function Get-Nodes {
   # the accessibility tree in points: a JSON array (older idb: one element per line)
