@@ -11,9 +11,7 @@
       "vendors": "clickup github gitlab jira jira-server linear youtrack azure",
       "fallback": {
         "checklist": "an Items block in the description (<!-- kit:<name> -->)",
-        "statuses": "tracker.statuses / vocab.json names per role",
-        "dependencies": "a **Waits on:** line in the description",
-        "labels": "tags (kitbag.py naming tags): a <!-- kit:tags --> **Tags:** line in the description (task-items.ps1 Set-KitTaskTags)"
+        "dependencies": "a **Waits on:** line in the description"
       }
     },
     "git-host": {
@@ -24,7 +22,6 @@
       "names": "command",
       "vendors": "github gitlab bitbucket azure gitea",
       "fallback": {
-        "mr.parseRef": "core ConvertFrom-KitMrRef (an MR URL or <repo>!<n>)",
         "mr.labels": "a Tags: line in the MR body (devtools.py mr_labels)"
       },
       "gaps": {

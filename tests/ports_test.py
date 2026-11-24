@@ -278,6 +278,13 @@ kq.texts[ln] = kq.texts[ln].replace("'status' = {", "'status-x' = {", 1); p6 = p
 for rel, end in (('.codex/config.toml', "'''"), ('.agents/hooks.json', '"')):   # the plain health hook gone, health -Flow -Fetch kept
     kq.texts[rel] = kt.ktext(kq, rel).replace('bossy.ps1 health' + end, 'bossy.ps1 healthz' + end)
 p7 = [x for x in par(kq, man) if x.startswith('hook SessionStart bossy.ps1 health:')]
+kc = kt.load(kt.KIT_DIR); tl = 'skills/crafty/adapters/tracker-local.ps1'   # cells from code: an undeclared adapter, a stub verb, a new called verb
+kc.texts[tl] += "\nRegister-KitAdapter 'tracker' 'fakey' @{ 'view' = { 'x' }; 'url' = { param($a) throw 'UNSUPPORTED tracker/fakey/url' } }\nfunction Get-Frob { __TrA 'frobnicate' @{} }\n"
+pc = par(kc, man); stale = 'fallback "publish" is used by no adapter'
+fb2 = json.loads(json.dumps(man)); fb2['adapters']['report']['fallback'] = {'publish': 'a kept file'}; pf = par(kt.load(kt.KIT_DIR), fb2)
+print(f'parity-code:{any("tracker/fakey: registered in code" in x for x in pc)}|{any("tracker/fakey/url: a required verb" in x for x in pc)}'
+      f'|{any("tracker/fakey/status: a required verb" in x for x in pc)}|{any("tracker: verb frobnicate is called (skills/crafty/adapters/tracker-local.ps1:" in x for x in pc)}'
+      f'|{sum("/frobnicate: an optional verb" in x for x in pc) >= 8}|{any(stale in x for x in pf)}')
 print(f'parity-kit:{not p0} {p0[:3]}')
 print(f'parity-nested:{any("tracker/linear/status: a required verb" in x for x in p6) and len(p7) == 2}')
 print(f'parity-sibling:{any("tracker/github: verb tag-add is in no family list" in x for x in p1) and sum("/tagAdd: an optional verb" in x for x in p2) == 7 and not any("tagAdd" in x for x in p3)}')

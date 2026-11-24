@@ -17,6 +17,7 @@ Expect "parity: every adapter verb and harness feature native, fallback or a dec
 Expect 'parity: a verb on one adapter only fails (no family list); a family cap fails every sibling without it until a fallback' ($res -contains 'parity-sibling:True')
 Expect 'parity: a renamed verb is missing though a nested @{ status = } remains; a dropped hook is missing though a longer one starts with it' ($res -contains 'parity-nested:True')
 Expect 'parity: a declared gap the adapter now has, or one naming no adapter, fails' ($res -contains 'parity-gaps:True')
+Expect "parity from code (owner 2026-11-24): an adapter registered but undeclared is walked and fails, a verb that only throws UNSUPPORTED is missing, a verb code calls in no list fails and is a cell on every adapter, a fallback no adapter uses fails ($($res -match '^parity-code:'))" ($res -contains 'parity-code:True|True|True|True|True|True')
 Expect 'parity: a Claude Code hook neither Codex nor Antigravity runs fails both until declared (gap / fallback)' ($res -contains 'parity-harness:True')
 Expect "parity next: the org's adapter first, no none adapter, only fallback / gap cells, a no-such-feature gap left out, one without its link fails ($($res -match '^parity-next:'))" ($res -contains 'parity-next:True|True|True|True|True')
 Expect 'ports: workspace skill links, org rules always-on (split under 24 KB) + AGENTS.override.md, none in the kit' ($res -contains 'ports-workspace:True')

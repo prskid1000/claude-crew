@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L264 kitlog · L366 load · L859 lint · L1273 README graph · L1391 lint command · L1673 audit ·
-  L1821 registry · L1881 tools · L1969 parity · L2478 arch lint · L2751 prose · L2933 sections · L3065 budget · L3083 migrate ·
-  L3231 plugins · L3288 state lint · L3476 main
+  L1821 registry · L1881 tools · L1969 parity · L2526 arch lint · L2799 prose · L2981 sections · L3113 budget · L3131 migrate ·
+  L3279 plugins · L3336 state lint · L3524 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1975,6 +1975,39 @@ ktext = lambda k, rel: k.texts.get(rel) or read(osp.join(k.dir, rel))   # port c
 HARNESS = ('codex', 'antigravity')
 AD_EXT, AD_COMMENT = ('.ps1', '.py', '.mjs'), r'(?m)^[ \t]*(#|//).*$'   # .mjs: ADAPTERS['<kind>']['<name>'] = {...} (browser.mjs)
 kebab = lambda v: re.sub('([A-Z])', r'-\1', v).lower()   # Test-KitCap: cap commentEdit = verb comment-edit
+# a verb whose whole body only refuses: { [param(..)] throw 'UNSUPPORTED ..' | '..not supported' } (ps1), lambda ..: sys.exit / raise (py)
+AD_STUB = re.compile(r"""(?:\{\s*(?:param\([^)]*\)\s*;?\s*)?throw|lambda[^:\n]*:\s*(?:sys\.exit|raise\s+\w+)\()\s*\(?\s*[f$]?['"][^'"\n]*(?:UNSUPPORTED|not supported)[^\n]*""", re.I)
+AD_ROUTERS = {'Invoke-HostVerb': ('git-host', {'ci.': 'ci'})}   # a dispatcher whose family is computed, not literal: (family, {verb prefix: family})
+
+def adapter_calls(k):
+    """{family: {verb: 'file:line'}} of every literal verb or cap the kit's code dispatches (owner 2026-11-24: cells from code, not
+    only parity.json): Invoke-KitAdapter <fam> <name> <verb>, Test-KitCap <fam> <name> <cap>, any function that forwards $Verb /
+    $Cap to them (found, never listed: __TrA, __TrCan), AD_ROUTERS, and Python `<var> = ADAPTERS['<fam>']...` then <var>['<verb>']
+    / .get('<verb>') within 15 lines."""
+    out, texts = {}, {f: re.sub(AD_COMMENT, '', t) for f, t in k.texts.items() if re.match(r'(skills|workflows)/', f) and f.endswith(AD_EXT)
+                      and '.local.' not in f and '/kitbag' not in f}
+    def add(fam, v, f, t, i):
+        if fam and re.match(r'^[A-Za-z][\w.-]*$', v or ''):
+            out.setdefault(fam, {}).setdefault(v, f'{f}:{t.count(chr(10), 0, i) + 1}')
+    fwd = {}   # forwarding function -> its family (a literal family, the verb or cap passed through)
+    for f, t in texts.items():
+        for m in re.finditer(r"""(?:Invoke-KitAdapter|Test-KitCap)\s+'?([\w-]+)'?\s+\S+\s+\$(?:Verb|Cap)\b""", t):
+            fn = list(re.finditer(r'(?m)^\s*function\s+([\w-]+)', t[:m.start()]))
+            if fn:
+                fwd[fn[-1].group(1)] = (m.group(1), {})
+    for f, t in texts.items():
+        for m in re.finditer(r"""(?:Invoke-KitAdapter|Test-KitCap)\s+'([\w-]+)'\s+\S+\s+'?([A-Za-z][\w.-]*)'?|(?:Invoke-KitAdapter|Test-KitCap)\s+([a-z][\w-]*)\s+\S+\s+'?([A-Za-z][\w.-]*)'?""", t):
+            add(m.group(1) or m.group(3), m.group(2) or m.group(4), f, t, m.start())
+        for fn, (fam, pre) in {**fwd, **AD_ROUTERS}.items():
+            for m in re.finditer(r"""(?<![\w$-])%s\s+'?([A-Za-z][\w.-]*)'?""" % re.escape(fn), t):
+                p = next((x for x in pre if m.group(1).startswith(x)), None)
+                add(pre[p] if p else fam, m.group(1)[len(p):] if p else m.group(1), f, t, m.start())
+        if f.endswith('.py'):
+            for m in re.finditer(r"""(?:(\w+)\s*=|for\s+\w+\s*,\s*(\w+)\s+in)\s*(?:\w+\.)?ADAPTERS\[['"]([\w-]+)['"]\]""", t):
+                var, win = m.group(1) or m.group(2), t[m.end():m.end() + 15 * 120]
+                for c in re.finditer(r"""(?<![\w.])\(?%s(?:\s+or\s+\{\}\))?(?:\[['"]([\w-]+)['"]\]|\.get\(['"]([\w-]+)['"]\))""" % re.escape(var), win):
+                    add(m.group(3), c.group(1) or c.group(2), f, t, m.end() + c.start())
+    return out
 
 def _braced(t, i):
     """t from its first { at or after i to the matching } (kit adapter code keeps braces in strings balanced)."""
@@ -2062,7 +2095,18 @@ def adapter_matrix(k, fam, a, bad=None):
     verbs, caps, fb, ck = a.get('verbs', '').split(), a.get('caps', '').split(), a.get('fallback') or {}, a.get('capKeys') or {}
     gaps, used, code, out, delegates = _gap_keys(a.get('gaps')), set(), adapter_code(k, fam), {}, {}
     allv = list(dict.fromkeys(verbs + caps + [x for x in fb if not x.startswith('_')] + [v for _, v in gaps]))
-    for n in a.get('names', '').split() + a.get('vendors', '').split():
+    if not hasattr(k, 'ad_calls'):
+        k.ad_calls = adapter_calls(k)
+    known = set(allv) | {kebab(x) for x in allv}
+    for v, at in (k.ad_calls.get(fam) or {}).items():   # a verb code calls that no list names: a cell on every adapter
+        if v not in known:
+            bad('PARITY', at.rsplit(':', 1)[0], f'{fam}: verb {v} is called ({at}) but in no family list: add it to adapters.{fam} verbs (required) or caps (optional) in {PARITY_JSON}')
+            allv.append(v)
+    names = a.get('names', '').split() + a.get('vendors', '').split()
+    for n in sorted(set(code) - set(names)):   # registered in code, not declared: walked too, so its missing cells show
+        bad('PARITY', code[n][1], f'{fam}/{n}: registered in code, but {PARITY_JSON} adapters.{fam} names / vendors do not list it: add it')
+        names.append(n)
+    for n in names:
         if n not in code:
             bad('PARITY', PARITY_JSON, f'{fam}/{n}: registered, but no Register-KitAdapter / ADAPTERS entry registers it')
             continue
@@ -2086,7 +2130,8 @@ def adapter_matrix(k, fam, a, bad=None):
             if ct and cs is None and v in caps:
                 return 'config'   # a caps scriptblock: what the org's commands configure
             if has(v) or has(kebab(v)):
-                return 'native'
+                return None if any(AD_STUB.match(body, m.end()) for x in (v, kebab(v))
+                                   for m in re.finditer(r"""(['"]?)%s\1\s*[=:]\s*""" % re.escape(x), body)) else 'native'   # throws UNSUPPORTED only: no verb
             return ('config' if 'Invoke-KitCommand' in body else 'native') if star else None
         row = {}
         for v in allv:
@@ -2108,6 +2153,9 @@ def adapter_matrix(k, fam, a, bad=None):
     for n, to in delegates.items():   # '*' -> another adapter: its row (jira-server = jira)
         if to in out:
             out[n] = dict(out[to])
+    for v in [x for x in fb if not x.startswith('_')]:   # a declaration the code no longer needs is stale
+        if out and not any(r.get(v) in ('fallback', 'gap') for r in out.values()):   # a gap's adapter runs the fallback too
+            bad('PARITY', PARITY_JSON, f'{fam}: fallback "{v}" is used by no adapter (each is native or config now): drop it')
     for key in sorted({x[0] for x in gaps.values()} - used):
         if not any(gaps[g][0] == key and g[0] in out and out[g[0]].get(g[1]) != 'gap' for g in gaps):
             bad('PARITY', PARITY_JSON, f'{fam}: gaps "{key}" names no adapter or verb of the family: fix or drop it')
