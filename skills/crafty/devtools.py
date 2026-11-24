@@ -2309,7 +2309,7 @@ def cases_cmd(a):
         else:
             if verb == 'add':   # a shared task: one wave agent never rewrites another's title or ids
                 old_of = lambda k, i: next((x for x in c.get(k) or [] if isinstance(x, dict) and str(x.get('id')) == str(i)), None)
-                dup = [f'{k} {e.get("id")}' for k in ('cases', 'checks', 'qualities', 'unchanged') for e in new.get(k) or [] if isinstance(e, dict)
+                dup = [f'{k} {e.get("id")}' for k in ('cases', 'checks', 'qualities', 'unchanged') for e in new.get(k) or [] if isinstance(e, dict) and not e.get('_del')   # a delete is no rewrite
                        and (o := old_of(k, e.get('id'))) and any(o.get(f) != v for f, v in e.items() if f != 'by')]
                 if dup and '--replace' not in rest:   # retro: an existing id was overwritten silently
                     raise SystemExit(f'cases add: {", ".join(dup)} exist(s) with other values: a new id for a new case, or --replace to change it. Nothing was written.')
