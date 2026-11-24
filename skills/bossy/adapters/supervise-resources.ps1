@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1041 release · L1087 lines · L1114 cleanup · L1181 launch ·
-  L1298 pause · L1417 heartbeat · L1433 sessions · L1492 ci tasks ·
-  L1557 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L364 shells · L554 page · L1052 release · L1098 lines · L1125 cleanup · L1192 launch ·
+  L1309 pause · L1428 heartbeat · L1444 sessions · L1503 ci tasks ·
+  L1568 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -369,7 +369,7 @@ function Get-KitShellCommand([string]$CommandLine) {
   $c = "$CommandLine"
   if ($c -match "(?s)\beval '(.*)'\s*(<\s*/dev/null\s*)?&&\s*pwd -P" -or $c -match "(?s)\beval '(.*)'") { return ($Matches[1] -replace "'\\''", "'" -replace '\\"', '"').Trim() }
   if ($c -match '(?i)\s-e(?:c|n[a-z]*)?\s+([A-Za-z0-9+/=]{8,})') { try { return [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1])).Trim() } catch {} }
-  if ($c -match '(?is)\s-(?:c|Command)\s+(.*)$') { return ($Matches[1].Trim() -replace '^"(.*)"$', '$1' -replace '\\"', '"').Trim() }
+  if ($c -match '(?is)\s-(?:[a-z]?c|Command)\s+(.*)$') { return ($Matches[1].Trim() -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1' -replace '\\"', '"').Trim() }   # -lc: Codex
   ($c -replace '^\s*("[^"]*"|\S+)\s*', '').Trim()
 }
 # table cell: quoting undone, cd / export preambles skipped, heredoc as "<cmd> <<EOF (heredoc, N lines)", 60 chars
@@ -392,35 +392,46 @@ function Get-KitShellDir([string]$Cmd) {
   $d = $Matches[1].Trim('"', "'"); if ($KitIsWindows) { $d = $d -replace '^/([A-Za-z])(?=/|$)', '$1:' }
   if ($d -match '[$%`~]' -or ($KitIsWindows -and $d -notmatch '^[A-Za-z]:[\\/]|^\\\\') -or -not [IO.Path]::IsPathRooted($d)) { return '' }; $d
 }
-# shells whose parent is Claude Code (claude, or node running it); never this sweep's own chain
+# shells whose parent is an agent CLI (or node running Claude Code); never this sweep's own chain
 function Get-KitAgentShells($Procs) {
   $byId = @{}; foreach ($p in $Procs) { $byId[$p.Id] = $p }
   $mine = @{}; $q = $byId[$PID]; for ($i = 0; $q -and -not $mine[$q.Id] -and $i -lt 64; $i++) { $mine[$q.Id] = 1; $q = $byId[$q.ParentId] }
   foreach ($p in $Procs) {
     $par = $byId[$p.ParentId]
-    if ($p.Name -match '^(bash|sh|zsh|pwsh|powershell)(\.exe)?$' -and -not $mine[$p.Id] -and $par -and ($par.Name -match '^claude(\.exe)?$' -or ($par.Name -match '^node(\.exe)?$' -and "$($par.CommandLine)" -match '(?i)claude-code|@anthropic-ai[\\/]claude|[\\/]claude(\.exe|\.js|\.mjs)?(\s|"|$)'))) { $p }
+    if ($p.Name -match '^(bash|sh|zsh|pwsh|powershell)(\.exe)?$' -and -not $mine[$p.Id] -and $par -and ($par.Name -match '^(claude|codex|agy|antigravity)(\.exe)?$' -or ($par.Name -match '^node(\.exe)?$' -and "$($par.CommandLine)" -match '(?i)claude-code|@anthropic-ai[\\/]claude|[\\/]claude(\.exe|\.js|\.mjs)?(\s|"|$)'))) { $p }
   }
 }
-# per new shell (key -> cmd, created): the transcript whose tool_use ran it, nearest its start ($null: none). One listing; per file
-# only its last 16 MB (append-only: a new shell's line is near the end), searched with IndexOf (a Select-String per shell over the
-# 90 MB coordinator transcript cost 20 s a sweep)
+# the transcript line that started a shell -> @{ bg; mon; id } per kind: claude tool_use, codex function_call, agy run_command
+# (codex / agy: a shell outliving its yield / wait runs in the background)
+$script:KitShellCall = @{
+  claude = @{ want = '"tool_use"'; call = { param($o, $f) $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($f) })[0]
+      # K104: a Monitor call is a background shell too (21 outlived their agents)
+      if ($u) { $mon = "$($u.name)" -eq 'Monitor'; @{ bg = ([bool]$u.input.run_in_background -or $mon); mon = $mon; id = "$($u.id)" } } } }
+  codex = @{ want = '"function_call"'; call = { param($o, $f) $p = $o.payload; if ($p.type -eq 'function_call' -and "$($p.arguments)".Contains($f)) { @{ bg = 1; id = "$($p.call_id)" } } } }
+  antigravity = @{ want = '"run_command"'; call = { param($o, $f) if (@($o.tool_calls | Where-Object { $_.name -eq 'run_command' -and "$($_.args.CommandLine)".Contains($f) }).Count) { @{ bg = 1 } } } }
+}
+# per new shell (key -> cmd, created): the transcript (any kind) whose tool call ran it, nearest its start; per file its last 16 MB,
+# IndexOf (Select-String per shell over 90 MB cost 20 s a sweep)
 function Find-KitShellTranscripts([hashtable]$Want) {
   $out = @{}; $frags = @{}
   foreach ($k in @($Want.Keys)) { $f = "$(@([regex]::Matches($Want[$k].cmd, '[^"\\\r\n\t]{8,}') | Sort-Object Length -Descending)[0])"; if ($f) { $frags[$k] = $f.Substring(0, [math]::Min(120, $f.Length)) } }
-  $r = Invoke-KitAdapter transcript claude root; if (-not $frags.Count -or -not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return $out }
+  if (-not $frags.Count) { return $out }
   $from = @($frags.Keys | ForEach-Object { $Want[$_].created } | Sort-Object)[0].AddMinutes(-1)
-  foreach ($file in @(Get-ChildItem -LiteralPath $r.dir -Recurse -Filter '*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $from } | ForEach-Object FullName)) {
-    $text = Read-KitFileTail $file 16MB
-    foreach ($k in @($frags.Keys)) {
-      for ($i = $text.IndexOf($frags[$k], [StringComparison]::Ordinal); $i -ge 0; $i = $text.IndexOf($frags[$k], $e, [StringComparison]::Ordinal)) {
-        $s0 = $text.LastIndexOf("`n", $i) + 1; $e = $text.IndexOf("`n", $i); if ($e -lt 0) { $e = $text.Length }; $line = $text.Substring($s0, $e - $s0)
-        if ($line -notmatch '"tool_use"' -or ($line -match '"timestamp":"([^"]+)"' -and [math]::Abs(([datetimeoffset]$Matches[1] - [datetimeoffset]$Want[$k].created).TotalSeconds) -gt 120)) { continue }   # parse only lines near the shell's start
-        $o = try { $line | ConvertFrom-Json -Depth 80 } catch { continue }
-        $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($frags[$k]) })[0]; if (-not $u) { continue }
-        $gap = if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Want[$k].created).TotalSeconds) } else { 1e9 }
-        # K104: a Monitor tool call is a background shell too (no run_in_background key; 21 outlived their agents)
-        $mon = "$($u.name)" -eq 'Monitor'
-        if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = ([bool]$u.input.run_in_background -or $mon); mon = $mon; gap = $gap; tuid = "$($u.id)"; out = (Find-KitShellOutputPath $text "$($u.id)") } }
+  foreach ($kind in @($script:KitShellCall.Keys)) {
+    $r = try { Invoke-KitAdapter transcript $kind root } catch { $null }; if (-not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { continue }
+    $sc = $script:KitShellCall[$kind]
+    foreach ($file in @(Get-ChildItem -LiteralPath $r.dir -Recurse -Filter $(if ($r.filter) { $r.filter } else { '*.jsonl' }) -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $from } | ForEach-Object FullName)) {
+      $text = Read-KitFileTail $file 16MB
+      foreach ($k in @($frags.Keys)) {
+        for ($i = $text.IndexOf($frags[$k], [StringComparison]::Ordinal); $i -ge 0; $i = $text.IndexOf($frags[$k], $e, [StringComparison]::Ordinal)) {
+          $s0 = $text.LastIndexOf("`n", $i) + 1; $e = $text.IndexOf("`n", $i); if ($e -lt 0) { $e = $text.Length }; $line = $text.Substring($s0, $e - $s0)
+          if (-not $line.Contains($sc.want) -or ($line -match '"timestamp":"([^"]+)"' -and [math]::Abs(([datetimeoffset]$Matches[1] - [datetimeoffset]$Want[$k].created).TotalSeconds) -gt 120)) { continue }   # parse only lines near the shell's start
+          $o = try { $line | ConvertFrom-Json -Depth 80 } catch { continue }
+          $u = & $sc.call $o $frags[$k]; if (-not $u) { continue }
+          # agy: no timestamp
+          $gap =if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Want[$k].created).TotalSeconds) } else { 119 }
+          if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = $u.bg; mon = $u.mon; gap = $gap; tuid = $u.id; out = $(if ($kind -eq 'claude') { Find-KitShellOutputPath $text $u.id } else { '' }) } }
+        }
       }
     }
   }

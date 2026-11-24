@@ -13,6 +13,8 @@ Expect 'ports: port_deploy keeps user files, removes only stale generated ports'
 Expect 'ports.targets unset or unknown: off, no workspace copies (owner 2026-11-22)' ($res -contains 'ports-default-off:True')
 Expect 'ports: hooks absolute, no double quotes (agy cmd /c); Codex cleanup + health -Flow async, KIT_TOOL; agy both detached, hidden' ($res -contains 'ports-hooks:True')
 Expect 'ports: the Codex guard hook matches shell, apply_patch and MCP SQL tools (parity: guard on MCP SQL), no other MCP tool' ($res -contains 'ports-codex-mcp:True')
+Expect 'ports: Codex and agy reads / MCP calls run guard_client.mjs (agy: view_file, call_mcp_tool, mcp_*); agy run_command keeps crafty.ps1 guard; a spaced path pipes stdin through pwsh' ($res -contains 'ports-guard-reads:True')
+Expect 'ports: agy agents get their tools by agy name (+ call_mcp_tool); one with no agy name leaves the list unset' ($res -contains 'ports-agy-tools:True')
 Expect "parity: every adapter verb and harness feature native, fallback or a declared gap on this kit ($($res -match '^parity-kit:'))" ($res -contains 'parity-kit:True []')
 Expect 'parity: a verb on one adapter only fails (no family list); a family cap fails every sibling without it until a fallback' ($res -contains 'parity-sibling:True')
 Expect 'parity: a renamed verb is missing though a nested @{ status = } remains; a dropped hook is missing though a longer one starts with it' ($res -contains 'parity-nested:True')
@@ -35,6 +37,26 @@ $prD = New-Item -ItemType Directory -Force (Join-Path (TkPath $k 'port-runs' -Cr
 Set-Content (Join-Path $prD 'journal.jsonl') @('{"type":"launched"}', '{"type":"started","agentId":"agy1","label":"build:A"}', '{"type":"result","agentId":"agy1","result":{"ok":true}}', '{"type":"done"}')
 $prOut = pwsh -NoProfile -Command "`$env:KIT_TRANSCRIPTS = '$prT'; . '$(Lib)' 6>`$null; `$d = @(Get-KitWorkflowDirs 'antigravity'); `$ev = @(Get-Content (Join-Path `$d[0].FullName 'journal.jsonl') | ConvertFrom-Json); `"`$(`$d.Name) `$(Get-KitRunState `$d[0] @() `$ev)`"" 2>&1 | Out-String
 Expect "ports: Get-KitWorkflowDirs lists Antigravity run journals; a done run is ended ($($prOut.Trim()))" ($prOut.Trim() -eq 'wf_agy-test ended')
+# parity (harness run journals): a Codex by-hand run journals each step (kitbag.py port --journal), the same records: the Runs band sees it
+$cjKb = Join-Path $k 'skills/bossy/kitbag.py'; $cjRc = @(foreach ($cjA in @(@('launched', '--workflow', 'buildy'), @('started', '--agent', 'th-1', '--label', 'build:A', '--phase', 'Build'), @('result', '--agent', 'th-1'))) { & $py -X utf8 $cjKb port --journal $cjA[0] --run r1 @($cjA | Select-Object -Skip 1) *> $null; $LASTEXITCODE })
+$cjMid = pwsh -NoProfile -Command "`$env:KIT_TRANSCRIPTS = '$prT'; . '$(Lib)' 6>`$null; `$d = @(Get-KitWorkflowDirs 'codex'); `$ev = @(Get-Content (Join-Path `$d[0].FullName 'journal.jsonl') | ConvertFrom-Json); `"`$(`$d.Name) `$(@(`$ev).Count)`"" 2>&1 | Out-String
+& $py -X utf8 $cjKb port --journal done --run r1 *> $null; & $py -X utf8 $cjKb port --journal started --run r1 *> $null; $cjBad = $LASTEXITCODE
+$cjOut = pwsh -NoProfile -Command "`$env:KIT_TRANSCRIPTS = '$prT'; . '$(Lib)' 6>`$null; `$d = @(Get-KitWorkflowDirs 'codex'); `$ev = @(Get-Content (Join-Path `$d[0].FullName 'journal.jsonl') | ConvertFrom-Json); `"`$(`$d.Name) `$(Get-KitRunState `$d[0] @() `$ev)`"" 2>&1 | Out-String
+Expect "ports: a Codex run's journal lines (kitbag.py port --journal) list as a workflow dir; done = ended; started without --agent refused ($($cjRc -join ',') | $($cjMid.Trim()) | $($cjOut.Trim()) | $cjBad)" (($cjRc -join ',') -eq '0,0,0' -and $cjMid.Trim() -eq 'wf_cdx-r1 3' -and $cjOut.Trim() -eq 'wf_cdx-r1 ended' -and $cjBad -eq 2)
+# parity (harness Monitor and background-shell check): a Codex exec_command and an Antigravity run_command shell are found in their
+# transcripts (codex / agy parents) and die with their agent; the other one stays
+$cxg = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); $mt = Get-Date; $env:KIT_TRANSCRIPTS = $prT; $env:KIT_TRANSCRIPTS_CODEX = Join-Path (Kd) 'txc'; $env:KIT_TRANSCRIPTS_ANTIGRAVITY = Join-Path (Kd) 'txa'
+  $cxF = Join-Path $env:KIT_TRANSCRIPTS_CODEX '2026/01/02/rollout-x.jsonl'; $agF = Join-Path $env:KIT_TRANSCRIPTS_ANTIGRAVITY 'c1/.system_generated/logs/transcript.jsonl'
+  foreach ($d in $cxF, $agF) { $null = New-Item -ItemType Directory -Force (Split-Path $d) }
+  $cxC = 'tail -f D:/x/codex-watch.out'; $agC = 'tail -f D:/x/agy-watch.out'
+  @{ timestamp = $mt.ToUniversalTime().ToString('o'); type = 'response_item'; payload = @{ type = 'function_call'; name = 'exec_command'; call_id = 'c9'; arguments = (@{ cmd = $cxC } | ConvertTo-Json -Compress) } } | ConvertTo-Json -Depth 9 -Compress | Set-Content $cxF
+  @{ type = 'PLANNER_RESPONSE'; tool_calls = @(@{ name = 'run_command'; args = @{ CommandLine = (ConvertTo-Json $agC); WaitMsBeforeAsync = '500' } }) } | ConvertTo-Json -Depth 9 -Compress | Set-Content $agF
+  $ps = @([pscustomobject]@{ Id = 5; ParentId = 1; Name = 'codex.exe' }, [pscustomobject]@{ Id = 6; ParentId = 1; Name = 'agy.exe' },
+    [pscustomobject]@{ Id = 7; ParentId = 5; Name = 'bash.exe'; CommandLine = "bash -lc '$cxC'"; Created = $mt }, [pscustomobject]@{ Id = 8; ParentId = 6; Name = 'pwsh.exe'; CommandLine = "pwsh -Command $agC"; Created = $mt })
+  $got = "$(@(Get-KitAgentShells $ps | ForEach-Object Id) -join ',')"
+  $a = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'cx'; transcript = $cxF }) $ps $null { }); $b = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'ag'; transcript = $agF }) $ps $null { })
+  Remove-Item Env:KIT_TRANSCRIPTS, Env:KIT_TRANSCRIPTS_CODEX, Env:KIT_TRANSCRIPTS_ANTIGRAVITY; "$got|$a|$b" }
+Expect "background shells on Codex and Antigravity: found under codex / agy, each killed with its own agent only ($cxg)" ($cxg -match '^7,8\|killed shell 7 of cx: [^|]*\|killed shell 8 of ag: ' -and $cxg -notmatch 'shell 8 of cx|shell 7 of ag')
 Remove-TestKit $k
 $beatRx = 'Get-KitBeatPrompt \{ "Run & .+? supervise -AutoFix -Brief\. (.+?)" \}'
 $libBeat = if ((Get-Content (Join-Path $src 'skills/crafty/lib.ps1') -Raw) -match $beatRx) { $Matches[1] }

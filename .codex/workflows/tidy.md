@@ -4,7 +4,7 @@
 
 **When to run it:** A /buildy or /testy finished (any outcome), the session-start nudge says signals piled up, or the owner asks for a kit retrospective
 
-Codex has no workflow engine: you are the coordinator. Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency limit), `wait_agent` for them, then the next phase. Hold every gate below (the .js enforces them in Claude Code and Antigravity). No run journal here: the launch record keeps the args, but the Runs band, stuck checks and `recover` resume cover Claude Code and Antigravity runs only.
+Codex has no workflow engine: you are the coordinator. Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency limit), `wait_agent` for them, then the next phase. Hold every gate below (the .js enforces them in Claude Code and Antigravity). Journal each step (the Runs band, stuck checks and `recover` read it): `python -X utf8 <kit>/skills/bossy/kitbag.py port --journal launched --run <run> --workflow tidy` first; per agent `--journal started --run <run> --agent <its id> --label <label> --phase <phase>`, then `--journal result --run <run> --agent <its id>`; the end `--journal done --run <run>` (stopped: `--journal finished --run <run> --error '<why>'`).
 
 ## Phases
 

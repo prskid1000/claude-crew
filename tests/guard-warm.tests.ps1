@@ -52,6 +52,16 @@ $cx = foreach ($c in @(@('big', 'Read', @{ file_path = $big }), @('wide', 'Read'
     @('tick', 'mcp__db__run_sql', @{ sql = 'select a from t where `c#` = 1 limit 5' }), @('inner', 'mcp__db__run_sql', @{ sql = 'select id from t where id in (select id from u limit 5)' }), @('pdf', 'Read', @{ file_path = "$big.pdf" }))) {
   "$($c[0]):$(@(& $viaClient (@{ tool_name = $c[1]; cwd = $k; tool_input = $c[2] } | ConvertTo-Json -Compress)) -join '' -replace '^deny\|.*', 'deny' -replace '^$', 'ok')" }
 Expect "guard context: big / wide whole-file Reads, a 700-line range and wide or unbounded SQL denied, ranges, small files, LIMIT, aggregates pass ($($cx -join ' '))" (($cx -join ' ') -eq 'big:deny wide:deny range:ok bigrange:deny tail:ok widerange:ok zero:deny strtail:ok crlf:deny small:ok star:deny nolim:deny over:deny lim:ok count:ok grp:deny show:ok exists:ok cte:ok tick:ok inner:deny pdf:ok')
+# parity (harness guard on file reads and MCP SQL): Antigravity's view_file / call_mcp_tool / eager mcp_<server>_<tool> hit the same
+# rules, answered as { decision, reason }; the test-logins file is denied to every CLI's file view
+$lgF = Join-Path (Kd) 'skills/pokey/targets.local.json'; New-Item -ItemType Directory -Force (Split-Path $lgF) | Out-Null; Set-Content $lgF '{}'
+$ag = foreach ($c in @(@('big', 'view_file', @{ AbsolutePath = $big }), @('range', 'view_file', @{ AbsolutePath = (ConvertTo-Json $big); StartLine = '1'; EndLine = '40' }), @('bigrange', 'view_file', @{ AbsolutePath = $big; StartLine = 1; EndLine = 700 }),
+    @('logins', 'view_file', @{ AbsolutePath = $lgF }), @('star', 'call_mcp_tool', @{ ServerName = 'db'; ToolName = 'run_sql'; Arguments = (@{ query = 'SELECT * FROM t LIMIT 5' } | ConvertTo-Json -Compress) }),
+    @('lim', 'call_mcp_tool', @{ ServerName = 'db'; ToolName = 'run_sql'; Arguments = @{ query = 'select id from t limit 5' } }), @('docs', 'call_mcp_tool', @{ ServerName = 'docs'; ToolName = 'search'; Arguments = @{ query = 'select everything' } }),
+    @('eager', 'mcp_db_run_sql', @{ query = 'select id from t' }))) {
+  $agO = (@{ conversationId = 'c1'; toolCall = @{ name = $c[1]; args = $c[2] } } | ConvertTo-Json -Compress -Depth 5 | node $gc) -join ''
+  "$($c[0]):$(($agO | ConvertFrom-Json).decision)" }
+Expect "guard context on Antigravity: view_file caps, the logins file and SQL via call_mcp_tool / mcp_<server>_<tool> denied as decision deny; a range, LIMIT and non-SQL MCP allowed ($($ag -join ' '))" (($ag -join ' ') -eq 'big:deny range:allow bigrange:deny logins:deny star:deny lim:allow docs:allow eager:deny')
 $plain = @($ins | ForEach-Object { & $viaPlain $_ })
 # K75: a cold call past the client's hook-time bound under load passes once with no answer; answers are compared without that bound
 $env:KIT_GUARD_TIMEOUT_MS = '120000'

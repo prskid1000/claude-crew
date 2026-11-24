@@ -60,6 +60,15 @@ agc = [h['command'] for h in ag['kit-health']['SessionStart']] + [h['command'] f
 # Codex PreToolUse (parity): shell, apply_patch and MCP SQL tools reach the guard; other MCP tools do not
 cxm = re.compile(cx['hooks']['PreToolUse'][0]['matcher'])
 print(f"ports-codex-mcp:{all(cxm.search(t) for t in ('Bash', 'apply_patch', 'mcp__db__run_sql', 'mcp__pg__query')) and not cxm.search('mcp__docs__search')}")
+# parity: both run guard_client.mjs for reads / MCP (Codex: its one PreToolUse; agy: view_file, call_mcp_tool, eager mcp_*), run_command keeps crafty.ps1 guard
+agm, gnode = re.compile(ag['guard']['PreToolUse'][1]['matcher']), 'node D:/w/.claude/skills/crafty/guard_client.mjs'
+spaced = base64.b64decode(pt.node_hook_cmd(pt.GUARD_NODE, 'C:/a b/.claude').split()[-1]).decode('utf-16-le')
+ok_gr = cx['hooks']['PreToolUse'][0]['hooks'][0]['command'] == gnode and ag['guard']['PreToolUse'][0]['matcher'] == 'run_command' \
+    and all(agm.fullmatch(t) for t in ('view_file', 'call_mcp_tool', 'mcp_db_run_sql')) and not agm.fullmatch('run_command') \
+    and ag['guard']['PreToolUse'][1]['hooks'][0]['command'] == gnode and spaced == "[Console]::In.ReadToEnd() | & node 'C:/a b/.claude/skills/crafty/guard_client.mjs'"
+print(f"ports-guard-reads:{ok_gr}")
+# parity: agy agents get the mapped tools list (+ call_mcp_tool); a tool with no agy name (WebFetch) leaves it unset
+print(f"ports-agy-tools:{pt.gravity_tools('Read, Grep, Glob, Bash') == ['view_file', 'grep_search', 'find_by_name', 'list_dir', 'run_command', 'call_mcp_tool'] and pt.gravity_tools('Read, WebFetch') is None and pt.gravity_tools('') is None}")
 ok_hooks = all('D:/w/.claude/skills/' in c and '"' not in c for c in cmds + agc) and cx['hooks']['SessionStart'][1]['hooks'][0].get('async') is True \
     and cx['hooks']['SessionStart'][2]['hooks'][0].get('async') is True and 'health -Flow -Fetch' in agc[2] and agc[2].count('-WindowStyle Hidden') == 2 \
     and cx['shell_environment_policy']['set']['KIT_TOOL'] == 'codex' and agc[1].count('-WindowStyle Hidden') == 2 and agc[1].endswith("'{}'") \

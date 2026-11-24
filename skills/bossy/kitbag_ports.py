@@ -11,8 +11,8 @@ deployed targets; a deselected one's kit-written copies are removed (its folder 
 the files (bossy.ps1 health, prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py
 loads this file and shares its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L39 characters · L74 tools · L195 agents · L249 hooks · L324 workflows · L554 mechanics · L588 deploy · L638 targets ·
-  L851 command
+Sections: L40 characters · L75 tools · L196 agents · L266 hooks · L351 workflows · L583 mechanics · L617 deploy · L667 targets ·
+  L880 command
 """
 import base64, contextlib, fnmatch, hashlib, io, json, os, re, shutil, sys, tempfile
 from pathlib import Path
@@ -30,6 +30,7 @@ CODEX_WORKFLOWS = KIT / ".codex" / "workflows"
 GRAVITY_WORKFLOWS = KIT / ".agents" / "kit-workflows"
 PWSH = "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "
 GUARD = ("crafty/crafty.ps1", "guard", 10)
+GUARD_NODE = ("crafty/guard_client.mjs", 10)   # Read / view_file caps, the logins file, MCP SQL row caps (settings.json PreToolUse)
 HEALTH = ("bossy/bossy.ps1", "health", 15)
 CLEANUP = ("bossy/bossy.ps1", "cleanup -IfDue -Quiet", 600)
 FLOW = ("bossy/bossy.ps1", "health -Flow -Fetch", 120)   # async like cleanup (settings.json SessionStart)
@@ -218,12 +219,28 @@ def write_codex(name, fields, body):
     write_port(CODEX_AGENTS / f"{name}.toml", f'name = "{name}"\ndescription = {json.dumps(fields["description"], ensure_ascii=False)}\n'
       f'sandbox_mode = "workspace-write"\ndeveloper_instructions = """\n{body}\n"""\n')
 
+# Claude Code tool -> Antigravity tools (names from https://antigravity.google/docs/hooks/; a misnamed one hangs the agent, so a
+# tool with no documented name here leaves the agent's list unset: all tools); ToolSearch: no such step there
+GRAVITY_TOOL_MAP = {"Read": ["view_file"], "Grep": ["grep_search"], "Glob": ["find_by_name", "list_dir"], "Bash": ["run_command"],
+  "PowerShell": ["run_command"], "Write": ["write_to_file"], "Edit": ["replace_file_content", "multi_replace_file_content"],
+  "Monitor": ["manage_task"], "TaskStop": ["manage_task"], "Agent": ["invoke_subagent"], "ToolSearch": []}
+
+def gravity_tools(tools):
+    """Antigravity's `tools:` allow-list for a Claude Code tools line, or None (a tool it cannot name: every tool loads)."""
+    names = [x.strip() for x in (tools or "").split(",") if x.strip()]
+    if not names or any(x not in GRAVITY_TOOL_MAP and not x.startswith("mcp__") for x in names):
+        return None
+    # call_mcp_tool always: MCP grants are org-local (kit.local.json tools.roles), never in the tracked list
+    return list(dict.fromkeys([g for x in names if not x.startswith("mcp__") for g in GRAVITY_TOOL_MAP[x]] + ["call_mcp_tool"]))
+
 def write_gravity(name, fields, body):
-    # Antigravity names its tools differently (a mismapped one hangs): tools unset = all tools; the guard hook enforces
+    # tools: the mapped allow-list (https://antigravity.google/docs/subagents/), else unset = all tools; the guard hook enforces both
+    gt = gravity_tools(fields.get("tools"))
     head = [f"name: {name}", f'description: {json.dumps(fields["description"], ensure_ascii=False)}', "subagent: true",
-      "mainAgent: false", "model: inherit", "commandExecutionPolicy: auto"]
+      "mainAgent: false", "model: inherit", "commandExecutionPolicy: auto"] + ([f"tools: [{', '.join(gt)}]"] if gt else [])
     note = (f"\n> Ported note: the Claude Code definition restricts tools to `{fields['tools']}` (MCP servers only when kit.local.json "
-      "tools.roles grants them); here all tools and MCP servers load: call no other. The kit guard hook blocks what it blocks for every agent.\n") if fields.get("tools") else ""
+      "tools.roles grants them); here " + ("the tools list above holds their Antigravity names; every MCP server is reachable (call_mcp_tool): call no other."
+      if gt else "all tools and MCP servers load (one has no Antigravity name): call no other.") + " The kit guard hook blocks what it blocks for every agent.\n") if fields.get("tools") else ""
     write_port(GRAVITY_AGENTS / f"{name}.md", "---\n" + "\n".join(head) + "\n---\n" + note + "\n" + body.strip() + "\n" + GRAVITY_TOOL)
 
 def prune(folder, suffix, keep):
@@ -256,6 +273,14 @@ def hook_cmd(spec, kit):
         return f"{PWSH.replace('-File ', '-EncodedCommand ')}{code}"
     return f'{PWSH}{path} {verb}'
 
+def node_hook_cmd(spec, kit):
+    """node <path>; a path with a space or quote: pwsh pipes stdin to it (no double quotes, as hook_cmd)."""
+    path = f'{kit}/skills/{spec[0]}'
+    if re.search(r"[\s'&]", path):
+        code = base64.b64encode(f"[Console]::In.ReadToEnd() | & node '{path.replace(chr(39), chr(39) * 2)}'".encode('utf-16-le')).decode()
+        return f"pwsh -NoProfile -NonInteractive -EncodedCommand {code}"
+    return f'node {path}'
+
 def detached(cmd, windows):
     """agy runs hooks synchronously: the slow cleanup starts hidden in the background and the hook prints {} at once."""
     if windows:
@@ -271,7 +296,7 @@ def codex_config_text(kit=".claude"):
       "[features]", "memories = false", "",   # AGENTS.md "Memory": kit stores only (settings.json autoMemoryEnabled false)
       "[sandbox_workspace_write]", "network_access = true", "", "[shell_environment_policy]", 'set = { KIT_TOOL = "codex" }', "",
       "[[hooks.PreToolUse]]", 'matcher = "^(Bash|apply_patch|mcp__.*(sql|query).*)$"', "", "[[hooks.PreToolUse.hooks]]", 'type = "command"',
-      f"command = '''{hook_cmd(GUARD, kit)}'''", f"timeout = {GUARD[2]}"]
+      f"command = '''{node_hook_cmd(GUARD_NODE, kit)}'''", f"timeout = {GUARD_NODE[1]}"]   # node: its warm guard, as settings.json
     for spec in (HEALTH, CLEANUP, FLOW):
         toml += ["", "[[hooks.SessionStart]]", 'matcher = "*"', "", "[[hooks.SessionStart.hooks]]", 'type = "command"',
           f"command = '''{hook_cmd(spec, kit)}'''", f"timeout = {spec[2]}"] + (["async = true"] if spec is not HEALTH else [])
@@ -282,7 +307,9 @@ def gravity_hooks_text(kit=".claude", windows=None):
     hook = lambda spec, cmd=None: {"type": "command", "command": cmd or hook_cmd(spec, kit), "timeout": spec[2]}
     clean, flow = (hook(s, None if windows is None else detached(hook_cmd(s, kit), windows)) for s in (CLEANUP, FLOW))
     return json.dumps({
-      "guard": {"enabled": True, "PreToolUse": [{"matcher": "run_command", "hooks": [hook(GUARD)]}]},
+      # view_file and MCP calls (call_mcp_tool, an eager server's mcp_<server>_<tool>): https://antigravity.google/docs/hooks/
+      "guard": {"enabled": True, "PreToolUse": [{"matcher": "run_command", "hooks": [hook(GUARD)]},
+        {"matcher": "view_file|call_mcp_tool|mcp_.*", "hooks": [{"type": "command", "command": node_hook_cmd(GUARD_NODE, kit), "timeout": GUARD_NODE[1]}]}]},
       "kit-health": {"enabled": True, "SessionStart": [hook(HEALTH), clean, flow]}}, indent=2) + "\n"
 
 # settings.json denies Read(**/skills/pokey/targets.local.json); the guard blocks shell reads; these cover each CLI's own reads
@@ -542,8 +569,10 @@ def port_workflows():
         write_port(CODEX_WORKFLOWS / f"{fields['name']}.md", workflow_procedure_doc(fields, "Codex",
           "Per phase, in order: `spawn_agent` each of its agents from `.codex/agents/*.toml` (up to the session's concurrency "
           "limit), `wait_agent` for them, then the next phase. Hold every gate below (the .js enforces them in Claude Code and "
-          "Antigravity). No run journal here: the launch record keeps the args, but the Runs band, stuck checks and `recover` "
-          "resume cover Claude Code and Antigravity runs only.", workflow_gates(fields['name'], js)[0]))
+          "Antigravity). Journal each step (the Runs band, stuck checks and `recover` read it): `python -X utf8 <kit>/skills/bossy/kitbag.py "
+          f"port --journal launched --run <run> --workflow {fields['name']}` first; per agent `--journal started --run <run> --agent <its id> "
+          "--label <label> --phase <phase>`, then `--journal result --run <run> --agent <its id>`; the end `--journal done --run <run>` "
+          "(stopped: `--journal finished --run <run> --error '<why>'`).", workflow_gates(fields['name'], js)[0]))
         write_port(GRAVITY_WORKFLOWS / f"{fields['name']}.py", RUNNER.format(name=fields['name'], shim=SHIM,
           description=fields['description'], when=fields.get('whenToUse', '(see the workflow source)')))
         made.add(fields['name'])
@@ -576,7 +605,7 @@ def mechanics(tool):
     lines = ["# Codex mechanics (generated by kitbag.py port; the shared rules follow)", "",
       "- **Start** codex in the workspace root (this folder; trusted in `~/.codex/config.toml`): Codex reads project config "
       "between the git root and the start folder. Approve the kit hooks once with `/hooks`.",
-      "- **Hooks** (`.codex/config.toml`, absolute paths): PreToolUse shell + apply_patch + MCP SQL tools -> `crafty.ps1 guard` (file reads go through the shell); SessionStart "
+      "- **Hooks** (`.codex/config.toml`, absolute paths): PreToolUse shell + apply_patch + MCP SQL tools -> `guard_client.mjs` (the warm `crafty.ps1 guard`; file reads go through the shell); SessionStart "
       "`bossy.ps1 health` and `bossy.ps1 cleanup -IfDue` (async); `.codex/rules/kit.rules` forbids `git stash`, `--no-verify` and reading the test logins. No SendMessage guard: agents message each other only by `bossy.ps1 board msg`; Codex memories off.",
       "- **Skills**: `.agents/skills/<name>` links to `.claude/skills/<name>`. **Agents**: `.codex/agents/*.toml`.",
       "- **Workflows**: no engine: follow `.codex/workflows/<name>.md` by hand.",
@@ -850,6 +879,8 @@ def check_stale():
 
 # ---- command: port [--check | --deploy]
 def cmd_port(a):
+    if '--journal' in a:
+        return port_journal(parse_opts(a, ('--journal', '--run', '--workflow', '--agent', '--label', '--phase', '--error'))[0])
     if '--check' in a:
         stale = check_stale()
         if stale:
@@ -870,5 +901,25 @@ def cmd_port(a):
     port_deploy()
     return 0
 
+JOURNAL_TYPES = ('launched', 'started', 'result', 'finished', 'done')
+def port_journal(flags):
+    """A by-hand run's journal line (the Codex procedure docs): the same records as the agy runner's, in
+    port-runs/codex/subagents/workflows/wf_cdx-<run>/journal.jsonl (the Runs band, stuck checks and recover read it)."""
+    typ, run = flags.get('--journal'), re.sub(r'[^\w.-]', '-', str(flags.get('--run') or ''))
+    if typ not in JOURNAL_TYPES or not run or (typ in ('started', 'result') and not flags.get('--agent')):
+        print(f"kitbag port --journal {'|'.join(JOURNAL_TYPES)} --run <run> [--workflow <name>] [--agent <spawn_agent id> --label <label> --phase <phase>] [--error <text>]")
+        return 2
+    d = Path(kit_path('port-runs')) / 'codex' / 'subagents' / 'workflows' / f'wf_cdx-{run}'
+    d.mkdir(parents=True, exist_ok=True)
+    o = {'type': typ, **({'workflow': flags.get('--workflow') or ''} if typ == 'launched' else {}),
+         **({'agentId': flags['--agent'], 'label': flags.get('--label') or '', 'phase': flags.get('--phase') or ''} if typ == 'started' else {}),
+         **({'agentId': flags['--agent'], 'result': flags.get('--label') or 'done'} if typ == 'result' else {}),
+         **({'error': str(flags.get('--error') or '')[:300]} if typ == 'finished' else {})}
+    jf = d / 'journal.jsonl'   # a run journal (the agy runner's records), not a log stream
+    with open(jf, 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps(o, ensure_ascii=False) + '\n')
+    print(f"journal {typ}: {d / 'journal.jsonl'}")
+    return 0
+
 COMMANDS = {'port': cmd_port, 'tools': cmd_tools}
-ARGS = {'port': ({'--check', '--deploy'}, set(), False), 'tools': ({'--json'}, {'--filter', '--file', '--days'}, False)}
+ARGS = {'port': ({'--check', '--deploy'}, {'--journal', '--run', '--workflow', '--agent', '--label', '--phase', '--error'}, False), 'tools': ({'--json'}, {'--filter', '--file', '--days'}, False)}

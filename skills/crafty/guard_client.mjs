@@ -114,9 +114,12 @@ function param(key) {
   if (typeof v === 'number') return v
   try { return Number(/default=([\d.]+)/.exec(JSON.parse(readFileSync(join(kit, 'skills', 'bossy', 'params.registry.json'), 'utf8')).params[key])[1]) } catch { return 0 }
 }
-function deny(why) { process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
+let gravity = false   // Antigravity's hook input (toolCall) wants { decision, reason } back
+function deny(why) { process.stdout.write(JSON.stringify(gravity ? { decision: 'deny', reason: why } : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
 function readRule(ti) {
   const f = `${ti.file_path || ''}`
+  // the test logins: Claude Code's settings.json deny covers its Read; this one covers every CLI's own file view (README "Install")
+  if (/(^|[\\/])skills[\\/]pokey[\\/]targets\.local\.json$/i.test(f)) deny('kit guard: skills/pokey/targets.local.json holds test logins: never read it; names + tenants: pokey.ps1 user list -Target <t>; a call as a user: pokey.ps1 api -Target <t> -As <user>')
   if (!f || ti.pages || /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i.test(f)) return
   const maxL = param('guard.readMaxLines'), maxKB = param('guard.readMaxKB'); let kb = 0, lines = 0
   const ranged = ti.offset != null || ti.limit != null, from = Math.max(1, Number(ti.offset) || 1), upto = from + (ti.limit != null ? Number(ti.limit) || 0 : 2000)   // no limit: the Read tool's 2000 lines
@@ -148,5 +151,14 @@ if (!input.trim()) process.exit(0)
 { let j = null; try { j = JSON.parse(input) } catch { }
   const tn = `${j?.tool_name || ''}`
   if (tn === 'Read') { readRule(j.tool_input || {}); process.exit(0) }
-  if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) } }
+  if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) }
+  // Antigravity (https://antigravity.google/docs/hooks/): view_file { AbsolutePath, StartLine, EndLine }; MCP through call_mcp_tool
+  // { ServerName, ToolName, Arguments } or an eager server's mcp_<server>_<tool>; arg values may come JSON-encoded
+  const gn = `${j?.toolCall?.name || ''}`, ga = j?.toolCall?.args || {}, dec = (v) => { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { return v } }
+  if (gn) gravity = true
+  if (gn === 'view_file') { const s = Number(dec(ga.StartLine)) || null, e = Number(dec(ga.EndLine)) || null
+    readRule({ file_path: dec(ga.AbsolutePath), ...(s || e ? { offset: s || 1, limit: e ? e - (s || 1) + 1 : undefined } : {}) }); process.stdout.write('{"decision":"allow"}\n'); process.exit(0) }
+  if (gn === 'call_mcp_tool' || /^mcp_/.test(gn)) { const a = gn === 'call_mcp_tool' ? dec(ga.Arguments) || {} : ga
+    if (/sql|query/i.test(gn === 'call_mcp_tool' ? `${dec(ga.ToolName)}` : gn)) sqlRule(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, dec(v)])))
+    process.stdout.write('{"decision":"allow"}\n'); process.exit(0) } }
 if (process.env.KIT_GUARD_WARM === '0') plain(false); else ask(2)

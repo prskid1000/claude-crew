@@ -11,6 +11,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "view_file|call_mcp_tool|mcp_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/skills/crafty/guard_client.mjs",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },

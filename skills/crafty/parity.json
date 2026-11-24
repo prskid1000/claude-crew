@@ -57,7 +57,7 @@
       "caps": "agentMeta",
       "names": "claude codex antigravity none",
       "gaps": {
-        "codex,antigravity,none/agentMeta": "SendMessage is Claude Code-only: nothing to look up"
+        "none/agentMeta": "no transcript (another tool): no agent to look up; board and journal only"
       }
     },
     "deploy-kind": {
@@ -198,8 +198,8 @@
     "_readme": "kitbag.py port writes the Codex (.codex/) and Antigravity (.agents/) copies; a hook not listed runs the same script verb there",
     "hooks": {
       "PreToolUse guard_client.mjs": {
-        "codex": "crafty.ps1 guard",
-        "antigravity": "crafty.ps1 guard"
+        "codex": "guard_client.mjs",
+        "antigravity": "guard_client.mjs"
       },
       "PreToolUse bossy.ps1 guard-sendmessage": {
         "codex": "fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg",
@@ -212,20 +212,20 @@
     },
     "features": {
       "guard on file reads and MCP SQL": {
-        "codex": "port: PreToolUse matcher Bash|apply_patch|mcp__*(sql|query)* (Codex reads files through its shell; hook input tool_name / tool_input as Claude Code)",
-        "antigravity": "gap: only run_command is hooked"
+        "codex": "port: PreToolUse guard_client.mjs on Bash|apply_patch|mcp__*(sql|query)* (Codex reads files through its shell; hook input tool_name / tool_input as Claude Code)",
+        "antigravity": "port: PreToolUse guard_client.mjs on view_file|call_mcp_tool|mcp_.* (https://antigravity.google/docs/hooks/: Read caps, the logins file, SQL row caps; answered { decision, reason })"
       },
       "test-login read deny": {
         "codex": "fallback: kit.rules exec policy + the shell guard (best-effort)",
-        "antigravity": "fallback: an always-on rule + the shell guard"
+        "antigravity": "port: guard_client.mjs denies view_file of the logins file, an always-on rule, the shell guard"
       },
       "per-agent tool and MCP lists": {
-        "codex": "gap: every tool loads (agents workspace-write); the guard covers both",
-        "antigravity": "gap: every tool loads; the guard covers both"
+        "codex": "gap: no such feature: https://learn.chatgpt.com/docs/agent-configuration/subagents a custom agent has no tools allow-list and its mcp_servers / sandbox_mode do not override the parent: the ported note names the allowlist, the guard covers both",
+        "antigravity": "port: tools: [<agy names>] in .agents/agents/*.md (https://antigravity.google/docs/subagents/; kitbag_ports.py GRAVITY_TOOL_MAP + call_mcp_tool); an agent with a tool agy cannot name (WebFetch, WebSearch) keeps all tools"
       },
       "Artifacts": {
-        "codex": "gap: no Artifacts tool",
-        "antigravity": "gap: no Artifacts tool"
+        "codex": "fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; the Codex CLI has no viewer (https://learn.chatgpt.com/docs/artifacts-viewer)",
+        "antigravity": "fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; agy Artifacts are its own plans and walkthroughs (https://antigravity.google/docs/artifacts/)"
       },
       "heartbeat cron (CronList)": {
         "codex": "fallback: bossy.ps1 heartbeat (OS timer)",
@@ -236,12 +236,12 @@
         "antigravity": "fallback: ask_question when listed, else bossy.ps1 decide ask"
       },
       "run journals (Runs band, stuck checks, recover)": {
-        "codex": "gap: workflows run by hand, no journal",
+        "codex": "fallback: the .codex/workflows procedure journals each step (kitbag.py port --journal) into <runtime>/work/port-runs/codex/",
         "antigravity": "port: run_workflow journal in <runtime>/work/port-runs/"
       },
       "Monitor and background-shell check": {
-        "codex": "gap: it reads Claude Code transcripts",
-        "antigravity": "gap: it reads Claude Code transcripts"
+        "codex": "port: the shell sweep finds shells under codex by their exec_command in the rollout (supervise-resources.ps1 KitShellCall)",
+        "antigravity": "port: the shell sweep finds shells under agy by their run_command in transcript.jsonl (supervise-resources.ps1 KitShellCall)"
       }
     }
   }

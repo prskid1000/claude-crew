@@ -199,14 +199,12 @@ fallbacks: `skills/crafty/parity.json` `harness`; `kitbag.py parity`, lint PARIT
 | workflow buildy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/buildy.py |
 | workflow testy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/testy.py |
 | workflow tidy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/tidy.py |
-| guard on file reads and MCP SQL | port: PreToolUse matcher Bash|apply_patch|mcp__*(sql|query)* (Codex reads files through its shell; hook input tool_name / tool_input as Claude Code) | gap: only run_command is hooked |
-| test-login read deny | fallback: kit.rules exec policy + the shell guard (best-effort) | fallback: an always-on rule + the shell guard |
-| per-agent tool and MCP lists | gap: every tool loads (agents workspace-write); the guard covers both | gap: every tool loads; the guard covers both |
-| Artifacts | gap: no Artifacts tool | gap: no Artifacts tool |
+| test-login read deny | fallback: kit.rules exec policy + the shell guard (best-effort) | port: guard_client.mjs denies view_file of the logins file, an always-on rule, the shell guard |
+| per-agent tool and MCP lists | gap: no such feature: https://learn.chatgpt.com/docs/agent-configuration/subagents a custom agent has no tools allow-list and its mcp_servers / sandbox_mode do not override the parent: the ported note names the allowlist, the guard covers both | port: tools: [<agy names>] in .agents/agents/*.md (https://antigravity.google/docs/subagents/; kitbag_ports.py GRAVITY_TOOL_MAP + call_mcp_tool); an agent with a tool agy cannot name (WebFetch, WebSearch) keeps all tools |
+| Artifacts | fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; the Codex CLI has no viewer (https://learn.chatgpt.com/docs/artifacts-viewer) | fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; agy Artifacts are its own plans and walkthroughs (https://antigravity.google/docs/artifacts/) |
 | heartbeat cron (CronList) | fallback: bossy.ps1 heartbeat (OS timer) | fallback: schedule |
 | blocking owner questions | fallback: request_user_input in Plan mode, else bossy.ps1 decide ask (blocking) | fallback: ask_question when listed, else bossy.ps1 decide ask |
-| run journals (Runs band, stuck checks, recover) | gap: workflows run by hand, no journal | port: run_workflow journal in <runtime>/work/port-runs/ |
-| Monitor and background-shell check | gap: it reads Claude Code transcripts | gap: it reads Claude Code transcripts |
+| run journals (Runs band, stuck checks, recover) | fallback: the .codex/workflows procedure journals each step (kitbag.py port --journal) into <runtime>/work/port-runs/codex/ | port: run_workflow journal in <runtime>/work/port-runs/ |
 <!-- kit-graph:end -->
 
 ## Using it
@@ -363,7 +361,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 | git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect; caps: mr.labels | command | github, gitlab, bitbucket, azure, gitea | gap: mr.labels (1) | `skills/crafty/lib.ps1` |
 | report | `reports.type` | publish; caps: evidence tags | markdown, html, command | gdocs, pdf, confluence, notion | gap: selftest (3) | `skills/crafty/devtools.py` |
 | ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | fallback: failure (1) | `skills/crafty/lib.ps1` |
-| transcript | `board tool` | root last; caps: agentMeta | claude, codex, antigravity, none |  | gap: agentMeta (3) | `skills/crafty/lib.ps1` |
+| transcript | `board tool` | root last; caps: agentMeta | claude, codex, antigravity, none |  | gap: agentMeta (1) | `skills/crafty/lib.ps1` |
 | deploy-kind | `repos[].deploys[] (kind)` | isDeployed plan; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | fallback: lastDeploy (4) · gap: deploy (3), isRunning (6), restart (7) | `skills/pokey/adapters/deployed-checks.ps1` |
 | secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | gap: delete (1), rotate (1), set (1), write (1) | `skills/crafty/adapters/secret-store.ps1` |
 | process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | not walked: a built-in is one rule for its own gates (testingDocs: promote here, finish / merge / mrBody in devtools.py; reproRow: bugFix in devtools.py); an unset gate passes | `skills/crafty/adapters/process-gates.ps1` |

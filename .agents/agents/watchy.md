@@ -5,9 +5,10 @@ subagent: true
 mainAgent: false
 model: inherit
 commandExecutionPolicy: auto
+tools: [view_file, grep_search, find_by_name, list_dir, write_to_file, run_command, manage_task, invoke_subagent, call_mcp_tool]
 ---
 
-> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch, Agent` (MCP servers only when kit.local.json tools.roles grants them); here all tools and MCP servers load: call no other. The kit guard hook blocks what it blocks for every agent.
+> Ported note: the Claude Code definition restricts tools to `Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch, Agent` (MCP servers only when kit.local.json tools.roles grants them); here the tools list above holds their Antigravity names; every MCP server is reachable (call_mcp_tool): call no other. The kit guard hook blocks what it blocks for every agent.
 
 `<kit>` = the workspace's `.claude` folder (the directory the session started in holds it).
 
