@@ -1891,7 +1891,7 @@ function Invoke-Decide {
       }
       # deploy.triggers {<env | repo>: auto}: the owner's standing word in config (every env named and every MR's repo is auto)
       $tgs = if (-not $Id -and $gates -contains 'deploy') { Get-KitSetting 'deploy.triggers' $null }
-      # a key covers its env group (<key>-*) and the repos whose repos[].deploys target such an env (coordinator 2026-11-23: NO-WORD on pythonmagic-staging)
+      # a key covers its env group (<key>-*) and the repos whose repos[].deploys target such an env (coordinator 2026-11-23: NO-WORD on <repo>-staging)
       if ($tgs) { $tgH = $tgs | ConvertTo-Json -Depth 3 | ConvertFrom-Json -AsHashtable; $tgOn = @($tgH.Keys | Where-Object { "$($tgH[$_])".ToLower() -eq 'auto' })
         $tgEnv = { param($e) @($tgOn | Where-Object { $e -eq $_ -or $e -like "$_-*" }).Count -gt 0 }
         $auto = { param($k) (& $tgEnv $k) -or @(@(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $k } | ForEach-Object { @($_.deploys).target } | Where-Object { $_ -and (& $tgEnv $_) }).Count -gt 0 }; $rps = @($wantMrs | ForEach-Object { (("$_" -split '!')[0] -split '/')[-1] } | Select-Object -Unique)

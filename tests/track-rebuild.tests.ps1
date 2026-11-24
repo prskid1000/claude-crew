@@ -202,5 +202,29 @@ Expect "deploy.triggers: a key covers its env group (<key>-*) and the repos depl
 $w1 = pwsh @np $O decide check -Gate deploy -Item svc-staging | Out-String; $w2 = pwsh @np $O decide check -Gate deploy -Mrs 'grp/svc!3' | Out-String; $w3 = pwsh @np $O decide check -Gate deploy -Item web-staging | Out-String; $w4 = pwsh @np $O decide check -Gate deploy -Item 'svc-staging,web-staging' | Out-String
 if ($null -ne $klKeepR) { [IO.File]::WriteAllText($klR, $klKeepR) } else { Remove-Item $klR }
 Expect "decide check -Gate deploy: an auto env or repo in deploy.triggers = WORD (config); any other env, or a mix, = NO-WORD" ($w1 -match '^WORD config \(deploy svc-staging\)' -and $w2 -match '^WORD config \(deploy svc\)' -and $w3 -match '^NO-WORD' -and $w4 -match '^NO-WORD')
+# parent rollup id compare: the strip is the tracker's own branch tag + '#', never one vendor's prefix
+$idk = foreach ($tt in 'jira', 'linear', 'clickup') { Invoke-PsTest "idkey-$tt" @'
+$env:KIT_TRACKER_TYPE = $args[1]; . $args[0]
+"$($args[1]):" + ((@('PROJ-12', 'https://x.test/browse/x#ENG-7', 'CU-a1b2', ' CU-9 ') | ForEach-Object { ConvertTo-KitTrackerKey $_ }) -join ',')
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'), $tt) }
+Expect "parent rollup id key: jira / linear ids kept whole (PROJ-12, ENG-7, CU-a1b2 untouched), clickup strips its CU- tag ($($idk -join ' | '))" (
+  @($idk -ceq 'jira:PROJ-12,ENG-7,CU-a1b2,CU-9').Count -eq 1 -and @($idk -ceq 'linear:PROJ-12,ENG-7,CU-a1b2,CU-9').Count -eq 1 -and @($idk -ceq 'clickup:PROJ-12,ENG-7,a1b2,9').Count -eq 1)
+# an org without promoted / inTest (tracker.statuses.<role> null): each write of them is kept with a SKIPPED that names the role
+# (deploys.ps1 intest reads 'has no inTest status' as kept, not MARKED), the parent follows the roles in use, reads match no off role
+$ko = New-TestKit rollupoff; Set-JsonFile (Join-Path $ko 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'none'; statuses = @{ promoted = $null; inTest = $null } } }
+$ro = Invoke-PsTest rolesoff @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'
+function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; function St($i) { (Get-TrackerTask $i).status }
+$p = Mk 'Ask' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Clear-TrackerMemo $p
+Set-TrackerStatus $a 'review' | Out-Null; Set-TrackerStatus $b 'review' | Out-Null; "par:$(St $p)"
+"pro:$(Set-TrackerStatus $a 'promoted')|$(St $a)"; "int:$(Set-TrackerStatus $a 'inTest')|$(St $a)"
+Set-TrackerStatus $a 'closed' | Out-Null; "cls:$(St $a)|$(St $p)"
+"rd:$(Test-TrackerStatus 'in test' 'inTest')|$(Test-TrackerStatus 'promoted' 'promoted')|$(Test-TrackerStatusOff 'inTest')|$(Test-TrackerStatusOff 'review')"
+'@ @((Join-Path $ko 'skills/crafty/crafty.ps1'))
+$ov = { param($key) "$(@($ro | Where-Object { "$_" -like "${key}:*" })[0])".Substring($key.Length + 1) }
+Expect "org without promoted / inTest: writes kept with SKIPPED 'has no <role> status', parent follows review, reads match no off role ($($ro -join ' | '))" (
+  (& $ov 'par') -eq 'for review' -and (& $ov 'pro') -match '^SKIPPED: \S+ kept: the org has no promoted status\|for review$' -and (& $ov 'int') -match 'has no inTest status.*\|for review$' -and
+  (& $ov 'cls') -eq 'closed|for review' -and (& $ov 'rd') -eq 'False|False|True|False')
+Remove-TestKit $ko
 Remove-TestKit $k
 Complete-Tests

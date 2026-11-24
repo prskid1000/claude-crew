@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L88 move · L131 status roles · L286 task text · L303 naming · L415 track lines · L420 task ids ·
-#   L436 tags · L495 order
+# Sections: L8 items · L88 move · L131 status roles · L290 task text · L307 naming · L419 track lines · L424 task ids ·
+#   L440 tags · L499 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -262,6 +262,10 @@ function Get-KitParentStatusTarget([string]$ParentKey, [string[]]$ChildKeys, [sw
   $go = if ($ParentKey -eq 'closed') { $NewChild -or $Reopen } else { $rk[$t] -ne $rk[$ParentKey] }   # both ways (owner 2026-11-19: a parent always equals its least complete open child)
   if ($go -and $t -ne $ParentKey) { $t } else { '' }
 }
+# one id two ways (a URL fragment '...#id', the branch tag of tracker.branchTag / vocab trackers.<type>): the bare id to compare
+function ConvertTo-KitTrackerKey([string]$Id) {
+  $v = "$Id".Trim() -replace '^.*#'; if ($KitConf.TrackerTag) { $v = $v -replace ('^' + [regex]::Escape($KitConf.TrackerTag)) }; $v
+}
 # -ChildId / -ChildStatus: the change just made (a tracker may still show the old one); no child: the parent's own subtasks as read.
 # -ParentId: known by the caller. -DryRun: returns the plan, writes nothing. Never throws: the caller's write has already happened.
 function Sync-TrackerParent([string]$ChildId, [string]$ChildStatus, [string]$ParentId, [switch]$NewChild, [switch]$Reopen, [switch]$DryRun, [int]$Depth = 0) {
@@ -269,7 +273,7 @@ function Sync-TrackerParent([string]$ChildId, [string]$ChildStatus, [string]$Par
   try {
     if (-not $ParentId -and $ChildId) { $ParentId = "$((Get-TrackerTask $ChildId).parent)" }; if (-not $ParentId) { return }
     Clear-TrackerMemo $ParentId; $p = Get-TrackerTask $ParentId; if (-not $p.name) { return }
-    $nid = { param($x) "$x".Trim() -replace '^(?:.*#|CU-)' }; $found = $false
+    $nid = { param($x) ConvertTo-KitTrackerKey $x }; $found = $false
     $keys = @(foreach ($s in @($p.subtasks)) { if ($ChildStatus -and $ChildId -and (& $nid $s.id) -eq (& $nid $ChildId)) { $found = $true; Get-TrackerStatusKey $ChildStatus } else { Get-TrackerStatusKey "$($s.status)" } })
     if ($ChildStatus -and $ChildId -and -not $found) { $keys += Get-TrackerStatusKey $ChildStatus }   # a tracker may not list the child yet; no status given (a move): as the tracker shows it
     if (@($keys | Where-Object { -not $_ }).Count) { return }   # a subtask status the kit does not know (custom, empty): guess nothing

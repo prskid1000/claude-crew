@@ -1347,7 +1347,7 @@ function Invoke-KitOutbox([switch]$DryRun) {
 }
 function Set-TrackerStatus([string]$Id, [string]$Status, [string]$Back) {
   $Status = ConvertTo-TrackerStatusKey $Status
-  if (Test-TrackerStatusOff $Status) { Write-Host "tracker: $Id status $Status skipped (tracker.statuses.$Status is null)"; return }
+  if (Test-TrackerStatusOff $Status) { $skip = "SKIPPED: $Id kept: the org has no $Status status"; Write-Host "tracker: $skip"; return $skip }
   $was = try { if (-not $__trDry) { Clear-TrackerMemo $Id; Get-TrackerTask $Id } } catch { $null }
   $sc = "$($was.list)"; if ($sc -and $__trStatus.Contains($Status) -and -not @(Get-KitRoleNames $Status $sc).Count) { $skip = "SKIPPED: $Id kept '$($was.status)': scope $sc has no $Status status (step skipped; crafty.ps1 tracker roles $sc)"; Write-Host "tracker: $skip"; return $skip }   # never invented
   if ($bad = Test-KitScopeStatus $sc $Status) { throw "tracker: $Id not set: $bad" }

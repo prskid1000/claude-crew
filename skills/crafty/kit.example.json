@@ -126,6 +126,11 @@
      "webLogin": { "path": "/login", "fields": { "#username": "{user}", "#password": "{pass}" }, "rememberMeLabel": "Remember me", "submit": "button[type=submit]", "tokenKeys": ["access_token"] },
      "users": { "admin": ["qa-admin", "<password>"], "qa-user-1": ["qa-user-1", "<password>"] }
     },
+    "my-test": {
+     "web": "https://test.example.com", "api": "https://test-api.example.com",
+     "auth": { "preset": "oauth2", "path": "/oauth/token", "body": { "grant_type": "password", "client_id": "<client id>", "username": "{user}", "password": "{pass}" }, "header": "Authorization: Bearer {token}" },
+     "users": { "admin": ["qa-admin", "<password>"] }
+    },
     "local": { "web": "http://localhost:4200", "api": "http://localhost:8080", "auth": { "type": "none" } }
    }
   }
