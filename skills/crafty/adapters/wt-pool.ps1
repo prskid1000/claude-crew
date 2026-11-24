@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L134 names · L205 slots · L231 lease · L342 release · L373 lanes · L478 sync · L579 pool · L622 sweep
+Sections: L15 worktrees · L134 names · L219 slots · L245 lease · L356 release · L387 lanes · L492 sync · L593 pool · L636 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -201,6 +201,20 @@ function Get-KitBuildOwner([string]$Leaf, [string]$Repo, [string]$Top) {
   if ($tn) { $sl = @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -and -not $_.parked -and "$($_.path)".Replace('\', '/').TrimEnd('/') -ieq $tn })[0]; if ($sl) { return "$($sl.agent)" } }
   $o = if ($Repo -and $Leaf.Length -gt $Repo.Length + 1 -and $Leaf.EndsWith("-$Repo", [StringComparison]::OrdinalIgnoreCase)) { $Leaf.Substring(0, $Leaf.Length - $Repo.Length - 1) } else { ($Leaf -split '-')[0] }
   if ($o -match '^lane-(?<s>.+)$') { "lane $(Get-KitPoolLabel env (ConvertFrom-KitLaneLabel $Matches.s))" } else { $o }
+}
+# STUCK progress (owner 2026-11-24: a long phase writes no beat or transcript): the newest write of the agent's step journal, its
+# worktrees (board worktrees + leased slots: changed files, commits), its QA run dir, its agent work dir; $null = none (lib.ps1 status rows)
+function Get-KitAgentProgressAt($Entry, $Step) {
+  if (-not $Entry -or $Entry.status -eq 'left') { return $Step.jt }
+  Get-KitLiveCached "prog:$($Entry.run)/$($Entry.agent)" {
+    $newest = { param($d) if ($d -and (Test-Path -LiteralPath $d)) { @(Get-ChildItem -LiteralPath $d -File -Recurse -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime } }
+    $wts = @(@($Entry.worktrees) + @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.agent -eq $Entry.agent -and $_.path } | ForEach-Object path) | Where-Object { $_ -and (Test-Path -LiteralPath "$_/.git") } | Select-Object -Unique)
+    $at = @($Step.jt) + @(foreach ($w in $wts) {
+        foreach ($f in @(git -C $w status --porcelain --untracked-files=all 2>$null | Select-Object -First 200)) { (Get-Item -LiteralPath (Join-Path $w (("$f".Substring(3).Trim('"') -split ' -> ')[-1])) -ErrorAction SilentlyContinue).LastWriteTime }
+        $hl = "$(git -C $w rev-parse --path-format=absolute --git-path logs/HEAD 2>$null)".Trim(); if ($hl) { (Get-Item -LiteralPath $hl -ErrorAction SilentlyContinue).LastWriteTime } })   # a commit or checkout
+    if ($Entry.run) { $at += & $newest (Join-Path (Get-KitPath qa-runs) $Entry.run) }
+    if ($Entry.agent) { $at += & $newest (Join-Path (Get-KitPath agents) $Entry.agent) }
+    @($at | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1] }
 }
 # ---- slots: a repo's pool size and its slots (worktrees marked <git dir>/claude-slot)
 # the repos[] entry whose checkout it is, else origin's last path segment, else the folder

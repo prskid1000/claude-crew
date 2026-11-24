@@ -53,8 +53,17 @@ $wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-It
 & $wj wf_s3 sq @(@{ type = 'started'; agentId = 'z1'; label = 'build:Q1' }, @{ type = 'result'; agentId = 'z1'; result = @{} }) 5 @{ paused = (& $ago 4) }
 & $se S9 @{ beat = (& $ago 30) }; $null = & $tx (Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/agent-a9.jsonl') '{"message":{"content":[{"type":"tool_result","content":"SESSION s-S9   (pass -Session s-S9 to beat / check / leave)"}]}}'   # an Agent-tool subagent no beat mapped
 & $wj wf_s4 sv @(@{ type = 'launched' }) 30
+# progress past the beat (a long phase): a fresh file in its agent dir, its worktree or its QA run dir keeps it ACTIVE; S3 (all idle) stays STUCK
+$pw = Join-Path (Kd) 'pw-wt'; git init -q $pw; 'x' | Set-Content "$pw/edit.txt"; & $se P10 @{ beat = (& $ago 30); worktrees = @($pw) }
+& $se P11 @{ beat = (& $ago 30) }; $null = New-Item -ItemType Directory -Force (Join-Path (TkPath $k agents -Create) 'P11'); 'n' | Set-Content (Join-Path (TkPath $k agents) 'P11/notes.md')
+& $se P12 @{ beat = (& $ago 30); run = 'qa-p12' }; $null = New-Item -ItemType Directory -Force (Join-Path (TkPath $k qa-runs -Create) 'qa-p12/T1'); '{}' | Set-Content (Join-Path (TkPath $k qa-runs) 'qa-p12/T1/results.json')
 $st = Invoke-PsTest 'status' '. $args[0]; $r = Get-KitStatusRows; Format-KitStatusTable $r (Get-Date) $script:KitTxVersions; Get-KitStuckFlags $r (Get-Date) 20 | ForEach-Object { "[$($_.level)] $($_.what)" }' @($O)
 $sv = { param($n, $rx) [bool]@($st | Where-Object { $_ -match "^\| $([regex]::Escape($n)) \|[^|]*\| $rx" }).Count }
+Expect "status: a beat 30 min old with a fresh worktree edit, agent dir file or QA run dir file = ACTIVE, no STUCK flag; S3 (all idle) still STUCK" ((& $sv 'P10 (devy)' 'ACTIVE') -and (& $sv 'P11 (devy)' 'ACTIVE') -and (& $sv 'P12 (devy)' 'ACTIVE') -and -not @($st -match '\[WATCH\] STUCK P1[012]').Count -and @($st -match '\[WATCH\] STUCK S3 ').Count)
+# a coordinator beat within one interval: health says the heartbeat is present, never a second CronCreate (two supervise crons, 2026-11-24)
+$hp = Invoke-PsTest 'beat-one' '. $args[0]; $sf = Get-KitPath supervise-state -Create; $was = if (Test-Path $sf) { [IO.File]::ReadAllText($sf) }
+Write-KitAtomic $sf (@{ coordAt = (Get-Date).AddMinutes(-3).ToString("o") } | ConvertTo-Json); Get-KitBeatArmLine; if ($was) { [IO.File]::WriteAllText($sf, $was) } else { Remove-Item $sf }' @($O)
+Expect "heartbeat arm line with a recent coordinator beat: 'heartbeat present', no CronCreate ($hp)" ("$hp" -match '^heartbeat present \(last beat \d\d:\d\d\): no CronCreate')
 Expect "status: a workflow with no step in 10 min (failed at its args) = FINISHED, not STUCK" ((& $sv 'sv (workflow)' 'FINISHED') -and -not @($st -match 'STUCK.*\bsv\b').Count)
 $lt = Invoke-PsTest 'livetx' '. $args[0]; @(Get-KitLiveTranscripts (Get-Date) 10).Name -join ","' @($O)
 Expect "status: a stale beat but a fresh transcript (found by its SESSION line, kept in the entry) = ACTIVE; NEXT counts it ($lt)" ((& $sv 'S9 (devy)' 'ACTIVE') -and (Read-Json "$bd/s-S9.json").transcript -match 'agent-a9' -and "$lt" -match 'agent-a9')

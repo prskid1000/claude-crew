@@ -9,8 +9,8 @@ Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1041 release · L1087 lines · L1119 cleanup · L1186 launch ·
-  L1303 pause · L1422 heartbeat · L1437 sessions · L1496 ci tasks ·
-  L1559 the kit origin's default branch (kitBranch, else origin/HEAD)
+  L1303 pause · L1422 heartbeat · L1442 sessions · L1501 ci tasks ·
+  L1564 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1420,7 +1420,12 @@ function Show-KitPause {
 }
 
 # ---- heartbeat: the E1 cron call, an overdue coordinator (health), collision words in agent results (supervise)
-function Get-KitBeatArmLine { "CronList has no heartbeat -> CronCreate cron '*/$([int](Get-KitParam 'supervise.heartbeatMinutes')) * * * *', recurring: true, durable: true, prompt ""$(Get-KitBeatPrompt)""" }
+# a coordinator beat within one interval = a heartbeat cron fires: never a second CronCreate (owner 2026-11-24: two supervise crons at once)
+function Get-KitBeatArmLine([datetime]$Now = (Get-Date)) {
+  $bmin = [double](Get-KitParam 'supervise.heartbeatMinutes'); $ca = try { (Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json).coordAt } catch { $null }
+  if ($ca -and ($Now - [datetime]$ca).TotalMinutes -le $bmin + 2) { return "heartbeat present (last beat $(([datetime]$ca).ToString('HH:mm'))): no CronCreate; CronList shows 2+ heartbeat crons -> CronDelete all but one" }
+  "CronList has no heartbeat -> CronCreate cron '*/$([int]$bmin) * * * *', recurring: true, durable: true, prompt ""$(Get-KitBeatPrompt)"""
+}
 # health: the coordinator's beat passed while agents live (coordAt: not the OS timer's)
 function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
   $s = try { Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json } catch { $null }
