@@ -110,7 +110,7 @@ Expect "release under an open PAUSE of the agent's run: layers kept, before boar
 $rlo = Px $L5 release -Agent rl1 2>&1 | Out-String; $rlc = $LASTEXITCODE; $rln = Px $L5 release -Agent rl2 2>&1 | Out-String
 Expect "localenv: release with no -Env picks the leased env; no lease anywhere still needs -Env ($rlc)" ($rlc -eq 0 -and $rlo -match '\[shop\] lease of rl1 released' -and $rln -match '-Env needed')
 $lfKit = New-TestKit le5lanes; $lfE = New-Item -ItemType Directory -Force (Join-Path $lfKit 'skills/envy/adapters'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $lfE)
-Copy-Item @((Join-Path $src 'skills/envy/adapters/shared_builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane_standard.ps1')) $lfE; $lfL = Join-Path $lfKit 'skills/envy/envy.ps1'
+Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) $lfE; $lfL = Join-Path $lfKit 'skills/envy/envy.ps1'
 & $J @{ localEnv = @{ lanes = @{ openAfterMinutes = 15 }; envs = @{ shop = @{ lanes = @{ max = 3 }; services = @(@{ name = 'api'; port = 41071; start = 'echo' }) } } } } (Join-Path $lfKit 'skills/crafty/kit.local.json') 8
 # v2-wave1 JCF: a deploy onto a lane another agent leases (picked or named) waits for that lease; a free lane of the group instead
 $lf = & { . $lfL
