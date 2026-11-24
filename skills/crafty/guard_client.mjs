@@ -107,7 +107,7 @@ function ask(tries) {
 }
 
 // ---- context: Read and SQL calls answered here, never by pwsh (owner 2026-11-22: big whole-file Reads and wide SQL results filled
-// agents' context): a Read without offset / limit of a text file over guard.readMaxLines lines or guard.readMaxKB; a SELECT * or a row
+// agents' context): a Read (whole file or one offset / limit range) of a text file over guard.readMaxLines lines or guard.readMaxKB; a SELECT * or a row
 // SELECT without LIMIT <= guard.sqlMaxRows (aggregates, SHOW, DESCRIBE, EXPLAIN pass). Pins: kit.local.json guard.<key>
 function param(key) {
   let v; try { v = key.split('.').reduce((o, k) => o?.[k], JSON.parse(readFileSync(join(here, 'kit.local.json'), 'utf8'))) } catch { }
@@ -117,10 +117,15 @@ function param(key) {
 function deny(why) { process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
 function readRule(ti) {
   const f = `${ti.file_path || ''}`
-  if (!f || ti.offset != null || ti.limit != null || ti.pages || /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i.test(f)) return
+  if (!f || ti.pages || /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i.test(f)) return
   const maxL = param('guard.readMaxLines'), maxKB = param('guard.readMaxKB'); let kb = 0, lines = 0
-  try { const st = statSync(f); if (!st.isFile()) return; kb = Math.round(st.size / 1024); if (!(maxKB && kb > maxKB)) for (const b of readFileSync(f)) if (b === 10) lines++ } catch { return }   // size first: a huge log is never read here
-  if ((maxL && lines > maxL) || (maxKB && kb > maxKB)) deny(`kit guard: ${f} is ${lines} lines / ${kb} KB (cap ${maxL} lines / ${maxKB} KB, AGENTS.md "File inspection"): read its section map (top 40 lines; a .md: Grep '^#' for its headings) then the range you need (offset / limit); note what you need from it once (your crafty.ps1 dir notes)`)
+  const ranged = ti.offset != null || ti.limit != null, from = Math.max(1, Number(ti.offset) || 1), upto = from + (ti.limit != null ? Number(ti.limit) || 0 : 2000)   // no limit: the Read tool's 2000 lines
+  try { const st = statSync(f); if (!st.isFile()) return
+    if (!ranged) { kb = Math.round(st.size / 1024); if (!(maxKB && kb > maxKB)) for (const b of readFileSync(f)) if (b === 10) lines++ }   // size first: a huge log is never read here
+    else if (st.size <= 16 * 1024 * 1024) { let n = 1, by = 0, lb = 0; for (const b of readFileSync(f)) { if (n >= from) { lb++; if (b === 10) { lines++; by += Math.min(lb, 2000); lb = 0 } } if (b === 10 && ++n >= upto) break }
+      kb = Math.round((by + Math.min(lb, 2000)) / 1024) }   // a range (offset 1, limit 700 passed the cap): its own lines and bytes (the tool cuts a line at 2000)
+    else lines = upto - from } catch { return }
+  if ((maxL && lines > maxL) || (maxKB && kb > maxKB)) deny(`kit guard: ${f}${ranged ? ` lines ${from}-${from + lines}` : ''} is ${lines} lines / ${kb} KB (cap ${maxL} lines / ${maxKB} KB, AGENTS.md "File inspection"): read its section map (top 40 lines; a .md: Grep '^#' for its headings) then the range you need (offset / limit); note what you need from it once (your crafty.ps1 dir notes)`)
 }
 function sqlRule(ti) {
   const q0 = `${ti.query || ti.sql || ti.statement || ''}`; if (!q0.trim()) return
