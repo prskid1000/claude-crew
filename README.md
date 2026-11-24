@@ -310,7 +310,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `localOnly`, `orgTerms` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words pre-push blocks |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example only (setup -WriteLocal) |
 | `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (shape, example: envy reference.md); baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
-| `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match |
+| `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match, needsOwnerClick (true or the step's text: the start waits on a person, e.g. a UAC prompt; the coordinator gets a hold msg, the start waits runtimeProbe.ownerWaitMinutes) |
 | `media` |  | evidence videos -&gt; text index (pokey media.md); stt {baseUrl, model, maxConcurrent (1), ramGB (2)}: local speech-to-text |
 | `writes` |  | tracer {csv, time, kind, process, folder, mb, disk}: a disk-write tracer CSV and its column names (tracerCsv: older csv key); softGBPerHour, hardGBPerHour: params pins |
 | `findings` |  | required: the fields every module-audit finding fills (revy kind module; default root_cause, why_today, why_not_prod, db_migration, code_location) |

@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L157 transcript tails · L189 supervise sweep · L269 status rows
+# Sections: L6 supervise report · L162 transcript tails · L194 supervise sweep · L274 status rows
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -127,6 +127,11 @@ function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$
 # board messages (bossy.ps1 board msg | inbox): one jsonl per agent; the unread ones as lines, then marked read (inbox, board beat and
 # every gated build print them: a workflow step between beats still gets the coordinator's rule); -All: the read ones too
 function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
+function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind = 'note', [string]$Ref = '') {
+  $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
+  $line = [ordered]@{ at = (Get-KitStamp); from = $From; to = $To; kind = $Kind; text = $Text; ref = $Ref; read = $false } | ConvertTo-Json -Compress
+  Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
+}
 function Read-KitInboxNew([string]$Agent, [switch]$All) {
   if (-not $Agent) { return }; $f = Get-InboxFile $Agent; if (-not (Test-Path -LiteralPath $f)) { return }
   Invoke-KitLocked $f { $m = @(Get-Content -LiteralPath $f | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_ }); $new = @($m | Where-Object { $All -or -not $_.read })

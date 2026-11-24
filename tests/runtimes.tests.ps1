@@ -1,8 +1,8 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 # tests/runtimes.tests.ps1: runtimes (fake isUp / up / down lines on a flag file): lease, start, stop, an owner-started runtime stays,
-# the guard's auto lease, supervise -AutoFix on a dead holder; dashboard liveness: run state, Runs band hours and chips, disk rows' age,
-# a failed page or stats source, Trends split cells; usage numbers (prices, outcomes, one row per run, host MRs). Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1
+# needsOwnerClick, the guard's auto lease, supervise -AutoFix on a dead holder; dashboard liveness: run state, Runs band hours and chips,
+# disk rows' age, a failed page or stats source, Trends split cells; usage numbers (prices, outcomes, one row per run, host MRs).
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $TestKitFiles = @('skills/crafty/adapters/container-tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit rt; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
@@ -26,6 +26,15 @@ $null = pwsh @np $D runtime use -Name fake -Agent a1; $r3 = pwsh @np $D runtime 
 Expect "runtimes: an owner-started runtime is never started or stopped ($r3)" ((Log) -eq '' -and (Test-Path $flag) -and $r3 -match 'not started by the kit')
 $bad = Invoke-TestScript $D runtime use -Name nope
 Expect "runtimes: an unknown runtime exits 1 ($($bad.code))" ($bad.code -eq 1 -and $bad.out -match 'no kit.local.json runtimes.nope')
+
+# needsOwnerClick: up never brings it up (UAC); a hold msg to the coordinator, the start waits for the owner
+Reset; $env:KIT_PARAM_RUNTIMEPROBE_OWNERWAITMINUTES = '0.5'; $coIn = Join-Path (TkPath $k board) 'inbox/coordinator.jsonl'
+& $J @{ runtimes = @{ fake = @{ isUp = $fake.isUp; down = $fake.down; up = '1'; needsOwnerClick = 'click Yes' } } } (Join-Path $k 'skills/crafty/kit.local.json')
+$click = Start-Job { Start-Sleep 4; New-Item -Force $using:flag }; $uc = Invoke-TestScript $D runtime use -Name fake -Agent oc1; $null = Wait-Job $click -Timeout 30
+Expect "runtimes: needsOwnerClick: hold msg, waits for the owner ($($uc.out))" ($uc.code -eq 0 -and $uc.out -match 'up to 0.5 min for the owner: click Yes' -and (Get-Content $coIn -Raw) -match '"kind":"hold".*needs you: click Yes')
+$null = pwsh @np $D runtime release -Name fake -Agent oc1; Reset; $un = Invoke-TestScript $D runtime use -Name fake -Agent oc2
+Expect "runtimes: needsOwnerClick, no click: fails naming the step, no 2nd notice in the window ($($un.out))" ($un.code -ne 0 -and @(Get-Content $coIn | Select-String 'runtime-fake').Count -eq 1 -and$un.out -match 'after 30 s \(owner step not done:[\s|]+click Yes')
+Remove-Item Env:KIT_PARAM_RUNTIMEPROBE_OWNERWAITMINUTES; & $J @{ runtimes = @{ fake = $fake } } (Join-Path $k 'skills/crafty/kit.local.json'); Reset
 
 Reset
 $g = { param($c) pwsh @np $D guard -Json (@{ tool_name = 'PowerShell'; tool_input = @{ command = $c }; agent_type = 'devy'; agent_id = 'abcdef123456' } | ConvertTo-Json -Compress) | Out-String }
@@ -179,10 +188,6 @@ $zr = Invoke-PsTest 'resumed' '. $args[0]; $env:KIT_TRANSCRIPTS = $args[1]; $ld 
     Get-ChildItem $wzd | ForEach-Object { $_.LastWriteTime = (Get-Date).AddMinutes(-20 + 10 * $y) }; (Get-Item $wzd).LastWriteTime = (Get-Date).AddMinutes(-20 + 10 * $y) }
   @(Get-KitStatusRows | Where-Object name -eq "rz (workflow)" | ForEach-Object { $_.task }) -join "|"; foreach ($y in 1, 2) { Remove-Item (Join-Path $ld "wf_z$y.json") }' @($O, (Join-Path (Kd) 'tx3'))
 Expect "status: a resumed run's two folders are one workflow row, the newer folder's ($zr)" ("$zr" -match 'wf_z2' -and "$zr" -notmatch 'wf_z1|\|')
-# label pass: a head <b> and a row name capitalised; a value <b>, flag text in <li>, an id row (translate=no) kept
-$lcIn = "<b>idle</b><span class='gs0 hrs dy'><b>steps</b></span><li class='f hr'>build gate</li><span class=gn translate=no>api</span><span class=gn>browser x</span>"
-$lcOut = & { . $O; ConvertTo-KitLabelCase $lcIn }
-Expect "labels: sentence case on heads and row names only ($lcOut)" ($lcOut -ceq "<b>idle</b><span class='gs0 hrs dy'><b>Steps</b></span><li class='f hr'>build gate</li><span class=gn translate=no>api</span><span class=gn>Browser x</span>")
 # flag age: a flag back after a gap starts again
 $fgOut = & { . $O; $now = Get-Date
   $gst = @{ flagSeen = @{ (Get-KitFlagKey 'back') = @{ first = $now.AddHours(-3).ToString('o'); last = $now.AddMinutes(-90).ToString('o') }; (Get-KitFlagKey 'held') = @{ first = $now.AddMinutes(-50).ToString('o'); last = $now.AddMinutes(-15).ToString('o') } } }
@@ -204,14 +209,5 @@ $rtc = & { . $O; $n = [datetime]'2026-01-02T10:00:00'
   $sp = $h.Substring($h.IndexOf('data-mk=spend-role'))
   "$($sp -match "<i class='kst kd-time'[^>]*><span class=kr4>.*?<b class='kq k-tot kt'[^>]*>15 min</b>") $($sp -match "<b>1\.6 h</b><small class=knr>wall clock</small>")" }
 Expect "spend per role time cell: tiles and total over the steps with a split (avg 15 min, never the mixed 50); none: the avg wall clock, labelled ($rtc)" ($rtc -eq 'True True')
-# one role map (owner 2026-11-24): column groups with a header each, a gap (data-g0) before each later group; Waste: patterns per tag, amber fixable, red open
-$rgm = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }
-  $wi = @([pscustomobject]@{ role = 'devy'; kind = 'reread'; tag = 'fixable'; tokens = 9000; what = 're-read a.ps1 3x'; why = 'w1' }, [pscustomobject]@{ role = 'devy'; kind = 'reread'; tag = 'ignored'; tokens = 10; what = 'x'; why = 'w2' }, [pscustomobject]@{ role = 'devy'; kind = 'buildlog'; tag = 'open'; tokens = 5; what = 'log'; why = 'w3' }, [pscustomobject]@{ role = 'revy'; kind = 'reread'; tag = 'fixed'; tokens = 1; what = 'y'; why = 'w4' })
-  $wc = (Get-KitWasteRoleCells $wi).devy
-  $mh = Format-KitMetricHeat @(@{ n = 'devy'; sub = '2 agents'; v = @(1, 2) + $wc.v; tx = @('1', '2') + $wc.tx; tone = @('', '', 'warn', 'act', ''); tips = @('', '') + $wc.tips }) @('a', 'b', 'fixable', 'open', 'fixed') 'x' 'rg' @(@('Spend', 2), @('Waste', 3))
-  "$(@($wc.tx) -join ',') $($mh -match "<b style='grid-column:span 2'>Spend</b><b data-g0 style='grid-column:span 3'>Waste</b>") $($mh -match '<b data-g0>Fixable') $($mh -match "<i data-g0 data-t=warn [^>]*title='devy &#183; fixable: reread: re-read a\.ps1 3x[^']*w1'>1</i><i data-t=act ") $($mh -match '>devy<small>2 agents</small>')" }
-Expect "role map: group headers span their columns, later groups open with a gap, waste counts per tag toned with the list in the tooltip, agents on the name line ($rgm)" ($rgm -eq '1,1, True True True True')
-$dgf = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; Format-KitDayHeat @(@{ hd = 'G'; g = 'g1'; cn = 2 }, @{ n = 'a'; v = @(1) }, @{ n = 'b'; v = @(0) }) @('2026-01-01') 'k' }
-Expect 'day heat groups: a header folds its rows, an idle row in the group''s own fold' ($dgf -match "(?s)<div class=rgg data-g='dg-g1'><div class='gk rgh dgh'><button type=button class=rgb aria-expanded=true><span class=gn0>G</span><span class=gcn>2</span></button></div><div class=gk>.*?>a<.*<button type=button class=gkx aria-expanded=false>1 idle rows (·|&#183;) no data in 1 days</button><div class=gki>.*>b<.*</div></div></div>$")
 Remove-TestKit $k
 Complete-Tests

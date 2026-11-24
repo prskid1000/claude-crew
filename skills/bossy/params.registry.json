@@ -190,6 +190,7 @@
   "supervise.osTimerLimitMinutes": "config default=10 unit=min",
   "supervise.osTimerTickMinutes": "config default=5 unit=min",
   "runtimeProbe.isUpSec": "config default=20 unit=s",
+  "runtimeProbe.ownerWaitMinutes": "config default=15 unit=min",
   "outcomes.days": "config default=30 unit=d",
   "outcomes.causeSimilarity": "config default=0.3 unit=ratio",
   "outcomes.runWindowMinutes": "config default=60 unit=min",

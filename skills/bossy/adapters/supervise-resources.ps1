@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1042 release · L1088 lines · L1120 cleanup · L1187 launch ·
-  L1304 pause · L1423 heartbeat · L1439 sessions · L1498 ci tasks ·
-  L1563 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1042 release · L1088 lines · L1115 cleanup · L1182 launch ·
+  L1299 pause · L1418 heartbeat · L1434 sessions · L1493 ci tasks ·
+  L1558 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1111,12 +1111,7 @@ function Get-KitRecoverLinesResources {
 }
 
 # board messages: the file and its reader live in crafty adapters/supervise-report.ps1 (the gate prints them too)
-$script:KitMsgKinds = 'note', 'hold', 'dispute', 'rule', 'rollback', 'report', 'pause'   # board msg schema { kind, to, text, ref }
-function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind = 'note', [string]$Ref = '') {
-  $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
-  $line = [ordered]@{ at = (Get-KitStamp); from = $From; to = $To; kind = $Kind; text = $Text; ref = $Ref; read = $false } | ConvertTo-Json -Compress
-  Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
-}
+$script:KitMsgKinds = 'note', 'hold', 'dispute', 'rule', 'rollback', 'report', 'pause'   # board msg schema { kind, to, text, ref }; Send-BoardMsg: crafty supervise-report.ps1
 # ---- cleanup: idle resources
 # holderless test browsers, idle / surplus browser profiles, idle daemons (cleanup.idleDaemons)
 function Invoke-KitCleanupResources {

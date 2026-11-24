@@ -5,12 +5,13 @@ stops what it started once the last agent is done; a runtime the kit did not sta
   & <kit>/skills/crafty/crafty.ps1 runtime release [-Name <runtime>] [-Agent <a>] [-Session <s>]   drop the lease; last one + kit-started -> down
   & <kit>/skills/crafty/crafty.ps1 runtime status [-Name <runtime>] [-Json]
 Inputs: kit.local.json `runtimes.<name>`: isUp (command line; running = exit 0 + some output), up (optional: else the agent's
-own command starts it), down, match (regex of commands that use it, tested at each command's head: crafty.ps1 guard leases for an agent that forgot). -Agent
+own command starts it), down, match (regex of commands that use it, tested at each command's head: crafty.ps1 guard leases for an agent that forgot),
+needsOwnerClick (a start that waits on a person: hold msg to the coordinator, wait runtimeProbe.ownerWaitMinutes). -Agent
 defaults to $env:CLAUDE_AGENT, else main. State: <state>/runtimes/<name>.json. Command lines run in pwsh -Command.
 Dot-sourced by lib.ps1 (adapters/*.ps1): crafty.ps1 gets the verb and the guard rule, bossy.ps1 supervise its sweep
 (Get-KitSuperviseGuardRuntimes: a lease with no live holder for idle.graceMinutes -> released; kit-started + no lease -> down).
 Exit codes: 0 ok · 1 problem (not configured, up or down failed) · 2 usage.
-Sections: L16 state · L46 leases · L91 verb · L137 supervise
+Sections: L17 state · L47 leases · L113 verb · L159 supervise
 #>
 #Requires -Version 7
 # ---- state: names, state file, probes
@@ -67,14 +68,35 @@ function Use-KitRuntime([string]$Name, [string]$Agent, [string]$Session, [switch
   if ($null -eq $up) { return "runtime ${Name}: state unknown (isUp timed out); leased by $Agent, nothing started" }
   $line = Get-KitSetting "runtimes.$Name.up" ''
   if (-not $line) { return "runtime ${Name}: not running; leased by $Agent (no runtimes.$Name.up: your command starts it, the kit stops it after the last release)" }
+  $click = Send-KitRuntimeOwnerNotice $Name $Agent
   if ($NoWait) {   # the guard: a hook must answer in seconds
     Start-Detached 'pwsh' @('-NoProfile', '-NonInteractive', '-ec', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$env:WSL_UTF8 = '1'; $line")))
-    return "runtime ${Name}: was not running: starting it ($line); leased by $Agent"
+    return "runtime ${Name}: was not running: starting it ($line)$(if ($click) { "; waits for the owner: $click" }); leased by $Agent"
   }
-  $r = Invoke-KitRuntimeCmd $line 300
-  for ($i = 0; $i -lt 40 -and -not ($ok = Test-KitRuntimeUp $Name); $i++) { Wait-KitPoll 3 }
-  if (-not $ok) { throw "runtime ${Name}: started ($line, exit $($r.code)) but isUp does not answer after 2 min: $(@("$($r.err)" -split "`n")[0])" }
+  if ($click) { Write-Host "runtime ${Name}: waiting up to $(Get-KitParam 'runtimeProbe.ownerWaitMinutes') min for the owner: $click" }
+  $waitSec = if ($click) { 60 * [double](Get-KitParam 'runtimeProbe.ownerWaitMinutes') } else { 120 }
+  $deadline = (Get-Date).AddSeconds($waitSec)   # an owner step: one window for up + polls (up may block on the prompt)
+  $r = Invoke-KitRuntimeCmd $line ([math]::Max(300, $waitSec))
+  if (-not $click) { $deadline = (Get-Date).AddSeconds($waitSec) }
+  while (-not ($ok = Test-KitRuntimeUp $Name) -and (Get-Date) -lt $deadline) { Wait-KitPoll 3 }
+  if (-not $ok) { throw "runtime ${Name}: started ($line, exit $($r.code)) but isUp does not answer after $waitSec s$(if ($click) { " (owner step not done: $click)" }): $(@("$($r.err)" -split "`n")[0])" }
   "runtime ${Name}: started by the kit ($line); leased by $Agent"
+}
+
+# runtimes.<n>.needsOwnerClick (true or the step's text): the start waits on a person (UAC prompt, licence dialog): tell the coordinator, who tells the owner
+function Send-KitRuntimeOwnerNotice([string]$Name, [string]$Agent) {
+  $need = Get-KitSetting "runtimes.$Name.needsOwnerClick" $false
+  if (-not $need) { return '' }
+  $step = if ($need -is [string]) { $need } else { "approve the prompt the start of $Name raises (UAC or a dialog)" }
+  $text = "OWNER: runtime $Name is starting for $Agent and needs you: $step. The agent waits up to $(Get-KitParam 'runtimeProbe.ownerWaitMinutes') min."
+  # one notice per start window: other agents' guard leases while the prompt waits add none
+  try {
+    $f = Get-InboxFile 'coordinator'; $win = [double](Get-KitParam 'runtimeProbe.ownerWaitMinutes')
+    $dup = (Test-Path -LiteralPath $f) -and @(Get-Content -LiteralPath $f | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } |
+        Where-Object { $_.ref -eq "runtime-$Name" -and ((Get-Date) - [datetime]$_.at).TotalMinutes -lt $win }).Count
+    if (-not $dup) { Send-BoardMsg $Agent 'coordinator' $text 'hold' "runtime-$Name" }
+  } catch { }   # a notice never fails the start
+  $step
 }
 
 function Remove-KitRuntimeLease([string]$Name, [scriptblock]$Which, [string]$Why = 'released') {
