@@ -36,8 +36,9 @@ $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | 
 Expect 'devtools selftest with the gdocs adapter: share modes, unshared refused, an earlier link updated in place (a timeout retried once), env runs filling the human doc rows (a later NOT TESTED keeps a PASS), Drive evidence' ($LASTEXITCODE -eq 0 -and @([regex]::Matches($out, '(?m)^PASS gdocs')).Count -eq 7)
 Expect 'devtools selftest, confluence and command evidence (recorded replies, no account): page + multipart attachments, reused page; command store via reports.evidenceCommand' (
   $out -match '(?m)^PASS confluence evidence: ' -and $out -match '(?m)^PASS report command: evidence ' -and $out -notmatch '(?m)^FAIL')
-Expect 'devtools selftest, native evidence and tags (parity): notion File Upload API (recorded replies, no account), kept evidence for markdown / html / pdf, command {tags}' (
-  $out -match '(?m)^PASS notion evidence: ' -and $out -match '(?m)^PASS kept evidence ' -and $out -match '(?m)^PASS pdf evidence: ' -and $out -match '(?m)^PASS command: \{title\} and \{tags\}')
+Expect 'devtools selftest, native evidence and tags (parity): notion File Upload API (recorded replies, no account), kept evidence for markdown / html / pdf, command {tags}; native tags: markdown front matter, html meta, pdf /Keywords, notion database Tags; notion 429 retried once' (
+  $out -match '(?m)^PASS notion evidence: ' -and $out -match '(?m)^PASS kept evidence ' -and $out -match '(?m)^PASS pdf evidence: ' -and $out -match '(?m)^PASS command: \{title\} and \{tags\}' -and
+  @([regex]::Matches($out, '(?m)^PASS (pdf|notion) tags: ')).Count -eq 3 -and $out -match '(?m)^PASS notion: HTTP 429 retried once')
 $env:KIT_TRACKER_TYPE = 'none'
 $d = Join-Path (Kd) 'runs/GD'
 & $J @{ title = 'Run GD'; target = 't'; tracker = @{ list = 'L1'; parent = 'P1' }; items = @(foreach ($c in 'G1', 'G2') { @{ code = $c; title = $c; subtasks = @(@{ id = 'TG'; name = 'Task TG' }) } }) } "$d/run.json"
@@ -120,6 +121,19 @@ $pgOut = $pgBody | & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Pa
 Expect "mr prose refusal: per-section word / bullet counts with the limits ($(($pgOut -split "`n" | Where-Object { $_ -match 'per section' }) -join ''))" ($pgOut -match 'per section \(mr-body: .*limits .*\): Summary 60w 0b · Changes 4w 4b · How tested 1w 0b' -and $pgOut -match 'refused')
 $pgLast = @($pgOut -split "`r?`n" | Where-Object { $_.Trim() })[-1]
 Expect "mr prose refusal: its last line names the finding and the limits (retro 1124: 7 refusals showed only the count) ($pgLast)" ($pgLast -match 'mr-body refused: .*\(max \d+\).*; limits: mr-body: ')
+# kept-doc tags (parity, moved from devtools selftest for its cap): Markdown front matter, HTML meta keywords
+$tgPy = @'
+import os, sys, tempfile; sys.path.insert(0, sys.argv[1]); import devtools as d
+t = tempfile.mkdtemp(); p = os.path.join(t, 'tg.md'); open(p, 'w', encoding='utf-8').write('---\ntitle: X\ntags:\n  - old\n---\n# T\n')
+def rd(ty, *a): d.REPORT_TYPE, d.RCFG = ty, {}; return open(d.make_doc('T', p, t, tags=list(a)), encoding='utf-8').read()
+m1, m2, m0 = rd('markdown', 'a: b'), rd('markdown', 'b'), rd('markdown')
+rd('html', 'x'); h = rd('html', 'w', 'a&b')
+md = m1 == '---\ntitle: X\ntags: ["a: b"]\n---\n# T\n' and m2 == m1.replace('a: b', 'b') and m0 == '---\ntitle: X\n---\n# T\n'
+print('md:%s html:%s' % (md, h.count('keywords') == 1 and '<meta name="keywords" content="w, a&amp;b"></head>' in h))
+'@
+Set-Content -LiteralPath ($tgF = Join-Path $k 'tg-tags.py') -Value $tgPy -Encoding utf8   # a file: the python shim cuts a multi-line -c
+$tgOut = "$(& $py -X utf8 $tgF (Split-Path $DT) 2>&1)"
+Expect "kept-doc tags: Markdown front matter (own keys kept, a block list replaced, a colon one tag, one block after 2 publishes, none: key gone); HTML one escaped meta keywords ($tgOut)" ($tgOut -match 'md:True html:True')
 $vd = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; print(','.join(d._verdict(x) for x in (['PASS', 'NOT_TESTED_LOCAL'], ['PASS', 'PASS'], ['PASS', ''], ['FAIL', 'NOT_TESTED_LOCAL'])))" 2>&1
 Expect "render cases: a goal mixing PASS and NOT_TESTED_LOCAL reads NOT_TESTED_LOCAL, not blank; unrecorded stays blank ($vd)" ("$vd" -eq 'NOT_TESTED_LOCAL,PASS,,FAIL')
 # finish: one loop checkpoint under the keyed item covers every item tracked on the same MR (retro 1124: siblings refused)

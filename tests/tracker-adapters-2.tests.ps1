@@ -59,5 +59,7 @@ if ($yv -ne 'wave-2') { $global:failed++ }; "$(if ($yv -eq 'wave-2') { 'PASS' } 
 Cap azure dependencies ([ordered]@{ 'GET .*workitems/42\?\$expand=relations' = '{"id":42,"relations":[{"rel":"System.LinkTypes.Dependency-Reverse","url":"https://dev.azure.com/acme/_apis/wit/workItems/40"},{"rel":"System.LinkTypes.Dependency-Forward","url":"https://dev.azure.com/acme/_apis/wit/workItems/49"}]}'; 'PATCH .*workitems/42\?' = '{"id":42}' }) @{ id = '42'; on = @('40', '41') } {
  param($r, $l) ($r -join ',') -eq '40,41' -and @($global:log -match '^PATCH').Count -eq 1 -and $l -match '(?=PATCH .*json-patch)(?=.*Dependency-Reverse)(?=.*workItems/41")' -and $l -notmatch 'workItems/40"' } 'a Predecessor link per wait; a successor is no wait'
 Cap azure dependencies $global:fx @{ id = '42'; on = @() } { param($r) ($r -join ',') -eq '40' -and -not ($global:log -match '^PATCH') } 'on = none: a read only (tracker order)'
+Cap azure statuses ([ordered]@{ 'GET .*_apis/wit/workitemtypes/Task/states\?api-version=7\.1' = '{"value":[{"name":"To Do","category":"Proposed"},{"name":"QA","category":"InProgress"},{"name":"Done","category":"Completed"},{"name":"Cut","category":"Removed"}]}' }) @{ scope = 'Shop\Team' } {
+ param($r) ($r | ForEach-Object { "$($_.name)=$($_.type)" }) -join ',' -eq 'To Do=open,QA=custom,Done=closed,Cut=custom' } "the issue type's states; Proposed -> open, Completed -> closed"
 Remove-Item $trRt -Recurse -Force -ErrorAction SilentlyContinue
 exit [int]($global:failed -gt 0)

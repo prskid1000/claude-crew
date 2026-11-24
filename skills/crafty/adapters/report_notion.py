@@ -1,15 +1,16 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-"""Report adapter notion: reports.type notion = a child page of reports.parent via REST (env NOTION_TOKEN): heading, paragraph,
+"""Report adapter notion: reports.type notion = a child page of reports.parent via REST (env NOTION_TOKEN; a database parent: a
+row, tags as its Tags multi-select; HTTP 429 retried once): heading, paragraph,
 bulleted, table and code blocks, 100 per call; evidence = files uploaded to one child page. Readers = the parent page's sharing.
-Sections: L11 rest · L26 blocks · L87 evidence
+Sections: L12 rest · L31 blocks · L119 evidence
 """
-import html, json, mimetypes, os, re, sys
+import html, json, mimetypes, os, re, sys, time
 
 dt = None
 API = 'https://api.notion.com/v1/'
 
 # ---- rest: JSON or multipart calls, text runs
-def _http(method, url, body=None, headers=None):
+def _http(method, url, body=None, headers=None, again=True):
     import urllib.request, urllib.error
     data = body if isinstance(body, bytes) else body and json.dumps(body).encode()   # bytes: a multipart upload
     q = urllib.request.Request(url, data, {'Content-Type': 'application/json', **(headers or {})}, method=method)
@@ -17,6 +18,10 @@ def _http(method, url, body=None, headers=None):
         with urllib.request.urlopen(q, timeout=int((dt.CFG.get('net') or {}).get('timeoutSec') or 60)) as r:
             return json.loads(r.read() or b'{}')
     except urllib.error.HTTPError as e:
+        if e.code == 429 and again:   # rate limited (developers.notion.com/reference/request-limits): one retry after Retry-After
+            wait = (e.headers or {}).get('Retry-After') or '1'
+            time.sleep(min(float(wait) if re.match(r'^\d+(\.\d+)?$', wait) else 1, 30))
+            return _http(method, url, body, headers, False)
         raise SystemExit(f'{method} {url}: HTTP {e.code} {e.read()[:300]}')
 
 def _rich(s):
@@ -65,8 +70,35 @@ def _auth(parent, need_parent=True):
     return {'Authorization': 'Bearer ' + token, 'Notion-Version': '2022-06-28'}
 
 
-def _page(parent, title, children, headers):
-    page = _http('POST', API + 'pages', {'parent': {'page_id': parent}, 'properties': {'title': {'title': [{'text': {'content': title}}]}}, 'children': children}, headers)
+def _db(parent, headers):
+    """reports.parent's database (its schema), or None: a page parent (developers.notion.com/reference/post-page: a child page's
+    only property is its title, so tags stay in the Tags: line)."""
+    if parent not in _db.seen:
+        try:
+            r = _http('GET', f'{API}databases/{parent}', None, headers)
+        except SystemExit as e:   # a page id: 400 / 404; auth, server or rate errors stop the publish
+            if not re.search(r': HTTP (400|404) ', str(e)):
+                raise
+            r = None
+        _db.seen[parent] = r if (r or {}).get('object') == 'database' else None
+    return _db.seen[parent]
+_db.seen = {}
+
+
+def _page(parent, title, children, headers, tags=()):
+    db, name = _db(parent, headers), [{'text': {'content': title}}]
+    if not db:
+        body = {'parent': {'page_id': parent}, 'properties': {'title': {'title': name}}}
+    else:   # a database row: its title property, tags as the Tags multi-select (added to the schema once)
+        props = db.get('properties') or {}
+        tk = next((k for k, v in props.items() if v.get('type') == 'title'), 'title')
+        own = next((k for k in props if k.lower() == 'tags'), None)   # a Tags column of another type is never retyped (its data would go)
+        mk = own if own and props[own].get('type') == 'multi_select' else None
+        if tags and not own:
+            _http('PATCH', f'{API}databases/{parent}', {'properties': {'Tags': {'multi_select': {}}}}, headers)
+            mk = 'Tags'; props['Tags'] = {'type': 'multi_select'}
+        body = {'parent': {'database_id': parent}, 'properties': {tk: {'title': name}, **({mk: {'multi_select': [{'name': t.replace(',', ' ')[:100]} for t in tags]}} if tags and mk else {})}}
+    page = _http('POST', API + 'pages', {**body, 'children': children}, headers)
     return page if page.get('id') else sys.exit(f'notion: no page in the reply: {str(page)[:300]}')
 
 
@@ -78,7 +110,7 @@ def publish(a):
     if not a['path'].lower().endswith(('.md', '.markdown')):   # HTML: its text lines
         text = html.unescape(re.sub(r'<[^>]+>', '\n', re.sub(r'(?is)<(head|style|script)\b.*?</\1>', '', text)))
     blocks = _blocks(text)
-    page = _page(parent, a['title'], blocks[:100], headers)
+    page = _page(parent, a['title'], blocks[:100], headers, a.get('tags') or ())
     for i in range(100, len(blocks), 100):
         _http('PATCH', f"{API}blocks/{page['id']}/children", {'children': blocks[i:i + 100]}, headers)
     return page.get('url') or 'https://www.notion.so/' + page['id'].replace('-', '')
@@ -123,7 +155,7 @@ def selftest(expect, tmp, md):
     _http = lambda *a, **k: calls.append(a) or (page if a[0] == 'POST' else {'object': 'list', 'results': []})
     try:
         u = publish({'title': 'T', 'path': md, 'parent': 'p1', 'keep': None})
-        first, second = (c[2]['children'] for c in calls)
+        first, second = (c[2]['children'] for c in calls if c[0] != 'GET')
         expect('notion: blocks 100 per call', u == page['url'] and (len(first), len(second), first[0]['type'], second[-1]['type']) == (100, 53, 'heading_1', 'code'))
         tb = _blocks('| A | B |\n|---|---|\n| x \\| y | 1<br>2 |\n| z |\nafter')
         expect('notion: a Markdown table = one table block (header row, cells padded, <br> -> line break)', [b['type'] for b in tb] == ['table', 'paragraph']
@@ -153,7 +185,52 @@ def selftest(expect, tmp, md):
                and ev_calls[0][2] == {'filename': 'n1.png', 'content_type': 'image/png'} and b'filename="n1.png"' in ev_calls[1][2] and b'PNG1' in ev_calls[1][2]
                and ev_calls[1][3]['Content-Type'].startswith('multipart/form-data; boundary=') and att == {'type': 'image', 'image': {'type': 'file_upload', 'file_upload': {'id': fid}}}
                and ev2['folderId'] == page['id'] and 'src' not in ev['files']['n1.png'])
+        db_calls, schema = [], {'object': 'database', 'id': 'd1', 'properties': {'Name': {'type': 'title'}}}   # recorded replies, no account
+        _http = lambda *a, **k: db_calls.append(a) or (schema if a[0] == 'GET' else {} if a[0] == 'PATCH' else page)
+        publish({'title': 'T', 'path': md, 'parent': 'd1', 'keep': None, 'tags': ['wave-2', 'a,b']})
+        publish({'title': 'T', 'path': md, 'parent': 'd1', 'keep': None, 'tags': ['wave-3']})
+        rows = [c[2] for c in db_calls if c[1].endswith('/pages')]
+        expect('notion tags: a database parent = a row (its title property), tags as the Tags multi-select (added to the schema once), a page parent: title only',
+               [c[0] for c in db_calls[:3]] == ['GET', 'PATCH', 'POST'] and db_calls[1][2] == {'properties': {'Tags': {'multi_select': {}}}}
+               and rows[0]['parent'] == {'database_id': 'd1'} and rows[0]['properties']['Name']['title'][0]['text']['content'] == 'T'
+               and rows[0]['properties']['Tags'] == {'multi_select': [{'name': 'wave-2'}, {'name': 'a b'}]} and rows[1]['properties']['Tags'] == {'multi_select': [{'name': 'wave-3'}]}
+               and [c[0] for c in db_calls].count('GET') == 1 and [c[1] for c in db_calls].count(API + 'databases/d1') == 2 and calls[1][2]['parent'] == {'page_id': 'p1'} and list(calls[1][2]['properties']) == ['title'])
+        db_calls.clear(); schema = {'object': 'database', 'id': 'd2', 'properties': {'Name': {'type': 'title'}, 'tags': {'type': 'select'}}}
+        publish({'title': 'T', 'path': md, 'parent': 'd2', 'keep': None, 'tags': ['wave-2']})
+
+        def denied(*a, **k):
+            raise SystemExit(f'{a[0]} {a[1]}: HTTP 401 unauthorized')
+        _http = denied
+        try:
+            publish({'title': 'T', 'path': md, 'parent': 'd3', 'keep': None}); auth = 'no exit'
+        except SystemExit as e:
+            auth = str(e)
+        expect('notion tags: a Tags column of another type is never retyped (no tags written); a 401 on the parent read stops the publish',
+               [c[0] for c in db_calls[:2]] == ['GET', 'POST'] and list(db_calls[1][2]['properties']) == ['Name'] and 'HTTP 401' in auth)
+        import io, urllib.request, urllib.error
+        tries, slept, open0, sleep0 = [], [], urllib.request.urlopen, time.sleep
+
+        class Reply(io.BytesIO):
+            def __enter__(self):
+                return self
+        def fake(q, timeout=None):
+            tries.append(q.full_url)
+            if len(tries) in (1, 3, 4):
+                raise urllib.error.HTTPError(q.full_url, 429, 'rate limited', {'Retry-After': '2'}, io.BytesIO(b'{"code":"rate_limited"}'))
+            return Reply(b'{"id":"f1"}')
+        urllib.request.urlopen, time.sleep, _http = fake, slept.append, saved   # the retry calls _http by name
+        try:
+            ok = saved('POST', API + 'file_uploads', {'filename': 'n1.png'}, {})
+            try:
+                saved('POST', API + 'file_uploads', {'filename': 'n1.png'}, {}); twice = 'no exit'
+            except SystemExit as e:
+                twice = str(e)
+        finally:
+            urllib.request.urlopen, time.sleep = open0, sleep0
+        expect('notion: HTTP 429 retried once after Retry-After (an upload goes through), a second 429 fails the call',
+               ok == {'id': 'f1'} and slept == [2.0, 2.0] and len(tries) == 4 and 'HTTP 429' in twice)
     finally:
+        _db.seen.clear()
         _http = saved
         os.environ.clear(); os.environ.update(env0)
 
@@ -161,4 +238,4 @@ def selftest(expect, tmp, md):
 def register(module):
     global dt
     dt = module
-    dt.ADAPTERS['report']['notion'] = {'publish': publish, 'evidence': evidence, 'selftest': selftest}
+    dt.ADAPTERS['report']['notion'] = {'publish': publish, 'evidence': evidence, 'selftest': selftest, 'tags': 'the Tags multi-select of a database parent'}

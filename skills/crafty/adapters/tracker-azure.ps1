@@ -60,6 +60,11 @@ Register-KitAdapter 'tracker' 'azure' @{
       subtasks = @(if ($kids) { (__TrAz 'GET' "wit/workitems?ids=$($kids -join ',')&fields=System.Title,System.State" $null).value | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; name = $_.fields.'System.Title'; status = [string]$_.fields.'System.State'; url = Get-TrackerUrl $_.id } } }) }) @("$($f.'System.Tags')" -split ';\s*')
   }
   'status' = { param($a) $null = __TrAzSet $a.id @{ 'System.State' = $a.status }; "status of $($a.id): $($a.status)" }
+  # the states of tracker.issueType in the project (scope = area path; states are per type, not per area); category Proposed -> open, Completed -> closed, Removed / Resolved custom (no role, as linear canceled)
+  'statuses' = { param($a)
+    @((__TrAz 'GET' "wit/workitemtypes/$([uri]::EscapeDataString((Get-KitSetting 'tracker.issueType' 'Task')))/states" $null).value | Where-Object { $_.name } |
+      ForEach-Object { [pscustomobject]@{ name = "$($_.name)"; type = @{ Proposed = 'open'; Completed = 'closed' }["$($_.category)"] ?? 'custom' } })
+  }
   'comment' = { param($a) $null = __TrAz 'POST' "wit/workItems/$($a.id)/comments" @{ text = (__TrHtml $a.text) }; "commented on $($a.id)" }
   'comments' = { param($a) @((__TrAz 'GET' "wit/workItems/$($a.id)/comments" $null).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.createdBy.displayName $_.createdDate (__TrUnHtml $_.text) $_.id } }
   'comment-edit' = { param($a) $null = __TrAz 'PATCH' "wit/workItems/$($a.id)/comments/$($a.comment)" @{ text = (__TrHtml $a.text) }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment

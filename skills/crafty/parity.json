@@ -38,9 +38,6 @@
       "caps": "evidence tags",
       "names": "markdown html command",
       "vendors": "gdocs pdf confluence notion",
-      "fallback": {
-        "tags": "the Tags: line under the doc title (devtools.py with_tags, every store); gdocs: Drive properties, confluence: page labels"
-      },
       "gaps": {
         "markdown,html,command/selftest": "no self-check: the first publish reports the error"
       }

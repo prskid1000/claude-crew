@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1556 publish · L2065 render · L2675 spec · L3220 plugins · L3234 keepboth · L3253 selftest · L4019 CLI
+  L1556 publish · L2086 render · L2696 spec · L3241 plugins · L3255 keepboth · L3274 selftest · L4040 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2020,11 +2020,32 @@ def relayout(ref):
     return url
 
 
+def tag_kept(p, tags):
+    """Tags in a kept doc's metadata (Markdown front matter, HTML meta keywords), old ones replaced."""
+    with open(p, encoding='utf-8', newline='') as fh:
+        t = fh.read()
+    if p.lower().endswith(('.html', '.htm')):
+        n, m = re.sub(r'<meta name="keywords" content="[^"]*">', '', t), f'<meta name="keywords" content="{html.escape(", ".join(tags))}">'
+        n = n.replace('</head>', m + '</head>', 1) if tags else n
+    else:   # front matter: its tags key replaced, other keys kept; JSON strings are YAML scalars
+        fm = re.match(r'\A---\r?\n(?:(.*?)\r?\n)?---\r?\n', t, re.S)
+        keep = '\n'.join(x for x in re.sub(r'(?m)^tags:.*(\r?\n[ \t-].*)*', '', (fm and fm[1]) or '').splitlines() if x.strip())
+        line = 'tags: [' + ', '.join(json.dumps(x, ensure_ascii=False) for x in tags) + ']' if tags else ''
+        body = '\n'.join(x for x in (keep, line) if x)
+        n = ('---\n' + body + '\n---\n' if body else '') + t[fm.end() if fm else 0:]
+    if n != t:
+        with open(p, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(n)
+    return p
+
+
 ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): adapters/report_gdocs.py
 # adapter:report/markdown: the file, kept (an earlier publish: the same file); evidence beside it
-ADAPTERS['report']['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'], a.get('url')), 'evidence': kept_evidence}
+ADAPTERS['report']['markdown'] = {'publish': lambda a: tag_kept(keep_doc(a['title'], a['path'], a['keep'], a.get('url')), a.get('tags') or []),
+                                  'evidence': kept_evidence, 'tags': 'YAML front matter tags'}
 # adapter:report/html: Markdown -> HTML (md_to_html), kept; evidence beside it
-ADAPTERS['report']['html'] = {'publish': lambda a: keep_doc(a['title'], _html_of(a), a['keep'], a.get('url')), 'evidence': kept_evidence}
+ADAPTERS['report']['html'] = {'publish': lambda a: tag_kept(keep_doc(a['title'], _html_of(a), a['keep'], a.get('url')), a.get('tags') or []),
+                              'evidence': kept_evidence, 'tags': 'meta keywords'}
 
 
 # adapter:report/command: reports.command {title} {path} {parent} {url} {tags} (earlier publish: update; tags comma-joined); last output word = URL
@@ -4005,10 +4026,10 @@ def _report_selftest(expect):
                 make_doc('T', md)
         except SystemExit as e:
             expect('a report type with no adapter: exit 3 + one line naming it', e.code == 3 and 'reports.type no-such-type: no such report adapter' in err.getvalue())
-        tl = with_tags('# T\n\nx\n', '.md', ['wave-2'])   # every store: the line; gdocs / confluence / command: native too (owner 2026-11-24)
-        expect('doc tags: a Tags line under the title (once, replaced), first in an HTML body; native: gdocs, confluence, command',
+        tl = with_tags('# T\n\nx\n', '.md', ['wave-2'])   # owner 2026-11-24
+        expect('doc tags: a Tags line under the title (once, replaced), first in an HTML body; every adapter native',
                tl == '# T\n\nTags: wave-2\n\nx\n' and with_tags(tl, '.md', ['bug']) == '# T\n\nTags: bug\n\nx\n' and with_tags(tl, '.md', []) == '# T\n\nx\n'
-               and with_tags('<body><p>x</p>', '.html', ['bug']) == '<body><p>Tags: bug</p><p>x</p>' and {n for n, x in ADAPTERS['report'].items() if x.get('tags')} == {'command', 'confluence', 'gdocs'} & set(ADAPTERS['report']))   # a test kit may load only some
+               and with_tags('<body><p>x</p>', '.html', ['bug']) == '<body><p>Tags: bug</p><p>x</p>' and all(x.get('tags') for x in ADAPTERS['report'].values()))
         for name, adapter in ADAPTERS['report'].items():
             if adapter.get('selftest'):
                 use(name, {}); adapter['selftest'](expect, tmp, md)
