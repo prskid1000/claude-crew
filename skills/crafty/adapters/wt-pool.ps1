@@ -141,10 +141,10 @@ function Get-WtDirty($d) {
   $uAll = @(if ($outU.Count) { '--untracked-files=all' })
   @(git -C $d status --porcelain @uAll 2>$null | Where-Object { $_ -and ($_.Substring(3).Trim('"').TrimEnd('/') -notin $mine) -and -not ($_.StartsWith('??') -and $_.Substring(3).Trim('"') -in $outU) })
 }
-# ---- names: slots slot-<nn>-<repo>, lanes per localEnv.laneIds; a bird is a lane's shown name only
-# pool slot n of a repo: folder slot-<nn>-<repo>, shown <repo>·slot-<nn> (N3: birds name lanes only; older <bird>-<repo> folders keep serving)
-function Get-KitSlotLeaf([int]$N, [string]$Rl) { 'slot-{0:d2}-{1}' -f $N, $Rl }
-function Get-KitSlotName([int]$N, [string]$Rl) { '{1}·slot-{0:d2}' -f $N, $Rl }
+# ---- names: slots and lanes per localEnv.laneIds; birds by default (owner 2026-11-24), numbered only when an org sets laneIds "nn"
+# pool slot n of a repo: folder <bird>-<repo>, shown <repo>·<Bird>; laneIds "nn": slot-<nn>-<repo>, <repo>·slot-<nn> (either kind keeps serving)
+function Get-KitSlotLeaf([int]$N, [string]$Rl) { if ("$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'nn') { 'slot-{0:d2}-{1}' -f $N, $Rl } else { "$(Get-KitBirdName $N)-$Rl".ToLower() } }
+function Get-KitSlotName([int]$N, [string]$Rl) { if ("$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'nn') { '{1}·slot-{0:d2}' -f $N, $Rl } else { "$Rl·$(Get-KitBirdName $N)" } }
 $script:KitBirds = @('Falcon', 'Kestrel', 'Osprey', 'Heron', 'Merlin', 'Harrier', 'Kite', 'Swift', 'Raven', 'Wren', 'Egret', 'Ibis', 'Lark', 'Owl', 'Petrel', 'Robin', 'Shrike', 'Tern', 'Finch', 'Plover')
 function Get-KitBirdName([int]$N) { $b = @(Get-KitSetting 'pool.names' $script:KitBirds); if ($N -ge 1 -and $N -le $b.Count) { "$($b[$N - 1])" } else { "Bird$N" } }
 # localEnv.laneIds "nn" (N3): lane k of the i-th base env (config order) = lane-<nn>, nn = 10 x i + k (k <= 9 with 2+ envs: adding lanes

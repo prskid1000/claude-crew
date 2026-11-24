@@ -133,8 +133,8 @@ names or sources match `match` (no names: all) holds `lock`; others queue up to 
   session, run, since, reason); past 1 MB the newest half kept. Last used: `bossy.ps1 status`, lane and env status.
 
 ## Worktrees and lanes
-- **Pool slots** (`crafty.ps1 wt lease`): per repo, folder `slot-<nn>-<repo>` (older `<bird>-<repo>` serve on), shown
-  `<repo>·slot-<nn>`; agents lease one per branch and release it; a free slot sits detached at `origin/<target>`, never on a
+- **Pool slots** (`crafty.ps1 wt lease`): per repo, folder `<bird>-<repo>`, shown `<repo>·<Bird>`
+  (`nn`: `slot-<nn>-<repo>`); agents lease one per branch and release it; a free slot sits detached at `origin/<target>`, never on a
   stale branch; warm free slots: 7-day p90 + 1 (`pool.warm` first).
 - **Lanes** (envy; ids `localEnv.laneIds`: `skills/envy/reference.md` "Names"): `nn` lane `lane-<nn>`, worktrees
   `lane-<nn>-<repo>` on local branch `lane/<nn>`; `bird` `<product>-<bird>`, `lane-<product>-<bird>-<repo>`, `lane/<product>-<bird>`;
