@@ -7,8 +7,8 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L718 flags · L942 bands ·
-  L1092 shells · L1163 reset
+Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L725 flags · L944 bands ·
+  L1107 shells · L1178 reset
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -506,7 +506,8 @@ function Format-KitDayHeat($Rows, [string[]]$Dates, [string]$What, [string]$TotL
   $nd = @($Dates).Count; if (-not $nd) { return '' }; $ic = [cultureinfo]::InvariantCulture; $cn = "style='--n:$nd'"
   $dl = { param($i) if ($i -eq $nd - 1) { 'today' } else { try { ([datetime]$Dates[$i]).ToString('ddd dd', $ic) } catch { "$($Dates[$i])" } } }
   $head = "<div class='gk gh'><span class=gn>$(& $e $What)</span><span class='gs0 hrs dy' $cn aria-hidden=true>$(@(for ($i = 0; $i -lt $nd; $i++) { "<b$(if ($i -eq $nd - 1) { ' class=nw' })>$(& $dl $i)</b>" }) -join '')</span><span class=gc><small>$(& $e $TotLabel)</small></span></div>"
-  $rs = @(foreach ($r in @($Rows | Where-Object { $_ })) { $vs = @(for ($i = 0; $i -lt $nd; $i++) { @($r.v)[$i] })
+  $rs = @(foreach ($r in @($Rows | Where-Object { $_ })) { if ($r.hd) { [pscustomobject]@{ hd = $r }; continue }   # a row group's header
+      $vs = @(for ($i = 0; $i -lt $nd; $i++) { @($r.v)[$i] })
       $mx = [math]::Max(1e-9, [double](@($vs | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ }) + 0 | Measure-Object -Maximum).Maximum)
       $pk = if ($r.sk) { Get-KitSplitPeaks $r.so $r.sk }   # sk + so: a split row (usage.ps1 split), each type shaded by its own peak
       # the parts as one bar: gradient stops at their running share, each in its tile colour (out slate, fresh k2, cache write k3, cache read k4)
@@ -520,10 +521,16 @@ function Format-KitDayHeat($Rows, [string[]]$Dates, [string]$What, [string]$TotL
           $c = Format-KitHeatCell $(if ($r.sh) { [int]@($r.sh)[$i] } elseif ($null -eq $v) { 0 } else { Get-KitHeatShade ([double]$v / $mx) }) $tx $tp ($i -eq $nd - 1)
           # dd: a direction per day (up / dn / rs = reset / ch = changed, not a number): the cell's colour (CSS .hm.pd)
           if ($r.dd -and "$(@($r.dd)[$i])") { $c = $c -replace '^<i', "<i data-d=$(@($r.dd)[$i])" }
+          if ($r.dt -and "$(@($r.dt)[$i])") { $c = $c -replace '^<i', "<i data-t=$(@($r.dt)[$i])" }   # dt: a tone per day (warn amber, act red)
           if ($r.fv -and $tx) { $c -replace '^<i', "<i tabindex=0 role=button data-ft='$(& $e $r.ft)' data-fv='$(& $e "$(@($r.fv)[$i])")'" } else { $c } })
       $busy = [bool]$r.keep -or [bool]@($vs | Where-Object { $null -ne $_ -and [double]$_ -gt 0 }).Count
-      [pscustomobject]@{ busy = $busy; html = "<div class=$(if ($r.gl) { "'gk gl0'" } else { 'gk' })$(if ($r.mk) { " data-mk='$($r.mk -replace '[^\w.:-]', '-')'" })><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })$(if ($r.id) { ' translate=no' })>$(& $e $r.n)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span><span class='gs hm dy$(if ($r.cls) { " $($r.cls)" })$(if ($r.sk -or $r.sb) { ' sbr' })' $cn role=img aria-label='$(& $e "$($r.n) per day, $nd days")'>$($cells -join '')</span><span class='gc$(if ("$($r.t)" -in '', '0', '—') { ' z' })'>$(& $e "$($r.t)")</span></div>" } })
-  "<div class='gks w1 dyh'>$head$(Format-KitHeatRows $rs 'rows' "$nd days")</div>"
+      [pscustomobject]@{ busy = $busy; html = "<div class=$(if ($r.gl) { "'gk gl0'" } else { 'gk' })$(if ($r.mk) { " data-mk='$($r.mk -replace '[^\w.:-]', '-')'" })><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })$(if ($r.id) { ' translate=no' })>$(& $e $r.n)$(if ($r.subh) { "<small>$($r.subh)</small>" } elseif ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span><span class='gs hm dy$(if ($r.cls) { " $($r.cls)" })$(if ($r.sk -or $r.sb) { ' sbr' })' $cn role=img aria-label='$(& $e "$($r.n) per day, $nd days")'>$($cells -join '')</span><span class='gc$(if ("$($r.t)" -in '', '0', '—') { ' z' })'>$(& $e "$($r.t)")</span></div>" } })
+  # row groups (owner 2026-11-24: one Per day map): @{ hd = title; g = key; cn = count; ex = summary html } starts a folding group; idle rows fold per group
+  $segs = [Collections.Generic.List[object]]::new(); $segs.Add([pscustomobject]@{ hd = $null; rows = [Collections.Generic.List[object]]::new() })
+  foreach ($x in $rs) { if ($x.hd) { $segs.Add([pscustomobject]@{ hd = $x.hd; rows = [Collections.Generic.List[object]]::new() }) } else { $segs[-1].rows.Add($x) } }
+  $body = @(foreach ($sg in $segs) { $hr = Format-KitHeatRows $sg.rows 'rows' "$nd days"; if (-not $sg.hd) { $hr; continue }; $h0 = $sg.hd
+      "<div class=rgg data-g='dg-$($h0.g -replace '[^\w-]', '-')'><div class='gk rgh dgh'><button type=button class=rgb aria-expanded=true><span class=gn0>$(& $e $h0.hd)</span>$(if ("$($h0.cn)" -ne '') { "<span class=gcn>$(& $e $h0.cn)</span>" })$(if ($h0.ex) { "<span class=fsm>$($h0.ex)</span>" })</button></div>$hr</div>" })
+  "<div class='gks w1 dyh'>$head$($body -join '')</div>"
 }
 # shared card parts (owner 2026-11-19: value + label tiles, one labelled stacked bar, an aligned table; never dot-joined text lines)
 # stat tiles: @{ v = value; u = unit; l = label; t = tone (act | watch); tip }
@@ -746,21 +753,18 @@ function Format-KitFlagHeat($FH) {
   $head = "<div class='gk gh'><span class=gn>level · kind · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead $h0)</span><span class=gc><small>24 h</small></span></div>"
   & $fold 'flagmap' 'Flags · 24 h' "$(@($xs | ForEach-Object { "$($_.l)|$($_.y)" } | Select-Object -Unique).Count) flags" "<div class='gks w1' data-mk=flags-hour>$head$(Format-KitHeatRows $rows 'rows')</div>$(Format-KitLegend 'cell = flags / hour · red ACT · amber WATCH · green FIXED' 'a cell = distinct flags raised that hour, shaded by count · outlined = now · tap a cell for the texts')" -Open:([bool]@($rows | Where-Object busy).Count) -tag h4 -cls 'sub st fhm'
 }
-# test runs (owner, 2026-11-14: one Activity tile): checks and pass % over 7 days, a stacked bar per day, NOT_TESTED causes in one line
-function Format-KitQaTile($qa, [datetime]$At = (Get-Date)) {
-  $ds = @($qa.days | Where-Object { $_ }); $tot = { param($d) [int]$d.pass + [int]$d.fail + [int]$d.nt + [int]$d.oos }
-  $kinds = @(@('pass', 'pass', 'q-p'), @('fail', 'fail', 'q-f'), @('nt', 'not tested', 'q-n'), @('oos', 'out of scope', 'q-o'))   # words, not the result codes
+# test checks (owner 2026-11-24: the Test runs tile folded into Per day): a group header (checks, pass % without OUT_OF_SCOPE, NOT_TESTED
+# causes) and a day row per result; a cell's tooltip names that day's runs
+function Get-KitQaDayRows($qa) {
+  $ds = @($qa.days | Where-Object { $_ }); $kinds = @(@('pass', 'pass', 'ws'), @('fail', 'fail', 'fh l-act'), @('nt', 'not tested', 'fh l-watch'), @('oos', 'out of scope', ''))   # words, not the result codes
   $sm = @{}; foreach ($kd in $kinds) { $kn = $kd[0]; $sm[$kn] = [int](@($ds | ForEach-Object { [int](Get-KitMember $_ $kn) }) + 0 | Measure-Object -Sum).Sum }
-  $n = $sm.pass + $sm.fail + $sm.nt + $sm.oos; if (-not $n) { return }
-  $inScope = $sm.pass + $sm.fail + $sm.nt; $pct = if ($inScope) { "$([math]::Round(100 * $sm.pass / $inScope))<small>% pass</small>" } else { '—<small> pass</small>' }   # OUT_OF_SCOPE never counts against the pass rate
-  $mx = [math]::Max(1, (@($ds | ForEach-Object { & $tot $_ }) + 0 | Measure-Object -Maximum).Maximum); $ic = [cultureinfo]::InvariantCulture; $today = $At.ToString('yyyy-MM-dd')
-  $cols = @(foreach ($d in $ds) { $t = & $tot $d; $dl = try { ([datetime]$d.day).ToString('ddd dd', $ic) } catch { $d.day }
-      "<span class='dbc$(if (-not $t) { ' z' })' title='$(& $e "$dl · $(@($d.runs).Count) runs · $(@($kinds | ForEach-Object { "$([int](Get-KitMember $d ($_[0]))) $($_[1])" }) -join ' · ')")'><b>$(if ($t) { $t } else { '—' })</b><i class=qs style='height:calc((100% - 12px) * $(& $n1 (100 * $t / $mx)) / 100)'>$(@($kinds | Where-Object { [int](Get-KitMember $d ($_[0])) } | ForEach-Object { "<i class=$($_[2]) style='flex:$([int](Get-KitMember $d ($_[0])))'></i>" }) -join '')</i></span>" })
-  $axis = @($ds | ForEach-Object { if ($_.day -eq $today) { '<span class=x>today</span>' } else { "<span>$(try { ([datetime]$_.day).ToString('ddd', $ic) } catch { $_.day })</span>" } }) -join ''
-  $legend = @($kinds | Where-Object { $sm[$_[0]] } | ForEach-Object { "<span class=ql><i class=$($_[2])></i>$($_[1]) $($sm[$_[0]])</span>" }) -join ''
-  $cz = @((Get-KitProps $qa.causes) | Where-Object { [int]$_.Value } | Sort-Object { - [int]$_.Value } | ForEach-Object { "$(& $e $_.Name) $([int]$_.Value)" })
-  "<div class=st data-fit data-mk=qa-day><div class=k>Test runs, 7 days</div><div class=v>$n<small> checks · </small>$pct</div>$(if ($cz.Count) { "<div class=s>Not tested: $($cz -join ' · ')</div>" })" +
-  "<figure class='dbr qbr'><div class=dbw role=img aria-label='checks per day, 7 days'>$($cols -join '')</div><div class=dbx>$axis</div><figcaption>$legend</figcaption></figure></div>"
+  $n = $sm.pass + $sm.fail + $sm.nt + $sm.oos; if (-not $n) { return @() }
+  $inScope = $sm.pass + $sm.fail + $sm.nt; $pct = if ($inScope) { "$([math]::Round(100 * $sm.pass / $inScope))% pass" } else { '— pass' }
+  $cz = @((Get-KitProps $qa.causes) | Where-Object { [int]$_.Value } | Sort-Object { - [int]$_.Value } | ForEach-Object { "$($_.Name) $([int]$_.Value)" })
+  $runsOf = { param($d) @($d.runs | Where-Object { $_ } | ForEach-Object { "$($_.run) ($($_.items) item(s))" }) -join ', ' }
+  @(@{ hd = 'Test checks'; g = 'qa'; cn = $n; ex = (& $e "$pct$(if ($cz.Count) { " · not tested: $($cz -join ' · ')" })") }) + @(foreach ($kd in $kinds) { $kn = $kd[0]
+      @{ n = $kd[1]; mk = "qa-$kn-day"; cls = $kd[2]; d = @($ds | ForEach-Object { "$($_.day)" }); v = @($ds | ForEach-Object { [double](Get-KitMember $_ $kn) }); t = "$($sm[$kn])"
+        title = "QA checks $($kd[1]) per day (results.json of the test runs); 7 d: sum"; tips = @($ds | ForEach-Object { "$([int](Get-KitMember $_ $kn)) $($kd[1])$(if (@($_.runs).Count) { " · runs: $(& $runsOf $_)" })" }) } })
 }
 # THE info popover of the page and its run pages (owner 2026-11-23); every title / data-tip renders through it
 # its colour swatches: the context categories (usage.ps1 KitCtxCats, the chart's --x-<key> colours)
@@ -914,19 +918,17 @@ function Get-KitStatsCss {
   'dialog.drw{position:fixed;inset:0 0 0 auto;margin:0;height:100dvh;max-height:none;width:min(1100px,94vw);max-width:none;padding:0;border:0;border-left:1px solid var(--ln);background:var(--bg);color:var(--fg)}dialog.drw[open]{display:flex;flex-direction:column}dialog.drw::backdrop{background:rgba(0,0,0,.35)}.dwh{display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--ln)}.dwh b{flex:1;font-size:13px;overflow-wrap:anywhere}.drw iframe{flex:1;border:0;width:100%;background:var(--bg)}' +
   '.nod{font-size:10.5px;color:var(--mt);padding:10px 0;text-align:center}' +
   '.cpt{margin-top:6px}.cpo{display:grid;grid-template-columns:minmax(0,1fr) max-content max-content;gap:2px 12px;font-size:12px;padding:2px 0;border-top:1px solid var(--ln)}.cpo .cn0{overflow-wrap:anywhere}.cpo small{color:var(--mt)}.cpo.hot .gc{color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}' +
-  '.dbc .qs{display:flex;flex-direction:column-reverse;overflow:hidden;background:none}.qs>i{display:block;min-height:2px;border-radius:0}.qs>.q-p,.ql>.q-p{background:var(--sage)}.qs>.q-f,.ql>.q-f{background:var(--act)}.qs>.q-n,.ql>.q-n{background:var(--watch)}.qs>.q-o,.ql>.q-o{background:color-mix(in srgb,var(--mt) 35%,var(--sf2))}' +
-  '.qbr figcaption{display:flex;flex-wrap:wrap;gap:0 8px;margin-top:2px}.ql{white-space:nowrap}.ql i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:3px;vertical-align:-1px}' +
   # bands (owner 2026-11-19): flags table, runs timeline, metric heatmaps; D8: every tile one size, a one-line label (ellipsis, its title holds it)
   '.flt{width:100%;table-layout:fixed}.flt col.c-lv{width:84px}.flt col.c-k{width:12%}.flt col.c-w{width:13%}.flt col.c-n{width:30%}.flt col.c-a{width:112px}.flt td{vertical-align:top;overflow-wrap:anywhere}.flt tr.ACT>td:first-child{box-shadow:inset 3px 0 var(--act)}.flt tr.WATCH>td:first-child{box-shadow:inset 3px 0 var(--watch)}.fxn{margin-left:4px;font-size:11px;color:var(--mt)}.chip.fxd{color:color-mix(in srgb,var(--sage2) 70%,var(--fg))}.fxb{all:unset;cursor:pointer;color:var(--mt);font-size:12px}.fxb::before{content:"\25B8  "}.fxb[aria-expanded=true]::before{content:"\25BE  "}.fxr>td{color:var(--mt);font-size:12px}#fl-hist{margin-top:8px}' +
   '@media(max-width:699px){.flt thead,.flt colgroup{display:none}.tw>table.flt tr{display:flex!important;flex-wrap:wrap;gap:2px 8px;padding:6px 0;border-top:1px solid var(--ln)}.tw>table.flt td{border:0;padding:0;flex:0 1 auto}.tw>table.flt td:nth-child(n+4),.tw>table.flt td[colspan]{flex-basis:100%}.tw>table.flt td::before{display:none}.mhw .gks.w0{grid-template-columns:minmax(0,1fr)}.gks.w0 .gk{grid-template-columns:minmax(0,1fr)}}' +
   '.rtl .gn{max-width:380px}.rtl .rr>.gn{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:baseline}.rtg{all:unset;cursor:pointer;font-weight:600;overflow-wrap:anywhere}.rtg::before{content:"\25B8 ";color:var(--mt)}.rgg:not(.cl)>.rr .rtg::before{content:"\25BE "}.rtl .gk.ag>.gn{padding-left:16px;white-space:normal;overflow-wrap:anywhere}.rtl .gk.ag .chip{margin-left:6px}:is(.rdg,.rkg).cl>.rgg{display:none}.rkh .gn small{font-weight:500}.rtl .rkg>.rgg>.rr>.gn{padding-left:16px}.rtl .rkg .gk.ag>.gn{padding-left:32px}.hm.rn i{--a:0%;background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.rtl .rk{font-size:11px}' +
-  '.gks.w0{grid-template-columns:minmax(0,max-content) minmax(160px,1fr)}.mhw .gks.w0{min-width:calc(var(--n) * 52px + 110px + var(--xw,0px))}.mhw .hm.dy,.mhw .hrs.dy{grid-template-columns:var(--gt,repeat(var(--n),minmax(48px,1fr)))}.hm.mh i[data-t=warn]{background:color-mix(in srgb,var(--watch) 60%,var(--sf2))}.hm.mh i[data-t=act]{background:color-mix(in srgb,var(--act) 60%,var(--sf2))}' +
+  '.gks.w0{grid-template-columns:minmax(0,max-content) minmax(160px,1fr)}.mhw .gks.w0{min-width:calc(var(--n) * 52px + 110px + var(--xw,0px))}.mhw .hm.dy,.mhw .hrs.dy{grid-template-columns:var(--gt,repeat(var(--n),minmax(48px,1fr)))}:is(.hm.mh,.hm.dy) i[data-t=warn]{background:color-mix(in srgb,var(--watch) 60%,var(--sf2))}:is(.hm.mh,.hm.dy) i[data-t=act]{background:color-mix(in srgb,var(--act) 60%,var(--sf2))}.gn small .rdw{color:color-mix(in srgb,var(--watch) 70%,var(--fg));font-weight:650}.gn small .rdv{color:color-mix(in srgb,var(--act) 70%,var(--fg));font-weight:650}.dyh .dgh>.rgb{margin-top:4px}.mgh b{border-bottom:2px solid var(--sage2);text-align:center;font-weight:650;color:var(--fg);padding-bottom:1px}.mhw [data-g0]{margin-left:6px}' +
   '.tls{align-items:stretch}.tl{min-height:46px;width:136px;display:flex;flex-direction:column;justify-content:space-between}.tl b{line-height:20px;white-space:nowrap}.tl span{display:block;line-height:14px;overflow-wrap:break-word}' +   # a long label wraps (never cut with an ellipsis)
   '.fsm{margin-left:8px;font-size:12px;font-weight:400;color:var(--mt);overflow-wrap:anywhere}' +   # a folded block's one-line summary in its header
   # split cells (usage.ps1 split, owner 2026-11-20): a row of small muted tiles (tint = type, fill capped by --kcap so text keeps 4.5:1,
   # a 2px accent at the left; output strongest, cache read faintest, the total strongest of all); the cell's own width picks the form
   # (container query): wide p4 + total, medium p2 + total, narrow the total over a 4-part bar; never stacked bands; .kh = the tile names
-  '.cxc{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:76px;text-align:right}[data-mk=context-role] .gs0.dy b{white-space:normal;overflow-wrap:anywhere;line-height:12px}.cxc b{text-align:right;font-size:11px;font-weight:600;line-height:13px;color:var(--fg)}.cxb{display:flex;height:6px;gap:1px;border-radius:2px;overflow:hidden;background:var(--sf2)}.cxb i{display:block;flex:0 1 0;min-width:2px}' +
+  '.cxc{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:76px;text-align:right}[data-mk=spend-role] .gs0.dy b{white-space:normal;overflow-wrap:anywhere;line-height:12px}.cxc b{text-align:right;font-size:11px;font-weight:600;line-height:13px;color:var(--fg)}.cxb{display:flex;height:6px;gap:1px;border-radius:2px;overflow:hidden;background:var(--sf2)}.cxb i{display:block;flex:0 1 0;min-width:2px}' +
   ':root{--x-ki:var(--plum);--x-ti:var(--sage2);--x-cd:var(--slate);--x-kd:var(--k3);--x-bt:var(--watch);--x-ot:var(--k4);--x-wd:var(--k2);--x-mo:var(--sage)}.x-ki{background:var(--x-ki)}.x-ti{background:var(--x-ti)}.x-cd{background:var(--x-cd)}.x-kd{background:var(--x-kd)}.x-bt{background:var(--x-bt)}.x-ot{background:var(--x-ot)}.x-wd{background:var(--x-wd)}.x-mo{background:var(--x-mo)}' +
   '.k-out,.k-wk,.k-to,.k-tw{--kc:var(--slate)}.k-to,.k-in{--kx:.85}.k-in,.k-mo{--kc:var(--k2)}.k-cw{--kc:var(--k3);--kx:.75}:is(.k-cr,.k-ca,.k-wa){--kc:var(--k4);--kx:.55}.k-tot{--kc:var(--sage)}.lgk[class*=k-]{background:var(--kc)}.kleg{white-space:normal}.hki{cursor:help;color:var(--mt);font-size:13px;line-height:1;margin-left:2px}.hki:focus-visible{outline:2px solid var(--sage);border-radius:50%}' +
   '@media(min-width:700px){.gks.w2{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(2,max-content)}.gks.w2 .gk{column-gap:12px}}@media(min-width:1100px){.gks.w2{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(3,max-content)}}@media(max-width:1099px){.gks.w2 .cxc{display:none}}@media(max-width:699px){.gks.w2 .gk{grid-template-columns:repeat(2,minmax(0,1fr))}}' +
@@ -1062,10 +1064,13 @@ function Format-KitRunsTimeline($Runs, $Agents, $Pages, $UsageAt = $null, $Usage
   $uOld = if ($UsageAt) { try { $ua = [datetime]$UsageAt; if (($at - $ua).TotalMinutes -gt 2 * [double](Get-KitParam 'supervise.heartbeatMinutes')) { "<p class=m>Tokens and steps: usage as of $($ua.ToString('MM-dd HH:mm')) (bossy.ps1 budget -Usage refreshes it); running state from this sweep.</p>" } } catch { } }
   "$uOld<div class='gks w2 rtl' data-mk=runs-hour>$(if ($liveR.Count) { "$(& $head $hL)$(@($liveR | ForEach-Object { & $runRow $_ $hL 23 }) -join '')" })$($dayG -join '')</div>$(Format-KitLegend "Cell: output / minutes · $(Format-KitSplitLegend) · Context: $(Format-KitContextLegend)" "a cell = minutes the run (or agent) was active in that clock hour (sage, lower part) under its output tokens in that hour (slate, upper part, shaded by the row's peak; hover: the hour's tokens and cost by type) · tokens · cost and time: a tile per type and the total (time: elapsed, wall clock); a narrower cell shows work / cache, then the total over a bar · context peak: the largest context of one model call, over the mix of what each call re-sent (hover: tokens per source, waste signals; bossy.ps1 usage -Context) · tap a run for its agents · running and ended today: the last 24 h (now at the right), older days: their clock day · ended runs by kind: tap a kind for its runs")"
 }
-# a metric heatmap (D2, D3): rows x named metric columns, each column shaded by its own peak; a row @{ n; title; v = values; tx = texts;
-# tips; tone = a class per cell ('' | warn | act) }; idle rows (no value) fold
-function Format-KitMetricHeat($Rows, [string[]]$Cols, [string]$What, [string]$Mk) {
+# a metric heatmap (D2, D3): rows x named metric columns, each column shaded by its own peak; a row @{ n; sub; title; v = values; tx = texts;
+# tips; tone = a class per cell ('' | warn | act) }; idle rows (no value) fold; $Groups @(@(label, columns), ..): a header over each
+# column group (owner 2026-11-24, the role map), a gap before each group after the first
+function Format-KitMetricHeat($Rows, [string[]]$Cols, [string]$What, [string]$Mk, $Groups = @()) {
   $nc = $Cols.Count; $rs = @($Rows | Where-Object { $_ })
+  $g0 = @{}; $gi = 0; foreach ($g in @($Groups)) { if ($gi) { $g0[$gi] = $true }; $gi += [int]$g[1] }   # the first column of each later group
+  $gHead = if (@($Groups).Count) { "<div class='gk gh mgr'><span class=gn></span><span class='gs0 hrs dy mgh' STYLE aria-hidden=true>$(@($Groups | ForEach-Object { $gs = 0 }{ "<b$(if ($gs) { ' data-g0' }) style='grid-column:span $([int]$_[1])'>$(& $e $_[0])</b>"; $gs += [int]$_[1] }) -join '')</span></div>" }
   # a split column gets the width of its tile row (wide form): tokens · cost 5 tiles, time 4; the rest share what is left
   $ck = @(for ($ci = 0; $ci -lt $nc; $ci++) { "$(@($rs | ForEach-Object { "$(@($_.sk)[$ci])" } | Where-Object { $_ })[0])" })
   $cn = if (@($ck | Where-Object { $_ }).Count) { "style='--n:$nc;--gt:$(@($ck | ForEach-Object { switch ($_) { '' { 'minmax(48px,1fr)' } 'time' { 'minmax(190px,2.2fr)' } default { 'minmax(260px,3fr)' } } }) -join ' ');--xw:$(@($ck | ForEach-Object { switch ($_) { '' { 0 } 'time' { 140 } default { 210 } } }) | Measure-Object -Sum | ForEach-Object Sum)px'" } else { "style='--n:$nc'" }
@@ -1073,21 +1078,31 @@ function Format-KitMetricHeat($Rows, [string[]]$Cols, [string]$What, [string]$Mk
   # sk + so (a kind and an object per column): a split column (usage.ps1 split), each type shaded by its column peak
   $pkc = @(for ($ci = 0; $ci -lt $nc; $ci++) { $k0 = @($rs | ForEach-Object { "$(@($_.sk)[$ci])" } | Where-Object { $_ })[0]; if ($k0) { Get-KitSplitPeaks @($rs | ForEach-Object { @($_.so)[$ci] }) $k0 } else { $null } })
   $out = @(foreach ($r in $rs) { $cells = @(for ($ci = 0; $ci -lt $nc; $ci++) { $v = @($r.v)[$ci]; $tn = "$(@($r.tone)[$ci])"
-        if ("$(@($r.sk)[$ci])" -and @($r.so)[$ci]) { Format-KitSplitCell @($r.so)[$ci] "$(@($r.sk)[$ci])" "$($r.n) · $($Cols[$ci])`n$(if (@($r.tips)[$ci]) { @($r.tips)[$ci] } else { Get-KitSplitTip @($r.so)[$ci] })" $pkc[$ci] -Heat; continue }
+        if ("$(@($r.sk)[$ci])" -and @($r.so)[$ci]) { $sc = Format-KitSplitCell @($r.so)[$ci] "$(@($r.sk)[$ci])" "$($r.n) · $($Cols[$ci])`n$(if (@($r.tips)[$ci]) { @($r.tips)[$ci] } else { Get-KitSplitTip @($r.so)[$ci] })" $pkc[$ci] -Heat; if ($g0[$ci]) { $sc -replace '^<i', '<i data-g0' } else { $sc }; continue }
         $c = Format-KitHeatCell $(if ($null -eq $v) { 0 } else { Get-KitHeatShade ([double]$v / $mx[$ci]) }) "$(@($r.tx)[$ci])" "$($r.n) · $($Cols[$ci]): $(if (@($r.tips)[$ci]) { @($r.tips)[$ci] } else { @($r.tx)[$ci] })" $false
-        if ($tn) { $c -replace '^<i', "<i data-t=$tn" } else { $c } })
-      [pscustomobject]@{ busy = [bool]@($r.v | Where-Object { [double]$_ -gt 0 }).Count; html = "<div class=gk><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })$(if ($r.id) { ' translate=no' })>$(& $e $r.n)</span><span class='gs hm dy mh$(if (@($r.sk | Where-Object { $_ }).Count) { ' kr' })' $cn role=img aria-label='$(& $e "$($r.n): $($Cols -join ', ')")'>$($cells -join '')</span></div>" } })
-  "<div class='tw mhw'><div class='gks w0 dyh' $cn data-mk=$($Mk -replace '[^\w.:-]', '-')><div class='gk gh'><span class=gn>$(& $e $What)</span><span class='gs0 hrs dy' $cn aria-hidden=true>$(@(for ($ci = 0; $ci -lt $nc; $ci++) { "<b>$(& $e (Format-KitLabel $Cols[$ci]))$(if ($ck[$ci]) { Format-KitSplitHead $ck[$ci] })</b>" }) -join '')</span></div>$(Format-KitHeatRows $out 'rows' '7 days')</div></div>"
+        if ($tn) { $c = $c -replace '^<i', "<i data-t=$tn" }; if ($g0[$ci]) { $c -replace '^<i', '<i data-g0' } else { $c } })
+      [pscustomobject]@{ busy = [bool]@($r.v | Where-Object { [double]$_ -gt 0 }).Count; html = "<div class=gk><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })$(if ($r.id) { ' translate=no' })>$(& $e $r.n)$(if ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span><span class='gs hm dy mh$(if (@($r.sk | Where-Object { $_ }).Count) { ' kr' })' $cn role=img aria-label='$(& $e "$($r.n): $($Cols -join ', ')")'>$($cells -join '')</span></div>" } })
+  "<div class='tw mhw'><div class='gks w0 dyh' $cn data-mk=$($Mk -replace '[^\w.:-]', '-')>$("$gHead".Replace('STYLE', $cn))<div class='gk gh'><span class=gn>$(& $e $What)</span><span class='gs0 hrs dy' $cn aria-hidden=true>$(@(for ($ci = 0; $ci -lt $nc; $ci++) { "<b$(if ($g0[$ci]) { ' data-g0' })>$($hl = & $e (Format-KitLabel $Cols[$ci]); if ($gHead) { $hl -replace '(\w{7})(\w{4,})', '$1&#173;$2' } else { $hl })$(if ($ck[$ci]) { Format-KitSplitHead $ck[$ci] })</b>" }) -join '')</span></div>$(Format-KitHeatRows $out 'rows' '7 days')</div></div>"
 }
-# repos now (D3): repo x branches, worktrees, kept, dirty, diverged; dirty amber, diverged red, the branches in the tooltip
-function Format-KitRepoGrid($Repos, $Sync) {
-  $syOf = @{}; foreach ($s in @($Sync | Where-Object { $_.repo })) { $syOf["$($s.repo)"] = $s }
-  $rr = @($Repos.repos | Where-Object { $_.repo -and [int]$_.branches + [int]$_.worktrees } | Sort-Object { -[int]$_.branches }, { -[int]$_.worktrees }); if (-not $rr.Count) { return '' }
-  $rows = @($rr | ForEach-Object { $s = $syOf["$($_.repo)"]; $dl = @($s.dirty | Where-Object { $_ }); $vl = @($s.diverged | Where-Object { $_ })
-      @{ n = "$($_.repo)"; id = $true; v = @([int]$_.branches, [int]$_.worktrees, [int]$_.kept, $dl.Count, $vl.Count); tx = @("$([int]$_.branches)", "$([int]$_.worktrees)", "$([int]$_.kept)", "$($dl.Count)", "$($vl.Count)")
-        tips = @('', '', 'unpushed, open or dirty: cleanup keeps it', ($dl -join '; '), ($vl -join '; ')); tone = @('', '', '', $(if ($dl.Count) { 'warn' }), $(if ($vl.Count) { 'act' })) } })
-  $sm = @(0..4 | ForEach-Object { $ci = $_; [int](@($rows | ForEach-Object { @($_.v)[$ci] }) | Measure-Object -Sum).Sum })   # folded (owner 2026-11-19): the totals in its header
-  & $fold 'repos-now' 'Repos now' $rr.Count "$(Format-KitMetricHeat $rows @('branches', 'worktrees', 'kept', 'dirty', 'diverged') 'repo' 'repo-now')$(Format-KitLegend 'amber dirty · red diverged' 'from the last repo sync · tap a cell for the branches')" -tag h4 -cls 'sub st' -extra "<span class=fsm>$($sm[0]) branches · $($sm[1]) worktrees$(if ($sm[3]) { " · $($sm[3]) dirty" })$(if ($sm[4]) { " · $($sm[4]) diverged" })$(if ($ra = try { [datetime]$Repos.at } catch { $null }) { " · as of $($ra.ToString($(if ($ra.Date -eq $at.Date) { 'HH:mm' } else { 'MM-dd HH:mm' })))" })</span>"
+# repos (owner 2026-11-24: Repos now folded into Per day): a group header (totals, as of), the all-repo branches / worktrees rows ($Total),
+# then a row per repo: a cell = branches / worktrees that day (the day's last sample's rp; today: the last sync), its line kept, dirty
+# (amber), diverged (red), the branches in the tooltip
+function Get-KitRepoDayRows($Repos, $Sync, $Live, [string[]]$Dates, $Total = @()) {
+  $syOf = @{}; foreach ($s in @($Sync | Where-Object { $_.repo })) { $syOf["$($s.repo)"] = $s }; $nd = $Dates.Count
+  $rr = @($Repos.repos | Where-Object { $_.repo -and [int]$_.branches + [int]$_.worktrees } | Sort-Object { -[int]$_.branches }, { -[int]$_.worktrees })
+  if (-not $rr.Count) { return @(@{ hd = 'Repos'; g = 'repos' }) + @($Total) }
+  $last = @{}; foreach ($x in @($Live | Where-Object { $_.rp -and $_.at })) { $last[$(try { ([datetime]$x.at).ToString('yyyy-MM-dd') } catch { '' })] = $x.rp }   # samples are oldest first: the day's last wins
+  $sm = @(0, 0, 0, 0, 0); $rows = @(foreach ($r in $rr) { $s = $syOf["$($r.repo)"]; $dl = @($s.dirty | Where-Object { $_ }); $vl = @($s.diverged | Where-Object { $_ })
+      $nb = [int]$r.branches; $nw = [int]$r.worktrees; $kp = [int]$r.kept; $sm[0] += $nb; $sm[1] += $nw; $sm[2] += $kp; $sm[3] += $dl.Count; $sm[4] += $vl.Count
+      $hv = @(for ($i = 0; $i -lt $nd; $i++) { if ($i -eq $nd - 1) { , @($nb, $nw) } else { $p = Get-KitMember $last[$Dates[$i]] "$($r.repo)"; if ($null -ne $p) { , @([int]@($p)[0], [int]@($p)[1]) } else { $null } } })
+      $tn = if ($vl.Count) { 'act' } elseif ($dl.Count) { 'warn' } else { '' }
+      @{ n = "$($r.repo)"; id = $true; mk = "repo-day-$($r.repo)"; cls = 'ws'; t = "$nb/$nw"; title = "$($r.repo): branches / worktrees per day (the day's last sample; today: the last sync)"
+        subh = "kept $kp$(if ($dl.Count) { " · <span class=rdw>dirty $($dl.Count)</span>" })$(if ($vl.Count) { " · <span class=rdv>diverged $($vl.Count)</span>" })"
+        v = @($hv | ForEach-Object { if ($null -ne $_) { [double]$_[0] } else { $null } }); tx = @($hv | ForEach-Object { if ($null -ne $_) { "$($_[0])/$($_[1])" } else { '' } })
+        dt = @(for ($i = 0; $i -lt $nd; $i++) { if ($i -eq $nd - 1) { $tn } else { '' } })
+        tips = @(for ($i = 0; $i -lt $nd; $i++) { $h1 = $hv[$i]; if ($null -eq $h1) { 'no sample' } else { "$($h1[0]) branches · $($h1[1]) worktrees$(if ($i -eq $nd - 1) { " · kept $kp (unpushed, open or dirty: cleanup keeps it)$(if ($dl.Count) { "`ndirty: $($dl -join '; ')" })$(if ($vl.Count) { "`ndiverged: $($vl -join '; ')" })" })" } }) } })
+  $ra = try { [datetime]$Repos.at } catch { $null }
+  @(@{ hd = 'Repos'; g = 'repos'; cn = $rr.Count; ex = (& $e "$($sm[0]) branches · $($sm[1]) worktrees · $($sm[2]) kept$(if ($sm[3]) { " · $($sm[3]) dirty" })$(if ($sm[4]) { " · $($sm[4]) diverged" })$(if ($ra) { " · as of $($ra.ToString($(if ($ra.Date -eq $at.Date) { 'HH:mm' } else { 'MM-dd HH:mm' })))" })") }) + @($Total) + $rows
 }
 # ---- shells: progress of agents' background shells without a service or new files (owner 2026-11-18): output file tail, CPU + IO samples; the sweep: supervise-resources.ps1 shells
 # the last $Bytes of a file another process may be writing ('' when unreadable)
@@ -1190,7 +1205,7 @@ function Get-KitStatsCutoff {
   if ($rd.Count) { $rd[-1] } else { [datetime]::MinValue }
 }
 # a budget -Usage result without what came before $StatsFrom: ended runs started before it (the day they are listed under), its days' values, its MRs; step outcomes recounted
-# from the kept runs (Spend per role stays: the result has no per-day split of it)
+# from the kept runs (the Per role map stays: the result has no per-day split of it)
 function Select-KitUsageSince($U, [datetime]$StatsFrom) {
   if (-not $U -or $StatsFrom -eq [datetime]::MinValue) { return $U }
   $cutDay = $StatsFrom.ToString('yyyy-MM-dd'); $uo = $U.PSObject.Copy()

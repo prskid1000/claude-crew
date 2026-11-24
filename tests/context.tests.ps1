@@ -128,16 +128,16 @@ $mk = { param($n, $t) [pscustomobject]@{ label = $n; role = 'kitty'; run = $n; r
 '@ @($O)
 Expect "context ACT: one line per source class, its top files by agents ($cg)" (@($cg).Count -eq 1 -and "$cg" -match '^context: code reads results over 8000 tokens in 4 agents => .*top: Read a\.ps1 2, Read b\.ps1 2; roles kitty')
 
-# the page: the Runs band cell (peak over a stacked bar, the tooltip per source + waste), the day heat's mix bar, the per-role table
+# the page: the Runs band cell (peak over a stacked bar, the tooltip per source + waste), the day heat's mix bar, role cells
 $pg = Invoke-PsTest ctx-page @'
 $null = . $args[0] 6>$null; function e($s) { [Net.WebUtility]::HtmlEncode("$s") }; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }
 $c = [pscustomobject]@{ n = 4; s0 = 20000; pk = 29000; sum = 94000; last = 21000; cmp = 1; ho = 1; agents = 1; pks = 29000; add = @(21500, 1000, 3000, 0, 4000, 0, 0, 1200); car = @(60000, 3000, 9000, 0, 12000, 0, 0, 10000); w = @(2, 2000, 0, 0, 1, 4000); rr = @(3, '/w/app/src/main.java'); top = @('4000|4|Bash pwsh crafty.ps1 check') }
 $cell = Format-KitContextCell $c 'build:A1'; $none = Format-KitContextCell $null
 $day = Format-KitDayHeat @(@{ n = 'Context mix'; v = @(94000, $null); sb = @((Get-KitContextGradient $c.car), ''); fmt = { param($v) Format-KitCompactNum $v }; t = '94k' }) @('2026-01-01', '2026-01-02') 'day'
-$roles = Format-KitContextRoles @([pscustomobject]@{ k = 'devy'; cx = $c }) { param($v) Format-KitCompactNum $v }
+$roles = Get-KitContextRoleCells ([pscustomobject]@{ cx = $c }) { param($v) Format-KitCompactNum $v }; $none2 = Get-KitContextRoleCells $null {}
 $rx1 = "^<span class='gc cxc' title='build:A1`ncontext peak 29k &#183; start 20k"; $rx2 = "<b>29k</b><span class=cxb aria-hidden=true><i class=x-ki style='flex-grow:638'></i>"; $rx3 = '--sb:linear-gradient\(90deg,var\(--x-ki\) 0% 63\.83%'
 $ok1 = $cell -match $rx1 -and $cell.Contains($rx2) -and @([regex]::Matches($cell, '<i class=x-')).Count -eq 5 -and $cell -match 'waste: start load 69% of the peak .* read main\.java 3x'
-$ok3 = $day.Contains("class='gs hm dy sbr'") -and $day -match $rx3; $ok4 = $roles.Contains('role &#183; context') -and $roles.Contains('data-mk=context-role') -and $roles.Contains('>69%<')
+$ok3 = $day.Contains("class='gs hm dy sbr'") -and $day -match $rx3; $ok4 = "$($roles.tx[0..2])|$($roles.ag)|$(-join $none2.tx)|$(@($none2.tx).Count)" -eq '20k 29k 69%|1||11'
 "$ok1|$($none.Contains('cxc z'))|$ok3|$ok4"
 '@ @($O)
 Expect "page: Runs band context cell = peak over 5 source parts (the zero ones left out), tooltip with waste; no record = a dash; Trends mix row = a stacked bar per day; per-role table (start / peak 69%) ($pg)" ("$pg" -eq 'True|True|True|True')

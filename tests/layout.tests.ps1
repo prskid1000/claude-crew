@@ -64,7 +64,7 @@ Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; history 
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
 $tileWant = @("<span class=gn title='seconds per sweep, the day&#39;s average; 7 d: average &#183; slowest step now: wave reports 14.2 s'>Sweep time (s)<small>now 34 s</small></span>", "title='2026-01-02 (today) &#183; Sweep time (s): 37'>37</i>", "id=sec-dl-days open>", ">Disk D<small>479.1 GB free &#183; filling 1.7 GB/h &#183; full in 30.2 h</small>",
   'steady (11 min) &#183; Writes GB: what it filled per hour', '>Disk E<small>9 GB free &#183; filling 0.5 GB/h</small>', '<b>1 / 12</b><span>QA seats</span>', '<b>1</b><span>Builds running</span>', '<b>2</b><span>Builds queued</span>', '<b>61<small>%</small></b><span>RAM used</span>',
-  "<span class=gn translate=no>a</span><span class='gs hm dy mh' style='--n:5'", "<span class=gn translate=no>c</span><span class='gs hm dy mh' style='--n:5'",
+  " translate=no>a<small>kept 1</small></span><span class='gs hm dy ws' style='--n:7'", " translate=no>c<small>kept 0</small></span><span class='gs hm dy ws' style='--n:7'",
   "title='2026-01-01 &#183; agents failed: 2'>2</i>")
 $tileMissing = @($tileWant | Where-Object { -not $tilePage.Contains($_) })
 $staleBoard = Join-Path (TkPath $k board -Create) 'stale-s.json'; @{ session = 'stale-s'; agent = 'Y7'; run = 'r7'; status = 'working'; beat = (Get-Date).AddMinutes(-40).ToString('o'); joined = (Get-Date).AddMinutes(-50).ToString('o') } | ConvertTo-Json | Set-Content $staleBoard -Encoding utf8
@@ -155,7 +155,7 @@ Add-Content -LiteralPath $args[2] -Value ((Get-Content -LiteralPath $args[3] -Ra
 $b = Get-KitUsage -Seconds 30; $r = $b.runs[0]; $s1 = @($r.steps | Where-Object label -eq 'build:X1')[0]
 "$($a.runs[0].tok)|$($r.tok)|$($s1.out)|$($s1.tools)|$($s1.min)|$($r.merged)|$($r.done)/$($r.total)|$($b.rates.fail)|$($b.bg[0].tok)|$($b.bg[0].roles)|$([math]::Round($s1.cost, 6))|$($r.loop)|$(@($b.days)[-1].tok)|$(@($b.byType).k -join ',')|$($r.wall)"
 $pgs = @{}; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ usage = $b } }) $pgs
-$cardGrid = @("<details class='sec sub st uc dlr' id=sec-dl-days open><summary><h4>Per day", "<span class=gn title='est. cost per day", "<div class=tls data-mk=trend-tiles>", "data-oc=fail aria-pressed=false", "class='sec sub st uc ur' id=sec-u-spend><summary><h4>Spend per role</h4>", '</span><span class=fsm>Top: ', "data-mk=spend-role>", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
+$cardGrid = @("<details class='sec sub st uc dlr' id=sec-dl-days open><summary><h4>Per day", "<span class=gn title='est. cost per day", "<div class=tls data-mk=trend-tiles>", "data-oc=fail aria-pressed=false", "class='sec sub st uc ur' id=sec-u-spend><summary><h4>Per role</h4>", '</span><span class=fsm>Top: ', "data-mk=spend-role>", '.ur{grid-column:1/-1}') | Where-Object { -not $h.Contains($_) }
 # column counts: run steps 8 (right-align nth-child ranges)
 $thCount = { param($open, $in = $h) ([regex]::Match($in, [regex]::Escape($open) + '.*?</tr>', 'Singleline').Value | Select-String '<th[ >]' -AllMatches).Matches.Count }
 $colCounts = "7 $(& $thCount "class='sy rst'>" @($pgs.Values)[0])"

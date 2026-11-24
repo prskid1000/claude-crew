@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1042 release · L1088 lines · L1120 cleanup · L1187 launch ·
-  L1304 pause · L1423 heartbeat · L1438 sessions · L1497 ci tasks ·
-  L1560 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1041 release · L1087 lines · L1119 cleanup · L1186 launch ·
+  L1303 pause · L1422 heartbeat · L1437 sessions · L1496 ci tasks ·
+  L1559 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -613,7 +613,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   if ($nowT) { $dFree = [ordered]@{}; foreach ($dk in $nowT.disks) { $dFree[$dk.drive] = $dk.free }
     $rs = [ordered]@{}; foreach ($r0 in @($d.resources | Where-Object { $_.name })) { $rs["$($r0.name)"] = [pscustomobject]@{ gb = $r0.gb; by = "$($r0.by)" } }   # each resource's RAM + holder: the cards' 24 h history
     $rsw = @((Get-KitRepoSweep).repos | Where-Object { $_ })   # the Branches tile's lines
-    $samples += [pscustomobject]@{ at = (Get-KitStamp stored $d.at); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
+    $samples += [pscustomobject]@{ at = (Get-KitStamp stored $d.at); run = $nowT.run; mem = $nowT.mem; gq = $nowT.gq; gw = $nowT.gw; seats = $nowT.seats; secs = $nowT.secs; br = $(if ($rsw.Count) { [int]($rsw | Measure-Object branches -Sum).Sum }); wt = $(if ($rsw.Count) { [int]($rsw | Measure-Object worktrees -Sum).Sum }); rp = $(if ($rsw.Count) { $rpm = [ordered]@{}; foreach ($rw in $rsw) { if ($rw.repo) { $rpm["$($rw.repo)"] = @([int]$rw.branches, [int]$rw.worktrees) } }; [pscustomobject]$rpm }); disks = [pscustomobject]$dFree; res = [pscustomobject]$rs } }
   $serr = [Collections.Generic.List[string]]::new(); $statsFrom = Get-KitStatsCutoff; $usage = Select-KitUsageSince (Read-KitUsageResult) $statsFrom   # budget -Usage writes it; nothing before the stats reset
   $stats = [ordered]@{ keepFree = $d.keepFree; usage = $usage; repos = (Get-KitRepoSweep); sync = @(try { Get-KitRepoSyncState } catch { $serr.Add("repo sync: $($_.Exception.Message)") }); days = @(try { Get-KitSuperviseDays $prior.stats.days $d.at -StatsFrom $statsFrom } catch { $serr.Add("days: $($_.Exception.Message)") }); ram = $series.ram; disks = $series.disks; now = $nowT; live = @($samples)
     paramDays = @(try { Get-KitParamDays $d.at } catch { $serr.Add("param days: $($_.Exception.Message)") })
@@ -756,12 +756,14 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $s7 = { param($vs) $v1 = @($vs | Where-Object { $null -ne $_ }); if ($v1.Count) { Format-KitCompactNum ($v1 | Measure-Object -Sum).Sum } else { '—' } }; $a7 = { param($vs) $v1 = & $avgOf $vs; if ($null -ne $v1) { Format-KitCompactNum $v1 } else { '—' } }
   $p7 = { param($vs) $v1 = @($vs | Where-Object { $null -ne $_ }); if ($v1.Count) { Format-KitCompactNum ($v1 | Measure-Object -Maximum).Maximum } else { '—' } }
   $hRows = @(@{ n = 'Sweep time (s)'; mk = 'sweep-day'; sub = $(if ($nw.secs) { "now $(& $fmt $nw.secs) s" }); title = "seconds per sweep, the day's average; 7 d: average$(if ($nw.slow) { " · slowest step now: $($nw.slow)" })"; v = $sw; t = (& $a7 $sw); keep = $true },
-    @{ n = 'agents failed'; mk = 'agents-failed-day'; title = 'agents that left the board failed, blocked or in error; 7 d: sum'; v = $fd; t = (& $s7 $fd); cls = 'fh l-act'; gl = $true },
-    @{ n = 'agents finished'; mk = 'agents-left-day'; title = 'agents that left the board (any status); 7 d: sum'; v = $lf; t = (& $s7 $lf) },
-    @{ n = 'branches'; mk = 'branches-day'; title = 'local branches over all repos, the day''s last sample; 7 d: peak (per repo now: the table below)'; v = $br; t = (& $p7 $br); cls = 'ws'; gl = $true },
-    @{ n = 'worktrees'; mk = 'worktrees-day'; title = 'worktrees over all repos, the day''s last sample; 7 d: peak'; v = $wt; t = (& $p7 $wt); cls = 'ws' })
-  foreach ($dr in $hRows) { $dr.d = $d7 }   # Trends aligns the rows by date
+    @{ n = 'agents failed'; mk = 'agents-failed-day'; title = 'agents that left the board failed, blocked or in error; 7 d: sum'; v = $fd; t = (& $s7 $fd); cls = 'fh l-act' },
+    @{ n = 'agents finished'; mk = 'agents-left-day'; title = 'agents that left the board (any status); 7 d: sum'; v = $lf; t = (& $s7 $lf) })
+  $rTot = @(@{ n = 'all branches'; mk = 'branches-day'; title = 'local branches over all repos, the day''s last sample; 7 d: peak'; v = $br; t = (& $p7 $br); cls = 'ws' },
+    @{ n = 'all worktrees'; mk = 'worktrees-day'; title = 'worktrees over all repos, the day''s last sample; 7 d: peak'; v = $wt; t = (& $p7 $wt); cls = 'ws' })
+  foreach ($dr in @($hRows) + @($rTot)) { $dr.d = $d7 }   # Trends aligns the rows by date
   $UP = Format-KitUsageHtml $st.usage
+  # row groups of the Per day map (owner 2026-11-24): test checks, usage, kit health, repos (each its header)
+  $dayMore = @(Get-KitQaDayRows $st.qa) + @($UP.dayRows) + @(@{ hd = 'Kit health'; g = 'kit' }) + @($hRows) + @(Get-KitRepoDayRows $st.repos $st.sync $lv $d7 $rTot)
   # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
   $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
     $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }
@@ -910,7 +912,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $nSh = @($j.shells | Where-Object { $_ }).Count
   # Trends (owner 2026-11-19): Delivery + Usage + kit health in one day heatmap, its tiles one strip, spend and repos as sub-blocks (adapters/outcomes.ps1)
   $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats -StatsFrom (Get-KitStatsCutoff) } catch { $null } }
-  $trends = try { Format-KitDeliveryHtml $oc $UP (Format-KitQaTile $st.qa $at) @(@($hRows) + @($UP.dayRows)) "$($UP.spend)$(Format-KitRepoGrid $st.repos $st.sync)" } catch { "<p class=m>Trends view failed: $(& $e $_.Exception.Message)</p>" }
+  $trends = try { Format-KitDeliveryHtml $oc $UP $dayMore "$($UP.spend)" } catch { "<p class=m>Trends view failed: $(& $e $_.Exception.Message)</p>" }
   $runsH = try { Format-KitRunsTimeline @($st.usage.runs) $agents @($UP.pages.Keys) $st.usage.at @($st.usage.agentSteps) } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
   $popJs = Get-KitPopoverJs
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)){ $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$(ConvertTo-KitLabelCase $UP.pages[$pk])</main><script>$popJs</script></body></html>" } }
@@ -987,7 +989,6 @@ function Get-KitSupervisePageCss {
   '@media(min-width:1100px){header.top{flex-wrap:nowrap;min-height:40px;padding:4px 16px}.jl{flex-wrap:nowrap;white-space:nowrap}}@media(pointer:fine){header.top :is(input,button){min-height:30px}header.top .ib{min-width:30px;padding:4px 7px}}header.top input[type=search]{width:120px;transition:width .15s}header.top input[type=search]:focus{width:220px}' +
   # step outcomes: one stacked bar + its legend with counts
   '.sb{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--sf2);margin:2px 0 4px}.sb i{display:block;min-width:2px}' +
-  '.ocl{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:2px 12px;font-size:12px;color:var(--mt)}.ocl i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}.ocl b{color:var(--fg)}' +
   # Usage: scroll boxes (sticky header), runs one line each, the chart's past days slate
   'h4{font-size:11.5px;font-weight:600;color:var(--mt);margin:0 0 4px}.sy{max-height:clamp(200px,42dvh,440px);overflow:auto}.sy>.tw{overflow:visible}.sy th{position:sticky;top:0;z-index:1;background:var(--sf)}.sy td{white-space:nowrap}.sy td:first-child{white-space:normal}td{font-variant-numeric:tabular-nums}' +
   '.ru{border:1px solid var(--ln);border-radius:8px;margin:0 0 4px}.ru>summary{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:4px 10px;min-height:32px;background:var(--sf2);border-radius:8px;font-size:12.5px;cursor:pointer}.ru[open]>summary{border-radius:8px 8px 0 0}.ru>summary .bar{margin:0}.ru>.sy,.ru>.tw{padding:0 4px 4px}' +
@@ -1011,11 +1012,9 @@ function Get-KitSupervisePageCss {
   '.lcl b i{font-style:normal}.lcl b span:not(:first-child){font-size:10px;font-weight:500;color:var(--mt)}.lgb{display:flex;flex-wrap:wrap;gap:2px 6px;margin-top:4px}button.lgt{min-height:26px;min-width:0;padding:1px 6px;border-color:transparent;background:none}button.lgt[aria-pressed=false]{opacity:.45}button.lgt[aria-pressed=false] .lk{text-decoration:line-through}' +
   ((0..4 | ForEach-Object { ".lgw.h$_ .s$_" }) -join ',') + '{display:none}.lcp li{cursor:pointer}.lcp li[aria-pressed=true]{background:color-mix(in srgb,var(--sage) 18%,transparent)}.lcp li:focus-visible{outline:2px solid var(--sage);outline-offset:-2px}' +
   '.fo{display:none!important}.ftl:not([data-fsel]){display:none}.fclr{margin:4px 0;font-size:12px;color:var(--mt)}.fclr b{color:var(--fg)}.fclr button{min-height:26px;padding:1px 8px;margin-left:6px}' +
-  '.obr{display:grid;grid-template-columns:minmax(90px,max-content) minmax(0,1fr);gap:8px;align-items:center;margin:4px 0;font-size:12px}.obn{overflow-wrap:anywhere}.obn b{color:var(--mt);font-weight:600;margin-left:4px}' +
-  '.obar{display:flex;gap:1px;min-height:20px;border-radius:4px;overflow:hidden;background:var(--sf2)}.obar i{flex-basis:0;min-width:2.4em;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:10.5px;font-weight:600;color:var(--fg);cursor:pointer}.obar i:hover,.obar i:focus-visible,.obar i[aria-pressed=true]{outline:2px solid var(--fg);outline-offset:-2px}' +
   '.ob-sage{background:color-mix(in srgb,var(--sage) 55%,var(--sf))}.ob-slate{background:color-mix(in srgb,var(--slate) 50%,var(--sf))}.ob-watch{background:color-mix(in srgb,var(--watch) 55%,var(--sf))}.ob-plum{background:color-mix(in srgb,var(--plum) 50%,var(--sf))}.ob-act{background:color-mix(in srgb,var(--act) 55%,var(--sf))}.ob-pale{background:color-mix(in srgb,var(--sage) 22%,var(--sf))}.ob-none{background:var(--sf2);box-shadow:inset 0 0 0 1px var(--ln)}.chip[class*=ob-]{color:var(--fg)}' +
   '.otl{list-style:none;margin:4px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:3px 12px;font-size:12px}.otl li{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}.ftl{margin-top:8px}' +
-  '.xl{color:color-mix(in srgb,var(--slate) 60%,var(--fg));font-size:12px;text-decoration:none;overflow-wrap:anywhere}a.xl:hover{text-decoration:underline}.lks{display:inline-flex;flex-wrap:wrap;gap:2px 8px}.rpl{font-size:12.5px;margin:6px 0}.dlc h4,.obc h4{margin:0 0 2px}' +
+  '.xl{color:color-mix(in srgb,var(--slate) 60%,var(--fg));font-size:12px;text-decoration:none;overflow-wrap:anywhere}a.xl:hover{text-decoration:underline}.lks{display:inline-flex;flex-wrap:wrap;gap:2px 8px}.rpl{font-size:12.5px;margin:6px 0}' +
   # Spend: one row per role (grid columns), its step types under it; the model mix a stacked bar per role, its legend the model totals
   '.spt{width:100%;border-collapse:collapse;font-size:12.5px}.spt col.c0{width:22%}.spt col.cm{width:16%}.spt col.cs{width:110px}table.spt th{font-size:11px;font-weight:600;color:var(--mt);text-align:right;padding:3px 8px;border-bottom:1px solid var(--ln)}table.spt td{padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums;border-top:1px solid var(--ln)}.spt tr :is(th,td):is(:first-child,:nth-child(4),:last-child){text-align:left}.spt tr :is(th,td):first-child{overflow-wrap:anywhere}' +
   '.spt .bar{margin:0;width:56px}.sb.mix{margin:0;height:10px}.sb.mix i{background:var(--c);min-width:3px}.ocl i[class^=t-]{background:var(--c)}.spt tr.spr td:first-child{font-weight:600}.spt tr.sty td{border-top:0;color:var(--mt);font-size:12px}.spt tr.sty td:first-child{padding-left:22px}.spt tbody:not(.op) tr.sty{display:none}' +

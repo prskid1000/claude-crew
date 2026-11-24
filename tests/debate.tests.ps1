@@ -109,8 +109,7 @@ $r1 = Add-KitWasteSignals $a; $r2 = Add-KitWasteSignals @(Get-KitWasteItems $ss)
 $null = Invoke-Learn -Skill devy -Kind win -Text 'fixed in abc1234: devy start files slimmed' -Ref waste:devy:startload; $b = @(Get-KitWasteItems $ss)
 "fixed:$(@($b | Where-Object kind -eq 'startload')[0].why -eq 'fixed in abc1234')"
 $wc = Get-KitWasteRoleCells @($b + $b); "cells:$("$(@($wc.devy.v) -join ',')|$(@($wc.revy.v) -join ',')" -eq '0,0,1|0,1,0' -and $wc.revy.tips[1] -match '^buildlog: 1 build / test log\(s\) pasted · 2 items · v1 · 10(.0)?k: retro signal raised' -and $wc.checky.ignored -match '^reread: .*: 478 tokens, under 2k, one-off$')"
-$e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $hr = Format-KitContextRoles @([pscustomobject]@{ k = 'revy'; cx = [pscustomobject]@{ n = 3; s0 = 9000; pk = 20000; pks = 20000; agents = 1; car = @(1, 1, 1, 1, 1, 1, 1, 1) } }) { param($v) Format-KitCompactNum $v } $b
-"heat:$($hr -match 'waste fixable' -and $hr -match 'waste open' -and $hr -match 'waste, last 7 days, one item per role \+ kind' -and $hr -notmatch 'class=wsx')"
+"heat:$((Format-KitWasteLegend) -match '^waste, last 7 days, one item per role \+ kind')"
 $null = Invoke-Learn -Skill checky -Kind false-positive -Text 'one-off notes read' -Ref waste:checky:reread; "closed:$(@(Get-KitWasteItems $ss | Where-Object kind -eq 'reread')[0].why -eq 'closed by /tidy: one-off notes read')"
 $late = (Get-Date).AddHours(1).ToString('o'); $dv = { param($s0) @($ss) + @([pscustomobject]@{ role = 'devy'; label = 'd9'; run = 'r9'; at = $late; cx = [pscustomobject]@{ n = 3; s0 = $s0; w = $z; rr = @(0, '') } }) }
 $c3 = @(Get-KitWasteItems (& $dv 30000) | Where-Object kind -eq 'startload')[0]; $c4 = @(Get-KitWasteItems (& $dv 12000) | Where-Object kind -eq 'startload')[0]

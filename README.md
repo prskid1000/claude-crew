@@ -246,12 +246,12 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
 - trends (7 calendar days ending today; usage: `bossy.ps1 budget -Usage` reads the transcripts incrementally, `_paths`
   `usage-cache` + `.cold.json`; `budget.prices` per model; delivery: `.state/outcomes.jsonl`): one tile strip (QA first pass %,
   came back %, median fix rounds, p50 hours to promoted, output tokens per merged MR, review + fix share, a tile per step outcome: a tap
-  shows the runs with it); ONE day heatmap (MRs merged per repo, tasks closed, came back, runs started: a cell filters the task
-  list or the runs; est. cost, tokens, sweep s, agents failed / finished, branches, worktrees); tasks per repo by outcome, work in
-  flight, test runs; Spend per role (roles x steps, tokens · est. cost, share, avg / p90 time = active minutes, wall clock where no split, and the 3 biggest models' share);
-  Repos now (repo x branches, worktrees, kept, dirty amber, diverged red);
-- context: a run row's peak cell (bar by source, waste in the tooltip); Trends "Context mix", "Peak context"; the per-role
-  table; flags (`usage.context.*`): WATCH per live agent (`peakWatch`,
+  shows the runs with it); ONE day heatmap, folding row groups: Delivery (MRs per repo, tasks closed, came back, runs
+  started: a cell filters the tasks or runs), Tasks by outcome, Work in flight (today), Test checks, Usage, Kit health, Repos
+  (a row per repo: branches / worktrees, kept, dirty amber, diverged red); ONE "Per role" heatmap, column groups: Spend (steps,
+  tokens · est. cost, share, avg / p90 active time), Model mix, Context, Waste (fixable / open / fixed);
+- context: a run row's peak cell (bar by source, waste in the tooltip); Trends "Context mix", "Peak context"; Per role
+  Context; flags (`usage.context.*`): WATCH per live agent (`peakWatch`,
   `rereadWatch`, `bigResultTokens`, `logTokens`, `startFactor` x role norm), ACT per source class in `actRuns`+ agents; ended
   starts learn `startNorm`;
 - kit internals (folded): Tuning: Settings = a tile map of key groups (width = keys, sage = changed this week, a source strip; a
