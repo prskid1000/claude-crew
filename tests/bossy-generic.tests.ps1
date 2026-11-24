@@ -245,5 +245,9 @@ $ec = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); function Left { 30 }; funct
     Start-KitSupervisePrefetchLocalEnv; "$step=$global:ecStarts/$(@(Get-KitSuperviseGuardLocalEnv | ForEach-Object name) -join ',')" }
   Start-KitSupervisePrefetchStateLint; $script:KitStateLintRun.lint = $true; $ecOut += "lint=$(@(Get-KitSuperviseFlagsStateLint).what)"; $ecOut -join ' ' }
 Expect "supervise prefetch: env status cached by its state files minus clocks and RAM, asked again on a change or a failed read; state lint flags in its section ($ec)" ($ec -eq 'first=1/shop · web same=1/shop · web clock=1/shop · web change=2/shop · web fail=3/ after=4/shop · web lint=state file x.json: unreadable')
+# guard-sendmessage: a crew agent (hook input has agent_id) is sent to board msg; the coordinator (no agent_id) may send
+$gsCrew = (@{ tool_name = 'SendMessage'; agent_id = 'a1b2c3'; agent_type = 'devy'; tool_input = @{ to = 'revy-18'; message = 'x' } } | ConvertTo-Json -Compress | & $pwshExe -NoProfile -File (Join-Path $k 'skills/bossy/bossy.ps1') guard-sendmessage 2>$null) -join ''
+$gsLead = (@{ tool_name = 'SendMessage'; tool_input = @{ to = 'revy-18'; message = 'x' } } | ConvertTo-Json -Compress | & $pwshExe -NoProfile -File (Join-Path $k 'skills/bossy/bossy.ps1') guard-sendmessage 2>$null) -join ''
+Expect "guard-sendmessage: crew -> crew denied with the board msg command; the coordinator's send allowed (crew: $gsCrew; lead: $gsLead)" ($gsCrew -match '"permissionDecision":"deny"' -and $gsCrew -match 'board msg -To' -and -not $gsLead)
 Remove-TestKit $k
 Complete-Tests

@@ -194,7 +194,7 @@ fallbacks: `skills/crafty/parity.json` `harness`; `kitbag.py parity`, lint PARIT
 <!-- kit-graph:start table-ports -->
 | Feature | Codex | Antigravity |
 |---|---|---|
-| hook PreToolUse bossy.ps1 guard-sendmessage | gap: no SendMessage tool | gap: no SendMessage tool |
+| hook PreToolUse bossy.ps1 guard-sendmessage | fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg | fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg |
 | hook PostToolUse ctx_hook.mjs | fallback: board beat prints the CONTEXT-CHECK line | fallback: board beat prints the CONTEXT-CHECK line |
 | workflow buildy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/buildy.py |
 | workflow testy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/testy.py |

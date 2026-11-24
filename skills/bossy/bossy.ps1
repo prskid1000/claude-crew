@@ -2113,6 +2113,13 @@ function Invoke-GuardSendMessage {
 $ErrorActionPreference = 'SilentlyContinue'
 $in = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() | ConvertFrom-Json }  # by hand: no stdin wait
 $to = "$($in.tool_input.to)".Trim()
+# crew -> crew goes through the board so supervise and the dashboard see it; agent_id is set only inside a subagent
+if ("$($in.agent_id)".Trim()) {
+  $why = "Blocked: crew agents never SendMessage ('$to'). Use: bossy.ps1 board msg -To <agent> -Kind <kind> -Text '<message>' (supervise and the dashboard see every board message); only the coordinator (main session) may SendMessage."
+  [Console]::Error.WriteLine($why)
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
+  exit 0
+}
 if ($to -notmatch '^(?<id>a[0-9a-f]{12,})$') { exit 0 }
 $id = $Matches.id
 $meta = Invoke-KitAdapter transcript claude agent-meta @{ id = $id }   # SendMessage: a Claude Code tool

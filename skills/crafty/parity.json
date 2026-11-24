@@ -215,8 +215,8 @@
         "antigravity": "crafty.ps1 guard"
       },
       "PreToolUse bossy.ps1 guard-sendmessage": {
-        "codex": "gap: no SendMessage tool",
-        "antigravity": "gap: no SendMessage tool"
+        "codex": "fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg",
+        "antigravity": "fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg"
       },
       "PostToolUse ctx_hook.mjs": {
         "codex": "fallback: board beat prints the CONTEXT-CHECK line",
