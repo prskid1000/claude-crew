@@ -3,7 +3,7 @@
 Copy a section, fill the `<...>` parts; which step fills which: the using skill's Files index.
 
 ## Writing standards (every artefact the kit reads or writes)
-Rules: AGENTS.md "Writing"; every limit is a ceiling. `kitbag.py prose --kind <kind> <file>` measures a text (exit 1 =
+Rules: AGENTS.md "Writing"; every limit is a ceiling. `skills/bossy/kitbag.py prose --kind <kind> <file>` measures a text (exit 1 =
 findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
 `pokey.ps1 finalize`) run it, print findings, never truncate; fix a finding by rewriting. Listed `##` sections: always, in
 order, never empty or bare "none": `n/a — <why>` (prose; `devtools.py doc` / `finish` refuse a doc without).

@@ -141,6 +141,9 @@ $kyWatch = (pwsh @np $D tracker create -List L1 -Key watch-stg-sig9 -Name '[Bug]
 Expect "tracker create / bug: free text only under a qa- / watch- key; a made-up key refused naming -Spec ($kyMadec $kyBugc)" ($kyMadec -eq 1 -and $kyMade -match "'made-up-1' is neither.*" -and $kyMade -match 'tracker create -Spec' -and $kyBugc -eq 1 -and $kyBug -match 'tracker create -Spec' -and $kyWatch -and $fbOwn)
 $kyDocs = @(Select-String -Path @(git -C $src ls-files -- 'skills/*.md' 'agents/*.md' 'workflows/*.js' | ForEach-Object { Join-Path $src $_ }) -Pattern 'tracker (create|bug)\b[^`]*?-Key (\S+)' -AllMatches | ForEach-Object { $_.Matches } | Where-Object { $_.Groups[2].Value -notmatch '^(qa|watch)-' } | ForEach-Object { $_.Value })
 Expect "kit docs: every tracker create / bug -Key they teach starts qa- or watch- ($($kyDocs -join ' ; '))" (-not $kyDocs.Count)
+# tidy-20261124-01: a bare kitbag.py path was not found
+$kbBare = @([regex]::Matches((Get-Content (Join-Path $src 'skills/crafty/templates.md') -Raw), '(?<![\w/])kitbag\.py prose') | ForEach-Object Value)
+Expect "templates.md: kitbag.py prose is named by its path skills/bossy/kitbag.py ($($kbBare.Count) bare)" (-not $kbBare.Count -and (Test-Path (Join-Path $src 'skills/bossy/kitbag.py')))
 # (cap move) tracker comment -Spec: a file or inline JSON, rendered; no text never reaches a CLI (it opened an editor)
 '{"status":"closed","why":"W0 done: lanes use staging sql_mode.","link":"https://github.com/o/r/commit/fd14532"}' | Set-Content "$bk/cs.json"
 $sf = pwsh @np $D tracker comment $ak -Kind comment-status -Spec "$bk/cs.json" 2>&1 | Out-String; $sfc = $LASTEXITCODE

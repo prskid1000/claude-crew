@@ -10,7 +10,7 @@ Codex and Antigravity read this file, Claude Code via `CLAUDE.md`; edit only her
 - Result first, then only what the reader needs to act: `<thing> <state/action> <reason>` -> next step.
 - Lists and fragments, one fact per line, each fact once; link (MR, task, doc, run) instead of repeating it.
 - Exact over descriptive (ids, paths, numbers, commands, error text); active voice; short common words; no invented abbreviations.
-- Limits per artefact: table `skills/crafty/templates.md` "Writing standards", checked by `kitbag.py prose --kind <kind> <file>`.
+- Limits per artefact: table `skills/crafty/templates.md` "Writing standards", checked by `skills/bossy/kitbag.py prose --kind <kind> <file>`.
   Fewer words, same facts: dense and specific. Code comment: 1 line saying why.
 - **Forget on cap:** over a cap, first cut its least valuable items anywhere (`kitbag.py forget`); never hard rules, owner
   decisions, guards; features only on the owner's yes.

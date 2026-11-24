@@ -65,8 +65,8 @@ Non-negotiables:
    `run`: the /buildy run), never the brief: `python -X utf8 <kit>/skills/crafty/devtools.py render wave-brief
    <data.json> <brief>` (`<brief>` = `crafty.ps1 dir -Agent briefy -Item <run> -Name wave-brief.md`)
    writes the brief, `<brief>.contracts.md` and `<brief>.args.json` (the /buildy launch args); check the brief with
-   `kitbag.py prose --kind wave-brief <brief>`; return the args file's path. Data `task` = the tracker task the areas build
-   (`agents[].task` when they differ): 2+ areas on one task get a subtask each at launch (`AREA TASK` lines).
+   `skills/bossy/kitbag.py prose --kind wave-brief <brief>`; return the args file's path. Data `task` = the tracker task the
+   areas build (`agents[].task` when they differ): 2+ areas on one task get a subtask each at launch (`AREA TASK` lines).
 7. **Tasks** (new ones only): `crafty.ps1 tracker create -Spec <json>` each (fields: crafty.ps1 "task spec"; items = its
    item table rows, `desc` = Title plus ports; links = full URLs, never a local path); 2+ related: the parent ask first, the
    rest with its `parent` (another list: an Items link); flat ones: `tracker group -Parent <p> -Tasks <ids>`; the item
