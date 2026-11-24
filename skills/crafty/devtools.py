@@ -36,13 +36,13 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L397 process · L606 git host · L679 scope · L771 MR · L967 merge · L1298 docs ·
-  L1461 publish · L1956 render · L2525 spec · L2882 plugins · L2896 keepboth · L2915 selftest · L3613 CLI
+Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L969 merge · L1300 docs ·
+  L1463 publish · L1958 render · L2527 spec · L3071 plugins · L3085 keepboth · L3104 selftest · L3802 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
 """
-import contextlib, difflib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time
+import contextlib, difflib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zlib
 from datetime import datetime
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
@@ -553,6 +553,8 @@ def finish(tid, guide, solution_md, status='review', ai=None):
         raise SystemExit(f'finish {tid}: {why}{"" if how.startswith("builtin:") else f" (process.gates.finish {how})"}. Nothing was written.')
     if gaps := spec_trace_gaps(tid):   # every spec rule is proven by a case (templates.md "Spec")
         raise SystemExit(f'finish {tid}: spec S-id(s) {", ".join(gaps)} have no test case: cases add a check or case with "spec" naming each. Nothing was written.')
+    if (sr := spec_rec(tid)).get('data') and not sr.get('retired') and (dg := spec_diagram_gap(sr['data'])):   # owner 2026-11-24: proper diagrams
+        raise SystemExit(f'finish {tid}: spec section {dg} has no diagram: spec write a Mermaid diagram (or {{"diagrams": {{"na": "<why>"}}}}). Nothing was written.')
     ai_url = _doc_url(tid, 'testing-ai', ai) if ai else ''
     guide_url = _doc_url(tid, 'testing-doc', guide) if guide else ''
     md = t.get('description') or ''
@@ -2523,38 +2525,72 @@ def wave_files(s, brief_path):
 
 
 # ---- spec: one versioned spec doc per task or standing subject; its S-ids are cited by cases, commits, MRs and QA results
-SPEC_KINDS, SPEC_LISTS = ('feature', 'bug', 'subject'), {'rules': 'id', 'decisions': 'id', 'contracts': 'name', 'users': 'who', 'options': 'choice'}
-# every section, always rendered: (field, heading, the interview question an open one raises); {"na": "<why>"} = does not apply
+SPEC_KINDS, SPEC_LISTS = ('feature', 'bug', 'subject'), {'rules': 'id', 'decisions': 'id', 'users': 'who', 'metrics': 'metric', 'glossary': 'term'}
+# per kind (f / b / s), every section always rendered (owner dec-0001): (field, kinds, heading, purpose, the plain-words questions briefy asks);
+# {"na": "<why>"} = does not apply; a '#' heading nests under the one before
 SPEC_SECTIONS = (
-    ('goal', 'Goal', 'What outcome does the business want, for whom, and how is success measured?'),
-    ('scope', 'Scope', 'What is in scope (screens, flows, data)?'),
-    ('nonGoals', 'Non-goals', 'What is explicitly out of scope?'),
-    ('users', 'Users and flows', 'Who uses it, and what does each user do step by step?'),
-    ('rules', 'Behaviour rules and acceptance', 'Which behaviour rules must hold, each with a Given / When / Then acceptance?'),
-    ('options', 'Options and trade-offs', 'Which design choices exist (paths A / B / C), which one is chosen, why, and when to revisit?'),
-    ('approach', 'Implementation approach', 'How is it built (layers, components, sequence)?'),
-    ('impact', 'Impacted modules / APIs / data', 'Which modules, APIs, tables and jobs change or are read?'),
-    ('contracts', 'Data / API contracts', 'Which fields or endpoints cross repos or areas (contracts file rows)?'),
-    ('ui', 'UI', 'Which screens and states change, and which theme rule do they follow?'),
-    ('edges', 'Edge cases', 'Which edge cases (empty, limits, concurrency, permissions, bad input) must behave how?'),
-    ('risks', 'Risks', 'What can go wrong (data, performance, security, migration), and the mitigation?'),
-    ('rollout', 'Rollout and feature flag', 'How is it rolled out: flag name, how to enable, how to roll back?'),
-    ('tests', 'Test strategy', 'Which layers prove it (unit, integration, API, UI, local env, test env)?'),
-    ('diagrams', 'Diagrams', 'Does a flow, state machine, sequence or data model need a diagram (Mermaid)?'),
-    ('repro', 'Bug', 'Repro steps, expected, actual and root cause?'),
-    ('decisions', 'Decisions', 'Which decisions were made, by whom?'),
-    ('questions', 'Open questions', ''),
+    ('summary', 'fbs', 'Summary', 'one line: what changes, for whom (bug: ~10 words)', 'In one sentence, what will be different for users?'),
+    ('impact', 'b', 'Impact', 'who is hit, how many, since when, severity, workaround', 'Who is hit and how badly? Since when? Is there a workaround?'),
+    ('problem', 'f', 'Problem and evidence', 'the pain, who feels it, the proof, the cost of doing nothing', 'What hurts today and for whom? What shows it (tickets, numbers, quotes)? What if we do nothing?'),
+    ('metrics', 'f', 'Success metrics', 'number, target, by when', 'How will you know it worked? Which number moves, by how much, by when?'),
+    ('scope', 'f', 'Scope, no-gos and appetite', 'in, out, the time budget', 'What must be in the first version? What are we not doing? How much time is it worth?'),
+    ('purpose', 's', 'Purpose and boundary', 'what the subject covers, where it stops', 'What is this part of the product for? Where does it stop?'),
+    ('glossary', 's', 'Glossary', 'domain terms, one line each', 'Which words do your users use that we must use the same way?'),
+    ('users', 'f', 'Users and flows', 'who, step by step', 'Who uses it? Walk me through what they do, start to finish.'),
+    ('users', 's', 'Actors and flows', 'roles and their main flows', 'Who touches it, and what does each one do?'),
+    ('repro', 'b', 'Reproduce', 'steps, env / build, frequency, expected, actual, evidence', 'What did you do, what did you expect, what happened? Every time?'),
+    ('regression', 'b', 'Regression range', 'last good version or date, first bad', 'Did it ever work? When did it stop?'),
+    ('rootCause', 'b', 'Root cause', 'trigger vs root cause, the 5-whys chain', 'What set it off, and why could that happen at all?'),
+    ('fix', 'b', 'Fix and rules', 'how it is fixed; the S-ids it must hold below', 'What is the right behaviour, exactly?'),
+    ('rules', 'fs', 'Behaviour rules', 'S1..Sn, one testable rule each with Given / When / Then; edge cases under their rule', 'What must always happen? What when it is empty, too big, not allowed or done twice?'),
+    ('rules', 'b', '### Rules', 'the S-ids the fix holds (new or existing)', 'Which rule did it break, and which new rule keeps it fixed?'),
+    ('algorithm', 'fs', 'Algorithm', 'the core logic in plain steps: inputs, steps and branches, outputs, limits, failures; enough to build it without the code (n/a only for a pure UI or text change)',
+     'What goes in and what comes out? What are the steps, and where does it branch? What are the limits, and what happens when a step fails?'),
+    ('algorithm', 'b', '### Fix algorithm', 'the corrected logic in plain steps: inputs, steps and branches, outputs, limits, failures', 'Step by step, what must the code now do?'),
+    ('design', 'f', 'Design', 'approach, impacted modules, contracts, at least one diagram chosen by need: C4 context / container (structure), sequence (interactions), '
+     'state (lifecycles), flowchart (the algorithm), ER (data)', 'Does this picture match how you see it working?'),
+    ('ui', 'f', 'UI screens and states', 'screens; empty / loading / error / success; the theme rule', 'Which screens change? What does the user see when nothing is there, while it loads, or when it fails?'),
+    ('crossCutting', 'f', 'Cross-cutting', 'one line each or "none": security and privacy, permissions, performance budget, observability, accessibility, i18n, cost, backward compatibility',
+     'Who must not see this? How fast must it feel? Any language or accessibility need?'),
+    ('dataModel', 's', 'Data model and states', 'entities, a state-machine diagram, invariants', 'What states can it be in? What must never happen?'),
+    ('interfaces', 's', 'Interfaces', 'APIs, jobs, integrations (contracts file rows)', 'Which screens, systems or jobs talk to it?'),
+    ('quality', 's', 'Quality scenarios', 'performance, security, availability as concrete scenarios', 'How many, how fast, who may see what?'),
+    ('detection', 'b', 'Detection gap', 'why tests or monitoring missed it, the regression test added', 'Why did no test or alert catch it?'),
+    ('dataRepair', 'b', 'Data repair', 'rows to fix, backfill, customers to tell', 'Was any data saved wrong that we must fix?'),
+    ('risks', 'f', 'Risks and rabbit holes', 'risk -> mitigation; what could make it take much longer', 'What worries you? What could make this take much longer?'),
+    ('risks', 's', 'Risks and tech debt', 'known weak spots', 'Which parts break often or are hard to change?'),
+    ('rollout', 'fb', 'Rollout', 'flag, migration / backfill, rollback, who is told (bug: the hotfix path)', 'Everyone at once or a few customers first? If it goes wrong, what do we switch back?'),
+    ('tests', 'f', 'Acceptance and test strategy', 'each S-id -> test layer and env', 'Which test, on which env, proves each rule?'),
+    ('dependencies', 'f', 'Dependencies', 'other teams, vendors, tasks', 'Do we wait on anyone else?'),
+    ('decisions', 'fbs', 'Decisions', 'one row per choice (MADR): drivers, options, chosen, why, confirm-by', 'Which ways could we do this? What matters most when choosing? How will we know the choice held?'),
+    ('questions', 'fbs', 'Open questions', 'the spec stays draft while any remain', ''),
 )
-SPEC_FIELDS = """spec JSON (devtools.py spec write; merged into the stored spec, lists by key): kind feature|bug|subject · title · change (what
- changed and why: every version after v1) · any section below: a value, or {"na": "<why it does not apply>"}; a missing one is open
- (rendered as its question; the spec stays draft): goal · scope [..] · nonGoals [..] · users [{who, flow}] · rules [{id: S1, text,
- acceptance (Given / When / Then), status: removed}] (an id is never reused) · options [{choice, options: [{id: A, text, pros, cons}],
- chosen, why, rejected, revisit}] · approach · impact [..] · contracts [{name, ref: contracts file row}] · ui {screens, states, theme}
- · edges [{text, rule: S1}] · risks [{text, mitigation}] · rollout {flag, enable, rollback} · tests [..] · diagrams [{title, mermaid}]
- (an image when mmdc is on PATH; the source always) · repro {steps, expected, actual, rootCause} (bug) · decisions [{id, question,
- answer, by}] · questions [..] (open ones: ready only when none)
-Interview (briefy, the architect; people are the business owners): spec questions <key> prints every open section and rule gap as
- one question; batch them to the owner (bossy.ps1 decide ask, via the coordinator), never guess; write each answer back (or n/a + why)."""
+# the parts of an object-valued section: each is answered, 'n/a' or asked
+SPEC_PARTS = {'impact': ('who', 'howMany', 'since', 'severity', 'workaround'), 'problem': ('pain', 'evidence', 'costOfNothing'), 'scope': ('in', 'out', 'appetite'),
+              'purpose': ('covers', 'boundary'), 'repro': ('steps', 'env', 'frequency', 'expected', 'actual', 'evidence'), 'regression': ('lastGood', 'firstBad'),
+              'rootCause': ('trigger', 'cause', 'whys'), 'fix': ('approach',), 'algorithm': ('inputs', 'steps', 'outputs', 'limits', 'failures'),
+              'design': ('approach', 'modules', 'contracts', 'diagrams'), 'ui': ('screens', 'states', 'theme'),
+              'crossCutting': ('security', 'permissions', 'performance', 'observability', 'accessibility', 'i18n', 'cost', 'compatibility'),
+              'dataModel': ('entities', 'diagrams', 'invariants'), 'detection': ('why', 'test'), 'rollout': ('flag', 'migration', 'rollback', 'tell')}
+SPEC_LABELS = {'howMany': 'How many', 'costOfNothing': 'Cost of doing nothing', 'in': 'In', 'out': 'Out (no-gos)', 'lastGood': 'Last good', 'firstBad': 'First bad',
+               'cause': 'Root cause', 'whys': '5 whys', 'i18n': 'i18n', 'compatibility': 'Backward compatibility', 'tell': 'Who is told', 'enable': 'How to enable',
+               'theme': 'Theme rule', 'env': 'Env / build', 'security': 'Security and privacy', 'performance': 'Performance budget', 'test': 'Regression test added'}
+SPEC_DIAGRAMS = ('design', 'dataModel')   # feature / subject: at least one diagram here unless n/a with a reason
+MMDC_PIN = '12.2.0'   # @mermaid-js/mermaid-cli, installed by spec setup into <runtime>/tools/mmdc (reversy-style pin)
+SPEC_FIELDS = """spec JSON (devtools.py spec write; merged into the stored spec: lists by key, objects by part, a list part whole): kind feature|bug|subject · title
+ · change (what changed and why: every version after v1) · the kind's sections (spec template <kind> prints them with purpose and
+ questions): a value, an object of its parts, or {"na": "<why>"}; a missing one is open (rendered as its question; the spec stays draft).
+ Shapes: rules [{id: S1, text, acceptance (Given / When / Then), status: removed}] (an id is never reused) · edges [{text, rule: S1}]
+ (rendered under its rule) · decisions [{id, question, drivers, options: [{id: A, text, pros, cons}], chosen, why, confirm, by}] ·
+ users [{who, flow}] · metrics [{metric, target, by}] · glossary [{term, meaning}] · risks [{text, mitigation}] · tests [{rule, layer,
+ env}] · algorithm {inputs, steps [..], outputs, limits, failures} (or pseudocode) · design {approach, modules [..], contracts [{name,
+ ref}], diagrams [{title, type: c4|sequence|state|flowchart|er, mermaid}]} (feature: at least one diagram; dataModel the same for a
+ subject) · crossCutting {security, permissions, performance, observability, accessibility, i18n, cost, compatibility} · other
+ objects: the parts spec template names. Old fields (goal, nonGoals, options, approach, impact, contracts, diagrams, edges,
+ repro.rootCause) map onto these on read.
+Interview (briefy, the architect; people are the business owners): spec questions <key> prints every open section and part as one
+ question; batch them to the owner (bossy.ps1 decide ask, via the coordinator), never guess; write each answer back (or n/a + why).
+Diagram images: spec setup (once per machine: mmdc pinned into <runtime>/tools); without it the Mermaid source block stays."""
 
 
 def spec_rec(key):
@@ -2572,98 +2608,238 @@ def spec_shape(s):
         + [f'rule id {i!r}: S<n>' for i in ids if not re.match(r'^S\d+$', i)] + [f'rule {i}: twice' for i in sorted({i for i in ids if ids.count(i) > 1})]
 
 
+def spec_sections(kind):
+    """The kind's sections in doc order (an unknown kind: feature)."""
+    k = (kind if kind in SPEC_KINDS else 'feature')[0]
+    return [x for x in SPEC_SECTIONS if k in x[1]]
+
+
+def spec_migrate(s):
+    """A spec in the v1 shape (18 sections) -> the per-kind v2 shape; v2 input is returned as is (no rule changes)."""
+    s, live = dict(s or {}), lambda v: v not in (None, '', [], {})
+    if 'goal' in s:
+        g = s.pop('goal')
+        s.setdefault('summary', g)
+    if isinstance(s.get('scope'), (list, str)) or 'nonGoals' in s:
+        sc, ng = s.pop('scope', None), s.pop('nonGoals', None)
+        s['scope'] = {**({'in': sc} if live(sc) else {}), **({'out': ng} if live(ng) else {})} if not _na(sc) else sc
+    keep = lambda **kv: {k: v for k, v in kv.items() if v}   # only given parts: a partial write never blanks a stored one
+    dec = [] if _na(s.get('decisions')) else [{**{k: x for k, x in d.items() if k != 'answer'}, **keep(chosen=d.get('chosen') or d.get('answer'))}
+                                              for d in s.get('decisions') or [] if isinstance(d, dict)]
+    if 'options' in s:
+        o = s.pop('options')
+        dec = [{'id': x.get('choice'), 'question': x.get('choice'), **keep(options=x.get('options'), chosen=x.get('chosen'), confirm=x.get('revisit'),
+                why='; '.join(y for y in (x.get('why'), x.get('rejected') and f'rejected: {x["rejected"]}') if y))}
+               for x in (o if isinstance(o, list) else []) if isinstance(x, dict)] + dec
+        s['decisions'] = dec or (s.get('decisions') if _na(s.get('decisions')) else o)
+    elif dec:
+        s['decisions'] = dec
+    old = {k: s.pop(k) for k in ('approach', 'impact', 'contracts', 'diagrams') if k in s}
+    if old:   # bug -> Fix; subject -> Data model (diagrams) + Interfaces (contracts), the rest carried; feature -> Design
+        part = {'approach': old.get('approach'), 'modules': old.get('impact'), 'contracts': old.get('contracts'), 'diagrams': old.get('diagrams')}
+        part = {k: v for k, v in part.items() if v is not None}
+        tgt = {'bug': 'fix', 'subject': 'dataModel'}.get(s.get('kind'), 'design')
+        if tgt == 'dataModel':
+            if 'contracts' in part:
+                s.setdefault('interfaces', part.pop('contracts'))
+            s.update({f'earlier {k}': part.pop(k) for k in ('approach', 'modules') if k in part})
+        if part:
+            s[tgt] = {**(s.get(tgt) if isinstance(s.get(tgt), dict) and not _na(s.get(tgt)) else {}), **part}
+    if isinstance(s.get('repro'), dict) and 'rootCause' in s['repro']:
+        s['repro'] = dict(s['repro'])
+        rc = s['repro'].pop('rootCause')
+        if live(rc):
+            s.setdefault('rootCause', {'cause': rc})
+    return s
+
+
 def _na(v):
     return isinstance(v, dict) and set(v) == {'na'}
 
 
-def spec_questions(s):
-    """The interview: one question per open section or rule gap (a draft spec is not ready while any is left)."""
-    out = []
-    for f, head, q in SPEC_SECTIONS:
+def _open(v):
+    return v in (None, '', [], {}) or _na(v) and not str(v['na']).strip()
+
+
+def _label(k):
+    return SPEC_LABELS.get(k) or re.sub(r'(?<=[a-z])([A-Z])', r' \1', k).capitalize()
+
+
+def spec_diagram_gap(s):
+    """'' or the section of a feature / subject spec that needs a diagram (Design / Data model): finish and the interview refuse it."""
+    s = spec_migrate(s)
+    for f, kinds, head, _, _ in spec_sections(s.get('kind')):
         v = s.get(f)
-        if f == 'repro' and s.get('kind') != 'bug' or f == 'questions' or _na(v) and str(v['na']).strip():
+        dg = v.get('diagrams') if isinstance(v, dict) else None
+        if f in SPEC_DIAGRAMS and not _na(v) and not (_na(dg) and str(dg['na']).strip()) \
+                and not any(isinstance(x, dict) and str(x.get('mermaid') or '').strip() for x in (dg if isinstance(dg, list) else [dg])):
+            return head
+    return ''
+
+
+def spec_questions(s):
+    """The interview: one question per open section, part or rule gap (a draft spec is not ready while any is left)."""
+    s, out = spec_migrate(s), []
+    for f, kinds, head, purpose, q in spec_sections(s.get('kind')):
+        v, h = s.get(f), head.lstrip('# ')
+        if f == 'questions' or _na(v) and str(v['na']).strip():
             continue
-        if v in (None, '', [], {}) or _na(v):
-            out.append(f'{head}: {q}' + (' (n/a needs its reason)' if _na(v) else ''))
+        if _open(v):
+            out.append(f'{h} ({purpose}): {q}' + (' (n/a needs its reason)' if _na(v) else ''))
+            continue
+        if isinstance(v, dict):
+            out += [f'{h}: {_label(k)}?' for k in SPEC_PARTS.get(f, ()) if k != 'diagrams' and _open(v.get(k))]
+    if (gap := spec_diagram_gap(s)) and not any(x.startswith(gap + ' (') for x in out):
+        out.append(f'{gap}: which diagram shows it (C4 context / container, sequence, state, flowchart of the algorithm, ER)? Mermaid source, or n/a + why')
     for r in s.get('rules') or []:
         out += [f'{r.get("id")}: {k}? ({"the rule" if k == "text" else "Given / When / Then"})' for k in ('text', 'acceptance')
                 if r.get('status') != 'removed' and not r.get(k)]
-    out += [f'{o.get("choice")}: which option, and why?' for o in s.get('options') or [] if isinstance(o, dict) and not o.get('chosen')]
-    if (s.get('ui') or {}).get('screens') and not s['ui'].get('theme'):
-        out.append('UI: which theme rule do the screens follow?')
+    out += [f'{d.get("id")}: which option, and why?' for d in s.get('decisions') or [] if isinstance(d, dict) and not d.get('chosen')]
     return out + ([] if _na(s.get('questions')) else [f'Open: {q}' for q in s.get('questions') or []])
 
 
-def _diagram(key, i, d):
-    """A diagram: the image (mmdc on PATH renders the Mermaid source) above its source block."""
-    src = str(d.get('mermaid') or '').strip()
-    img, mmdc = '', shutil.which('mmdc')
+def mmdc_path():
+    """The pinned mmdc (spec setup) or one on PATH, else ''."""
+    p = os.path.join(kit_path('tools'), 'mmdc', 'node_modules', '.bin', 'mmdc' + ('.cmd' if os.name == 'nt' else ''))
+    return p if os.path.isfile(p) else shutil.which('mmdc') or ''
+
+
+def mmdc_setup():
+    """Install the pinned mermaid-cli into <runtime>/tools/mmdc; a local Chrome / Edge is reused (no browser download)."""
+    npm, d = shutil.which('npm'), os.path.join(kit_path('tools', create=True), 'mmdc')
+    if not npm:
+        raise SystemExit('spec setup: npm is not on PATH (install Node.js); diagrams stay Mermaid source blocks')
+    pf = [os.environ.get(v) for v in ('ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA') if os.environ.get(v)]
+    exe = next((b for b in [os.environ.get('CHROME_PATH')] + [os.path.join(x, *y) for x in pf for y in (('Google', 'Chrome', 'Application', 'chrome.exe'),
+               ('Microsoft', 'Edge', 'Application', 'msedge.exe'))] + [shutil.which(n) for n in ('google-chrome', 'chromium', 'chromium-browser')] if b and os.path.isfile(b)), '')
+    os.makedirs(d, exist_ok=True)
+    r = subprocess.run([npm, 'install', '--prefix', d, '--no-audit', '--no-fund', f'@mermaid-js/mermaid-cli@{MMDC_PIN}'], capture_output=True, text=True,
+                       errors='replace', timeout=600, env={**os.environ, **({'PUPPETEER_SKIP_DOWNLOAD': '1'} if exe else {})})
+    if r.returncode:
+        raise SystemExit(f'spec setup: npm install failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}')
+    with open(os.path.join(d, 'puppeteer.json'), 'w', encoding='utf-8') as fh:
+        json.dump({'executablePath': exe, 'args': ['--no-sandbox']} if exe else {'args': ['--no-sandbox']}, fh)
+    return f'mmdc {MMDC_PIN}: {mmdc_path() or d}' + (f' (browser {exe})' if exe else ' (puppeteer browser)')
+
+
+def _diagram(key, i, d, n=2):
+    """A diagram: the image (pinned mmdc renders the Mermaid source; hosted where the doc store hosts evidence) above its source block."""
+    src, mmdc, img = str(d.get('mermaid') or '').strip(), mmdc_path(), ''
     if src and mmdc:
-        base = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', f'{key}-d{i}'))
-        with open(base + '.mmd', 'w', encoding='utf-8', newline='\n') as fh:
-            fh.write(src + '\n')
-        try:
-            ok = subprocess.run([mmdc, '-i', base + '.mmd', '-o', base + '.png'], capture_output=True, timeout=90).returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            ok = False
-        img = f'![{d.get("title", "diagram")}]({base}.png)\n\n'.replace('\\', '/') if ok else ''
+        base = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', f'{key}-d{i}-{zlib.crc32(src.encode()):08x}'))
+        pk, png = f'{key}:spec', base + '.png'
+        if not os.path.isfile(png):
+            with open(base + '.mmd', 'w', encoding='utf-8', newline='\n') as fh:
+                fh.write(src + '\n')
+            cfg = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(mmdc))), 'puppeteer.json')
+            try:
+                subprocess.run([mmdc, '-i', base + '.mmd', '-o', png, '-b', 'white', '-s', '2'] + (['-p', cfg] if os.path.isfile(cfg) else []), capture_output=True, timeout=120)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        if os.path.isfile(png):
+            hosted = (_pub_read(pk).get('diagramSrc') or {}).get(os.path.basename(png))
+            if not hosted and (hosted := ((make_evidence(f'{key} spec diagrams', [png], key=pk).get('files') or {}).get(os.path.basename(png)) or {}).get('src')):
+                _pub_update(pk, diagramSrc={**(_pub_read(pk).get('diagramSrc') or {}), os.path.basename(png): hosted})
+            if hosted or REPORT_TYPE in ('markdown', 'html'):   # a kept local doc reads the file; a hosted doc needs a hosted image
+                img = f'![{d.get("title", "diagram")}]({(hosted or png).replace(chr(92), "/")})\n\n'
+            else:
+                print(f'[spec] {key}: diagram "{d.get("title", "")}" image not hosted (reports.evidence): kept as Mermaid source', file=sys.stderr)
+        else:
+            print(f'[spec] {key}: diagram "{d.get("title", "")}" did not render (mmdc {mmdc}): kept as Mermaid source', file=sys.stderr)
     elif src:
-        print(f'[spec] {key}: diagram "{d.get("title", "")}" kept as Mermaid source (no mmdc on PATH for an image)', file=sys.stderr)
-    return f'### {d.get("title") or f"Diagram {i}"}\n\n{img}```mermaid\n{src}\n```'
+        print(f'[spec] {key}: diagram "{d.get("title", "")}" kept as Mermaid source (devtools.py spec setup installs mmdc for an image)', file=sys.stderr)
+    kind = f' ({d["type"]})' if d.get('type') else ''
+    return f'{"#" * (n + 1)} {d.get("title") or f"Diagram {i}"}{kind}\n\n{img}```mermaid\n{src}\n```'
+
+
+def _spec_val(k, v, key):
+    """One part's Markdown lines."""
+    if _na(v):
+        return [f'- **{_label(k)}:** n/a — {v["na"]}' if str(v['na']).strip() else f'- **{_label(k)}:** **open**']
+    if v in (None, '', [], {}):
+        return [f'- **{_label(k)}:** **open**']
+    if k == 'diagrams':
+        return ['', '\n\n'.join(_diagram(key, i, d if isinstance(d, dict) else {'mermaid': d}) for i, d in enumerate(v if isinstance(v, list) else [v], 1)), '']
+    if k == 'contracts' and isinstance(v, list) and all(isinstance(x, dict) for x in v):
+        return [f'- **{_label(k)}:**', '', _table(['Contract', 'Contracts file row'], [[x.get('name', ''), x.get('ref', '')] for x in v]), '']
+    if k == 'pseudocode':
+        return ['- **Pseudocode:**', '', f'```\n{v}\n```', '']
+    if isinstance(v, list) and k in ('steps', 'whys'):
+        return [f'- **{_label(k)}:**'] + [f'{i}. {x}' for i, x in enumerate(v, 1)]
+    if isinstance(v, list):
+        return [f'- **{_label(k)}:** ' + '; '.join(str(x) if not isinstance(x, dict) else ' · '.join(str(y) for y in x.values() if y) for x in v)]
+    return [f'- **{_label(k)}:** {v}']
 
 
 def _spec_body(f, v, s, key):
     """One section's body (v answered, never None)."""
     li = lambda xs: '\n'.join(f'- {x}' if isinstance(x, str) else '- ' + ' · '.join(str(y) for y in x.values() if y) for x in (xs if isinstance(xs, list) else [xs]))
-    tab = lambda head, keys, xs: _table(head, [[x.get(k, '') for k in keys] for x in xs])
-    if f == 'users':
+    tab = lambda head, keys, xs: _table(head, [[x.get(k, '') if isinstance(x, dict) else (x if k == keys[0] else '') for k in keys] for x in xs])
+    if f == 'users' and isinstance(v, list):
         return tab(['Who', 'Flow'], ('who', 'flow'), v)
-    if f == 'rules':
+    if f == 'metrics' and isinstance(v, list):
+        return tab(['Metric', 'Target', 'By when'], ('metric', 'target', 'by'), v)
+    if f == 'glossary' and isinstance(v, list):
+        return tab(['Term', 'Meaning'], ('term', 'meaning'), v)
+    if f == 'rules' and isinstance(v, list):
+        edges = [e for e in s.get('edges') or [] if not _na(s.get('edges'))]
+        cut = lambda r: [f'- {e}' if isinstance(e, str) else f'- {e.get("text", "")} ({e["rule"]})' for e in edges if (e.get('rule') if isinstance(e, dict) else None) == r]
+        rest = [x for r in [None] + [x.get('id') for x in v] for x in cut(r)]
         return 'One testable rule per S-id; test cases, commits, MRs and QA results cite it.\n\n' + _table(['S-id', 'Rule', 'Acceptance'], [
-            [r['id'] + (' (removed)' if r.get('status') == 'removed' else ''), r.get('text') or '**open**', r.get('acceptance') or '**open**'] for r in v])
-    if f == 'options':
-        return '\n\n'.join(f'**{o.get("choice")}** · chosen: {o.get("chosen") or "**open**"} · why: {o.get("why", "")} · rejected: {o.get("rejected") or "—"}'
-                           f' · revisit: {o.get("revisit") or "—"}\n\n' + tab(['Option', 'What', 'Pros', 'Cons'], ('id', 'text', 'pros', 'cons'), o.get('options') or []) for o in v)
-    if f == 'contracts':
-        return tab(['Contract', 'Contracts file row'], ('name', 'ref'), v)
-    if f in ('ui', 'rollout', 'repro') and isinstance(v, dict):
-        lab = {'screens': 'Screens', 'states': 'States', 'theme': 'Theme rule', 'flag': 'Flag', 'enable': 'How to enable', 'rollback': 'Roll back',
-               'steps': 'Repro steps', 'expected': 'Expected', 'actual': 'Actual', 'rootCause': 'Root cause'}
-        keys = {'ui': ('screens', 'states', 'theme'), 'rollout': ('flag', 'enable', 'rollback'), 'repro': ('steps', 'expected', 'actual', 'rootCause')}[f]
-        return _table(['', ''], [[lab[k], v.get(k) or ('not known yet' if k == 'rootCause' else '**open**')] for k in keys])
-    if f == 'edges':
-        return '\n'.join(f'- {e}' if isinstance(e, str) else f'- {e.get("text", "")}' + (f' ({e["rule"]})' if e.get('rule') else '') for e in v)
-    if f == 'risks':
+            [r['id'] + (' (removed)' if r.get('status') == 'removed' else ''), r.get('text') or '**open**', r.get('acceptance') or '**open**'] for r in v]) \
+            + ('\n\n**Edge cases** (under their rule)\n\n' + '\n'.join(rest) if rest else '')
+    if f == 'decisions' and isinstance(v, list):
+        return '\n\n'.join(f'**{d.get("question") or d.get("id")}**' + (f' ({d["id"]})' if d.get('id') and d.get('id') != d.get('question') else '')
+                           + f' · drivers: {d.get("drivers") or "—"} · chosen: {d.get("chosen") or "**open**"} · why: {d.get("why") or "—"}'
+                           + f' · confirm-by: {d.get("confirm") or "—"}' + (f' · by: {d["by"]}' if d.get('by') else '')
+                           + ('\n\n' + tab(['Option', 'What', 'Pros', 'Cons'], ('id', 'text', 'pros', 'cons'), d['options']) if isinstance(d.get('options'), list) and d['options'] else '')
+                           for d in v)
+    if f == 'risks' and isinstance(v, list):
         return '\n'.join(f'- {r}' if isinstance(r, str) else f'- {r.get("text", "")}' + (f' · mitigation: {r["mitigation"]}' if r.get('mitigation') else '') for r in v)
-    if f == 'diagrams':
-        return '\n\n'.join(_diagram(key, i, d) for i, d in enumerate(v, 1))
-    if f == 'decisions':
-        return tab(['#', 'Question', 'Answer', 'By'], ('id', 'question', 'answer', 'by'), v)
-    return li(v) if isinstance(v, (list, dict)) else str(v)
+    if isinstance(v, dict):
+        keys = list(SPEC_PARTS.get(f, ())) + [k for k in v if k not in SPEC_PARTS.get(f, ())]
+        return '\n'.join(x for k in keys for x in _spec_val(k, v.get(k), key)).strip()
+    return li(v) if isinstance(v, list) else str(v)
 
 
 def render_spec(s, key, ver, log, tasks=()):
-    """The spec doc (templates.md "Spec"): every section always present (answered, 'n/a — <why>' or its open question), the change log
-    with the S-ids each version touched."""
+    """The spec doc (templates.md "Spec"): the kind's sections, each always present (answered, 'n/a — <why>' or its purpose +
+    open question), the change log with the S-ids each version touched."""
+    s = spec_migrate(s)
     qs, last, parts = spec_questions(s), (log or [{}])[-1], []
-    for f, head, q in SPEC_SECTIONS:
+    for f, kinds, head, purpose, q in spec_sections(s.get('kind')):
         v = s.get(f)
-        if f == 'repro' and s.get('kind') != 'bug':
-            body = 'n/a — not a bug'
-        elif f == 'questions':
+        if f == 'questions':
             body = '\n'.join(f'- {x}' for x in qs) if qs else 'none — every section answered'
         elif _na(v):
-            body = f'n/a — {v["na"]}' if str(v['na']).strip() else f'**Open:** {q} (n/a needs its reason)'
+            body = f'n/a — {v["na"]}' if str(v['na']).strip() else f'**Open** ({purpose}): {q} (n/a needs its reason)'
         elif v in (None, '', [], {}):
-            body = f'**Open:** {q}'
+            body = f'**Open** ({purpose}): {q}'
         else:
             body = _spec_body(f, v, s, key)
-        parts += [f'## {head}', body]
+        parts += [head if head.startswith('#') else f'## {head}', body]
+    known = {f for f, *_ in spec_sections(s.get('kind'))} | {'kind', 'title', 'edges'}
+    if extra := {k: v for k, v in s.items() if k not in known and v not in (None, '', [], {})}:   # a v1 field this kind has no section for: shown, never lost
+        parts += ['## Carried from the earlier template', _spec_body('carried', extra, s, key)]
     head = [f'# {key} Spec v{ver} — {s.get("title", "")}',
             _table(['', ''], [['Kind', s.get('kind', '')], ['Status', f'draft · {len(qs)} open question(s)' if qs else 'ready'],
                               ['Version', f'v{ver} · {last.get("date", "")} · {last.get("by", "")}'], ['Tasks', ', '.join(tasks) or 'none (standing subject spec)']])]
     log_t = _table(['Version', 'Date', 'By', 'What changed', 'S-ids'], [[f'v{e["v"]}', e.get('date', ''), e.get('by', ''), e.get('what', ''), ', '.join(e.get('ids') or []) or '—'] for e in log])
     return '\n\n'.join(head + parts + ['## Change log', log_t]) + '\n'
+
+
+def spec_template(kinds=SPEC_KINDS):
+    """The blank template per kind (the template doc): each section's heading, purpose and the questions briefy asks."""
+    out = ['# Spec template', 'Rendered by `devtools.py spec write`; every section always present: answered, `n/a — <why>` or its open question. '
+           'S-ids (S1..Sn, never reused) are cited by test cases, commits, MRs and QA results. Diagrams: Mermaid source kept, an image rendered.']
+    for k in kinds:
+        out.append(f'## Kind: {k}')
+        for f, _, head, purpose, q in spec_sections(k):
+            parts = ', '.join(SPEC_PARTS.get(f, ()))
+            out.append(f'{"#" * (head.count("#") + 1) if head.startswith("#") else "###"} {head.lstrip("# ")}\n\n*{purpose}*' + (f' · parts: {parts}' if parts else '')
+                       + (f'\n\nAsk: {q}' if q else ''))
+        out.append('### Change log\n\n*version, date, by, what changed and why, S-ids touched*')
+    return '\n\n'.join(out) + '\n'
 
 
 def spec_link(tid, rec=None):
@@ -2703,7 +2879,12 @@ def spec_write(key, path, by='', subject=False):
     new, pk = load_spec(path), f'{key}:spec'
     what, rec = str(new.pop('change', '') or ''), _pub_read(pk)
     subject = bool(subject or rec.get('subject'))
-    old = rec.get('data') or {}
+    old = spec_migrate(rec.get('data') or {})
+    kd = new.get('kind') or old.get('kind')
+    new = {k: v for k, v in spec_migrate({**new, 'kind': kd}).items() if k != 'kind' or 'kind' in new}
+    for k, v in list(new.items()):   # an object section merges by part ({"rollout": {"tell": ".."}} answers one part); a None part deletes it
+        if k in SPEC_PARTS and isinstance(v, dict) and not _na(v) and isinstance(old.get(k), dict) and not _na(old[k]):
+            new[k] = {p: x for p, x in {**old[k], **v}.items() if x is not None}
     data = merge_spec(old, new, SPEC_LISTS)
     if gaps := spec_shape(data):
         raise SystemExit(f'spec {key} refused: {"; ".join(gaps)} (devtools.py spec --help). Nothing was written.')
@@ -2775,19 +2956,27 @@ def spec_trace_gaps(tid):
 
 def spec_cmd(a):
     """spec write <task|subject> <spec.json> [--subject] [--by <who>] · questions <key> · link <task> <subject> [--ids S1,S2]
-    · trace <task> · show <task|subject> · retire <task|subject> --reason <why>
+    · trace <task> · show <task|subject> · retire <task|subject> --reason <why> · template [feature|bug|subject] · setup
       python -X utf8 devtools.py spec write T1 spec-t1.json --by briefy-w2      (a task's spec: linked on T1 as its Spec line)
-      python -X utf8 devtools.py spec questions T1     (the open sections and rule gaps: the interview, one question per line; exit 1 when any)
+      python -X utf8 devtools.py spec questions T1 [--kind bug]   (open sections, parts and rule gaps: the interview, one per line; exit 1 when any)
+      python -X utf8 devtools.py spec template bug     (the kind's sections: purpose + questions; no kind: all three)
+      python -X utf8 devtools.py spec setup            (once per machine: pinned mmdc into <runtime>/tools for diagram images)
       python -X utf8 devtools.py spec write orders-list spec.json --subject     (a standing spec for a module or flow)
       python -X utf8 devtools.py spec link T1 orders-list --ids S1,S3           (a task builds against a standing spec)
       python -X utf8 devtools.py spec trace T1         (S-ids no test case cites: exit 1; finish refuses them)
       python -X utf8 devtools.py spec retire T1 --reason 'superseded by T7'   (doc marked SUPERSEDED, Spec line and links removed)"""
-    verbs = ('write', 'questions', 'link', 'trace', 'show', 'retire')
+    verbs = ('write', 'questions', 'link', 'trace', 'show', 'retire', 'template', 'setup')
+    if a and a[0] == 'setup':
+        print(mmdc_setup())
+        return 0
+    if a and a[0] == 'template':
+        print(spec_template([k for k in a[1:2] if k in SPEC_KINDS] or SPEC_KINDS), end='')
+        return 0
     if not a or a[0] in ('-h', '--help', 'help') or a[0] not in verbs or len(a) < 2:
         hlp = a and a[0] in ('-h', '--help', 'help')
         print(spec_cmd.__doc__ + '\n' + SPEC_FIELDS, file=sys.stdout if hlp else sys.stderr)
         return 0 if hlp else 2
-    opt = {a[i][2:]: a[i + 1] for i in range(len(a) - 1) if a[i] in ('--by', '--ids', '--reason')}
+    opt = {a[i][2:]: a[i + 1] for i in range(len(a) - 1) if a[i] in ('--by', '--ids', '--reason', '--kind')}
     verb, key = a[0], a[1]
     if verb == 'write':
         if len(a) < 3:
@@ -2795,7 +2984,7 @@ def spec_cmd(a):
         print(spec_write(key, a[2], opt.get('by') or '', '--subject' in a))
     elif verb == 'questions':
         rec = spec_rec(key)
-        qs = spec_questions(rec.get('data') or {}) if rec.get('data') else [f'{h}: {q}' for f, h, q in SPEC_SECTIONS if q and f != 'repro']
+        qs = spec_questions(rec.get('data') or {'kind': opt.get('kind') or 'feature'})
         print('\n'.join(f'Q{i} {q}' for i, q in enumerate(qs, 1)) or f'{key}: ready (no open question)')
         return 1 if qs else 0
     elif verb == 'link':

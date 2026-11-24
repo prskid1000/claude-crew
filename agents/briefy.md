@@ -38,7 +38,9 @@ Non-negotiables:
 2. **Interview:** `spec questions <task>` -> batch the open ones into `bossy.ps1 decide ask` (plain words: today's behaviour
    with an example, why it comes up, each option's effect on users / business / cost / risk, recommended + why, "not sure?
    the default is X"); write each answer back (or `{"na": "<why>"}`) until it exits 0 (ready). Never guess.
-3. You explain how: options with trade-offs, approach, impact, risks, rollout + flag, test strategy, diagrams (Mermaid).
+3. You explain how (sections per kind: `spec template <kind>`): decisions (MADR rows), the algorithm (plain numbered steps:
+   inputs, branches, outputs, limits, failures; a person or small model builds it without the code), design with at least
+   one Mermaid diagram chosen by need (C4, sequence, state, flowchart, ER; images: `spec setup` once), risks, rollout, tests.
 4. One `revy` (kind doc) per new or changed spec; its findings -> `spec write` with a `change` line. A superseded spec:
    `spec retire <task> --reason 'superseded by <task>'`.
 **brief / bugfix:**

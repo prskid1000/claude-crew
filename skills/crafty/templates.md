@@ -59,11 +59,11 @@ holdMerge?, wave? }`.
 Layout: the renderer (`**Specs:**` links each task's spec); `name` titles it, `run` the /buildy run.
 
 ## Spec
-Rendered, never hand-written: `devtools.py spec write <task|subject> <spec.json>` (fields, interview: `spec --help`); one doc
-per task (its Spec line, like the testing docs) or a standing subject spec tasks link (`spec link`). S-ids (`S<n>`, never
-reused) are the contract: cases cite them (`"spec"`, rendered `[S<n>]`), MR / commit specs list `specIds`, finish refuses
-an uncited one (`spec trace`). A change: a `change` line -> v<n+1>, a change-log row with the S-ids touched, `RETEST` on
-their tasks; a draft spec refuses the wave brief.
+Rendered, never hand-written: `devtools.py spec write <task|subject> <spec.json>` (`spec --help`; sections per kind:
+`spec template <kind>`); one per task (its Spec line) or a subject spec tasks link (`spec link`). S-ids (`S<n>`, never
+reused): cases cite them, MR / commit specs list `specIds`; finish refuses an uncited one (`spec trace`) and a feature /
+subject with no diagram (or `n/a — <why>`). A `change` line -> v<n+1>, a change-log row (S-ids touched), `RETEST` on their
+tasks; a draft spec refuses the wave brief.
 
 ## Bug-fix brief
 `bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos), added to the wave brief:

@@ -11,38 +11,75 @@ $docs = TkPath $k docs
 function Dt { $o = & $py -X utf8 $DT @args 2>&1 | Out-String; [pscustomobject]@{ out = $o.Trim(); code = $LASTEXITCODE } }
 
 # ---- write: a bad S-id refused; a draft renders every section, open ones as their question (the interview)
-$heads = @('Goal', 'Scope', 'Non-goals', 'Users and flows', 'Behaviour rules and acceptance', 'Options and trade-offs', 'Implementation approach', 'Impacted modules / APIs / data',
-  'Data / API contracts', 'UI', 'Edge cases', 'Risks', 'Rollout and feature flag', 'Test strategy', 'Diagrams', 'Bug', 'Decisions', 'Open questions', 'Change log')
+$heads = @('Summary', 'Problem and evidence', 'Success metrics', 'Scope, no-gos and appetite', 'Users and flows', 'Behaviour rules', 'Algorithm', 'Design', 'UI screens and states',
+  'Cross-cutting', 'Risks and rabbit holes', 'Rollout', 'Acceptance and test strategy', 'Dependencies', 'Decisions', 'Open questions', 'Change log')
+$bugHeads = @('Summary', 'Impact', 'Reproduce', 'Regression range', 'Root cause', 'Fix and rules', 'Rules', 'Fix algorithm', 'Detection gap', 'Data repair', 'Rollout', 'Decisions', 'Open questions', 'Change log')
 Set-JsonFile "$wd/s0.json" @{ kind = 'feature'; title = 'Sort orders'; rules = @(@{ id = 'X1'; text = 'sorts' }) }
 $r0 = Dt spec write T1 "$wd/s0.json"
 Expect "spec write: a rule id that is no S<n> is refused, nothing written ($($r0.code))" ($r0.code -ne 0 -and $r0.out -match "rule id 'X1'" -and (Dt spec show T1).out -match 'no spec')
-Set-JsonFile "$wd/d0.json" @{ kind = 'bug'; title = 'Totals off'; goal = 'totals match'; risks = @{ na = '' }; rules = @(@{ id = 'S1'; text = 'total = sum of lines' }) }
+Set-JsonFile "$wd/d0.json" @{ kind = 'bug'; title = 'Totals off'; goal = 'totals match'; dataRepair = @{ na = '' }; repro = @{ steps = 'open totals'; rootCause = 'rounding per line' }
+  approach = 'round once'; rules = @(@{ id = 'S1'; text = 'total = sum of lines' }) }
 $rd = Dt spec write T9 "$wd/d0.json"; $dd = Get-Content -Raw (Join-Path $docs 'T9-spec.md'); $dq = Dt spec questions T9
-Expect "spec draft: every section heading, open ones as questions, n/a without reason is open; questions exit 1 ($($rd.code)$($dq.code))" ($rd.code -eq 0 -and
-  @($heads | Where-Object { $dd -notmatch "(?m)^## $([regex]::Escape($_))$" }).Count -eq 0 -and $dd -match '\| Status \| draft · \d+ open' -and $dd -match '(?m)^\*\*Open:\*\* Which design choices exist' -and
-  $dd -match '(?m)^\*\*Open:\*\* Repro steps' -and $dq.code -eq 1 -and $dq.out -match 'Q\d+ S1: acceptance\?' -and $dq.out -match 'Q\d+ Risks: .* \(n/a needs its reason\)' -and $dq.out -match 'Q\d+ Bug: ')
+Expect "spec draft (bug, v1-shape input): the bug sections only, open ones as purpose + question, parts asked, n/a without reason open; questions exit 1 ($($rd.code)$($dq.code))" ($rd.code -eq 0 -and
+  @($bugHeads | Where-Object { $dd -notmatch "(?m)^#{2,3} $([regex]::Escape($_))$" }).Count -eq 0 -and $dd -notmatch '(?m)^## (Design|Problem and evidence)$' -and $dd -match '\| Status \| draft · \d+ open' -and
+  $dd -match '(?m)^\*\*Open\*\* \(last good version or date, first bad\): Did it ever work' -and $dd -match '(?s)## Summary\s+totals match' -and $dd -match '- \*\*Root cause:\*\* rounding per line' -and
+  $dd -match '(?s)## Fix and rules\s+- \*\*Approach:\*\* round once' -and $dq.code -eq 1 -and $dq.out -match 'Q\d+ S1: acceptance\?' -and $dq.out -match 'Q\d+ Data repair .* \(n/a needs its reason\)' -and
+  $dq.out -match 'Q\d+ Reproduce: Frequency\?' -and $dq.out -notmatch 'which diagram')
 Set-JsonFile "$wd/d1.json" @{ rules = @(@{ id = 'S1'; acceptance = 'Given 2 lines Then total = their sum' }); change = 'interview answer' }
 $r9 = Dt spec write T9 "$wd/d1.json"
 Expect 'spec: an interview answer to a draft is v2 with no RETEST mark' ($r9.code -eq 0 -and $r9.out -match 'spec T9 v2' -and $r9.out -notmatch 'RETEST' -and (Dt spec show T9).out -notmatch 'retest')
 $lb = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; print(d.links_block('Spec: the list must sort\n**Spec:** [open](https://x/s) · v1\nBody', {'spec': '[open](https://x/s) · v2'}))" 2>&1 | Out-String
 Expect "links_block: the Spec link line is replaced, a person's own 'Spec:' line stays ($($lb.Trim() -replace '\s+', ' '))" ($lb -match '(?s)^\*\*Spec:\*\* \[open\]\(https://x/s\) · v2\s+Spec: the list must sort\s+Body' -and $lb -notmatch 'v1')
-$s1 = @{ kind = 'feature'; title = 'Sort orders'; goal = 'newest orders first'; scope = @('orders list'); nonGoals = @('export')
+$s1 = @{ kind = 'feature'; title = 'Sort orders'; goal = 'newest orders first'; scope = @{ in = @('orders list'); out = @('export'); appetite = '2 days' }
+  problem = 'dispatchers miss new orders'; metrics = @(@{ metric = 'missed orders'; target = '0'; by = 'one week after deploy' }); dependencies = @{ na = 'none' }
+  crossCutting = 'none: same screen, same data'; algorithm = @{ inputs = 'orders'; steps = @('read sort param', 'order by created_at desc'); outputs = 'sorted page'; limits = 'one indexed query'; failures = 'bad sort -> 400' }
   users = @(@{ who = 'dispatcher'; flow = 'opens Orders, reads newest' })
   rules = @(@{ id = 'S1'; text = 'the list sorts by date, newest first'; acceptance = 'Given 2 orders When Orders opens Then the newer is on top' },
             @{ id = 'S2'; text = 'a Date header click flips the order'; acceptance = 'Given the list When Date is clicked Then oldest first' })
   options = @(@{ choice = 'where to sort'; options = @(@{ id = 'A'; text = 'server'; pros = 'paging'; cons = 'API change' }, @{ id = 'B'; text = 'client'; pros = 'no API'; cons = 'one page' }); chosen = 'A'; why = 'paging'; rejected = 'B: one page only'; revisit = 'never' })
   approach = 'sort param on GET /orders'; impact = @('OrderController', 'orders.created_at index'); risks = @(@{ text = 'slow sort'; mitigation = 'index' })
-  rollout = @{ flag = 'sortV2'; enable = 'Settings > Orders'; rollback = 'flag off' }; tests = @('unit', 'API', 'UI'); diagrams = @(@{ title = 'Sort flow'; mermaid = 'flowchart LR; A-->B' })
+  rollout = @{ flag = 'sortV2'; enable = 'Settings > Orders'; rollback = 'flag off'; migration = 'none'; tell = 'dispatchers' }; tests = @('unit', 'API', 'UI'); diagrams = @(@{ title = 'Sort flow'; mermaid = 'flowchart LR; A-->B' })
   decisions = @{ na = 'no choice left' }; questions = @()
   contracts = @(@{ name = 'GET /orders sort'; ref = 'wave.contracts.md row 1' }); ui = @{ screens = 'Orders'; states = 'empty, loaded'; theme = 'app theme colours only' }
   edges = @(@{ text = 'two orders with one timestamp'; rule = 'S1' }) }
 Set-JsonFile "$wd/s1.json" $s1
 $r1 = Dt spec write T1 "$wd/s1.json" --by briefy-1
 $doc = Get-Content -Raw (Join-Path $docs 'T1-spec.md') -ErrorAction SilentlyContinue
-Expect "spec write v1 ready: standard sections, options table, Mermaid source, n/a with reason, change log row ($($r1.code))" ($r1.code -eq 0 -and $doc -match '(?m)^# T1 Spec v1 — Sort orders' -and
-  @($heads | Where-Object { $doc -notmatch "(?m)^## $([regex]::Escape($_))$" }).Count -eq 0 -and $doc -match '\| Status \| ready \|' -and $doc -match '\| S2 \| a Date header click' -and
-  $doc -match '\*\*where to sort\*\* · chosen: A' -and $doc -match '\| B \| client \| no API \| one page \|' -and $doc -match '```mermaid\s+flowchart LR; A-->B' -and $doc -match 'n/a — not a bug' -and
-  $doc -match 'n/a — no choice left' -and $doc -match '\| v1 \| \S+ \| briefy-1 \| first version \| S1, S2 \|' -and $doc -match 'two orders with one timestamp \(S1\)' -and (Dt spec questions T1).code -eq 0)
+Expect "spec write v1 ready: feature sections, v1 fields mapped (options -> Decisions, approach / contracts / diagrams -> Design), algorithm steps, Mermaid source, n/a with reason, change log row ($($r1.code))" (
+  $r1.code -eq 0 -and $doc -match '(?m)^# T1 Spec v1 — Sort orders' -and @($heads | Where-Object { $doc -notmatch "(?m)^## $([regex]::Escape($_))$" }).Count -eq 0 -and $doc -notmatch '(?m)^## (Reproduce|Glossary)$' -and
+  $doc -match '\| Status \| ready \|' -and $doc -match '\| S2 \| a Date header click' -and $doc -match '\*\*where to sort\*\* · drivers: — · chosen: A · why: paging; rejected: B: one page only' -and
+  $doc -match '\| B \| client \| no API \| one page \|' -and $doc -match '(?s)## Design\s+- \*\*Approach:\*\* sort param on GET /orders.*\| GET /orders sort \| wave.contracts.md row 1 \|.*```mermaid\s+flowchart LR; A-->B' -and
+  $doc -match '(?m)^- \*\*Steps:\*\*\s+1\. read sort param\s+2\. order by created_at desc' -and $doc -match '(?s)## Dependencies\s+n/a — none' -and $doc -match '- \*\*Out \(no-gos\):\*\* export' -and
+  $doc -match '\| v1 \| \S+ \| briefy-1 \| first version \| S1, S2 \|' -and $doc -match '(?s)\*\*Edge cases\*\*.*two orders with one timestamp \(S1\)' -and (Dt spec questions T1).code -eq 0)
+# owner 2026-11-24 (proper diagrams): a feature Design without a diagram is open (draft) and finish refuses it; n/a + why passes; an answer merges by part
+$dg = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; f = {'kind': 'feature', 'design': {'approach': 'x'}}; print(d.spec_diagram_gap(f), '|', d.spec_diagram_gap({**f, 'design': {'approach': 'x', 'diagrams': {'na': 'text only'}}}) or '-', '|', d.spec_diagram_gap({'kind': 'bug'}) or '-', '|', any('which diagram' in q for q in d.spec_questions(f)))" 2>&1 | Out-String
+$null = Dt spec write T5 "$wd/s1.json"
+Set-JsonFile "$wd/s1b.json" @{ rollout = @{ tell = 'dispatchers and support' }; change = 'who is told' }; $r1b = Dt spec write T5 "$wd/s1b.json"; $doc1b = Get-Content -Raw (Join-Path $docs 'T5-spec.md')
+Expect "spec diagrams: Design with none = gap + interview question; n/a passes; bug needs none; an object answer merges by part ($($dg.Trim()))" ($dg.Trim() -eq 'Design | - | - | True' -and $r1b.code -eq 0 -and
+  $doc1b -match '- \*\*Who is told:\*\* dispatchers and support' -and $doc1b -match '- \*\*Flag:\*\* sortV2')
+Set-JsonFile "$wd/s1c.json" @{ change = 'diagram dropped'; design = @{ diagrams = @() } }; $null = Dt spec write T5 "$wd/s1c.json"; $fq = Dt spec questions T5
+# a stand-in for the pinned mmdc (spec setup): writes the -o file; the image line goes above the kept Mermaid source
+$mmBin = Join-Path (TkPath $k tools) 'mmdc/node_modules/.bin'; $mmFake = Join-Path $mmBin ($IsWindows ? 'mmdc.cmd' : 'mmdc'); $null = New-Item -ItemType Directory -Force $mmBin
+Set-Content -LiteralPath $mmFake ($IsWindows ? "@echo off`r`ntype nul > %4" : "#!/bin/sh`ntouch `"`$4`""); if (-not $IsWindows) { chmod +x $mmFake }
+Set-JsonFile "$wd/s1d.json" @{ change = 'diagram back'; design = @{ diagrams = @(@{ title = 'Sort flow'; type = 'flowchart'; mermaid = 'flowchart LR; A-->C' }) } }; $null = Dt spec write T5 "$wd/s1d.json"
+$doc1d = Get-Content -Raw (Join-Path $docs 'T5-spec.md'); Remove-Item -LiteralPath $mmFake
+Expect "spec questions: a dropped diagram reopens the spec; mmdc renders an image above the Mermaid source ($($fq.code))" ($fq.code -eq 1 -and $fq.out -match 'Design: which diagram' -and (Dt spec questions T5).code -eq 0 -and
+  $doc1d -match '(?s)### Sort flow \(flowchart\)\s+!\[Sort flow\]\([^)]*T5-d1-[0-9a-f]{8}\.png\)\s+```mermaid\s+flowchart LR; A-->C')
+Set-Content -LiteralPath "$wd/mg.py" -Encoding utf8 @"
+import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d
+v1 = {'kind': 'subject', 'title': 't', 'approach': 'old way', 'contracts': [{'name': 'GET /x', 'ref': 'r1'}], 'diagrams': [{'title': 'L', 'mermaid': 'stateDiagram-v2; A-->B'}], 'rules': [{'id': 'S1', 'text': 'r', 'acceptance': 'a'}]}
+m = d.spec_migrate(v1); md = d.render_spec(v1, 's', 1, [{'v': 1}])
+b = d.render_spec({'kind': 'bug', 'title': 'b', 'risks': [{'text': 'RISKY'}]}, 'b', 1, [{'v': 1}])
+print(m['rules'] == v1['rules'], d.spec_migrate(m) == m, 'approach' in v1, d.spec_diagram_gap(v1) or '-', m['interfaces'][0]['name'], 'Earlier approach:** old way' in md, 'GET /x' in md, 'RISKY' in b,
+      d.spec_diagram_gap({'kind': 'feature', 'design': {'diagrams': [{'title': 'x', 'mermaid': ''}]}}))
+"@
+$mg = & $py -X utf8 "$wd/mg.py" 2>$null | Out-String
+Expect "spec_migrate (v1 -> v2): rules kept, idempotent, input untouched; a subject's diagrams -> Data model, contracts -> Interfaces, the rest carried (shown); an empty Mermaid is no diagram ($($mg.Trim()))" ($mg.Trim() -eq 'True True True - GET /x True True True Design')
+Set-JsonFile "$wd/s1e.json" @{ change = 'a decision'; decisions = @(@{ id = 'D1'; question = 'q'; chosen = 'A' }) }; $null = Dt spec write T5 "$wd/s1e.json"
+Set-JsonFile "$wd/s1f.json" @{ change = 'a better why'; decisions = @(@{ id = 'D1'; why = 'w' }) }; $null = Dt spec write T5 "$wd/s1f.json"
+Expect 'spec write: a partial decision update keeps its chosen option (ready stays)' ((Dt spec questions T5).code -eq 0 -and (Get-Content -Raw (Join-Path $docs 'T5-spec.md')) -match '\*\*q\*\* \(D1\) · drivers: — · chosen: A · why: w')
+$tp = Dt spec template bug
+Expect 'spec template bug: the bug sections with purpose and questions, no feature section' ($tp.code -eq 0 -and $tp.out -match '(?m)^### Regression range' -and $tp.out -match 'Ask: Did it ever work' -and $tp.out -match '(?m)^#### Fix algorithm' -and $tp.out -notmatch 'Success metrics')
 $sh = Dt spec show T1
 Expect "spec show: version, ready and S-ids ($($sh.out))" ($sh.code -eq 0 -and $sh.out -match 'T1:spec v1 ready .* S-ids S1, S2')
 
@@ -71,7 +108,7 @@ Expect 'spec trace: every S-id cited -> exit 0' ((Dt spec trace T1).code -eq 0)
 # ---- standing subject spec linked to a task: only the ids it names count; a change marks that task
 $sub = @{ kind = 'subject'; title = 'Orders list'; goal = 'one behaviour for every orders screen'
   rules = @(@{ id = 'S1'; text = 'rows page by 50'; acceptance = 'Given 51 orders Then page 2 holds 1' }, @{ id = 'S2'; text = 'filters persist'; acceptance = 'Given a filter When reopened Then kept' }) }
-foreach ($f in 'scope', 'nonGoals', 'users', 'options', 'approach', 'impact', 'contracts', 'ui', 'edges', 'risks', 'rollout', 'tests', 'diagrams', 'decisions', 'questions') { $sub[$f] = @{ na = 'subject-wide rules only' } }
+foreach ($f in 'purpose', 'glossary', 'users', 'algorithm', 'dataModel', 'interfaces', 'quality', 'risks', 'decisions', 'questions') { $sub[$f] = @{ na = 'subject-wide rules only' } }
 Set-JsonFile "$wd/sub.json" $sub
 $sw = Dt spec write orders-list "$wd/sub.json" --subject; $ln = Dt spec link T2 orders-list --ids S2; $gp = Dt spec trace T2
 Set-JsonFile "$wd/sub2.json" @{ rules = @(@{ id = 'S1'; text = 'rows page by 100'; acceptance = 'Given 101 orders Then page 2 holds 1' }); change = 'page size 100' }
