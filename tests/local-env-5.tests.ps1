@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 local-env-5.tests.ps1: envy.ps1 thin artifacts (services[].classpathFile): per-release classpath.txt + java.args, {javaArgs};
-a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers; lanes -Sync.
+a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers; lanes -Sync; down without -Env / -All; deploy -Dir a,b.
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-5.tests.ps1 (tests/kit-tests.ps1 -Area local-env-5 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -165,4 +165,12 @@ Remove-TestKit $syKit
 # K2X: the sync scratch (a.txt, m-z.txt) stays under the test home, never at a drive root
 $leNew = @(foreach ($dr in $script:rootsAt.Keys) { Get-ChildItem -LiteralPath $dr -Force -Name -ErrorAction SilentlyContinue | Where-Object { $_ -notin $script:rootsAt[$dr] -and $_ -in 'a.txt', 'm.txt', 'n.txt', 'o.txt', 'r.txt', 'x.txt', 'z.txt' } })
 Expect "lanes -Sync scratch under the test home: no new drive-root entry ($($leNew -join ', '))" (-not $leNew.Count -and $sc.StartsWith([IO.Path]::GetTempPath().TrimEnd('\', '/')))
+$kd2 = New-TestKit le5d; $ed2 = New-Item -ItemType Directory -Force (Join-Path $kd2 'skills/envy/adapters'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $ed2)
+Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) $ed2; $L2 = Join-Path $kd2 'skills/envy/envy.ps1'; $k2 = $kd2
+& $J @{ localEnv = @{ envs = @{ shop = @{ services = @() }; mig = @{ services = @() } } } } (Join-Path $kd2 'skills/crafty/kit.local.json') 6
+# down with no -Env: usage + env list, exit 2; -All stops every env; deploy -Dir takes a list (a 2-dir call failed binding [string])
+$dn = Px $L2 down 2>&1 | Out-String; $dnc = $LASTEXITCODE; $da = Px $L2 down -All 2>&1 | Out-String; $dac = $LASTEXITCODE
+$dd1 = New-Item -ItemType Directory -Force (Join-Path $k2 'wt-a'); $dd2 = New-Item -ItemType Directory -Force (Join-Path $k2 'wt-b')
+$dx = (Px $L2 deploy -Env shop -Dir "$dd1,$dd2" 2>&1 | Out-String) -replace '\s*\|?\s+', ' '
+Expect "localenv: down without -Env prints usage + envs, exit 2 ($dnc); down -All runs on each env, exit 0 ($dac); deploy -Dir a,b binds and checks each dir" ($dnc -eq 2 -and $dn -match 'usage: envy\.ps1 down -Env' -and $dn -match 'shop' -and $dn -match 'mig' -and $dn -notmatch 'At .*char:' -and $dac -eq 0 -and $da -notmatch 'usage:|-Env needed' -and $dx -notmatch 'argument transformation' -and $dx -match 'wt-a is not a git worktree')
 Complete-Tests

@@ -6,7 +6,7 @@ Verbs: envs · status · doctor [-Fix] · deploy · wait (-Id | -Until up [-Serv
        migrations · sql -Query (read-only) · dbtemp [-Kill <id>] (temp per db connection; storage.db.use / kill) · mark [-Name <n>] (marks = list) ·
        seed [-Check] · drop -Agent <id> [-Note <why>] | -Stale [-DryRun] (bossy.ps1 release / supervise: layers of a finished agent,
        merged, gone or orphan ones)
-       (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
+       (owner) up -Services [-Owner] · unhold · restart -Services · down -Env <e> | -All · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
        [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] | import -From <source> -Tenant <schema>
        [-As <name>] -Mask <profile> [-DryRun] [-Refresh] (adapters/tenant-models.ps1) · cleanup [-Quick] [-DryRun] ·
        lanes -Migrate [-LanesOnly] [-DryRun] | -Sync [-DryRun] (wt-pool.ps1 lanes) ·
@@ -2022,7 +2022,7 @@ param(
   [string]$From, [string]$Tenant, [string]$As, [string]$Mask,
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
-  [string]$Branch, [string[]]$Repo, [string]$Dir, [string[]]$Services, [string]$Service, [Alias('Item')][string]$Task, [string]$Note, [string]$Id,
+  [string]$Branch, [string[]]$Repo, [string[]]$Dir, [string[]]$Services, [string]$Service, [Alias('Item')][string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
   [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [switch]$Fix, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
   [int]$Lane = 0, [string]$Until, [int]$Timeout = 600, [Alias('All')][switch]$AllServices
@@ -2038,6 +2038,8 @@ if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each 
 if ($EnvName) { $EnvName = Resolve-EnvAlias $EnvName }
 # release without -Env: the env (lane) the agent leases (retro 2026-11-23: release needed -Env)
 if (-not $EnvName -and $Action -eq 'release') { $relHeld = @(EnvNames | Where-Object { (Read-State $_).leases.ContainsKey($Agent) }); if ($relHeld.Count -eq 1) { $EnvName = $relHeld[0] } elseif ($relHeld.Count) { throw "-Env needed: $Agent leases $($relHeld -join ', ') (envy.ps1 release -Env <env>)" } }
+# down without -Env: -All stops every env and lane (owner "down all"); else usage + env list, no crash
+if (-not $EnvName -and $Action -eq 'down' -and @(EnvNames).Count -gt 1) { if ($AllServices) { foreach ($downEnv in @(EnvNames)) { Invoke-LocalEnv down -Env $downEnv -Agent $Agent }; return }; Stop-KitVerb "usage: envy.ps1 down -Env <env> [-Services <s>] | down -All (every env and lane). Envs: $((EnvNames) -join ', ')" }
 if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 elseif ($EnvName -and $Agent -ne 'main' -and ($Action -eq 'deploy' -or ($Action -eq 'wait' -and $Id)) -and [int](Get-EnvCfg $EnvName).lane -gt 1) { $EnvName = Select-Lane $EnvName $Agent 0 $Action $Id $EnvName }   # an agent's named lane another agent leases: a deploy takes a free one (wait -Id follows it)
@@ -2237,14 +2239,21 @@ switch ($Action) {
     if ($bad.Count) { $bad | ForEach-Object { "FAIL $($_.what)" }; [Console]::Error.WriteLine("envy.ps1: deploy stopped: fix the FAIL lines (envy.ps1 doctor -Env $e)"); exit 1 }
     Touch-Lease $e $Agent
     $envRepos = EnvRepos $e
-    if ($Dir) {
-      $Dir = (Resolve-Path $Dir).Path
-      $Branch = "$(git -C $Dir rev-parse --abbrev-ref HEAD)".Trim()
-      $common = (Resolve-Path "$(git -C $Dir rev-parse --path-format=absolute --git-common-dir)".Trim()).Path
-      $hit = $envRepos.Values | Where-Object { (Resolve-Path "$(git -C $_.cfg.checkout rev-parse --path-format=absolute --git-common-dir)".Trim() -ErrorAction SilentlyContinue).Path -eq $common } | Select-Object -First 1
-      if (-not $hit) { throw "[$e] $Dir is not a worktree of a repo this env runs ($($envRepos.Keys -join ', '))" }
-      $Repo = @($hit.name)
-      if (@(git -C $Dir status --porcelain --untracked-files=no).Count) { Write-Warning "$Dir has uncommitted changes: only committed work is deployed (crafty.ps1 wt commit first)" }
+    if ($Dir) {   # one worktree per repo (-Dir a,b), all on one branch
+      $dirBranches = @{}; $Repo = @()
+      foreach ($dd in @(Split-KitList $Dir)) {
+        $dd = (Resolve-Path $dd).Path
+        $ddCommon = "$(git -C $dd rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if (-not $ddCommon) { throw "[$e] $dd is not a git worktree" }
+        $dirBranches[$dd] = "$(git -C $dd rev-parse --abbrev-ref HEAD)".Trim()
+        $common = (Resolve-Path $ddCommon).Path
+        $hit = $envRepos.Values | Where-Object { (Resolve-Path "$(git -C $_.cfg.checkout rev-parse --path-format=absolute --git-common-dir)".Trim() -ErrorAction SilentlyContinue).Path -eq $common } | Select-Object -First 1
+        if (-not $hit) { throw "[$e] $dd is not a worktree of a repo this env runs ($($envRepos.Keys -join ', '))" }
+        $Repo += $hit.name
+        if (@(git -C $dd status --porcelain --untracked-files=no).Count) { Write-Warning "$dd has uncommitted changes: only committed work is deployed (crafty.ps1 wt commit first)" }
+      }
+      $oneBranch = @($dirBranches.Values | Select-Object -Unique)
+      if ($oneBranch.Count -gt 1) { throw "[$e] -Dir worktrees are on different branches ($(@($dirBranches.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" }) -join '; ')): one deploy per branch; deploy one -Dir per call" }
+      $Branch = $oneBranch[0]
     }
     if (-not $Branch) { throw 'deploy needs -Dir <your worktree> or -Branch <branch>' }
     if ($Branch -match '^(localenv|lane)/') { throw 'that is the env branch itself' }
@@ -2387,7 +2396,7 @@ switch ($Action) {
   }
   'migrations' {   # the migration layers live, or the tables -Branch's migrations touch (what its release mark slices)
     $envRepos = EnvRepos $e; $st = Read-State $e
-    if ($Dir -and -not $Branch) { $Branch = "$(git -C (Resolve-Path $Dir).Path rev-parse --abbrev-ref HEAD)".Trim() }
+    if ($Dir -and -not $Branch) { $Branch = "$(git -C (Resolve-Path @(Split-KitList $Dir)[0]).Path rev-parse --abbrev-ref HEAD)".Trim() }
     if (-not $Branch) { foreach ($rn in $st.release.repos.Keys) { foreach ($l in @(Layers $st $rn | Where-Object { $_.migrations })) { "[$e] $rn $($l.branch) ($($l.agent)) since release $($l.since): MIGRATIONS" } }; return }
     foreach ($r in $envRepos.Values) {
       $sha = Resolve-Ref $r.cfg.checkout $Branch; if (-not $sha -or -not (HasMigrations $r.cfg.checkout $r.target $sha)) { continue }
