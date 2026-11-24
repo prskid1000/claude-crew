@@ -20,7 +20,7 @@ one is refused. A tracker with native ids keeps them as the link; the kit key li
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags).
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L28 model · L94 no repeats · L188 tags
+Sections: L28 model · L94 no repeats · L194 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -111,7 +111,7 @@ def carried(key, cfg, ty=''):
     return {m[1].lower(), *words(cfg['products'].get(m[1], ''))}, [x for x in lead if x[0]], [an] if len(an) > 1 else []
 
 
-def clean(text, key, cfg, ty=''):
+def clean(text, key, cfg, ty='', labels=False):
     """<text> without what <key> / <ty> already says: product words anywhere, a leading area or type word, a type tag, a repo list."""
     anywhere, lead, phrases = carried(key, cfg, ty)
     t = re.sub(REPO_LIST, '', str(text or ''))
@@ -127,6 +127,7 @@ def clean(text, key, cfg, ty=''):
     while changed:   # leading carried words, in any order (Catalogue catalogue-blocks, Feature: ...)
         changed = False
         for ws, colon in lead:
+            colon = colon or (labels and ws != [str(ty).lower()])   # a title: an area word goes only as a label ('Catalogue: x'), 'Payment methods' stays
             sp = lambda w: re.escape(w[:-1] if w.endswith('s') and len(w) > 3 else w) + 's?'   # Accounts / Account
             m = re.match(r'(?i)' + r'[\s:—–-]+'.join(map(sp, ws)) + (r'\s*:[\s—–-]*' if colon else r'(?![a-z0-9])[\s:;,—–-]*'), t)
             if m and t[m.end():].strip():
@@ -160,11 +161,16 @@ def dup_words(kind, name, cfg):
         ty, free = re.match(r'\w+', name)[0], re.sub(rf'\s*\[{key}\]$', '', name.split(': ', 1)[1])
     else:
         ty, free = '', name.split(' ', 1)[1].replace('-', ' ')
-    c = clean(free, key, cfg, ty)
+    c = clean(free, key, cfg, ty, labels=kind == 'title')
     if re.sub(r'\W+', ' ', c).strip().lower() != re.sub(r'\W+', ' ', free).strip().lower():
         gone = [w for w in re.findall(r'[\w-]+', free) if w.lower() not in re.findall(r'[\w-]+', c.lower())]
         return f'DUP-WORDS: repeats {" ".join(gone) or "a repo list"} (the key / type already say it): {c!r}'
     return ''
+
+
+def sentence(t):
+    """A title reads as a sentence on its own: a lowercase first word gets a capital (menu: list -> Menu: list; iPhone, npm-x stay)."""
+    return t[:1].upper() + t[1:] if re.match(r'[a-z]+(?![a-zA-Z0-9-])', t) else t
 
 
 def make(kind, p, cfg=None):
@@ -175,7 +181,7 @@ def make(kind, p, cfg=None):
     key = g('key')
     cl = lambda t, ty='': clean(t, key, cfg, ty)
     tag = slugify(g('tag'), 3)   # a tracker's native branch tag (CU-<id>): kept so its links and the kit's branch parsers still match
-    out = {'title': lambda: f'{key} {cl(g("outcome"), g("type", "Feature"))}',   # type, product, area: tags (naming tags)
+    out = {'title': lambda: f'{key} {sentence(clean(g("outcome"), key, cfg, g("type", "Feature"), labels=True))}',   # type, product, area: tags (naming tags)
            'doc': lambda: f'{key} {g("kind", "Spec")} v{g("ver", "1")} — {cl(g("title"), g("kind", "Spec"))}',
            'branch': lambda: f'{g("type", "feat")}/{key}-' + '-'.join(x for x in (tag, slugify(cl(g("slug") or g("title"), g("type", "feat")))) if x),
            'mr': lambda: f'{g("type", "feat")}{"(" + g("scope") + ")" if g("scope") else ""}: {cl(g("summary"), g("type", "feat"))} [{key}]',

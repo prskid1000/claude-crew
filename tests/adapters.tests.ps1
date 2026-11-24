@@ -53,11 +53,12 @@ Set-JsonFile (Join-Path $tnd 'LOCAL-90.json') @{ id = 'LOCAL-90'; name = 'SHOP-C
 Set-JsonFile (Join-Path $tnd 'LOCAL-91.json') @{ id = 'LOCAL-91'; name = 'SHOP-CAT-002 [Bug] Catalogue: crash on save'; status = 'open'; parent = 'LOCAL-90'; list = 'L'; assignees = @(); description = 'd'; comments = @() }
 $rtD = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 -DryRun 2>&1 | Out-String; $rt0 = (Get-Content (Join-Path $tnd 'LOCAL-90.json') -Raw | ConvertFrom-Json).name
 $rtA = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 2>&1 | Out-String; $rv = pwsh -NoProfile -File $Dc tracker view LOCAL-90 2>$null | ConvertFrom-Json
+$null = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 2>&1; $rv2 = pwsh -NoProfile -File $Dc tracker view LOCAL-90 2>$null | ConvertFrom-Json   # a re-run plans from the old title, writes it once
 $rpo = pwsh -NoProfile -File $Dc tracker status LOCAL-91 promoted 2>&1 | Out-String; $rp = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','
 $null = pwsh -NoProfile -File $Dc tracker status LOCAL-91 closed 2>&1; $rc = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','; Remove-Item Env:KIT_TRACKER_TYPE
 Expect "tracker retag: dry run = table only; apply = <KEY> <outcome> + tags, the old wave label gone; promoted -> needs-deploy, closed clears ($($rv.name) | $($rv.tags -join ',') | $rp | $rc | $rpo)" (
-  $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \| SHOP-CAT-002 \| SHOP-CAT-002 crash on save \| bug, shop, catalogue \|' -and $rtD -match 'DRY RUN: 2 keyed' -and $rt0 -like '*`[Feature`]*' -and
-  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'SHOP-CAT-001 price grid' -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,shop,catalogue,wave-2' -and $rp -eq 'bug,shop,catalogue,needs-deploy' -and $rc -eq 'bug,shop,catalogue')
+  $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \| SHOP-CAT-002 \| SHOP-CAT-002 Crash on save \| bug, shop, catalogue \|' -and $rtD -match 'DRY RUN: 2 keyed' -and $rt0 -like '*`[Feature`]*' -and
+  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'SHOP-CAT-001 Price grid' -and $rv2.name -eq $rv.name -and ([regex]::Matches("$($rv2.description)", 'Old title').Count) -eq 1 -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,shop,catalogue,wave-2' -and $rp -eq 'bug,shop,catalogue,needs-deploy' -and $rc -eq 'bug,shop,catalogue')
 
 # secret store: file round trip (targets.local.json shape kept), names only, env read-only, secret:<name> refs, a fake store,
 # the guard denies the configured store's backing file and keeps the file store's default

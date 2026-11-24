@@ -4,7 +4,7 @@
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
 # Sections: L8 items · L88 move · L131 status roles · L286 task text · L303 naming · L415 track lines · L420 task ids ·
-#   L436 tags · L494 order
+#   L436 tags · L495 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -477,7 +477,8 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   $seen = @{}; $todo = [Collections.Generic.Queue[string]]::new(); foreach ($p in @(Split-KitList $Id)) { $todo.Enqueue($p) }
   $items = @(while ($todo.Count) { $k = $todo.Dequeue(); if ($seen.Contains($k)) { continue }; Clear-TrackerMemo $k; $tk = Get-TrackerTask $k; $seen[$k] = $tk
       if (-not $tk.name) { Write-Warning "retag: $k not readable: skipped"; continue }; foreach ($s in @($tk.subtasks)) { if ($s.id) { $todo.Enqueue("$($s.id)") } }
-      if (Get-KitNameKey $tk.name) { [ordered]@{ id = "$k"; title = "$($tk.name)"; tags = @(Get-KitTaskTags $k $tk); wave = "$((Read-KitState (Get-KitTaskFile $k)).order.wave)" } } })   # wave: tracker order's record
+      if (Get-KitNameKey $tk.name) { $ot = if ("$($tk.description)" -match '\*\*Old title:\*\* ([^\r\n]+)') { $Matches[1] -replace '\\([\[\]])', '$1' } else { "$($tk.name)" }   # a re-run plans from the first old title
+      [ordered]@{ id = "$k"; title = $ot; tags = @(Get-KitTaskTags $k $tk); wave = "$((Read-KitState (Get-KitTaskFile $k)).order.wave)" } } })   # wave: tracker order's record
   $pf = New-KitTempFile; [IO.File]::WriteAllText($pf, (@{ items = $items } | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
   $lec = $global:LASTEXITCODE; $md = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch '^DRY RUN: nothing renamed' })   # keys stay: no seed hint
   $rows = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf --json 2>$null | ConvertFrom-Json); $global:LASTEXITCODE = $lec; Remove-Item -LiteralPath $pf -Force
