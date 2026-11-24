@@ -134,9 +134,9 @@ function Invoke-HostApi([string]$Path) {
   if ($Path -match 'pipelines/7/jobs') { return @([pscustomobject]@{ name = 'deploy'; status = 'success' }) }
   if ($Path -match 'pipelines\?') { return @([pscustomobject]@{ id = 7; sha = $c1; status = 'success'; updated_at = (Get-Date).AddHours(-6).ToString('s') }) }
 }
-$p = @((@(Invoke-Deploy request -Mrs 'api!2' -Run w9 -Json) -notmatch '^requested ') -join "`n" | ConvertFrom-Json); $asked = @(Get-Content $env:FAKE_ASKED)
+$sum = @(@(Invoke-Deploy request -Mrs 'api!2' -Run w9 -Json) -join "`n" | ConvertFrom-Json); $p = @(Get-Content -Raw -LiteralPath $sum[0].file | ConvertFrom-Json); $asked = @(Get-Content $env:FAKE_ASKED)
 "skip:$(($asked -join ';') -eq 'api!2')"
-"batch:$($p[0].status -eq 'READY' -and (@($p[0].mrs.mr) -join ',') -eq 'api!2')"
+"batch:$($p[0].status -eq 'READY' -and (@($p[0].mrs.mr) -join ',') -eq 'api!2' -and (@($sum[0].mrs) -join ',') -eq 'api!2')"
 "first:$($p[0].mrs[0].detail -eq 'pending:True')"
 $rp = @(Get-KitValue 'repos' @()); $two = @([pscustomobject]@{ name = 'api'; checkout = $rp[0].checkout; deploys = @($rp[0].deploys[0], [pscustomobject]@{ target = 'stage'; ssh = @{ host = 'h' } }) })
 $gone = @([pscustomobject]@{ name = 'api'; checkout = 'Z:/no-such-checkout'; deploys = $rp[0].deploys })

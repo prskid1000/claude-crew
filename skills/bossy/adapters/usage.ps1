@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L365 context · L707 waste (owner 2026-11-23 · L749 split · L823 budget
+Sections: L9 usage · L374 context · L716 waste (owner 2026-11-23 · L773 split · L847 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -116,16 +116,25 @@ function Get-KitPct($Vals, [double]$P) { $s = @($Vals | Where-Object { $null -ne
 function Get-KitRunLabel($A, [string]$Run = '', [string]$RunDir = '') {
   # N3 (owner 2026-11-23): '<run id> · <KEY> <short title>'; the title from args.label (wave-brief render) or <runDir>/run.json label (pokey prepare)
   $lb = "$($A.label)".Trim(); $rd = if ($RunDir) { $RunDir } else { "$($A.runDir)" }
-  if ($rd) { if ((Split-Path $rd -Leaf) -match '^[a-z]+(?:-[a-z]+)*-\d{8}-\d{2,}$') { $Run = $Matches[0] }; if (-not $lb) { $lb = try { "$((Read-KitText (Join-Path $rd 'run.json') | ConvertFrom-Json).label)".Trim() } catch { '' } } }
+  if ($rd) { if ((Split-Path $rd -Leaf) -match $script:KitRunIdRx) { $Run = $Matches[0] }; if (-not $lb) { $lb = try { "$((Read-KitText (Join-Path $rd 'run.json') | ConvertFrom-Json).label)".Trim() } catch { '' } } }
+  $std = if ($Run -match $script:KitRunIdRx) { $Run; $Run = '' }   # a standard id: the row tooltip shows it (owner 2026-11-24); a legacy name stays the title
   if ($lb) { return (@($Run, $lb) | Where-Object { $_ }) -join ' · ' }
-  $pre = if ($Run -match '^[a-z]+(?:-[a-z]+)*-\d{8}-\d{2,}$') { $Run; $Run = '' }   # a standard id leads; a legacy one stays the title
   $s = @(@(if ($A.name) { "$($A.name)$(if ($A.target) { " · $($A.target)" })" }) + $Run + @(if ($A.brief) { [IO.Path]::GetFileNameWithoutExtension("$($A.brief)") }) + @($A.mandate) + @(@($A.agents)[0].area) | ForEach-Object { ("$_" -replace '\s+', ' ').Trim() } | Where-Object { $_ -and $_ -notmatch '^<' })[0]
   $cs = @(@(@($A.agents) | ForEach-Object { "$($_.items)" -split '[,\s]+' }) + @($A.select.tasks) + @($A.tasks) + @($A.task) | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^(?=[\w-]*\d)[\w-]{2,}$' -and "$s" -notmatch [regex]::Escape($_) } | Select-Object -Unique)
   $sfx = if ($cs.Count -le 2) { $cs -join ', ' } else { "$($cs.Count) items" }; $room = 48 - $(if ($sfx) { $sfx.Length + 3 } else { 0 })   # the codes are never cut
-  if ("$s".Length -gt $room) { $s = ("$s".Substring(0, [math]::Max(8, $room) - 1) -replace '\s+\S*$', '') + '…' }; (@($pre, $s, $sfx) | Where-Object { $_ }) -join ' · '
+  if ("$s".Length -gt $room) { $s = ("$s".Substring(0, [math]::Max(8, $room) - 1) -replace '\s+\S*$', '') + '…' }
+  $out = (@($s, $sfx) | Where-Object { $_ }) -join ' · '; if ($out) { $out } else { Format-KitRunName $std }
 }
-# a run id's label from its newest launch record (board show); no record: the id
-function Get-KitRunTitle([string]$Run) { $r = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { "$($_.run)" -eq $Run -or ($_.runDir -and (Split-Path "$($_.runDir)" -Leaf) -eq $Run) } | Sort-Object { try { [datetime]$_.at } catch { [datetime]0 } })[-1]; if ($r.args) { Get-KitRunLabel $r.args $Run "$($r.runDir)" } else { $Run } }
+# a run id shown (owner 2026-11-24): no date (the day group shows it), no role word (the kind chip / agent row shows it), no counter
+# (a collision adds it): kitty-fix-0007 + subject 'rest' -> 'fix: rest' · legacy kitty-20261124-rest -> 'rest' · buildy-0042 -> 'buildy'
+function Format-KitRunName([string]$Run, [string]$Subject = '') {
+  if ("$Run" -notmatch '^[a-z]+(?:-[a-z]+)*-(?:\d{8}-[\w-]+|\d{4,})$') { return $(if ($Subject) { $Subject } else { "$Run" }) }   # a hand-made name is its own title
+  $w = @("$Run" -split '-' | Where-Object { $_ -and $_ -notmatch '^\d{8}$' }); if ($w.Count -gt 1 -and $w[-1] -match '^\d+$') { $w = @($w | Select-Object -SkipLast 1) }
+  $tail = @($w | Select-Object -Skip 1) -join '-'; $out = (@($(if ($Subject) { $tail }), $(if ($Subject) { $Subject } else { $tail })) | Where-Object { $_ }) -join ': '
+  if ($out) { $out } else { $w[0] }
+}
+# a run id's label from its newest launch record (board show); no record: Format-KitRunName (-Subject: board join -Subject)
+function Get-KitRunTitle([string]$Run, [string]$Subject = '') { $r = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { "$($_.run)" -eq $Run -or ($_.runDir -and (Split-Path "$($_.runDir)" -Leaf) -eq $Run) } | Sort-Object { try { [datetime]$_.at } catch { [datetime]0 } })[-1]; if ($r.args) { Get-KitRunLabel $r.args $Run "$($r.runDir)" } else { Format-KitRunName $Run $Subject } }
 function Get-KitRunMandate($A) { $m = ((@($A.mandate) | Where-Object { $_ }) -join ' · ' -replace '\s+', ' ').Trim(); if ($m.Length -gt 400) { $m.Substring(0, 399) + '…' } else { $m } }
 function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seconds = 60) {
   $cf = Get-KitPath usage-cache -Create; $all = try { Read-KitText $cf | ConvertFrom-Json -AsHashtable } catch { $null }; $cache = $all.files; if ($cache -isnot [hashtable]) { $cache = @{} }
@@ -710,20 +719,31 @@ $script:KitWasteFix = [ordered]@{ startload = 'slim the role''s start files (kit
 function Get-KitWasteItems($Steps, $Signals = $null) {
   $min = [double](Get-KitParam 'usage.context.wasteMinTokens'); $nAct = [int](Get-KitParam 'usage.context.actRuns'); $aim = [double](Get-KitParam 'usage.context.startAim'); $f = { param($v) Format-KitCompactNum ([double]$v) }
   if ($null -eq $Signals) { $Signals = @(Get-Content -LiteralPath (Get-KitPath signals) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { "$($_.ref)" -like 'waste:*' }) }
-  $fixed = @{}; $raised = @{}; foreach ($g in @($Signals | Where-Object { $_ })) { if ("$($g.kind)" -eq 'win') { $fixed["$($g.ref)"] = $(if ("$($g.text)" -match 'fixed in (\w+)') { $Matches[1] } else { 'kit' }) } else { $raised["$($g.ref)"] = "$($g.at)" } }
+  # fixed: a win signal "fixed in <sha>" or a kit commit trailer "Waste-Fix: waste:<role>:<kind>" (owner 2026-11-24), dated by its commit;
+  # closed: /tidy's false-positive signal (its reason); an item after its fix = seen again (open), before = fixed
+  $tOf = { param($v) try { [datetimeoffset]"$v" } catch { $null } }; $fixed = @{}; $raised = @{}; $closed = @{}
+  if (-not $script:KitShaAt) { $script:KitShaAt = @{} }   # a commit's time: one git call per sha a process
+  foreach ($g in @($Signals | Where-Object { $_ })) { $gk = "$($g.ref)"
+    if ("$($g.kind)" -eq 'win') { $sha = if ("$($g.text)" -match 'fixed in (\w+)') { $Matches[1] } else { 'kit' }; if ($sha -ne 'kit' -and -not $script:KitShaAt.ContainsKey($sha)) { $script:KitShaAt[$sha] = & $tOf "$(git -C $KitConf.Kit log -1 --format=%cI $sha 2>$null)" }; $ct = $script:KitShaAt[$sha]; $fixed[$gk] = @{ sha = $sha; at = $(if ($ct) { $ct } else { & $tOf $g.at }) } }
+    elseif ("$($g.kind)" -eq 'false-positive') { $closed[$gk] = "$($g.text)" } else { $raised[$gk] = "$($g.at)" } }
+  foreach ($cl in @(git -C $KitConf.Kit log --since=30.days --grep=Waste-Fix: '--format=%h%x09%cI%x09%(trailers:key=Waste-Fix,valueonly,separator=%x2C)' 2>$null)) { $cp = "$cl" -split "`t"; if ($cp.Count -lt 3) { continue }
+    foreach ($ck in @($cp[2] -split '\s*,\s*' | Where-Object { $_ -like 'waste:*' })) { $cat = & $tOf $cp[1]; if (-not $fixed[$ck] -or ($cat -and $cat -gt $fixed[$ck].at)) { $fixed[$ck] = @{ sha = $cp[0]; at = $cat } } } }
   $its = @(foreach ($s in @($Steps | Where-Object { $_ -and $_.cx -and [int]$_.cx.n })) { $c = $s.cx; $w = @($c.w); $rr = @($c.rr); $who = "$(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })"
-      $mk = { param($k, $t, $what) [pscustomobject]@{ role = "$($s.role)"; who = $who; run = "$(if ($s.run) { $s.run } else { $who })"; kind = $k; tokens = [long]$t; what = $what; key = "waste:$($s.role):$k" } }
+      $mk = { param($k, $t, $what) [pscustomobject]@{ role = "$($s.role)"; who = $who; run = "$(if ($s.run) { $s.run } else { $who })"; kind = $k; tokens = [long]$t; what = $what; key = "waste:$($s.role):$k"; at = "$($s.at)" } }
       if ([int]$rr[0] -ge 2) { & $mk reread $w[1] "re-read $([IO.Path]::GetFileName("$($rr[1])")) $($rr[0])x" }
       if ([long]$w[2]) { & $mk bigresult $w[3] "$($w[2]) result(s) over $(& $f (Get-KitParam 'usage.context.bigResultTokens'))" }
       if ([long]$w[4]) { & $mk buildlog $w[5] "$($w[4]) build / test log(s) pasted" } })
   $runsOf = @{}; foreach ($g in @($its | Group-Object key)) { $runsOf[$g.Name] = @($g.Group.run | Sort-Object -Unique).Count }
   # W3 start load: one item per role (every agent of it would bury the rest: 2,350 of 2,734 items), its avg start vs usage.context.startAim
-  foreach ($g in @($Steps | Where-Object { $_ -and $_.cx -and [int]$_.cx.n -and [double]$_.cx.s0 } | Group-Object { "$($_.role)" })) { $avg = [double](@($g.Group | ForEach-Object { [double]$_.cx.s0 }) | Measure-Object -Average).Average
-    if (-not $aim -or $avg -le $aim) { continue }; $k = "waste:$($g.Name):startload"; $runsOf[$k] = @($g.Group | ForEach-Object { if ($_.run) { "$($_.run)" } else { "$($_.label)" } } | Sort-Object -Unique).Count
-    $its += [pscustomobject]@{ role = $g.Name; who = "$($g.Count) agent(s)"; run = ''; kind = 'startload'; tokens = [long]($avg - $aim); what = "avg start $(& $f $avg) vs the $(& $f $aim) aim"; key = $k } }
+  foreach ($g in @($Steps | Where-Object { $_ -and $_.cx -and [int]$_.cx.n -and [double]$_.cx.s0 } | Group-Object { "$($_.role)" })) { $k = "waste:$($g.Name):startload"; $fx = $fixed[$k]
+    $post = @(if ($fx -and $fx.at) { $g.Group | Where-Object { ($pa = & $tOf $_.at) -and $pa -gt $fx.at } }); $use = if ($post.Count) { $post } else { @($g.Group) }   # re-measured on the runs after its fix
+    $avg = [double](@($use | ForEach-Object { [double]$_.cx.s0 }) | Measure-Object -Average).Average
+    if (-not $aim -or ($avg -le $aim -and -not $fx)) { continue }; $runsOf[$k] = @($use | ForEach-Object { if ($_.run) { "$($_.run)" } else { "$($_.label)" } } | Sort-Object -Unique).Count
+    $its += [pscustomobject]@{ role = $g.Name; who = "$($use.Count) agent(s)"; run = ''; kind = 'startload'; tokens = [long][math]::Max(0, $avg - $aim); what = "avg start $(& $f $avg) vs the $(& $f $aim) aim"; key = $k; at = $(if ($post.Count -and $avg -gt $aim) { "$(@($post | Sort-Object { "$($_.at)" })[-1].at)" }) } }
   $rank = @{ fixable = 0; open = 1; fixed = 2; ignored = 3 }
-  @(foreach ($i in $its) { $n = $runsOf[$i.key]
-      $tag, $why = if ($fixed[$i.key]) { 'fixed', "fixed in $($fixed[$i.key])" } elseif ($raised[$i.key]) { 'open', "retro signal raised $("$($raised[$i.key])".Substring(0, [math]::Min(10, "$($raised[$i.key])".Length))), not fixed: $($script:KitWasteFix[$i.kind])" }
+  @(foreach ($i in $its) { $n = $runsOf[$i.key]; $fx = $fixed[$i.key]; $after = $fx -and $fx.at -and ($ia = & $tOf $i.at) -and $ia -gt $fx.at
+      $tag, $why = if ($fx -and -not $after) { 'fixed', "fixed in $($fx.sha)" } elseif ($after) { 'open', "seen again after the fix $($fx.sha): $($script:KitWasteFix[$i.kind])" } elseif ($closed[$i.key]) { 'ignored', "closed by /tidy: $($closed[$i.key])" }
+        elseif ($raised[$i.key]) { 'open', "retro signal raised $("$($raised[$i.key])".Substring(0, [math]::Min(10, "$($raised[$i.key])".Length))), not fixed: $($script:KitWasteFix[$i.kind])" }
         elseif ($i.tokens -ge $min -or $n -ge $nAct) { 'fixable', "$(& $f $i.tokens) tokens$(if ($i.tokens -ge $min) { ", over $(& $f $min)" })$(if ($n -ge $nAct) { ", in $n runs: a retro signal" }) -> $($script:KitWasteFix[$i.kind])" }
         else { 'ignored', "$(& $f $i.tokens) tokens, under $(& $f $min), one-off" }
       $i | Add-Member -Force NoteProperty tag $tag -PassThru | Add-Member -Force NoteProperty why $why -PassThru | Add-Member -Force NoteProperty runs $n -PassThru }) | Sort-Object { $rank[$_.tag] }, { -$_.tokens }
@@ -737,13 +757,17 @@ function Add-KitWasteSignals($Items) {
   $n
 }
 # the Waste panel: a filter chip per tag (counts), every item (fixable / open first, ignored muted), its reason in the tooltip
-function Format-KitWastePanel($Items, $Fold) {
-  $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $its = @($Items | Where-Object { $_ })
+function Format-KitWastePanel($Items, $Fold, [int]$Days = 7) {
+  $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $rk = @{ fixable = 0; open = 1; fixed = 2; ignored = 3 }
+  # one row per pattern (role + kind; owner 2026-11-24: 298 rows of one kind): its most urgent tag, its runs, tokens added up
+  $its = @(@($Items | Where-Object { $_ }) | Group-Object { "$($_.role)|$($_.kind)" } | ForEach-Object { $gi = @($_.Group | Sort-Object { $rk["$($_.tag)"] }, { -[double]$_.tokens }); $g0 = $gi[0]
+      $gr = @($gi | ForEach-Object { if ("$($_.run)") { "$($_.run)" } else { "$($_.who)" } } | Sort-Object -Unique).Count
+      [pscustomobject]@{ tag = $g0.tag; why = $g0.why; role = $g0.role; run = $g0.run; tokens = [long](@($gi.tokens) | Measure-Object -Sum).Sum; what = $(if ($gi.Count -gt 1) { "$($g0.what) · $($gi.Count) items" } else { $g0.what }); who = $(if ($gr -gt 1) { "$gr runs" } else { $g0.who }) } } | Sort-Object { $rk["$($_.tag)"] }, { -$_.tokens })
   $cnt = [ordered]@{}; foreach ($t in 'fixable', 'open', 'fixed', 'ignored') { $cnt[$t] = @($its | Where-Object tag -eq $t).Count }
   $chips = "<div class=wsf role=group aria-label='waste tag'>$(@($cnt.Keys | ForEach-Object { "<button type=button data-w=$_ aria-pressed=false title='show only $_ items (again: all)'><span class='wtg t-$_'>$_</span> $($cnt[$_])</button>" }) -join '')</div>"
   $rows = @($its | ForEach-Object { "<div class='wr t-$($_.tag)' title='$(& $e "$($_.why)`n$($_.role) · $($_.who) · $($_.run)")'><span class='wtg t-$($_.tag)'>$($_.tag)</span><span>$(& $e $_.role)</span><span class=wwh>$(& $e $_.what) · $(& $e $_.who)</span><b>$(& $e (Format-KitCompactNum ([double]$_.tokens)))</b></div>" }) -join ''
-  $hd = "<span class=fsm>$(@($cnt.Keys | Where-Object { $cnt[$_] } | ForEach-Object { "$($cnt[$_]) $_" }) -join ' · ')</span>"
-  & $Fold 'u-waste' 'Waste' $its.Count -tag h4 -cls 'sub st' -extra $hd -inner "<div class=wsx data-w=all>$chips$(if ($rows) { $rows } else { '<p class=empty>No waste recorded.</p>' })</div>$(Format-KitLegend 'tag: fixable · open · fixed · ignored (muted)' "fixable = over $(Format-KitCompactNum ([double](Get-KitParam 'usage.context.wasteMinTokens'))) tokens or in $(Get-KitParam 'usage.context.actRuns')+ runs (supervise raises a retro signal) · open = signal raised, not fixed · fixed = a win signal with its commit · ignored = under the threshold, one-off · hover an item for why")"
+  $hd = "<span class=fsm>last $Days days · $(@($cnt.Keys | Where-Object { $cnt[$_] } | ForEach-Object { "$($cnt[$_]) $_" }) -join ' · ')</span>"
+  & $Fold 'u-waste' 'Waste' $its.Count -tag h4 -cls 'sub st' -extra $hd -inner "<div class=wsx data-w=all>$chips$(if ($rows) { $rows } else { '<p class=empty>No waste recorded.</p>' })</div>$(Format-KitLegend 'tag: fixable · open · fixed · ignored (muted)' "fixable = over $(Format-KitCompactNum ([double](Get-KitParam 'usage.context.wasteMinTokens'))) tokens or in $(Get-KitParam 'usage.context.actRuns')+ runs (supervise raises a retro signal) · open = signal raised, not fixed · fixed = a win signal or a kit commit's Waste-Fix: trailer, and no run after it shows the pattern · ignored = under the threshold, one-off, or closed by /tidy with its reason · a row = one role + kind · hover an item for why")"
 }
 
 # ---- split: tokens, cost and time by type in one stacked form (owner 2026-11-20: a single "tokens" number misleads, 96% are cache reads)

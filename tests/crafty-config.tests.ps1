@@ -145,5 +145,12 @@ Expect "runtime: '<kit name>/.runtime' resolves from the workspace (lib.ps1, kit
 $rvK = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = 'command'; . '$k/skills/crafty/lib.ps1'; Save-TrackerKey ([pscustomobject]@{ id = 'n42'; name = 'AB-CD-007 [Feature] Ui: x' }); `$x = try { Resolve-TrackerId 'AB-CD-008' } catch { 'refused ' + `$_ }; `"`$(Resolve-TrackerId 'AB-CD-007')|`$(Resolve-TrackerId 'n9')|`$(Resolve-TrackerId 'AB-CD-008' -Soft)|`$x|`$(Test-KitHeldLine 'ATTENTION AB-CD-007: MRs merged, task id not readable: x' @('AB-CD-007'))`"" 2>&1 | Out-String
 $gtx = Get-Content (Join-Path $k 'skills/crafty/adapters/process-gates.ps1') -Raw
 Expect "tracker ids: a kit key -> the native id a read recorded; unknown key refused with the hint (url: kept); an unread task says 'task id not readable', a held one drops that line ($($rvK.Trim()))" ($rvK.Trim() -match '^n42\|n9\|AB-CD-008\|refused .*AB-CD-008 is a kit key, not a command task id: pass the native id.*\|True$' -and $gtx -match 'task id not readable: ')
+# repos[].commitStyle (retro tidy-20261124-01: a commitlint hook only warned): a miss refused, -ProseOk too; a bad regex named
+$csr = Join-Path (Kd) 'cs-repo'; New-Item -ItemType Directory -Force $csr | Out-Null; 'i' | Set-Content "$csr/i.txt"; Save-GitRepo $csr i
+& $J @{ repos = @(@{ name = 'cs-repo'; commitStyle = '^web/ui: .{8,}' }) } $dkl; 'cs' | Set-Content "$csr/cs.txt"
+$csNo = pwsh @np $D wt commit -Dir $csr -Message 'fix: no repo prefix here' -ProseOk x 2>&1 | Out-String; $csNoc = $LASTEXITCODE
+$null = pwsh @np $D wt commit -Dir $csr -Message 'web/ui: with the repo prefix' 2>&1; $csOk = $LASTEXITCODE; $csLog = "$(git -C $csr log -1 --format=%s)"
+& $J @{ repos = @(@{ name = 'cs-repo'; commitStyle = '([' }) } $dkl; 'c2' | Set-Content "$csr/c2.txt"; $csBad = pwsh @np $D wt commit -Dir $csr -Message 'web/ui: a bad regex now' 2>&1 | Out-String; $csBadc = $LASTEXITCODE; Remove-Item $dkl
+Expect "wt commit: repos[].commitStyle refuses a miss even with -ProseOk, a match commits, a bad regex is named ($csNoc $csOk $csBadc)" ($csNoc -eq 1 -and $csNo -match 'misses repos\[\]\.commitStyle' -and $csOk -eq 0 -and $csLog -eq 'web/ui: with the repo prefix' -and $csBadc -eq 1 -and $csBad -match 'is no valid regex')
 Remove-TestKit $k
 Complete-Tests

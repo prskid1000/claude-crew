@@ -1,6 +1,6 @@
 <#
 bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skills/bossy/bossy.ps1 <verb> [args]
-  board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages;
+  board join|beat|check|leave|show|msg|inbox -Agent -Run [-Subject <words>: the run label] [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages;
     check -Decision continue|handoff -Reason <why> -Ctx <key>: answers a CONTEXT-CHECK (board beat, the Claude Code hook)
   learn -Skill -Kind -Text | -Read [-Phase -Project] | -Show (-When -Do -Why | -Bump | -Fixed | -Trim | -Stats | -History)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
@@ -75,7 +75,7 @@ param(
   [string]$Agent, [string]$Area = '', [string[]]$Items = @(), [Alias('Claims')][string[]]$Worktrees = @(), [string]$Run = '', [string]$Contracts = '',
   [string]$Session, [string]$Status = '', [string]$Worktree, [switch]$Resume, [string]$Type = '',
   [string]$To, [string]$Text, [switch]$All, [string]$Model = '', [string]$Tool = '', [string]$Handoff = '', [double]$Wait = 1.5, [switch]$Force, [string]$Kind = 'note', [string]$Ref = '',
-  [ValidateSet('', 'continue', 'handoff')][string]$Decision = '', [string]$Reason = '', [string]$Ctx = ''
+  [ValidateSet('', 'continue', 'handoff')][string]$Decision = '', [string]$Reason = '', [string]$Ctx = '', [string]$Subject = ''
 )
 if ($Action -eq 'help') { (Get-Content $PSCommandPath -TotalCount 6 | Select-String -Pattern '^\s+(board |check -Decision)').Line; return }   # retro 1709: board help failed validation
 $dir = Get-KitPath board -Create
@@ -110,14 +110,14 @@ function Print($act) {
   if (-not $act) { 'board: no other active agents'; return }
   'board (active agents):'
   # N3 (owner 2026-11-23): a run line '<run id> · <KEY> <short title>', its agents '<role>-<nn> · <area>'
-  foreach ($g in @($act | Group-Object { "$($_.run)" } | Sort-Object Name)) { if ($g.Name) { "  run $(Get-KitRunTitle $g.Name)" }
+  foreach ($g in @($act | Group-Object { "$($_.run)" } | Sort-Object Name)) { if ($g.Name) { $rt = Get-KitRunTitle $g.Name (@($g.Group | ForEach-Object { "$($_.subject)" } | Where-Object { $_ }))[0]; "  run $rt$(if ($rt -ne $g.Name) { " ($($g.Name))" })" }
   $g.Group | Sort-Object agent | ForEach-Object { $task = "$($_.items)"; $cl = (@($_.worktrees | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf }) -join ',')
     '    {0,-24} {1,-8} {2,-30} {3,-22} {4} | beat {5}{6}' -f (Get-KitAgentLabel ([pscustomobject]@{ n = $_.agent; ar = $_.area; sub = $_.type })), "$(if ($_.holderPid) { "s$($_.holderPid)" })", $task.Substring(0, [math]::Min(30, $task.Length)), $cl.Substring(0, [math]::Min(22, $cl.Length)), $_.status, ([datetime]$_.beat).ToString('HH:mm'), $(if ($_.budget) { " | spend $([int]($_.spend / 1000))k/$([int]($_.budget / 1000))k" }) } }
 }
 
 switch ($Action) {
   'join' {
-    if (-not ($Agent -or $Type)) { 'usage: bossy.ps1 board join -Type <role> [-Run] [-Area] [-Items] [-Claims] (-Agent <id>: legacy)'; exit 2 }
+    if (-not ($Agent -or $Type)) { 'usage: bossy.ps1 board join -Type <role> [-Run] [-Subject <words>] [-Area] [-Items] [-Claims] (-Agent <id>: legacy)'; exit 2 }
     $notes = @()
     # N3: <role>-<nn>, given here only; the same run + area keeps it
     $auto = $Type -and $Type -ne 'coordinator' -and $Agent -in @($null, '', $Type)   # one coordinator per session: its role is its name
@@ -151,7 +151,7 @@ switch ($Action) {
         $notes += "TAKEOVER: replaced session $($o.session) ($why; joined $(([datetime]$o.joined).ToString('HH:mm')), last beat $(([datetime]$o.beat).ToString('HH:mm')))"
       } catch { $notes += "could not take over session $($o.session): $_" }
     }
-    $me = [ordered]@{ agent = $Agent; type = $(if ($Type) { $Type } else { "$env:CLAUDE_AGENT_TYPE" }); session = $tok; run = $Run; area = $Area; items = (@($Items) -join ','); worktrees = @(Split-KitList $Worktrees); contracts = $Contracts
+    $me = [ordered]@{ agent = $Agent; type = $(if ($Type) { $Type } else { "$env:CLAUDE_AGENT_TYPE" }); session = $tok; run = $Run; subject = $Subject; area = $Area; items = (@($Items) -join ','); worktrees = @(Split-KitList $Worktrees); contracts = $Contracts
                       status = 'working'; joined = $joined; beat = (Get-KitStamp stored $now); pid = $PID; pidStart = (Get-KitPidStart $PID) } + (Get-KitHolder)
     $bg = Get-KitBudget -Tool $Tool -Model $Model -Role $me.type; $me += [ordered]@{ tool = $bg.tool; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; capBy = $bg.capBy; spend = 0 }
     $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { Write-KitState $mf $me }
@@ -1781,7 +1781,7 @@ function Invoke-Decide {
       $shown = "$(if ($Context) { "Today: $(($Context.Trim() -replace '^(?i)today\s*:\s*').TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }
-      $o = [ordered]@{ id = "$(if ($Kind -eq 'envfix') { 'e' } else { 'd' })-$(Get-Date -Format yyyyMMddHHmmss)-$($Agent.ToLower() -replace '[^\w-]', '')-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
+      $o = [ordered]@{ id = (New-KitId $(if ($Kind -eq 'envfix') { 'envfix' } else { 'dec' }) $dir)   # NO-DATE: the counter, the time in at
         kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
         options = $opts; recommend = $Recommend; blocking = -not $Fyi; contracts = $Contracts; status = 'pending'; at = (Get-KitStamp)
         task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId; gate = $(if ($Gate -in $kitGates) { $Gate }) }
@@ -1824,7 +1824,7 @@ function Invoke-Decide {
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
       if ($scItem -and $By -notmatch $crewRx) {
         if ($pick -and "$($pick.label)" -match '(?i)\b(record|approve|allow|widen|yes)\b' -and "$($pick.label)" -notmatch "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep)\b") {
-          $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-coordinator-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
+          $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
             kind = 'decision'; run = $o.run; agent = 'coordinator'; item = $scItem; gate = 'scope'; question = $o.question; options = @(); blocking = $false; status = 'answered'; at = $now
             task = "$($o.task)"; mrs = @($o.mrs); answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }
           & $save $sc; $o | Add-Member -Force scopeId $sc.id; & $save $o; & $note $o.contracts "DECISION $Id SCOPE WORD $($sc.id) ($scItem)"; "SCOPE RECORDED $($sc.id) (scope $scItem, from $Id): pass it to the agent (wt commit -ScopeOk $($sc.id))"
@@ -1852,7 +1852,7 @@ function Invoke-Decide {
       if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: -By names the person who gave the word, never an agent or the coordinator ($By): omit -By (default owner) or name the person; the coordinator runs it without -Agent"; exit 2 }
       $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
       $now = (Get-KitStamp)
-      $o = [pscustomobject][ordered]@{ id = "d-$(Get-Date -Format yyyyMMddHHmmss)-coordinator-$([guid]::NewGuid().ToString('N').Substring(0, 4))"
+      $o = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
         kind = 'decision'; run = $Run; agent = 'coordinator'; item = $Item; gate = $Gate; question = $Question
         options = @(); blocking = $false; contracts = $Contracts; status = 'answered'; at = $now; task = $resolvedTask
         mrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); answer = $Answer; by = $By; source = $Source; answeredAt = $now; supersedes = $supIds }
@@ -1913,7 +1913,7 @@ function Invoke-Debate {
       $own = $Owner -or $Why -eq 'owner'
       $had = @(Read-KitJsonFiles $dir | Where-Object { $Run -and $_.run -eq $Run -and -not $_.owner })
       if ($had.Count -and -not $own) { "REFUSED: run $Run had its debate ($($had[0].id)); 1 per run unless the owner asks (-Owner): ask A/B with decide ask"; exit 1 }
-      $id = "debate-$(Get-Date -Format yyyyMMddHHmmss)-$([guid]::NewGuid().ToString('N').Substring(0, 4))"; $f = Join-Path $dir "$id.json"
+      $id = New-KitId debate $dir; $f = Join-Path $dir "$id.json"
       Write-KitState $f ([ordered]@{ id = $id; run = $Run; agent = $Agent; item = $Item; question = $Question; options = $opts; trigger = $Why; owner = [bool]$own })
       "DEBATE $f"
     }

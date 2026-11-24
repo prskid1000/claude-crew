@@ -18,7 +18,7 @@ function Get-LiquibaseMasters([string]$Top, [switch]$Other) {
 }
 # LBCHECK_CHANGED = changelog files (repo-relative paths) touched since -Since; the masters under -Dir (the checked folder) first
 function Invoke-LiquibaseCheck([string]$Top, [string[]]$Masters, [string]$Since, [string]$Dir, [switch]$Show) {
-  $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-14).ToString('yyyy-MM-dd') }
+  $sinceDate = try { [datetime]::ParseExact($Since.Substring(0, 8), 'yyyyMMdd', $null).ToString('yyyy-MM-dd') } catch { (Get-Date).AddDays(-[double](Get-KitParam 'migrations.changedSinceDays')).ToString('yyyy-MM-dd') }
   $env:LBCHECK_CHANGED = (@(git -C $Top log --since=$sinceDate --name-only --pretty=format: -- '*.xml') + @(git -C $Top diff --name-only HEAD -- '*.xml') | Where-Object { $_ } | Select-Object -Unique) -join '|'
   $rc = 0
   $mine = @($Masters | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $Top $_)) })

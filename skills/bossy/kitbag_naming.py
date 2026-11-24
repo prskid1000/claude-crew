@@ -2,21 +2,23 @@
 
   python -X utf8 skills/bossy/kitbag.py naming check <kind> <name> [<name> ...]   # exit 1 names each one off the standard + its pattern
   python -X utf8 skills/bossy/kitbag.py naming next key <PRODUCT> <AREA>           # the next <PRODUCT>-<AREA>-<nnn> (locked counter)
-  python -X utf8 skills/bossy/kitbag.py naming next id <kind>                      # <kind>-<YYYYMMDD>-<nn>: run (buildy, testy, kit ..), dec, fix
+  python -X utf8 skills/bossy/kitbag.py naming next id <kind>                      # <kind>-<nnnn>: run (buildy, testy, kitty-fix ..), dec; one locked counter per kind
   python -X utf8 skills/bossy/kitbag.py naming make <kind> key=<KEY> type=<t> ...  # a name from its parts (title doc branch mr case item)
   python -X utf8 skills/bossy/kitbag.py naming scan [--json]                       # live names (tasks, docs, board, launches) vs the standard
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
 Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 [Feature] Catalogue: <outcome>`
- · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-20261123-01` · agent `devy-01` · area `area-CAT` (`-2`: a second one
-   in a run) · lane `lane-01`
- · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-20261123-01`.
+ · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-0042` · agent `devy-01` · area `area-CAT` (`-2`: a second one
+   in a run) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
+ · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-0398`.
+NO-DATE: no name holds a date (owner 2026-11-24): the date lives in the record's fields (at, started); an old dated
+run / id (`buildy-20261123-01`) is read as an alias until the next minor version, never made.
 PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code: name}); an unknown code or a key without
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
 DUP-WORDS: a name never repeats what its key or type says (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them.
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L24 model · L80 no repeats
+Sections: L26 model · L87 no repeats
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -41,8 +43,8 @@ def patterns(cfg):
     return {'key': rf'^{key}$', 'item': rf'^{key}\.\d+ {slug}$', 'case': rf'^{key}-TC\d{{2,}}$',
             'title': rf'^{key}(?:\.\d+)? \[(?:{"|".join(TITLE_TYPES)})\] [^:]+: \S.*$',
             'doc': rf'^{key}(?:\.\d+)? (?:{"|".join(map(re.escape, DOC_KINDS))}) v\d+ — \S.*$',
-            'run': r'^[a-z]+(?:-[a-z]+)*-\d{8}-\d{2,}$', 'id': r'^[a-z]+-\d{8}-\d{2,}$', 'agent': r'^[a-z]+-\d{2,}$',
-            'area': rf'^area-(?:{alt(cfg["areas"])})(?:-\d+)?$', 'lane': r'^lane-\d{2,}$',
+            'run': r'^[a-z]+(?:-[a-z]+)*-\d{4,}$', 'id': r'^[a-z]+-\d{4,}$', 'agent': r'^[a-z]+-\d{2,}$',
+            'area': rf'^area-(?:{alt(cfg["areas"])})(?:-\d+)?$', 'lane': r'^lane-\d{2,}$', 'label': r'^\S.*$',
             'branch': rf'^(?:{ty})/{key}-{slug}$', 'mr': rf'^(?:{ty})(?:\([\w./-]+\))?!?: \S.* \[{key}\]$'}
 
 
@@ -52,6 +54,8 @@ def name_problem(kind, name, cfg=None):
     rx = patterns(cfg).get(kind)
     if rx is None:
         return f'unknown kind {kind!r} ({", ".join(patterns(cfg))})'
+    if (dm := DATE_RX.search(name)):
+        return f'NO-DATE: {dm[0]!r} is a date; the record\'s fields hold it, a counter makes it unique ({EXAMPLES[kind]})'
     if re.match(rx, name):
         return dup_words(kind, name, cfg)
     m = re.search(r'\b([A-Z]{2,6})-([A-Z]{2,6})-\d+', name)
@@ -69,8 +73,11 @@ def name_problem(kind, name, cfg=None):
 
 EXAMPLES = {'key': 'SHOP-CAT-004', 'item': 'SHOP-CAT-004.2 add-price-projection', 'case': 'SHOP-CAT-004-TC03',
             'title': 'SHOP-CAT-004 [Feature] Catalogue: <outcome>', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
-            'run': 'buildy-20261123-01', 'id': 'dec-20261123-01', 'agent': 'devy-01', 'area': 'area-CAT', 'lane': 'lane-01',
+            'run': 'buildy-0042', 'id': 'dec-0398', 'agent': 'devy-01', 'area': 'area-CAT', 'lane': 'lane-01', 'label': 'fix: rest',
             'branch': 'feat/SHOP-CAT-004-public-catalogue', 'mr': 'feat(web): <summary> [SHOP-CAT-004]'}
+
+
+DATE_RX = re.compile(r'(?<!\d)(?:19|20)\d\d(?:-?)(?:0[1-9]|1[0-2])(?:-?)(?:0[1-9]|[12]\d|3[01])(?!\d)')   # 20261124, 2026-11-24
 
 
 def slugify(text, words=6):
@@ -120,8 +127,17 @@ def clean(text, key, cfg, ty=''):
     return t.strip()
 
 
+def role_words():
+    """The crew and workflow names (_manifest agents + workflows)."""
+    m = (load_json(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'))[0] or {}).get('_manifest') or {}
+    return {str(x).lower() for k in ('agents', 'workflows') for x in (m.get(k) or {})}
+
+
 def dup_words(kind, name, cfg):
     """'' or 'DUP-WORDS ...': the free text of a standard <name> repeats its product, area, type or repos."""
+    if kind == 'label':   # a dashboard / board label: its kind chip and agent rows show the role (owner 2026-11-24)
+        lead = (re.findall(r'[a-z]+', name.lower()) or [''])[0]
+        return f'DUP-WORDS: label leads with the role {lead!r} (its kind chip shows it): {name!r}' if lead in role_words() else ''
     km = re.search(r'[A-Z]{2,6}-[A-Z]{2,6}-\d+', name)
     if not km or kind not in ('title', 'doc', 'branch', 'mr', 'item'):
         return ''
@@ -172,6 +188,9 @@ def _counter(group):
     f = kit_path('naming', create=True)
     with locked(f):
         x = state_read(f) or {}
+        if group.startswith('id:') and group not in x:   # migrate: the old per-day counters of this kind fold into one, past every id they made
+            days = [k for k in x if k.startswith(group + ':')]
+            x[group] = sum(int(x.pop(k) or 0) for k in days)
         x[group] = int(x.get(group) or 0) + 1
         state_write(f, x)
         return x[group]
@@ -189,12 +208,12 @@ def next_key(product, area, cfg=None):
 def next_id(kind):
     if not re.match(r'^[a-z]+(?:-[a-z]+)*$', kind):
         raise SystemExit(f'naming next id: kind {kind!r}: lowercase words joined by -')
-    day, live = time.strftime('%Y%m%d', time.gmtime()), board_live('run')
+    live = board_live('run')
     for _ in range(100):   # a reset counter never hands out a run id live on the board
-        rid = f'{kind}-{day}-{_counter(f"id:{kind}:{day}"):02d}'
+        rid = f'{kind}-{_counter(f"id:{kind}"):04d}'
         if rid not in live:
             return rid
-    raise SystemExit(f'naming next id: 100 {kind} ids of {day} live on the board')
+    raise SystemExit(f'naming next id: 100 {kind} ids live on the board')
 
 
 def board_live(field):

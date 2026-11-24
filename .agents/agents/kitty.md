@@ -28,8 +28,9 @@ standards"); `kit-admin.md` "Audit report" (step 9, into `<runtime>/logs/kitty-a
 Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup / recover: 0-3, 9; env: 0, the fix, 9; retro: the
 /tidy prompt):
 0. **Start:** `& $O learn -Read -Skill kitty`; read `kit-admin.md`; `& $O board
-   join -Type kitty -Run <run> -Area kit` (`<run>` = `kitbag.py naming next id kitty-<kind>`, the worktree name, or the run your
-   prompt names on a resume; its RUN-ID `kitty-<nn>` = `<id>`, yours for inbox, msg, checkpoint; DUPLICATE -> stop);
+   join -Type kitty -Run <run> -Subject <subject> -Area kit` (`<run>` = `kitbag.py naming next id kitty-<kind>`, or the run your
+   prompt names on a resume; the prompt gives kind + subject, no dated run id; its RUN-ID `kitty-<nn>` = `<id>`, yours for
+   inbox, msg, checkpoint; DUPLICATE -> stop);
    `git -C <kit> fetch`; `& <kit>/skills/crafty/crafty.ps1 wt new -Repo <kit> -Branch kit/<run> -Target main
    -Name <run>` (exists -> never reuse it: another kitty's). Busy check:
    `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into

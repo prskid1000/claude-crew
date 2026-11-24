@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2073 dir · L2083 checkpoint ·
-  L2123 prior · L2161 tracker · L2183 task spec · L2386 scope · L2434 host
+Sections: L25 init · L34 wt · L328 stack · L427 gate · L761 check · L1087 pipes · L1149 guard · L2074 dir · L2084 checkpoint ·
+  L2124 prior · L2163 tracker · L2185 task spec · L2388 scope · L2436 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -240,6 +240,7 @@ switch ($Action) {
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
     $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # subject style is commitlint's; WIP commits pass
     if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { [Console]::Error.WriteLine("commit refused: $($pf.Count) prose finding(s): rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes: $($pf -join '; ')"); exit 1 }   # stderr: a chained call shows it
+    if (-not $isMerge -and ($csw = Test-KitCommitStyle $(if ($main) { $main } else { $Dir }) $Message)) { [Console]::Error.WriteLine("commit refused: $csw"); exit 1 }
     git -C $Dir @c commit -m $Message @(if ($AllowEmpty) { '--allow-empty' })   # a deploy MR on a branch equal to its target
     exit $LASTEXITCODE
   }
@@ -2149,7 +2150,8 @@ param([Alias('Item')][string]$Task, [string]$Repo, [string]$Query, [string]$Symb
   foreach ($k in @(if ($st.docs) { $st.docs.Keys })) { & $add doc '' $k $st.docs[$k].url }
   foreach ($e in @($st.envRuns | Where-Object { $_ })) { & $add qa '' "$($e.env) $($e.at)" $e.result }
   $priorHits = @($priorHits | Group-Object { "$($_.kind) $($_.ref)" } | ForEach-Object { $_.Group[0] })
-  $own = { param($h) $h.kind -in 'doc', 'qa' -or (@($claimed | Where-Object { $_ }).Count -and $h.kind -eq 'branch' -and $h.ref -match $idRx) }   # gate passed once: tagged branches are the same wave's
+  $wave = $tt.parent -and $tt.parent -ne '-'   # similar tasks: its wave siblings (checked at create)
+  $own = { param($h) $h.kind -in 'doc', 'qa' -or ($wave -and $h.kind -eq 'task') -or (@($claimed | Where-Object { $_ }).Count -and $h.kind -eq 'branch' -and $h.ref -match $idRx) }   # gate passed once: tagged branches are the same wave's
   $gate = @($priorHits | Where-Object { -not (& $own $_) })   # own docs, QA runs, tagged work: shown, never a stop
   Update-KitTaskIndex $Task { param($x) $x.prior = [ordered]@{ at = (Get-KitStamp); validUntil = (Get-KitStamp stored (Get-Date).AddHours([double](Get-KitParam 'prior.validHours'))); found = $gate; claimed = $claimed } }
   $paired = { param($h) -not $Repo -and $h.tagged -and $h.repo -and $h.kind -ne 'task' }   # no -Repo: the task's own work across repos

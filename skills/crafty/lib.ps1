@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L94 state · L175 config · L256 OS · L458 leases · L877 status · L1177 tracker · L1495 prior ·
-  L1514 ask bugs · L1700 git-host · L1887 kitlog · L1995 params · L2300 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L460 leases · L879 status · L1179 tracker · L1497 prior ·
+  L1516 ask bugs · L1702 git-host · L1889 kitlog · L1999 params · L2304 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -13,6 +13,8 @@ if (-not $env:GIT_CONFIG_COUNT) { $env:GIT_CONFIG_COUNT = 1; $env:GIT_CONFIG_KEY
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
 $script:KitVocab = try { Get-Content (Join-Path $PSScriptRoot 'vocab.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }   # statuses, tracker vendors, docs (devtools.py reads it too)
+# a standard run id (kitbag.py naming next id: <kind>-<nnnn>); the dated form <kind>-<YYYYMMDD>-<nn> read as an alias until the next minor version
+$script:KitRunIdRx = '^[a-z]+(?:-[a-z]+)*-(?:\d{8}-\d{2,}|\d{4,})$'
 # pwsh 7 logs the full text of a script it finds suspicious (event 4104) on every load: kit scripts stay free of
 # lint-vocab.json "sbLog" words and of $o.$name members (kitbag lint SBLOG), so property access goes through these two
 function Get-KitProps($InputObject) { if ($null -ne $InputObject) { $InputObject.PSObject.Members.Match('*', [System.Management.Automation.PSMemberTypes]'AliasProperty,CodeProperty,Property,NoteProperty,ScriptProperty,InferredProperty') } }
@@ -1461,7 +1463,7 @@ function ConvertTo-KitOneLine([string]$Text) { ("$Text" -replace '\s+', ' ' -rep
 function Format-KitItemText([string]$Id, [string]$Desc, $Urls) {
   $Desc = $Desc -replace '`' -replace '\[([^\]]*)\]\([^)]*\)', '$1' -replace 'https?://\S+' -replace '(?<![\w-])[\w./-]+!\d+' -replace '(?i)(?:\s+[–—-]\s*|\s*\()(?:merged|done|deployed|closed)\)?\s*$' -replace '[\s·,;:–—-]+$'
   (@($Id, (ConvertTo-KitOneLine $Desc), (@($Urls | Where-Object { $_ } | Select-Object -Unique) -join ' ')) | Where-Object { $_ }) -join ' · ' }
-function Set-TrackerName([string]$Id, [string]$Name) { Clear-TrackerMemo $Id; __TrA 'rename' @{ id = $Id; name = $Name } }
+function Set-TrackerName([string]$Id, [string]$Name) { $Name = Resolve-KitRenameName $Id $Name; Clear-TrackerMemo $Id; __TrA 'rename' @{ id = $Id; name = $Name } }
 # move a task (K54): under -Parent, to another -List, or top-level (-Top); each adapter refuses what its tracker cannot do;
 # command adapter: tracker.commands.move
 function Move-TrackerTask([string]$Id, [string]$Parent = '', [string]$List = '', [switch]$Top) {
@@ -1670,11 +1672,11 @@ function Get-KitTaskDecisionRows([string]$Task) {
 }
 function Get-KitUtcTicks($At) { try { ([datetimeoffset]"$At").UtcTicks } catch { 0 } }
 # templates.md decisions: the task's Decisions checklist, one item per decision "<short id> · <question> → <answer> · <by> <MM-dd>" (resolved),
-# a pending ask unresolved, an OLDER answer the same question, -Supersedes or "supersedes d-<id>" replaced -> "superseded by <id>"
+# a pending ask unresolved, an OLDER answer the same question, -Supersedes or "supersedes dec-<nnnn>" replaced -> "superseded by <id>"
 function Format-KitDecisionItems($Rows, [string]$Link, [string]$Task) {
   $ans = @($Rows | Where-Object { $_.status -eq 'answered' -and $_.answer }); $sup = @{}; $tk = @{}; foreach ($r in $ans) { $tk["$($r.id)"] = Get-KitUtcTicks $r.at }
   foreach ($r in $ans) {
-    $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+(d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
+    $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+((?:dec|envfix)-\d{4,}|d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
     foreach ($o in $ans) { if ($tk["$($o.id)"] -lt $tk["$($r.id)"] -and ("$($o.id)" -in $ids -or (ConvertTo-KitLetters $o.question) -eq (ConvertTo-KitLetters $r.question))) { $sup["$($o.id)"] = $r.id } }
   }
   $dup = @($Rows | Group-Object { ("$($_.id)" -split '-')[-1] } | Where-Object Count -gt 1 | ForEach-Object Name)
@@ -1957,6 +1959,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $end = { param([string]$EndWhy) if (-not $EndWhy) { $EndWhy = $script:KitWhy }; if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($EndWhy) { @{ error = $EndWhy } } else { @{} })) } }   # rc 2 feeds tidy digest "Script errors"
   # bad parameters: exit 2 with the usage line, never a prompt
   $usage = { param([string]$why, [bool]$missing)
+    # decide show: the set's read verb
+    if ($why -match 'argument "(?<bad>[^"]+)" does not belong to the set "(?<set>[^"]+)"' -and $Matches.bad -in 'show', 'view', 'get', 'ls', 'read', 'info' -and ($rv = @(($Matches.set -split ',') | Where-Object { $_ -in 'list', 'show', 'view', 'status' })[0])) { $why += " Did you mean: $($rv)?" }
     $vs = @($meta.Values | Where-Object { $_.Attributes.Where({ $_ -is [Parameter] -and $_.Position -eq 0 }) } | ForEach-Object { $_.Attributes.Where({ $_ -is [ValidateSet] }).ValidValues } | Where-Object { $_ }); if ($vs.Count -and $missing) { $why += " Verbs: $($vs -join ', ')." }    $use = if ($src -and (Test-Path $src)) { [regex]::Match((Get-Content $src -Raw), "(?m)^\s+$([regex]::Escape(($Fn -replace '^Invoke-', '').ToLower()))\b[^\r\n]*").Value.Trim() }; if ($use) { $why += " Usage: $use" }
     $script:KitRc = 2; & $end $why; [Console]::Error.WriteLine($why); exit 2 }
   # a crash exits 1, never 0: a statement error alone lets `pwsh -File` exit 0

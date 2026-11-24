@@ -108,5 +108,11 @@ $hr = Invoke-PsTest 'deploy-holds' $ht @($O)
 Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too); a no until a run / tasks: muted, then one DEPLOY ASK (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg', 'until', 'met', 'tasks')
 Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll,yes,yes,no')
 Expect "deploy.answerWords: an org's own leading words first, whole words only, English still read ($(@($hr) -match '^words:'))" (@($hr) -contains 'words:yes,no,noAll,wait,unclear,yes')
+# deploy request (retro tidy-20261124-01: a batch's plan ran 58 KB): a summary out, the full plan in crafty.ps1 dir -Agent <run>
+$rqFx = Join-Path (Kd) 'rq-fixture.json'; & $J @{ mrs = @{ 'api!5' = @{ rows = @(@{ target = 'stage'; state = 'UNKNOWN'; detail = 'cannot reach the host' }) } } } $rqFx
+& $J @{ repos = @(@{ name = 'api'; deploys = @(@{ target = 'stage'; branch = 'staging'; job = 'deploy' }) }) } (Join-Path $k 'skills/crafty/kit.local.json')
+$rqT = Px $O deploy request -Mrs 'api!5' -Run w4 -Offline $rqFx | Out-String; $rqJ = @(Px $O deploy request -Mrs 'api!5' -Run w4 -Offline $rqFx -Json | ConvertFrom-Json)
+Expect "deploy request: a summary (-Json: target, status, trigger, mrs, file), the full plan in the run's agent folder ($($rqJ.Count))" ($rqT -match 'DEPLOY stage: UNKNOWN: the deploy check failed: api!5: cannot reach the host' -and $rqT -match 'full plan: .*w4[\\/]deploy-request\.json' -and
+  $rqJ.Count -eq 1 -and $rqJ[0].status -eq 'UNKNOWN' -and (Test-Path -LiteralPath $rqJ[0].file) -and @(Get-Content -Raw -LiteralPath $rqJ[0].file | ConvertFrom-Json)[0].why -match 'cannot reach')
 Remove-TestKit $k
 Complete-Tests

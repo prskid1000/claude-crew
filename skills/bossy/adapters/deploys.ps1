@@ -1,13 +1,13 @@
 <#
 deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec <deploy.deployedTimeoutSec, 100>]   merged-not-deployed MRs per test env, trigger, window; per MR its source / test files and OUT-OF-AREA (crafty.ps1 scope)
-  bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
+  bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] [-Json] (a summary; the full plan: crafty.ps1 dir -Agent <run> -Name deploy-request.json) · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy-merge.ps1
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L15 helpers · L106 intest · L277 deploy · L475 restart · L539 supervise
+Sections: L15 helpers · L106 intest · L277 deploy · L482 restart · L546 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -16,9 +16,9 @@ Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused
 # not a test env: deploys[].production, else deploy.productionPattern on the name (no default: nothing is production by name); -Lanes: + laneApk
 function Get-NoTestRx([Alias('Lane')][switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # <alias>!<iid> -> <repo name>!<iid>
-# a QA run's start: an N3 id (testy-<YYYYMMDD>-<nn>) from its run.json started; legacy folder name yyyy-MM-dd[-HHmmss]-<label> (date only: midnight); $null when none
+# a QA run's start: an N3 id (testy-<nnnn>) from its run.json started; legacy folder name yyyy-MM-dd[-HHmmss]-<label> (date only: midnight); $null when none
 function Get-KitQaRunStart([string]$Run) {
-  if ($Run -match '^[a-z]+(?:-[a-z]+)*-\d{8}-\d{2,}$') { $st = try { (Read-KitText (Join-Path (Get-KitPath qa-runs) "$Run/run.json") | ConvertFrom-Json).started } catch { $null }; if ($st) { return ([datetimeoffset]$st).LocalDateTime }; return }
+  if ($Run -match $script:KitRunIdRx) { $st = try { (Read-KitText (Join-Path (Get-KitPath qa-runs) "$Run/run.json") | ConvertFrom-Json).started } catch { $null }; if ($st) { return ([datetimeoffset]$st).LocalDateTime }; return }
   if ($Run -match '^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2})(\d{2}))?(?:-|$)') { [datetime]"$($Matches[1])T$(if ($Matches[2]) { "$($Matches[2]):$($Matches[3]):$($Matches[4])" } else { '00:00:00' })" } }
 function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }
@@ -296,7 +296,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     if (-not $Mrs.Count) { 'usage: deploy request -Mrs <repo>!<iid>,... -Run <run> [-Note ..]'; exit 2 }
     $Mrs = @($Mrs | ForEach-Object { ConvertTo-MrRef $_ })
     & $pendEdit { param($p) $p.requests = @(@($p.requests) + [pscustomobject]@{ at = (Get-Date).ToString('s'); run = $Run; mrs = $Mrs; note = $Note }) }
-    "requested a deploy for $($Mrs -join ', ') ($Run)"
+    if (-not $Json) { "requested a deploy for $($Mrs -join ', ') ($Run)" }
   }
   if ($Action -eq 'record') {
     if (-not $Env) { 'usage: deploy record -Env <target>[,<target>..] [-Mrs ..] [-By ..] [-Note ..]'; exit 2 }
@@ -330,7 +330,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     if ($t.done -and (-not $t.doneAt -or ((Get-Date) - [datetime]$t.doneAt).TotalDays -gt $Days)) { continue }   # no doneAt: an old record
     $act = @(@($t.created, $t.reopenedAt, $t.allMergedAt, $t.mergedSeenAt) | ForEach-Object { try { [datetime]$_ } catch {} } | Sort-Object)[-1]
     if (-not $t.done -and $act -and ((Get-Date) - $act).TotalDays -gt $Days) { $idle++; continue }   # open, untouched for -Days: not this plan's (94 MRs of October filled it)
-    foreach ($m in @($t.mrs)) {
+    foreach ($m in @($t.mrs | Where-Object { $_ })) {   # a tracked task without MRs yet: @($null) crashed the plan
       # live on every test env of its repo (supervise liveOn): nothing to deploy, no lookup
       $need = @($tOf[(& $repoOf $m)] | Where-Object { $_ -in $targets })
       if ($need.Count -and -not @($need | Where-Object { $_ -notin @($t.liveOn) }).Count) { continue }
@@ -340,7 +340,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   $pend = @()   # a request older than -Days expires (the plan's window; deploys by CI never record it)
   $stale = { param($q) $q.at -and $(try { ((Get-Date) - [datetime]$q.at).TotalDays -gt $Days } catch { $false }) }   # an unreadable date stays
   if (Test-Path $pf) { $pend = @((Get-Content $pf -Raw | ConvertFrom-Json).requests); if (@($pend | Where-Object { & $stale $_ }).Count) { & $pendEdit { param($p) $p.requests = @(@($p.requests) | Where-Object { -not (& $stale $_) }) }; $pend = @($pend | Where-Object { -not (& $stale $_) }) } }
-  foreach ($q in $pend) { foreach ($m in @($q.mrs)) { $cand[$m] = "requested by $($q.run)" } }
+  foreach ($q in $pend) { foreach ($m in @($q.mrs | Where-Object { $_ })) { $cand[$m] = "requested by $($q.run)" } }
   foreach ($m in $Mrs) { $cand[$m] = "requested by $Run" }
   # no network = UNKNOWN, no hang
   $rows = @{}; $failOf = @{}   # target -> why its check gave no rows (timeout, crash): that target is UNKNOWN, the others stand
@@ -458,6 +458,13 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     foreach ($b in @($plan | ForEach-Object { @($_.mrs) })) { if ($s = $scopeOf["$($b.mr -replace '^.*/')"]) { $b | Add-Member -Force NoteProperty files ([int]$s.files); $b | Add-Member -Force NoteProperty source @($s.source); $b | Add-Member -Force NoteProperty test ([int]$s.test); $b | Add-Member -Force NoteProperty outOfArea @($s.outside); $b | Add-Member -Force NoteProperty globs @($s.globs) } }
   }
   if ($idle) { [Console]::Error.WriteLine("deploy plan: $idle open task(s) idle over $Days days left out (-Days widens)") }
+  if ($Action -eq 'request') {   # a batch's full plan ran 58 KB: the plan goes to crafty.ps1 dir -Agent <run>, a summary out
+    $rqDir = Join-Path (Get-KitPath agents) (ConvertTo-KitSlug $(if ($Run) { $Run } else { 'deploys' })); New-Item -ItemType Directory -Force $rqDir | Out-Null
+    $rqFile = Join-Path $rqDir 'deploy-request.json'; ConvertTo-Json @($plan) -Depth 6 | Set-Content -LiteralPath $rqFile -Encoding utf8
+    $rqSum = @($plan | ForEach-Object { [ordered]@{ target = $_.target; status = $_.status; trigger = $_.trigger; mrs = @(@($_.mrs) | ForEach-Object mr | Where-Object { $_ }); why = $_.why; file = $rqFile } })
+    if ($Json) { ConvertTo-Json @($rqSum) -Depth 4 } else { foreach ($s in $rqSum) { "DEPLOY $($s.target): $($s.status)$(if ($s.status -eq 'UNKNOWN') { ": the deploy check failed: $($s.why)" }) · $(@($s.mrs).Count) MR(s)$(if (@($s.mrs).Count) { ": $(@($s.mrs) -join ', ')" })" }; "full plan: $rqFile" }
+    return
+  }
   if ($Json) { ConvertTo-Json @($plan) -Depth 6; return }
   foreach ($p in $plan) {
     $when = switch ($p.status) { 'WAIT' { " until $(([datetime]$p.nextAllowed).ToString('yyyy-MM-dd HH:mm')) (one deploy per $($p.windowHours) h)" } 'ASK' { ': ask the owner ONCE with this batch' } 'READY' { ": waits for a person's 'deploy $($p.target)' (deploy.trigger owner: nobody asks)" } 'UNKNOWN' { ": the deploy check failed: $($p.why) (plan again)" } 'DEPLOYING' { ': a deploy pipeline runs now (wait, then plan again)' } default { '' } }

@@ -108,7 +108,7 @@ $gcf = Join-Path (Kd) 'gate.contracts.md'; '# contracts' | Set-Content $gcf
 $nw = Px $O decide check -Gate deploy -Item hx | Out-String; $c1 = $LASTEXITCODE
 $null = Px $O decide record -Gate deploy -Item hx -Question q -Answer y -Source chat -By coordinator-2; $c2 = $LASTEXITCODE
 $rec = Px $O decide record -Gate deploy -Item hx -Mrs 'api!8' -Question q -Answer 'Go (Recommended)' -Source askuser -Contracts $gcf | Out-String
-$rid = if ($rec -match 'RECORDED (d-\S+)') { $Matches[1] }
+$rid = if ($rec -match 'RECORDED (dec-\d{4})') { $Matches[1] }
 $wm = Px $O decide check -Gate deploy -Mrs 'grp/api!8' | Out-String; $null = Px $O decide check -Gate merge -Item hx; $c3 = $LASTEXITCODE
 $wu = Px $O decide check -Gate deploy -Id $rid -Use -Agent op1 | Out-String; $wv = Px $O decide check -Gate deploy -Item hx | Out-String; $c4 = $LASTEXITCODE
 $aid = (Px $O decide ask -Run w1 -Agent X1 -Item A2 -Context 'T1 is tested' -Question 'Close T1?' -Options 'A: close — testers stop on it','B: keep — it stays in test' -Recommend A | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
@@ -125,7 +125,7 @@ $dataId = (Px $O decide record -Gate data -Item stgdata -Question q -Answer y -S
 $null = Px $O decide record -Gate bogus -Item stgdata -Question q -Answer y -Source chat; $bogusCode = $LASTEXITCODE
 $dataAsk = Px $O decide check -Gate ask -Id $dataId 2>&1 | Out-String; $dataBare = Px $O decide check -Id $dataId | Out-String
 $null = Px $O decide check -Gate merge -Item stgdata; $dataMerge = $LASTEXITCODE; $null = Px $O decide check -Gate deploy -Id $dataId; $dataDeploy = $LASTEXITCODE
-Expect 'decide: gate data recorded, an unknown gate refused; check -Id ignores a non-gate -Gate (ask, none); a real gate still binds' ($dataId -match '^d-' -and $bogusCode -eq 2 -and $dataAsk -match "WORD $dataId \(data stgdata\)" -and $dataBare -match "WORD $dataId" -and $dataMerge -eq 1 -and $dataDeploy -eq 1)
+Expect 'decide: gate data recorded, an unknown gate refused; check -Id ignores a non-gate -Gate (ask, none); a real gate still binds' ($dataId -match '^dec-\d{4}$' -and $bogusCode -eq 2 -and $dataAsk -match "WORD $dataId \(data stgdata\)" -and $dataBare -match "WORD $dataId" -and $dataMerge -eq 1 -and $dataDeploy -eq 1)
 $D = Join-Path $k 'skills/crafty/crafty.ps1'
 # checkpoints: two agents sharing a name, different runs = one file each; -Read -Run picks its own; an old resume.json is still read
 $ckDirTwin = Join-Path (TkPath $k agents) 'twin'

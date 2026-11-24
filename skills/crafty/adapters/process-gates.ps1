@@ -3,7 +3,7 @@
 # process-gate: Test-KitProcessGate (devtools.py process_gate is the python twin). Kind process-gate: verbs = gate names
 # (promote merge finish bugFix mrBody); built-ins testingDocs (promote here; devtools.py: merge, finish, mrBody) and reproRow (bugFix, devtools.py).
 # process.gates.<gate>: unset = pass · builtin:<name> · a command line (payload JSON on stdin, exit 0 = pass, stdout = why).
-# Sections: L7 gate · L38 process docs · L103 waits · L122 api budget
+# Sections: L7 gate · L44 process docs · L110 waits · L129 api budget
 # ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
 function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [Alias('TimeoutSeconds')][int]$TimeoutSec = 120) {
@@ -16,6 +16,12 @@ function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [Alias('Tim
   $w = [IO.StreamWriter]::new($p.StandardInput.BaseStream, [Text.UTF8Encoding]::new($false)); $w.Write($In); $w.Close()
   if (-not $p.WaitForExit($TimeoutSec * 1000)) { Stop-KitProcessTree $p; return [pscustomobject]@{ code = -1; out = ''; err = "$Exe timed out after $TimeoutSec s" } }
   $p.WaitForExit(); [pscustomobject]@{ code = $p.ExitCode; out = $so.Result.TrimEnd(); err = $se.Result.TrimEnd() }
+}
+# wt commit: repos[].commitStyle = the repo's own subject rule (its commitlint hook may only warn): '' or why it refuses (-ProseOk too)
+function Test-KitCommitStyle([string]$Repo, [string]$Message) {
+  $cs = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'commitStyle' '')"; $sj = ("$Message" -split '\r?\n')[0]
+  if (-not $cs -or $Message -match '^(wip|chore\(wip\))[:(]') { return '' }
+  try { if ($sj -notmatch $cs) { "subject '$sj' misses repos[].commitStyle '$cs' (-ProseOk does not pass it)" } } catch { "repos[].commitStyle '$cs' is no valid regex: fix kit.local.json" }
 }
 # -> { ok; why; how }: how = none | builtin:<name> | the command
 function Test-KitProcessGate([Parameter(Mandatory)][ValidateSet('promote', 'merge', 'finish', 'bugFix', 'mrBody')][string]$Gate, [hashtable]$Payload = @{}) {
@@ -68,7 +74,7 @@ function Update-KitQaParents([scriptblock]$Change) {
   $qf = Join-Path (Get-KitPath cache -Create) 'qa-parents.json'
   Invoke-KitLocked $qf { $q = try { Get-Content -LiteralPath $qf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $q) { $q = @{} }
     & $Change $q
-    foreach ($qk in @($q.Keys)) { if (([datetime]::Now - [datetime]$q[$qk].at).TotalDays -gt 30) { $q.Remove($qk) } }   # older runs: out of the window
+    $qKeep = [double](Get-KitParam 'qa.parentsKeepDays'); foreach ($qk in @($q.Keys)) { if (([datetime]::Now - [datetime]$q[$qk].at).TotalDays -gt $qKeep) { $q.Remove($qk) } }   # older runs: out of the window
     Write-KitAtomic $qf ($q | ConvertTo-Json -Depth 4 -Compress); $q }
 }
 function Add-KitQaParent([string]$Parent, [datetime]$At = [datetime]::Now) {
@@ -87,10 +93,11 @@ function Get-KitQaRunFiles([ValidateSet('run.json', 'finalize.json')][string]$Na
 # supervise "QA bug tasks": the beat's QA parents (run.json of 7 days; a 7-day parent each beat, an older one every 6 h, owner
 # 2026-11-18) and their tracker views started with the sweep (2-3 s each, read in the section); $script:KitQaBugs
 function Start-KitSupervisePrefetchQaBugs {
-  $now = Get-Date; $recent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays 7)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
+  $now = Get-Date; $qRecent = [double](Get-KitParam 'qa.bugsRecentDays'); $qOlder = [double](Get-KitParam 'qa.bugsOlderHours')
+  $recent = @(foreach ($rf in @(Get-KitQaRunFiles run.json -SinceDays $qRecent)) { try { [pscustomobject]@{ dir = $rf.Directory; j = ([IO.File]::ReadAllText($rf.FullName) | ConvertFrom-Json) } } catch {} })
   $idx = Update-KitQaParents { param($q) foreach ($qr in $recent) { $qp = [string]$qr.j.tracker.parent; $qt = $qr.dir.LastWriteTime
       if ($qp -and (-not $q[$qp] -or [datetime]$q[$qp].at -lt $qt)) { $q[$qp] = @{ at = (Get-KitStamp stored $qt); seen = $q[$qp].seen } } } }
-  $parents = @($idx.Keys | Where-Object { $qo = $idx[$_]; ($now - [datetime]$qo.at).TotalDays -le 7 -or -not $qo.seen -or ($now - [datetime]$qo.seen).TotalHours -ge 6 })
+  $parents = @($idx.Keys | Where-Object { $qo = $idx[$_]; ($now - [datetime]$qo.at).TotalDays -le $qRecent -or -not $qo.seen -or ($now - [datetime]$qo.seen).TotalHours -ge $qOlder })
   $views = @{}; foreach ($qp in $parents) { $views[$qp] = try { Start-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.dev, 'tracker', 'view', $qp) } catch { $null } }
   $script:KitQaBugs = [pscustomobject]@{ recent = $recent; parents = $parents; views = $views }
 }
@@ -114,7 +121,7 @@ function Wait-KitFileChange([string]$File, [int]$Seconds) {
 # parsed whole: ~0.8 s a call) -> the non-empty lines from 30 min before -Since on (slack for late rows; an unreadable time = late)
 function Get-KitLogLines([string]$File, [datetime]$Since) {
   $Lines = "$(Get-Content -LiteralPath $File -Raw)" -split '\r?\n'
-  $lo = 0; $hi = $Lines.Count; $atv = [datetimeoffset]::MinValue; $Cut = if ($Since.Year -gt 1) { $Since.AddMinutes(-30) } else { $Since }
+  $lo = 0; $hi = $Lines.Count; $atv = [datetimeoffset]::MinValue; $Cut = if ($Since.Year -gt 1) { $Since.AddMinutes(-[double](Get-KitParam 'log.sinceSlackMinutes')) } else { $Since }
   while ($lo -lt $hi) { $mid = [int][math]::Floor(($lo + $hi) / 2); $l = $Lines[$mid]
     if ($l.StartsWith('{"at":"') -and ($q = $l.IndexOf('"', 7)) -gt 7 -and [datetimeoffset]::TryParse($l.Substring(7, $q - 7), [ref]$atv) -and $atv.LocalDateTime -lt $Cut) { $lo = $mid + 1 } else { $hi = $mid } }
   for ($i = $lo; $i -lt $Lines.Count; $i++) { if ($Lines[$i]) { $Lines[$i] } }

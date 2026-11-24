@@ -1277,9 +1277,9 @@ if ($RunDir) { $rf = Join-Path $RunDir 'run.json'; if (-not (Test-Path -LiteralP
 if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run>'; exit 2 }
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
-# N3: <testy-id> -> testy-<YYYYMMDD>-<nn> (kitbag.py naming next id: one locked day counter)
+# N3: <testy-id> -> testy-<nnnn> (kitbag.py naming next id: one locked counter per kind, no date)
 if ("$($jb.runFolder)" -match '<(?<k>[a-z]+)-id>') { $idKind = $Matches.k; $nid = "$(& (Get-Python) -X utf8 $KitCmd.kitbag naming next id $idKind 2>$null | Select-Object -Last 1)".Trim()
-  if ($nid -notmatch '^[a-z]+-\d{8}-\d{2,}$') { throw "prepare: kitbag.py naming next id $idKind gave '$nid'" }; $jb.runFolder = "$($jb.runFolder)" -replace '<[a-z]+-id>', $nid }
+  if ($nid -notmatch '^[a-z]+-\d{4,}$') { throw "prepare: kitbag.py naming next id $idKind gave '$nid'" }; $jb.runFolder = "$($jb.runFolder)" -replace '<[a-z]+-id>', $nid }
 $dir = [regex]::Replace("$($jb.runFolder)", '<([yMdHms][^<>]*)>', { param($DateTok) Get-Date -Format $DateTok.Groups[1].Value })   # <yyyy-MM-dd> and other date formats
 if (-not [IO.Path]::IsPathRooted($dir)) { $dir = Join-Path (Split-Path $KitConf.Kit) $dir }   # testy's relative runFolder is from the workspace root, never this cwd (the kit: <kit>/.claude/.runtime, retro 1549)
 # a caller that expanded the stamp itself to nothing left '-<name>' (a leading '-' reads as a CLI flag)

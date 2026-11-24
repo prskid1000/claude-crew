@@ -5,7 +5,7 @@
  python -X utf8 devtools.py finish <taskId> <testing.md|url|-> <solution.md> [review] [--ai <ai.md|url>] [--prose-ok "<why>"]   the docs given
   (process.gates.finish builtin:testingDocs: the required process.docs) by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
   `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec (a doc process.docs lacks: skipped)
- python -X utf8 devtools.py cases add|result|round|render <task> ...   the task's test cases (one spec, "render" section):
+ python -X utf8 devtools.py cases add|result|round|render|show <task> ...   the task's test cases (one spec, "render" section):
   goals file, AI doc and human doc rendered from it, never hand-written
  python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"] [--check]   open a merge/pull request from the current branch: title
   (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works;
@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L606 git host · L679 scope · L771 MR · L967 merge · L1298 docs ·
-  L1461 publish · L1956 render · L2508 spec · L2865 plugins · L2879 keepboth · L2898 selftest · L3596 CLI
+  L1461 publish · L1956 render · L2520 spec · L2877 plugins · L2891 keepboth · L2910 selftest · L3608 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2155,12 +2155,13 @@ USAGE_EXAMPLES = {'evidence': 'python -X utf8 devtools.py evidence "T1 local run
 
 def cases_cmd(a):
     """cases add <task> <spec.json|JSON> [--replace] · result <task> <id> <PASS|FAIL|...> [<evidence> ...] · round <task> [--fix <sha>] [--bugs <t>]
-    [--retest <t>] · render <task> goals|ai|human -> the rendered file's path. Examples (one per verb):
+    [--retest <t>] · render <task> goals|ai|human -> the rendered file's path · show <task>: cases, results, rounds, gaps. Examples (one per verb):
+      python -X utf8 devtools.py cases show T1
       python -X utf8 devtools.py cases add T1 cases-t1.json
       python -X utf8 devtools.py cases result T1 A1 PASS A1_resp.json=https://drive.example/file/d/1Ab/view
       python -X utf8 devtools.py cases round T1 --fix 1a2b3c4 --bugs none
       python -X utf8 devtools.py cases render T1 ai"""
-    verbs = ('add', 'result', 'round', 'render')
+    verbs = ('add', 'result', 'round', 'render', 'show')
     if a and a[0] in ('--help', '-h', 'help'):   # 47 of 61 usage errors (2026-11-18..21) were help asks: usage, exit 0
         print(cases_cmd.__doc__)
         return 0
@@ -2172,6 +2173,17 @@ def cases_cmd(a):
         print(f'did you mean: cases {near[0]} (see its example above)' if near else f'cases {a[0]} needs <task> first (example above)' if a and a[0] in verbs else 'cases <verb> <task> ...: verbs ' + ', '.join(verbs), file=sys.stderr)
         return 2
     verb, tid, rest = a[0], a[1], a[2:]
+    if verb == 'show':   # read-only: what an agent wanted from "cases show" (retro tidy-20261124-01)
+        c = (state_read(task_file(tid)) or {}).get('cases')
+        if not c:
+            print(f'task {tid} has no cases spec: devtools.py cases add {tid} <spec.json> first')
+            return 1
+        print(f'cases {tid}: {c.get("title") or "(no title)"} · {len(c.get("rounds") or [])} round(s)')
+        for k in c.get('cases') or []:
+            print(f'  {k.get("id")} · {k.get("type") or "?"} · {k.get("result") or "open"}' + (f' (round {k["ran"]})' if k.get('ran') else ''))
+        for g in cases_gaps(c):
+            print(f'  GAP {g}')
+        return 0
     if verb == 'render':
         print(cases_file(tid, rest[0] if rest else 'ai'))
         return 0

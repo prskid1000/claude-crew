@@ -20,7 +20,9 @@ $cs = @{ title = 'Sort orders'; change = 'orders sort by date'; repos = @('web!5
 Set-JsonFile "$wd/cases.json" $cs
 $ca = Dt cases add T1 "$wd/cases.json"; $cr = Dt cases result T1 A1 PASS 'https://x/a1.png'; $null = Dt cases result T1 A2 PASS 'https://x/a2.json'
 $cn = Dt cases round T1 --fix abc1234; $cx = Dt cases result T1 A9 PASS
-$ai = Get-Content -Raw (Dt cases render T1 ai).out; $hu = Get-Content -Raw (Dt cases render T1 human).out; $go = Get-Content -Raw (Dt cases render T1 goals).out
+$csw = Dt cases show T1; $csn = Dt cases show T404
+Expect "cases show: cases, results, rounds; a task without a spec exits 1 ($($csw.code) $($csn.code))" ($csw.code -eq 0 -and $csw.out -match 'cases T1: Sort orders · 1 round\(s\)' -and $csw.out -match 'A1 · positive · PASS \(round 1\)' -and $csn.code -eq 1 -and $csn.out -match 'no cases spec')
+$ai = Get-Content -Raw (Dt cases render T1 ai).out;$hu = Get-Content -Raw (Dt cases render T1 human).out; $go = Get-Content -Raw (Dt cases render T1 goals).out
 $day = Get-Date -Format 'yyyy-MM-dd'
 Expect "cases add / result / round: the task's spec changes by key; an unknown case id is refused ($($ca.code)$($cr.code)$($cn.code)$($cx.code))" ($ca.code + $cr.code + $cn.code -eq 0 -and $cx.code -ne 0 -and $cx.out -match 'no case A9')
 Expect 'cases render ai: golden text (case # names its human check, evidence image inline / link named by type, a pipe escaped, Rounds row)' (Gold $ai @"

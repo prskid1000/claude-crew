@@ -84,32 +84,32 @@ const REPORT = {
  type: 'object',
  properties: {
   mrs: { type: 'array', items: obj({ url: S, repo: S,
-   merged: { ...B, description: 'true ONLY on a confirmed merge (devtools.py merge printed MERGED, or the host says so)' },
+   merged: { ...B, description: 'only on a confirmed merge (MERGED printed, or the host)' },
    mergeState: { ...S, enum: ['MERGED', 'SCHEDULED', 'WAIT', 'CONFLICT', 'PIPELINE_FAILED', 'NOT_MERGED', 'OPEN'] } }, ['url', 'repo', 'merged']) },
   worktrees: SA,
-  done: { ...SA, description: 'item ids finished (local test passed, MR open)' },
-  deferred: { type: 'array', items: obj({ id: S, reason: S, ownerDecided: B, kind: { enum: ['code', 'people'], description: 'people: no code (never holds promotion)' } }, ['id', 'reason']) },
-  needsDecision: { type: 'array', items: obj({ item: S, decisionId: { ...S, description: 'decide ask id' }, question: S }), description: 'items waiting on the owner; []' },
-  debate: { type: 'array', items: obj({ item: S, question: S, options: SA }), description: '2 valid paths ("A: <label> — <effect>", "B: ..") no test settles; []' },
-  disputes: { type: 'array', items: obj({ finding: S, evidence: S }), description: 'fix round: contested findings ("<file>:<line>"; evidence file:line, test or measurement); []' },
-  needsEnvFix: { type: 'array', items: obj({ item: S, envFixId: { ...S, description: 'decide ask -Kind envfix id' }, need: S }), description: 'items waiting on a coordinator-only env fix; []' },
+  done: { ...SA, description: 'item ids done: local pass, MR open' },
+  deferred: { type: 'array', items: obj({ id: S, reason: S, ownerDecided: B, kind: { enum: ['code', 'people'], description: 'people: no code' } }, ['id', 'reason']) },
+  needsDecision: { type: 'array', items: obj({ item: S, decisionId: { ...S, description: 'decide ask id' }, question: S }), description: 'items waiting on the owner' },
+  debate: { type: 'array', items: obj({ item: S, question: S, options: SA }), description: '2 paths no test settles: "A: <label> — <effect>"' },
+  disputes: { type: 'array', items: obj({ finding: S, evidence: S }), description: 'contested findings; evidence: file:line, test or measurement' },
+  needsEnvFix: { type: 'array', items: obj({ item: S, envFixId: { ...S, description: 'decide ask -Kind envfix id' }, need: S }), description: 'items waiting on a coordinator env fix' },
   localTest: { type: 'object', properties: {
-   status: { ...S, enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS all goals, clean logs; FAIL goals failing; BLOCKED only owner decision / remote-only; NONE no local env (merge waits: decisionId or fallback)' },
-   decisionId: { ...S, description: 'NONE: owner decide id allowing the merge' },
+   status: { ...S, enum: ['PASS', 'FAIL', 'BLOCKED', 'NONE'], description: 'PASS goals met, clean logs · FAIL · BLOCKED owner / remote-only · NONE no local env' },
+   decisionId: { ...S, description: 'NONE: decide id allowing the merge' },
    fallback: { ...S, enum: ['ci', 'unit'], description: 'NONE: the localFallback that passed' },
-   unitRun: { ...obj({ command: S, result: S }), description: 'fallback unit: crafty.ps1 check run + result' },
-   blockedKind: { ...S, enum: ['decision', 'remote'], description: 'BLOCKED: decision = waits for the owner, remote = needs a remote-only system' },
-   blockedReason: { ...S, description: 'BLOCKED only: the decision id or the remote dependency' },
-   envGap: { ...B, description: 'FAIL: true = every failing goal is an ENV GAP; a product failure: false' },
-   env: { ...S, description: '<env> r<n>, or "none: <why>"' }, rounds: N,
-   failing: { ...SA, description: 'goal ids still failing, with one line each' },
+   unitRun: { ...obj({ command: S, result: S }), description: 'fallback unit: check + result' },
+   blockedKind: { ...S, enum: ['decision', 'remote'], description: 'BLOCKED: owner / remote-only system' },
+   blockedReason: { ...S, description: 'decision id or remote dependency' },
+   envGap: { ...B, description: 'FAIL: every failing goal is an env gap' },
+   env: { ...S, description: '<env> r<n> | none: <why>' }, rounds: N,
+   failing: { ...SA, description: 'failing goal ids, a line each' },
    goalsDoc: { ...S, description: 'cases render <task> goals path' } }, required: ['status', 'env', 'rounds', 'failing', 'goalsDoc'] },
   needsLiveCheck: SA,
-  testerGuide: { ...S, description: 'the published human testing doc link (devtools.py finish)' },
-  seed: { ...SA, description: 'settings/data to seed after deploy' },
+  testerGuide: { ...S, description: 'human testing doc link' },
+  seed: { ...SA, description: 'seed after deploy' },
   foreignHooks: SA,
-  summary: { ...S, description: '<=200 words; MR merge state lives in mrs[].mergeState' },
-  handoff: { ...S, description: 'at a HANDOFF (board beat) or your CONTEXT-CHECK handoff only: the resume brief path' },
+  summary: { ...S, description: '<=200 words; merge state: mrs' },
+  handoff: { ...S, description: 'handoff only: resume brief path' },
  },
  required: ['mrs', 'worktrees', 'done', 'deferred', 'needsDecision', 'localTest', 'needsLiveCheck', 'seed', 'foreignHooks', 'summary', 'testerGuide'],
 }
@@ -358,7 +358,7 @@ const unitRan = (u) => /crafty\.ps1\W+check\b/.test(String((u || {}).command)) &
 const fallbackOk = (lt, r) => (lt.fallback !== 'unit' || unitRan(lt.unitRun)) && (((r && r.mrs) || []).length ? r.mrs.every((m) => [lt.fallback || 'ci', 'ci'].includes(repoNames(m).map((n) => CFG.local[n]).find(Boolean))) : !!Object.keys(CFG.local)[0])
 // BLOCKED, a FAIL beyond env gaps; with a: a code area's NONE, no decide id or fallback
 const noneGated = (lt, a, r) => !!a && !!lt && lt.status === 'NONE' && !['doc', 'spike', 'repro'].includes(a.kind) && !fallbackOk(lt, r)
-const holdsMerge = (lt, a, r) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap) || (noneGated(lt, a, r) && !/^d-\d{14}-[\w-]+$/.test(lt.decisionId)))
+const holdsMerge = (lt, a, r) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap) || (noneGated(lt, a, r) && !/^(?:dec-\d{4,}|d-\d{14}-[\w-]+)$/.test(lt.decisionId)))
 // NONE: a person's merge / scope / other word on this area
 async function noneWordOk(a, r, id) {
  const its = [a.id, a.task, AREA_TASK[a.id], a.branch, ...[].concat(a.branches || []), ...String(a.items).split(','), ...r.mrs.flatMap((x) => repoNames(x).map((n) => `${n}!${(/(\d+)\/?$/.exec(nu(x.url)) || [])[1]}`))]
@@ -701,7 +701,7 @@ phase('Deploy')
 const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const DEPLOYS = `${KIT}/skills/bossy/adapters/deploys.ps1`
 const dp = shipped.length ? await runStep(`# record the merged MRs as pending only: this step deploys nothing and asks nobody
-if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" | Out-Null; & ${ORCH} deploy plan -Json } else { 'NO-DEPLOYS' }`,
+if (Test-Path '${DEPLOYS}') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" -Json } else { 'NO-DEPLOYS' }`,
  'deploy-batch', 'Deploy', { whole: true, slow: true }) : null
 if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: no deploys adapter in this kit (merged work waits for a person)')
 else if (shipped.length) {

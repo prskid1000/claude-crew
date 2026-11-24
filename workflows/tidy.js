@@ -38,12 +38,12 @@ for (const [label, model] of [['prep', 'haiku'], ['prep-retry', 'sonnet']]) {
 <<<ARGS
 ${AJ}
 ARGS>>>
-2. run = the line python -X utf8 ${C}/skills/bossy/kitbag.py naming next id tidy prints (tidy-<YYYYMMDD>-<nn>). Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:1,kitty/:1'
+2. run = the line python -X utf8 ${C}/skills/bossy/kitbag.py naming next id tidy prints (tidy-<nnnn>). Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:1,kitty/:1'
  (MISMATCH = the file differs: write it again once, re-run.) record = its full output.
 3. Run in PowerShell (takes up to 2 min): & ${C}/skills/bossy/bossy.ps1 tidy prep -Json
  prep = its last output line (one line of JSON), verbatim.
 Return ok=true when step 3 printed the JSON line.`, { label, phase: 'Prep', schema: STEP, agentType: 'kitty', model, effort: 'low' })
- try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy-\d{8}-\d{2,}$/.test(r.run) ? r.run : 'tidy'; break } catch (e) { P = null }
+ try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy-\d{4,}$/.test(r.run) ? r.run : 'tidy'; break } catch (e) { P = null }
 }
 if (!P) return { applied: [], proposedForApproval: [], rejected: [], report: 'tidy prep failed twice: run bossy.ps1 tidy prep by hand' }
 log(`tidy prep: ${P.work} item(s), ${P.groups} group(s) of 2+, ${P.sec} s: ${(P.steps || []).join(', ')}`)
@@ -72,7 +72,7 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
  (forget on cap: content is cut and archived; a BATCH line = features: run its decide ask once, never remove them yourself).
 2. Rules: a lesson at (3×) or more and still true -> a short rule in its SKILL.md or rules/*.md, then learn -Skill <s> -Fixed "<words>".
  "Outcomes" lines (results, not friction): a repeat cause or an area / agent with most fix rounds -> a lesson (-Skill of the step that failed) or a rule edit for the brief or check that would have caught it.
- A "waste:" signal (ref waste:<role>:<kind>, its fix kind in the text): apply that fix in step 3, then after the push learn -Skill <role> -Kind win -Text "fixed in <sha>" -Ref <its ref> (Waste panel: fixed).
+ A "waste:" signal (ref waste:<role>:<kind>, its fix kind in the text) is never left open: apply that fix in step 3 with the commit trailer "Waste-Fix: <its ref>" (Waste panel: fixed once no later run shows it), or close it: learn -Skill <role> -Kind false-positive -Text "<why not>" -Ref <its ref> (Waste panel: ignored, that reason).
  "Standing rules proposed": the script already asked the owner (one decide ask); never apply one. An approved rule that holds for any org -> propose it as a kit rule edit.
 3. Scripts, defaults, templates (guard blocks, script errors, slow builds, failed upkeep steps): ${A.applyScripts ? 'apply the smallest fix, re-parse every changed .ps1 ([System.Management.Automation.Language.Parser]::ParseFile) and node --check every changed .js/.mjs; revert one that breaks.' : 'list each with the exact edit (file, function, new value); do not apply.'}
 4. The report is rendered, never hand-written: write retro.json { "date", "applied": [{ "change", "file", "count" }], "proposed":

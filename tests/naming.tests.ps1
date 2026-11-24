@@ -17,11 +17,14 @@ $k1 = Kb naming next key SHOP CAT; $k2 = Kb naming next key SHOP CAT; $k3 = Kb n
 Expect "next key: SHOP-CAT-001, -002, SHOP-PAY-001; an unknown AREA refused ($($kx.code))" ($k1.out -eq 'SHOP-CAT-001' -and $k2.out -eq 'SHOP-CAT-002' -and $k3.out -eq 'SHOP-PAY-001' -and
   $kx.code -ne 0 -and $kx.out -match 'unknown AREA XYZ')
 $i1 = Kb naming next id buildy; $i2 = Kb naming next id buildy
-Expect 'next id: <kind>-<YYYYMMDD>-<nn>, counted per day' ($i1.out -match '^buildy-\d{8}-01$' -and $i2.out -match '^buildy-\d{8}-02$')
+Expect 'next id: <kind>-<nnnn>, one counter per kind, no date' ($i1.out -eq 'buildy-0001' -and $i2.out -eq 'buildy-0002')
+# NO-DATE (owner 2026-11-24): old per-day counters fold into one past every id they made; a dated name is refused
+Set-JsonFile (TkPath $k naming) @{ 'id:fix:20261123' = 4; 'id:fix:20261124' = 2 }; $i3 = Kb naming next id fix; $dn = Kb naming check run buildy-20261123-01; $dnd = Kb naming check doc 'SHOP-CAT-004 Spec v1 — 2026-11-24 notes'
+Expect "NO-DATE: day counters fold (fix-0007), a dated run / doc refused ($($i3.out) | $($dn.out))" ($i3.out -eq 'fix-0007' -and $dn.code -eq 1 -and $dn.out -match 'NO-DATE' -and $dnd.code -eq 1 -and $dnd.out -match 'NO-DATE')
 
 # ---- check: every kind, good and bad
 $good = @{ key = 'SHOP-CAT-004'; item = 'SHOP-CAT-004.2 add-price-projection'; case = 'SHOP-CAT-004-TC03'; title = 'SHOP-CAT-004 [Feature] Catalogue: public page'
-  doc = 'SHOP-CAT-004 Spec v3 — Public catalogue'; run = 'buildy-20261123-01'; id = 'dec-20261123-02'; agent = 'devy-01'; area = 'area-CAT'; lane = 'lane-02'
+  doc = 'SHOP-CAT-004 Spec v3 — Public catalogue'; run = 'buildy-0042'; id = 'dec-0398'; agent = 'devy-01'; area = 'area-CAT'; lane = 'lane-02'
   branch = 'feat/SHOP-CAT-004-public-catalogue'; mr = 'feat(web): public catalogue page [SHOP-CAT-004]' }
 $bad = @{ key = 'WEB-12'; item = 'SHOP-CAT-004.2'; case = 'T1'; title = '[Feature] Shop — G3 catalogue'; doc = 'T1 testing doc (AI)'; run = 'wave-brief-a051'; id = 'd-20261123-x'
   agent = 'T1@150132'; area = 'X1'; lane = 'rm-kestrel'; branch = 'f/CU-14ab-sort'; mr = 'feat: sort (CU-14ab)' }
@@ -92,6 +95,13 @@ Expect "keyed task: MR title, commit subject, doc title (v per changed round), b
   @($tBr)[0] -match '^fix/SHOP-CAT-010-local-\d+-crash-on-save$' -and "$tBr" -match 'REFUSED .*no kit key')
 Expect "tracker: render previews <P>-<A>-000, create allocates; a bug under it takes the parent's key; update keeps it ($($tDry.name) | $($tNew.name) | $($tBug.name) | $($tUpd.name))" (
   $tDry.name -eq 'SHOP-CAT-000 [Feature] Catalogue: blocks' -and $tNew.name -eq 'SHOP-CAT-009 [Feature] Catalogue: blocks' -and $tBug.name -match '^SHOP-CAT-010 \[Bug\] Catalogue: crash on save$' -and $tUpd.name -eq 'SHOP-CAT-009 [Feature] Catalogue: blocks and nav')
+# owner 2026-11-24: a wave's area subtask is keyed from its parent; a rename never drops a key or type (RM-AGT-001 vanished by hand)
+$env:KIT_TRACKER_TYPE = 'none'
+$tSub = pwsh -NoProfile -File $D tracker create -Spec (@{ kind = 'Feature'; title = '[Feature] Shop Catalogue fix wave — grid page (web)'; parent = $tNew.id; newTask = 'wave area'; list = 'L1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'grid' }); acceptance = @('a'); links = @('https://x.example/1') } | ConvertTo-Json -Compress -Depth 5) 2>$null | ConvertFrom-Json
+$null = pwsh -NoProfile -File $D tracker rename $tNew.id 'blocks and footer'; $null = pwsh -NoProfile -File $D tracker rename $tBug.id 'crash on load'
+$tRn = (pwsh -NoProfile -File $D tracker view $tNew.id 2>$null | ConvertFrom-Json).name; $tRb = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name; Remove-Item Env:KIT_TRACKER_TYPE
+Expect "keyed titles: a wave area subtask gets '<KEY> [Type] <Area>: <outcome>' from its parent; tracker rename without a key keeps key and type ($($tSub.name) | $tRn | $tRb)" (
+  "$($tSub.name)" -match '^SHOP-CAT-\d{3} \[Feature\] Catalogue: \S' -and "$($tSub.name)" -cnotmatch 'Shop|\(web\)' -and $tRn -eq 'SHOP-CAT-009 [Feature] Catalogue: blocks and footer' -and $tRb -eq 'SHOP-CAT-010 [Bug] Catalogue: crash on load')
 
 # ---- standard flags (-Mr -Lane -TimeoutSeconds -Resume): the old names keep working one version; stamps: one helper per use
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
@@ -163,10 +173,15 @@ $show = pwsh -NoProfile -File $O board show | Out-String
 $lbl = pwsh -NoProfile -Command ". '$O'; Get-KitRunLabel ([pscustomobject]@{ name = 'v2-wave1'; agents = @(@{ items = 'A1, A2, A3' }) }) 'testy-20261123-09'; Get-KitRunLabel ([pscustomobject]@{ runDir = '$qd' }) 'select-x'
   Get-KitAgentLabel ([pscustomobject]@{ n = 'devy-01'; ar = 'area-CAT'; sub = 'devy' }); Get-KitAgentLabel ([pscustomobject]@{ n = 'briefy-v1retest'; sub = 'briefy' }); Get-KitAgentLabel ([pscustomobject]@{ n = 'JC'; sub = 'devy' })
   (Get-KitQaRunStart 'testy-20261123-02').ToString('o'); (Get-KitQaRunStart '2026-11-23-150132-old').ToString('HH:mm:ss')"
-Expect "labels: board show '<run> · <KEY> <title>' + '<role>-<nn> · <area>'; dashboard runs and agents; QA run start from run.json, legacy folder kept ($($lbl -join ' | '))" (
-  $show -match "run buildy-20261123-01 · SHOP-CAT-004 public price list" -and $show -match "$($d2.id) · area-CAT" -and $lbl[0] -eq 'testy-20261123-09 · v2-wave1 · 3 items' -and
-  $lbl[1] -eq 'testy-20261123-02 · SHOP-PAY-001 card refunds' -and $lbl[2] -eq 'devy-01 · area-CAT' -and $lbl[3] -eq 'briefy-v1retest' -and $lbl[4] -eq 'JC · devy' -and
+Expect "labels: board show '<KEY> <title> (<run id>)' + '<role>-<nn> · <area>'; dashboard runs and agents (no run id: the tooltip has it); QA run start from run.json, legacy folder kept ($($lbl -join ' | '))" (
+  $show -match "run SHOP-CAT-004 public price list \(buildy-20261123-01\)" -and $show -match "$($d2.id) · area-CAT" -and $lbl[0] -eq 'v2-wave1 · 3 items' -and
+  $lbl[1] -eq 'SHOP-PAY-001 card refunds' -and $lbl[2] -eq 'devy-01 · area-CAT' -and $lbl[3] -eq 'briefy-v1retest' -and $lbl[4] -eq 'JC · devy' -and
   [datetime]$lbl[5] -eq ([datetimeoffset]'2026-11-23T10:00:00Z').LocalDateTime -and $lbl[6] -eq '15:01:32')
+# labels drop what the day group and kind chip show (owner 2026-11-24): no date, no role word; a number only on a collision
+$ks = & $bj @('-Type', 'kitty', '-Run', 'kitty-fix-0007', '-Subject', 'rest', '-Area', 'kit'); $show2 = pwsh -NoProfile -File $O board show | Out-String
+$rnm = pwsh -NoProfile -Command ". '$O'; Format-KitRunName 'kitty-fix-0007' 'rest'; Format-KitRunName 'kitty-20261124-rest'; Format-KitRunName 'buildy-0042'; Format-KitRunName 'v2-wave1'"
+$lchk = @('fix: rest', 'kitty-20261124-rest', 'kitty: rest') | ForEach-Object { (Kb naming check label $_).code }
+Expect "labels: kind + subject, no date / role word ($($rnm -join ' | '); check $($lchk -join ',')); board join -Subject shows 'fix: rest (kitty-fix-0007)'" (($rnm -join '|') -eq 'fix: rest|rest|buildy|v2-wave1' -and ($lchk -join ',') -eq '0,1,1' -and $show2 -match 'run fix: rest \(kitty-fix-0007\)')
 # the wave-brief render names areas area-<AREA> (dependsOn follows, old ids aliased) and the run label '<KEY> <short title>'
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }; $wpy = Join-Path $wd 'wave_ids_check.py'
 Set-Content -LiteralPath $wpy -Encoding utf8 -Value @"
@@ -184,15 +199,15 @@ Expect "wave-brief ids: area-CAT, area-CAT-2, area-PAY, a keyless X9 kept; depen
   ($wv.ids -join ',') -eq 'area-CAT,area-CAT-2,area-PAY,X9' -and $wv.dep[0] -eq 'area-PAY' -and $wv.con.producer -eq 'area-PAY' -and $wv.con.consumers -eq 'area-CAT, X9' -and $wv.label -eq 'SHOP-CAT-004 public price list for guests')
 # tidy: the prep step returns the run id (kitbag.py naming next id tidy); worktree, branch and retro file carry it
 $jsT = @'
-const { calls, agent } = _mock((prompt, o) => o.label === 'prep' ? { ok: true, record: 'RECORDED', prep: JSON.stringify({ work: 1, groups: 0, sec: 1, steps: [], digest: 'd.md', at: 'x' }), run: 'tidy-20261123-04' } : { applied: [], proposedForApproval: [], rejected: [], report: 'r.md' })
+const { calls, agent } = _mock((prompt, o) => o.label === 'prep' ? { ok: true, record: 'RECORDED', prep: JSON.stringify({ work: 1, groups: 0, sec: 1, steps: [], digest: 'd.md', at: 'x' }), run: 'tidy-0004' } : { applied: [], proposedForApproval: [], rejected: [], report: 'r.md' })
 run({ kitDir: 'C:/k' }, agent, _n, _n, null).then(() => { const j = calls.find((c) => /Kind retro/.test(c.prompt)) || { prompt: '' }
- console.log(`tidy-run:${/naming next id tidy/.test(calls[0].prompt) && /-Branch kit\/tidy-20261123-04 -Target main -Name tidy-20261123-04;/.test(j.prompt) && /\/tidy-20261123-04\.md\./.test(j.prompt)}`) }).catch(_err)
+ console.log(`tidy-run:${/naming next id tidy/.test(calls[0].prompt) && /-Branch kit\/tidy-0004 -Target main -Name tidy-0004;/.test(j.prompt) && /\/tidy-0004\.md\./.test(j.prompt)}`) }).catch(_err)
 '@
 Expect-Each (Invoke-Js nm-tidy $jsT (Join-Path $src 'workflows/tidy.js')) 'tidy: N3 run id from the prep step: #' 'tidy-run' -Show 8
 # a reset counter never hands out an id live on the board (retro tidy-20261123-01): agent ids at join, run ids at naming next id
-$lvBd = TkPath $k board -Create; $lvDay = (Get-Date).ToUniversalTime().ToString('yyyyMMdd'); Remove-Item (TkPath $k naming) -ErrorAction SilentlyContinue
-& $J @{ agent = 'rechy-01'; type = 'rechy'; session = 'lv-a'; run = "rlive-$lvDay-01"; status = 'working'; joined = (Get-Date).ToString('o'); beat = (Get-Date).ToString('o') } (Join-Path $lvBd 'lv-a.json')
+$lvBd = TkPath $k board -Create; Remove-Item (TkPath $k naming) -ErrorAction SilentlyContinue
+& $J @{ agent = 'rechy-01'; type = 'rechy'; session = 'lv-a'; run = 'rlive-0001'; status = 'working'; joined = (Get-Date).ToString('o'); beat = (Get-Date).ToString('o') } (Join-Path $lvBd 'lv-a.json')
 $lvJoin = & $bj @('-Type', 'rechy', '-Run', 'lv-run'); $null = pwsh -NoProfile -File $O board leave -Agent $lvJoin.id; $lvRun = Kb naming next id rlive
-Expect "id allocator: rechy-01 and rlive-$lvDay-01 live on the board -> join gives rechy-02, next id rlive-$lvDay-02 ($($lvJoin.id), $($lvRun.out))" ($lvJoin.id -eq 'rechy-02' -and $lvRun.out -eq "rlive-$lvDay-02")
+Expect "id allocator: rechy-01 and rlive-0001 live on the board -> join gives rechy-02, next id rlive-0002 ($($lvJoin.id), $($lvRun.out))" ($lvJoin.id -eq 'rechy-02' -and $lvRun.out -eq 'rlive-0002')
 Remove-TestKit $k
 Complete-Tests

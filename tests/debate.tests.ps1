@@ -19,7 +19,7 @@ $dbj.rows = @(@{ option = 'A'; label = 'Per request'; change = 'always current';
   @{ option = 'B'; label = 'Cached'; change = 'lags 5 min'; cost = '-35 ms'; risk = 'stale price'; effort = '1 d'; evidence = @('C.java:20'); against = 'a wrong price at 9:00' })
 Set-JsonFile $dbf $dbj; $dbk = pwsh @np $O debate ask -File $dbf | Out-String
 Expect "debate: 2nd per run refused (1), -Owner allowed, options not A:/B: or rows not [A, B] = usage (2); brief: Character + round; ask: table, decide ask ($dbc $dbu $dbx)" ($dbc -eq 1 -and $dbo -match '^DEBATE ' -and $dbu -eq 2 -and $dbx -eq 2 -and
-  $dbA -match 'Cite it or drop it.*\n.*\n.*ROUND 0 \(blind' -and $dbR -match 'Show me the' -and $dbk -match '\| B: Cached \| lags 5 min \| -35 ms \| stale price \| 1 d \| C\.java:20 \| a wrong price at 9:00 \|' -and $dbk -match 'revy recommends A' -and $dbk -match 'DECISION d-')
+  $dbA -match 'Cite it or drop it.*\n.*\n.*ROUND 0 \(blind' -and $dbR -match 'Show me the' -and $dbk -match '\| B: Cached \| lags 5 min \| -35 ms \| stale price \| 1 d \| C\.java:20 \| a wrong price at 9:00 \|' -and $dbk -match 'revy recommends A' -and $dbk -match 'DECISION dec-\d{4}')
 # ---- decide ask (moved from bossy.tests: room): structured, blocking; today's context, option effects, a recommendation (A5)
 $cf = Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
 $out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Context 'edits recompute it' -Question 'Keep the old total?' -Options 'B: recompute — old invoices change','A: keep — no data change' -Recommend A -Contracts $cf | Out-String
@@ -31,7 +31,7 @@ $null = pwsh @np $O decide answer -Id $id -Answer 'A, keep it'
 $w = pwsh @np $O decide wait -Id $id -MaxMinutes 1 | Out-String
 Expect 'decide answer: wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' }).Count)
 $out = pwsh @np $O decide ask -Kind envfix -Run w1 -Agent X1 -Item A3 -Question 'refresh the release' -Contracts $cf | Out-String
-$eid = if ($out -match 'ENV-FIX (e-\S+) pending') { $Matches[1] }
+$eid = if ($out -match 'ENV-FIX (envfix-\d{4}) pending') { $Matches[1] }
 $pend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' })
 $null = Px $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
 $w = Px $O decide wait -Id $eid -MaxMinutes 1 | Out-String
@@ -110,7 +110,33 @@ $null = Invoke-Learn -Skill devy -Kind win -Text 'fixed in abc1234: devy start f
 "fixed:$(@($b | Where-Object kind -eq 'startload')[0].why -eq 'fixed in abc1234')"
 $fd = { param($id, $t, $n, [string]$inner, [string]$tag, [string]$cls, [string]$extra) "<details id=$id><summary>$t $n $extra</summary>$inner</details>" }
 $h = Format-KitWastePanel $b $fd; "html:$(([regex]::Matches($h, '<button type=button data-w=')).Count -eq 4 -and $h -match 'class=wsx data-w=all' -and $h -match "class='wr t-ignored' title='478 tokens, under 2k, one-off")"
+$h2 = Format-KitWastePanel @($b + $b) $fd; "group:$($h2 -match 'last 7 days · ' -and ([regex]::Matches($h2, "class='wr ")).Count -eq 3 -and $h2 -match '(·|&#183;) 2 items')"
+$null = Invoke-Learn -Skill checky -Kind false-positive -Text 'one-off notes read' -Ref waste:checky:reread; "closed:$(@(Get-KitWasteItems $ss | Where-Object kind -eq 'reread')[0].why -eq 'closed by /tidy: one-off notes read')"
+$late = (Get-Date).AddHours(1).ToString('o'); $dv = { param($s0) @($ss) + @([pscustomobject]@{ role = 'devy'; label = 'd9'; run = 'r9'; at = $late; cx = [pscustomobject]@{ n = 3; s0 = $s0; w = $z; rr = @(0, '') } }) }
+$c3 = @(Get-KitWasteItems (& $dv 30000) | Where-Object kind -eq 'startload')[0]; $c4 = @(Get-KitWasteItems (& $dv 12000) | Where-Object kind -eq 'startload')[0]
+"refix:$($c3.tag -eq 'open' -and $c3.why -match '^seen again after the fix abc1234' -and $c4.tag -eq 'fixed')"
+$gk = Join-Path (Get-KitPath work -Create) 'wfix'; $null = git init -q $gk; git -C $gk -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'fix(kit): slim build logs' -m 'Waste-Fix: waste:revy:buildlog'; $KitConf.Kit = $gk
+"trailer:$(@(Get-KitWasteItems $ss | Where-Object kind -eq 'buildlog')[0].why -match '^fixed in [0-9a-f]{7}')"
 '@ @($O)
-Expect-Each $wz 'waste: # (tags: fixable first by tokens, open, ignored; why: the reason; raised: one signal per 2-run pattern, once, then open; fixed: its commit; html: 4 chips, all shown, ignored muted with its reason)' @('tags', 'why', 'raised', 'fixed', 'html') -Show 6
+Expect-Each $wz 'waste: # (tags: fixable first by tokens, open, ignored; why: the reason; raised: one signal per 2-run pattern, once, then open; fixed: its commit; html: 4 chips, all shown, ignored muted with its reason; group: one row per role + kind, the window named; closed: /tidy''s reason -> ignored; refix: runs after the fix re-measure it; trailer: a Waste-Fix: commit fixes it)' @('tags', 'why', 'raised', 'fixed', 'html', 'group', 'closed', 'refix', 'trailer') -Show 10
+# retro tidy-20261124-01 (moved here: room): usage errors, decision ids in answers, prior wave siblings, log slack
+$dShow = (Px $O decide show 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $dShowc = $LASTEXITCODE; $tRm = Px $O track remove -Task X1 2>&1 | Out-String; $tRmc = $LASTEXITCODE
+Expect "usage: decide show names its verbs + the read verb (list); track remove without -Mrs prints its params, exit 2 ($dShowc $tRmc)" ($dShowc -eq 2 -and $dShow -match 'ask,list,answer' -and $dShow -match 'Did you mean: list\?' -and $tRmc -eq 2 -and $tRm -match 'track remove -Task <id> -Mrs')
+$sup = Invoke-PsTest supersede @'
+$null = . $args[0] 6>$null; $rw = { param($i, $h, $q, $a) [pscustomobject]@{ id = $i; at = "2026-01-01T$($h):00:00Z"; question = $q; answer = $a; status = 'answered'; by = 'owner' } }
+@(Format-KitDecisionItems @((& $rw 'dec-0001' '10' 'Where?' 'A'), (& $rw 'dec-0002' '11' 'Cache?' 'B, supersedes dec-0001')) '' 'T1').text -join "`n"
+'@ @($O)
+Expect "decide: 'supersedes dec-<nnnn>' in an answer supersedes that decision ($($sup -join ' | '))" ("$sup" -match '0001 · Where\? → superseded by 0002')
+$env:KIT_TRACKER_TYPE = 'none'; $crP = Join-Path $k 'skills/crafty/crafty.ps1'; $wvSpec = Join-Path (Kd) 'wave-spec.json'
+$wvPar = (Px $crP tracker create -Key qa-fx-debate-1 -List L1 -Name 'Launch parent ask' -Description 'the ask' | ConvertFrom-Json).id
+$wvIds = foreach ($wvT in 'Phase two api', 'Phase two api docs') { Set-JsonFile $wvSpec @{ title = $wvT; list = 'L1'; parent = $wvPar; newTask = 'planned phase'; problem = 'p'; goal = 'g'; items = @(@{ code = 'A1'; desc = 'x' }); acceptance = @('a'); links = @('https://x.example/1') }; (Px $crP tracker create -Spec $wvSpec | ConvertFrom-Json).id }
+$wvPr = Px $crP prior -Task $wvIds[0] | Out-String; $wvPrc = $LASTEXITCODE; $env:KIT_TRACKER_TYPE = $null
+Expect "prior gate: a wave sibling (same parent) is INFO, never a stop ($wvPrc $wvPr)" ($wvIds.Count -eq 2 -and $wvPrc -eq 0 -and $wvPr -match "INFO task\s+$($wvIds[1])" -and $wvPr -match 'NONE')
+$sl = Invoke-PsTest log-slack @'
+$null = . $args[0] 6>$null; $lf = Join-Path (Get-KitPath work -Create) 'slack.jsonl'; $t0 = Get-Date
+Set-Content $lf @(foreach ($m in 45, 20, 5) { [ordered]@{ at = $t0.AddMinutes(-$m).ToString('o'); m = $m } | ConvertTo-Json -Compress })
+$rd = { @(Get-KitLogLines $lf $t0.AddMinutes(-21) | ForEach-Object { "$(($_ | ConvertFrom-Json).m)" }) -join ',' }; $d30 = & $rd; $env:KIT_PARAM_LOG_SINCESLACKMINUTES = '0'; "$d30|$(& $rd)"
+'@ @($O)
+Expect "log.sinceSlackMinutes: the 30-min default reads a 45-min-old row from 21 min, 0 does not ($sl)" ("$sl".Trim() -eq '45,20,5|20,5')
 Remove-TestKit $k
 Complete-Tests

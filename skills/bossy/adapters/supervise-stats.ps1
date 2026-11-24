@@ -8,7 +8,7 @@ every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its ru
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L718 flags · L947 bands ·
-  L1094 shells · L1165 reset
+  L1097 shells · L1168 reset
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -431,7 +431,7 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
 # through $fold (chevron + count, open state kept; busy open, idle closed)
 # the 24 hour labels over a heatmap: every 6th clock hour, "now" over the last cell; -Clock: a calendar day (00-23), no "now"
 function Format-KitHourHead([datetime]$H0, [switch]$Clock) { @(for ($hi = 0; $hi -lt $(if ($Clock) { 23 } else { 21 }); $hi++) { if ($H0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span 2'>$($H0.AddHours($hi).ToString('HH'))</b>" } }) + $(if (-not $Clock) { "<b class=nw style='grid-column:23/span 2'>now</b>" }) -join '' }
-# Disk · 7 days (owner 2026-11-21: one disk section; never class wr: that is the 4-column write-row grid): a row per day (today on top), 24 clock hours, then GB written, kit GB (share) and
+# Disk · 7 days (owner 2026-11-21: one disk section): a row per day (today on top), 24 clock hours, then GB written, kit GB (share) and
 # each drive's free GB at day end with its change; it answers how much is written, by whom (kit or not) and whether a drive fills up.
 # An hour: shade = machine GB (one scale for the week), bottom stripe = kit share, the number only from writes.cellMinGB; no sample
 # covered it: hatched (never 0); $Drives: Resources disk rows (free = GB per day of $DDays, oldest first)
@@ -467,7 +467,7 @@ function Format-KitWritesCard($W, $Drives = @(), $DDays = @()) {
   $tot = [double](@($ds | ForEach-Object { [double]$_.m }) + 0 | Measure-Object -Sum).Sum; $totK = [double](@($ds | ForEach-Object { [double]$_.k }) + 0 | Measure-Object -Sum).Sum
   $stale = $last -and ($at - $last).TotalMinutes -gt 2 * [double](Get-KitParam 'supervise.heartbeatMinutes')
   $sum = "$(& $gbT $tot) written in 7 days (kit $(& $gbT $totK), $(if ($tot -gt 0) { [int][math]::Round(100 * $totK / $tot) } else { 0 })%)$(if ($drv.Count) { " · free now $(@($drv | ForEach-Object { "$($_.n -replace '^disk ') $(& $fGB $_.fnow) GB" }) -join ' · ')" })$(if ($stale) { " · no samples since $($last.ToString('HH:mm'))" })"
-  & $fold 'writes' 'Disk · 7 days' '' "<div class='gks wdk' style='--rc:$(2 + $drv.Count)' data-mk=writes-day-hour>$dHead$($dRows -join '')</div>$(Format-KitLegend "<i class='lgk r'></i>shade = GB / hour <i class='lgk kst'></i>stripe = kit share <i class='lgk nsx'></i>hatch = no samples · ▼ = free-space drop" "an hour: shade = GB the machine wrote (one scale for the week; a number from $(& $n1 $minGB) GB), the bottom stripe's width = the kit-owned share (est. = share of process I/O x disk writes) · outlined = now · free = GB at the day's last sample, amber = a drop of $(& $n1 $dropGB) GB or more, bold = the week's lowest · per owner: Resources · 24 h, Writes GB")" -tag h4 -cls 'sub st' -extra "<span class=fsm>$(& $e $sum)</span>"
+  & $fold 'writes' 'Disk · 7 days' '' "<div class='gks wdk' style='--rc:$(2 + $drv.Count)' data-mk=writes-day-hour>$dHead$($dRows -join '')</div>$(Format-KitLegend "<i class='lgk r'></i>shade = GB / hour <i class='lgk kst'></i>stripe = kit share <i class='lgk nsx'></i>hatch = no samples · ▼ = free-space drop" "an hour: shade = GB the machine wrote (one scale for the week; a number from $(& $n1 $minGB) GB), the bottom stripe's width = the kit-owned share (est. = share of process I/O x disk writes) · outlined = now · free = GB at the day's last sample, amber = a drop of $(& $n1 $dropGB) GB or more, bold = the week's lowest · per owner: Resources · 24 h, Writes GB")" -tag h4 -cls 'sub st' -extra "<span class=fsm>$(& $e $sum)</span>"   # never .wr: the waste row grid squeezed this summary to 36 px
 }
 # a share 0..1 -> cell shade % (square root: a small value still shows; 0 = blank)
 function Get-KitHeatShade([double]$F) { if ($F -gt 0) { [int][math]::Round(25 + 75 * [math]::Sqrt([math]::Min(1.0, $F))) } else { 0 } }
@@ -1010,12 +1010,13 @@ function Format-KitRunsTimeline($Runs, $Agents, $Pages, $UsageAt = $null, $Usage
   $wfIds = @{}; foreach ($r in @($Runs | Where-Object { $_ })) { foreach ($i in @(@($r.ids) + $r.id | Where-Object { $_ })) { $wfIds["$i"] = 1 } }
   $inRun = { param($sb) "$($sb.tf)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]' -and $wfIds.ContainsKey($Matches[1]) }
   foreach ($rn in @($byRun.Keys | Where-Object { -not $seen.ContainsKey($_) })) { $all = @($byRun[$rn] | ForEach-Object { & $agSub $_ } | Where-Object { $_.spans.Count -and -not (& $inRun $_) }); if (-not $all.Count) { continue }
-   # a named run: one row; no run name: a row per agent (its type + board name, its own tokens) in the agents kind
-   foreach ($subs in @(if ($rn) { , $all } else { $all | ForEach-Object { , @($_) } })) {
+   # a named run: one row; no run name: one 'Other' row per day (live ones: one), its agents under it (owner 2026-11-24: an agent is no run)
+   foreach ($subs in @(if ($rn) { , $all } else { $all | Group-Object { if ($_.live) { 'live' } else { $_.spans[0][1].ToString('yyyy-MM-dd') } } | ForEach-Object { , @($_.Group) } })) {
+    $oKey = if (@($subs | Where-Object live).Count) { 'live' } else { $subs[0].spans[0][1].ToString('yyyy-MM-dd') }   # the group's day, before transcripts stretch the spans
     $own = @(foreach ($sb in $subs) { if (-not $sb.tf) { continue }; $kx = & $txKey $sb.tf; $x = if ($axPath[$kx]) { $axPath[$kx] } else { $axLeaf[[IO.Path]::GetFileName($kx)] }; if ($x) { $sb.sp = & $spOf @($x); $sb.tok = [double]$x.tok; $xt = & $tOf $x.at; if ($xt -and $null -ne $x.min -and $sb.spans.Count) { $x0 = $xt.AddMinutes(-[double]$x.min); $sp0 = $sb.spans[0]; $sb.spans = @(, @($(if ($x0 -lt $sp0[0]) { $x0 } else { $sp0[0] }), $(if (-not $sb.live -and $xt -gt $sp0[1]) { $xt } else { $sp0[1] }))) }; $x } })
     $lv = [bool]@($subs | Where-Object live).Count; $s0 = @($subs | ForEach-Object { $_.spans[0][0] } | Sort-Object)[0]; $e0 = if ($lv) { $at } else { @($subs | ForEach-Object { $_.spans[0][1] } | Sort-Object)[-1] }
     $rsp = if ($own.Count) { & $spOf $own }
-    $sb0 = $subs[0]; $items.Add([pscustomobject]@{ id = $(if ($rn) { "board-$rn" } else { "board-solo-$($sb0.n)-$(if ($sb0.tf) { [IO.Path]::GetFileNameWithoutExtension($sb0.tf) } else { $s0.ToString('MMddHHmmss') })" }); run = $rn; label = $(if ($rn) { Get-KitRunTitle $rn } else { (Get-KitAgentLabel $sb0) }); grp = $(if (-not $rn) { 'agents' })
+    $sb0 = $subs[0]; $items.Add([pscustomobject]@{ id = $(if ($rn) { "board-$rn" } else { "board-other-$oKey" }); run = $rn; label = $(if ($rn) { Get-KitRunTitle $rn (@($byRun[$rn] | ForEach-Object { "$($_.subject)" } | Where-Object { $_ }))[0] } else { 'Other' }); grp = $(if (-not $rn) { 'agents' })
         kind = $(if (@($subs.sub | Select-Object -Unique).Count -eq 1) { "$(@($subs.sub)[0])" } else { 'agents' }); live = $lv; s = $s0; e = $e0; tok = $rsp.tok; cost = $rsp.cost; wall = [math]::Round(($e0 - $s0).TotalMinutes); sp = $rsp; oc = ''; subs = $subs }) } }
   # tokens · cost and time (owner 2026-11-20): one split cell each (usage.ps1 split); no transcript: its elapsed time, no tokens
   $vcol = { param($o, [string]$tip, $wall, $s1 = $null) if (-not $o) { $cnt = $UsageAt -and $s1 -and ([datetime]$UsageAt) -lt $s1; return "$(Format-KitContextCell $null)<span class='gc z' title='$(if ($cnt) { 'tokens are counted when the usage pass reaches this run' } else { 'no usage record: the agent started outside a workflow and no transcript of it was found (another tool, or not read yet)' })'>$(if ($cnt) { "Counting… (usage as of $(([datetime]$UsageAt).ToString('HH:mm')))" } else { 'No usage record' })</span><span class=gc>$(if ($null -ne $wall) { "$([int]$wall) min" } else { '—' })</span>" }
@@ -1042,6 +1043,8 @@ function Format-KitRunsTimeline($Runs, $Agents, $Pages, $UsageAt = $null, $Usage
   $rcNew = @{}; $rcVer = "$runRow|$vcol|$spOf|$tOf|$when|$hrs|$stCls|" + (@('Format-KitHeatCells', 'Format-KitHourHead', 'Get-KitAgentLabel', 'Format-KitContextCell', 'Get-KitContextTip', 'Format-KitSplitCell', 'Get-KitSplitTotal', 'Get-KitSplitTip', 'Get-KitSplitParts', 'Format-KitSplitNum', 'Get-KitHeatShade', 'Format-KitCompactNum', 'Format-KitHeatNum') | ForEach-Object { (Get-Command $_).Definition }) -join '|'
   $rowOf = { param($it, [datetime]$H0, [int]$NowAt) $rk = Get-KitHash "$rcVer|$($H0.ToString('o'))|$NowAt|$("$($it.id)" -in @($Pages))|$(if (-not $it.sp) { $UsageAt })|$($it | ConvertTo-Json -Depth 6 -Compress)"
     $rcNew[$rk] = if ($rcOld.ContainsKey($rk)) { $rcOld[$rk] } else { & $runRow $it $H0 $NowAt }; $rcNew[$rk] }
+  # two equal labels in one group (live, or one day): each gets its run's counter (owner 2026-11-24: a number only on a collision)
+  foreach ($cg in @($items | Group-Object { "$($_.label)|$(if ($_.live) { 'live' } else { $_.e.ToString('yyyy-MM-dd') })" } | Where-Object Count -gt 1)) { foreach ($ci in $cg.Group) { if ("$($ci.run)" -match '-(\d+)$') { $ci.label = "$($ci.label) #$([int]$Matches[1])" } } }
   $liveR = @($items | Where-Object live | Sort-Object s -Descending); $hL = $at.Date.AddHours($at.Hour - 23)
   # kind groups (owner 2026-11-21): a day's ended runs by kind, each a folding row with the group's sums, the newest group open
   $kindKey = { param($k) switch -Regex ("$k") { '^(kit|kitty)$' { 'kit' } '^(test|checky)$' { 'test' } '^(deploy|opsy)$' { 'deploy' } '^(build|devy|briefy)$' { 'build' } default { 'agents' } } }
