@@ -89,6 +89,18 @@ $null = pwsh -NoProfile -File $D tracker create -List L2 -Spec (@{ kind = 'featu
 $tNext = pwsh -NoProfile -File $D tracker create -List L2 -Spec (@{ kind = 'chore'; title = 'Price import job'; area = 'CAT'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'x' }); acceptance = @('a') } | ConvertTo-Json -Compress -Depth 4) 2>$null | ConvertFrom-Json
 $null = pwsh -NoProfile -File $D tracker create -Key qa-fx-naming-1 -List L1 -Parent $tNew.id -Name 'Shop: crash on save again' -Description 'd2' 2>$null; $tReuse = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name
 Expect "tracker create: a refused duplicate burns no key ($tDupC, next $($tNext.name)); a reused QA defect keeps its key ($tReuse)" ($tDupC -ne 0 -and $tNext.name -eq 'SHOP-CAT-012 [Chore] Catalogue: Price import job' -and $tReuse -match '^SHOP-CAT-010 \[Bug\] Catalogue: crash on save again$')
+# a hand rename stays on every later kit write: rename keeps the key, update -Spec without a title (devtools finish), the group re-render, a QA re-run
+$null = pwsh -NoProfile -File $D tracker rename $tNext.id 'Price import: owner words' 2>$null; $hr1 = (pwsh -NoProfile -File $D tracker view $tNext.id 2>$null | ConvertFrom-Json).name
+$null = pwsh -NoProfile -File $D tracker update $tNext.id -Spec (@{ docs = @{ spec = 'https://d/s1' } } | ConvertTo-Json -Compress) 2>$null; $hr2 = (pwsh -NoProfile -File $D tracker view $tNext.id 2>$null | ConvertFrom-Json).name
+$hr3 = Invoke-PsTest regroup @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $null = Publish-KitTaskSpec ([ordered]@{}) -Task $args[1]; Clear-TrackerMemo $args[1]; (Get-TrackerTask $args[1]).name
+'@ @($D, $tNext.id)
+$null = pwsh -NoProfile -File $D tracker rename $tBug.id 'SHOP-CAT-010 [Bug] Catalogue: owner bug words' 2>$null
+$null = pwsh -NoProfile -File $D tracker create -Key qa-fx-naming-1 -List L1 -Parent $tNew.id -Name 'Shop: crash third time' -Description 'd3' 2>$null; $hr4 = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name
+$kfq = Join-Path (TkPath $k published) 'qa-fx-naming-1_task.json'; $kq = Get-Content $kfq -Raw | ConvertFrom-Json; Set-JsonFile $kfq @{ key = $kq.key; id = $kq.id }   # a record from before names were kept
+$null = pwsh -NoProfile -File $D tracker create -Key qa-fx-naming-1 -List L1 -Parent $tNew.id -Name 'Shop: crash fourth time' -Description 'd4' 2>$null; $hr5 = (Get-Content $kfq -Raw | ConvertFrom-Json).name
+Expect "keyed record without a name: the re-run keeps the title and records it ($hr5)" ($hr5 -ceq 'SHOP-CAT-010 [Bug] Catalogue: owner bug words' -and (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name -ceq $hr5)
+Expect "hand rename kept: rename keeps the key, update / re-render / QA re-run keep the name ($hr1 | $hr2 | $(@($hr3)[-1]) | $hr4)" ($hr1 -cmatch '^SHOP-CAT-012 \[Chore\] .*owner words$' -and $hr2 -ceq $hr1 -and "$(@($hr3)[-1])" -ceq $hr1 -and $hr4 -ceq 'SHOP-CAT-010 [Bug] Catalogue: owner bug words')
 Remove-Item Env:KIT_TRACKER_TYPE
 Expect "keyed task: MR title, commit subject, doc title (v per changed round), branch (fix/ for a bug, the tracker tag kept); no key: -Branch needed ($tMr | $tCm | $tDoc | $($tBr -join ' | '))" (
   $tMr -eq 'feat(web): grid page [SHOP-CAT-009]' -and $tCm -eq 'feat(web): grid page [SHOP-CAT-009]' -and $tDoc -eq 'SHOP-CAT-009 Testing goals v2 — blocks and nav' -and

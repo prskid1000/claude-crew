@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming · L379 track lines · L384 task ids · L400 order
+# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming · L395 track lines · L400 task ids · L416 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -327,6 +327,20 @@ function Format-KitKeyedName([string]$Name, [string]$Key) {
   $ty = if ("$($nk.kind)" -in 'Feature', 'Bug', 'Chore', 'Spike') { (Get-Culture).TextInfo.ToTitleCase("$($nk.kind)".ToLower()) } else { 'Feature' }
   Invoke-KitNaming @('make', 'title', "key=$Key", "type=$ty", "outcome=$($nk.rest)")
 }
+# tracker update of an existing task (owner 2026-11-24): its live name stays (a hand rename, never re-made from the brief's area text); a
+# typed title renames it; a key the live name lost comes back
+function Get-KitKeptName([string]$Task, $Spec, [string]$Rendered, [string]$Key) {
+  $Live = if ($Task) { Clear-TrackerMemo $Task; "$((Get-TrackerTask $Task).name)" }
+  if (-not $Live -or "$($Spec.title)".Trim()) { return $Rendered }
+  if ($Key -and $Key -notlike '*-000' -and -not (Get-KitNameKey $Live)) { "$Key $Live" } else { $Live }
+}
+# tracker create -Key: the keyed defect record with the name the kit gave it (a re-run renames only while the task still has it)
+function Save-KitKeyedTask([string]$File, [string]$Key, [string]$Id) { Write-KitState $File ([ordered]@{ key = $Key; id = $Id; name = "$((Get-TrackerTask $Id).name)" }) }
+# a re-run: renamed while it holds that name; an older record without one only learns the live name (never renamed blind)
+function Update-KitKeyedTask([string]$File, $Old, [string]$Live, [string]$Name, [string]$Key) {
+  if ($Old.name -and $Live -ceq "$($Old.name)") { $null = Set-TrackerName $Old.id $Name }
+  if (-not $Old.name -or $Live -ceq "$($Old.name)") { Save-KitKeyedTask $File $Key $Old.id }
+}
 function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) { if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area -NoAllocate:$NoAllocate) }
 # wt new / lease -Task without -Branch: <feat|fix>/<KEY>-<tracker tag>-<slug> (kitbag.py naming make branch; the tag keeps every
 # branch -> task parser and the tracker's own links working); a task without a key: throw (pass -Branch)
@@ -348,7 +362,9 @@ function Test-KitSameArea([string]$Name, [string]$Ask) {
 }
 # a spec's key: its own, the title's, the live task's (a hand-renamed one keeps it), else allocated on create (-Allocate)
 function Set-KitSpecKey($Spec, [string]$Task, [switch]$Allocate) {
-  if (-not (Test-KitNamingOn) -or $Spec.key) { return }
+  if (-not (Test-KitNamingOn)) { return }
+  if ($Task -and ($lk = Get-KitNameKey "$((Get-TrackerTask $Task).name)")) { $Spec.key = $lk; return }   # the live key wins over a stored one
+  if ($Spec.key) { return }
   $tk = Get-KitNameKey "$($Spec.title)"   # create: a typed key only names PRODUCT-AREA; the counter gives the number (owner 2026-11-23)
   $ar = if ($Spec.area) { (@($Spec.product, $Spec.area) | Where-Object { $_ }) -join '-' } elseif ($tk) { ($tk -split '-')[0..1] -join '-' }
   $k = if ($Task) { Get-KitNameKey "$((Get-TrackerTask $Task).name)" } else { Get-KitNewTaskKey (Remove-KitNameKey "$($Spec.title)") "$($Spec.parent)" $ar -NoAllocate:(-not $Allocate) }

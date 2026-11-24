@@ -96,8 +96,8 @@ $null = Invoke-BugBrief -Task b1 -Repos w -Only C1, C2 -Skip 'C2=web; api area' 
 "n:$(try { Invoke-BugBrief -Task b1 -Repos w -Only C9 3>$null; 0 } catch { "$_" -match 'no check C9 ' })"
 '@ @($bbScript); Remove-Item $kl
 Expect-Each $bb 'bugbrief without check headings: the task is the check, -Agent B-<task>, -Repos from its MRs, else the configured repos; -Only / -Skip -> a Not yours list (a ; in a why kept), an unknown id = error; no repo name anywhere = error; Migration range only with a configured tool (#)' 'd', 'r', 'm', 'e', 'o', 'n'
-# Waste panel (context.tests: its cap): every item tagged (fixable / open / fixed / ignored, reason), fixable first; a pattern in 2 runs -> one
-# retro signal (then open); a win signal "fixed in <sha>" -> fixed; filter chips, ignored muted
+# Waste (context.tests: its cap): every item tagged (fixable / open / fixed / ignored, reason), fixable first; a pattern in 2 runs -> one
+# retro signal (then open); a win signal "fixed in <sha>" -> fixed; per-role columns of the role heat map
 $wz = Invoke-PsTest waste @'
 $null = . $args[0] 6>$null; $z = @(0, 0, 0, 0, 0, 0)
 $st = { param($r, $l, $run, $s0, $w, $rr) [pscustomobject]@{ role = $r; label = $l; run = $run; cx = [pscustomobject]@{ n = 3; s0 = $s0; w = $w; rr = $rr } } }
@@ -108,9 +108,9 @@ $a = @(Get-KitWasteItems $ss); "tags:$((@($a | ForEach-Object { "$($_.role)-$($_
 $r1 = Add-KitWasteSignals $a; $r2 = Add-KitWasteSignals @(Get-KitWasteItems $ss); "raised:$("$r1|$r2|$(@(Get-KitWasteItems $ss)[0].tag)" -eq '1|0|open')"
 $null = Invoke-Learn -Skill devy -Kind win -Text 'fixed in abc1234: devy start files slimmed' -Ref waste:devy:startload; $b = @(Get-KitWasteItems $ss)
 "fixed:$(@($b | Where-Object kind -eq 'startload')[0].why -eq 'fixed in abc1234')"
-$fd = { param($id, $t, $n, [string]$inner, [string]$tag, [string]$cls, [string]$extra) "<details id=$id><summary>$t $n $extra</summary>$inner</details>" }
-$h = Format-KitWastePanel $b $fd; "html:$(([regex]::Matches($h, '<button type=button data-w=')).Count -eq 4 -and $h -match 'class=wsx data-w=all' -and $h -match "class='wr t-ignored' title='478 tokens, under 2k, one-off")"
-$h2 = Format-KitWastePanel @($b + $b) $fd; "group:$($h2 -match 'last 7 days · ' -and ([regex]::Matches($h2, "class='wr ")).Count -eq 3 -and $h2 -match '(·|&#183;) 2 items')"
+$wc = Get-KitWasteRoleCells @($b + $b); "cells:$("$(@($wc.devy.v) -join ',')|$(@($wc.revy.v) -join ',')" -eq '0,0,1|0,1,0' -and $wc.revy.tips[1] -match '^buildlog: 1 build / test log\(s\) pasted · 2 items · v1 · 10(.0)?k: retro signal raised' -and $wc.checky.ignored -match '^reread: .*: 478 tokens, under 2k, one-off$')"
+$e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $hr = Format-KitContextRoles @([pscustomobject]@{ k = 'revy'; cx = [pscustomobject]@{ n = 3; s0 = 9000; pk = 20000; pks = 20000; agents = 1; car = @(1, 1, 1, 1, 1, 1, 1, 1) } }) { param($v) Format-KitCompactNum $v } $b
+"heat:$($hr -match 'waste fixable' -and $hr -match 'waste open' -and $hr -match 'waste, last 7 days, one item per role \+ kind' -and $hr -notmatch 'class=wsx')"
 $null = Invoke-Learn -Skill checky -Kind false-positive -Text 'one-off notes read' -Ref waste:checky:reread; "closed:$(@(Get-KitWasteItems $ss | Where-Object kind -eq 'reread')[0].why -eq 'closed by /tidy: one-off notes read')"
 $late = (Get-Date).AddHours(1).ToString('o'); $dv = { param($s0) @($ss) + @([pscustomobject]@{ role = 'devy'; label = 'd9'; run = 'r9'; at = $late; cx = [pscustomobject]@{ n = 3; s0 = $s0; w = $z; rr = @(0, '') } }) }
 $c3 = @(Get-KitWasteItems (& $dv 30000) | Where-Object kind -eq 'startload')[0]; $c4 = @(Get-KitWasteItems (& $dv 12000) | Where-Object kind -eq 'startload')[0]
@@ -118,7 +118,7 @@ $c3 = @(Get-KitWasteItems (& $dv 30000) | Where-Object kind -eq 'startload')[0];
 $gk = Join-Path (Get-KitPath work -Create) 'wfix'; $null = git init -q $gk; git -C $gk -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'fix(kit): slim build logs' -m 'Waste-Fix: waste:revy:buildlog'; $KitConf.Kit = $gk
 "trailer:$(@(Get-KitWasteItems $ss | Where-Object kind -eq 'buildlog')[0].why -match '^fixed in [0-9a-f]{7}')"
 '@ @($O)
-Expect-Each $wz 'waste: # (tags: fixable first by tokens, open, ignored; why: the reason; raised: one signal per 2-run pattern, once, then open; fixed: its commit; html: 4 chips, all shown, ignored muted with its reason; group: one row per role + kind, the window named; closed: /tidy''s reason -> ignored; refix: runs after the fix re-measure it; trailer: a Waste-Fix: commit fixes it)' @('tags', 'why', 'raised', 'fixed', 'html', 'group', 'closed', 'refix', 'trailer') -Show 10
+Expect-Each $wz 'waste: # (tags: fixable first by tokens, open, ignored; why: the reason; raised: one signal per 2-run pattern, once, then open; fixed: its commit; cells: one item per role + kind, per role fixable / open / fixed counts, items + reasons per cell, ignored apart; heat: waste columns of the role · context map, the window in its legend, no own panel; closed: /tidy''s reason -> ignored; refix: runs after the fix re-measure it; trailer: a Waste-Fix: commit fixes it)' @('tags', 'why', 'raised', 'fixed', 'cells', 'heat', 'closed', 'refix', 'trailer') -Show 10
 # retro tidy-20261124-01 (moved here: room): usage errors, decision ids in answers, prior wave siblings, log slack
 $dShow = (Px $O decide show 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $dShowc = $LASTEXITCODE; $tRm = Px $O track remove -Task X1 2>&1 | Out-String; $tRmc = $LASTEXITCODE
 Expect "usage: decide show names its verbs + the read verb (list); track remove without -Mrs prints its params, exit 2 ($dShowc $tRmc)" ($dShowc -eq 2 -and $dShow -match 'ask,list,answer' -and $dShow -match 'Did you mean: list\?' -and $tRmc -eq 2 -and $tRm -match 'track remove -Task <id> -Mrs')

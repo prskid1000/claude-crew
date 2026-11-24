@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L374 context · L716 waste (owner 2026-11-23 · L773 split · L847 budget
+Sections: L9 usage · L374 context · L718 waste (owner 2026-11-23 · L782 split · L856 budget
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -313,7 +313,7 @@ function Format-KitUsageHtml($U) {
         sk = @('', 'tc', '', 'time', ''); so = @($null, $tok0, $null, $tim0, $null); tips = @('', '', '', "$(& $mn $_.avgMin), avg of $($_.n) steps: active time$(if ([int]$_.wallN) { ", wall clock for the $($_.wallN) without a split" })$(if ([int]$_.tmN) { "; the cell: the $($_.tmN) with one`n$(Get-KitSplitTip ([pscustomobject]@{ tm = $tim0.tm }))" })", "$(& $mn $_.p90Min), p90 of $($_.n) steps (active time$(if ([int]$_.wallN) { "; wall clock for $($_.wallN)" }))")
         tx = @("$($_.n)", (& $tk $_.sum), "$(& $pct $_.sum $rAll)%", (& $mn $_.avgMin), (& $mn $_.p90Min)) + @($msh | ForEach-Object { if ($_) { "$_%" } else { '' } }) } })
   $top = $roles | Select-Object -First 1   # folded (owner 2026-11-19): the top role in its header (the 7-day cost is a Trends tile)
-  $spend = & $fold 'u-spend' 'Spend per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'P90 time') + @($mdl | ForEach-Object { & $mShort $_.k })) 'role · metric' 'spend-role')$(Format-KitLegend "shade = column peak · last $($mdl.Count) = model share$(if ($unp.Count) { ' · some not priced' })" "a column shaded by its peak (a split cell: each tile by its type's peak, named in the column head) · time = active (model + tools + waiting), wall clock where no split is recorded · the last $($mdl.Count) = each model's share of the role's tokens · hover a role for its step types$(if ($unp.Count) { " · not priced: $(@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })$(if ($tko.Count) { " · tokens only (Codex / Antigravity, no list price kept): $(@($tko | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })")$(Format-KitContextRoles $roles $tk)"
+  $spend = & $fold 'u-spend' 'Spend per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'P90 time') + @($mdl | ForEach-Object { & $mShort $_.k })) 'role · metric' 'spend-role')$(Format-KitLegend "shade = column peak · last $($mdl.Count) = model share$(if ($unp.Count) { ' · some not priced' })" "a column shaded by its peak (a split cell: each tile by its type's peak, named in the column head) · time = active (model + tools + waiting), wall clock where no split is recorded · the last $($mdl.Count) = each model's share of the role's tokens · hover a role for its step types$(if ($unp.Count) { " · not priced: $(@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })$(if ($tko.Count) { " · tokens only (Codex / Antigravity, no list price kept): $(@($tko | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })")$(Format-KitContextRoles $roles $tk (Get-KitWasteItems @(Get-KitContextSteps $U)))"
   $stepRows = { param($ss) @($ss | ForEach-Object { $tip = Get-KitSplitTip $_ "$($_.label)"; , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), @{ h = Format-KitSplitCell $_ 'tc' $tip }, @{ h = Format-KitSplitCell $_ 'time' (Get-KitSplitTip ($_ | Select-Object tm, tmN, min)) }, $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
   # a run: its human label (mandate / area, the run id in the tooltip), kind chip, resumed, outcome-split step bar; budget bar while running or over 80%
   $kindOf = { param($r) if ($r.kind) { "$($r.kind)" } elseif ("$($r.roles)" -match '^(kitty \d+( · )?)+$') { 'kit' } elseif ("$($r.roles)" -match 'checky') { 'test' } else { 'build' } }
@@ -367,7 +367,7 @@ function Format-KitUsageHtml($U) {
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); nRunning = $nRunning; tpm = $tpm
     dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })
-    tiles = $uTiles; dayRows = $uRows; spend = "$spend$(Format-KitWastePanel (Get-KitWasteItems @(Get-KitContextSteps $U)) $fold)"
+    tiles = $uTiles; dayRows = $uRows; spend = $spend
     pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }
 }
@@ -703,13 +703,15 @@ function Add-KitContextNormObs($Ended) {
 }
 # Spend per role's second table (owner 2026-11-22: "cut devy's start context", "trim build output"): per role (its agents in the name) avg start (the
 # instruction load), avg peak, start / peak, then each source's share of what its calls re-sent; a column shaded by its peak
-function Format-KitContextRoles($Roles, $Tk) {
+function Format-KitContextRoles($Roles, $Tk, $Waste = @()) {
+  $wc = Get-KitWasteRoleCells $Waste; $w0 = @{ v = @(0, 0, 0); tx = @('', '', ''); tips = @('none', 'none', 'none'); ignored = '' }
   $rs = @($Roles | Where-Object { $_ -and $_.cx -and [int]$_.cx.n }); if (-not $rs.Count) { return '' }
   $rows = @(foreach ($r in $rs) { $c = $r.cx; $ag = [math]::Max(1, [int]$c.agents); $car = @($c.car); $ct = [math]::Max(1.0, [double](@($car | ForEach-Object { [double]$_ }) | Measure-Object -Sum).Sum); $pa = [double]$c.pks / $ag; $sh = if ($pa) { 100 * [double]$c.s0 / $pa } else { 0 }
       $pc = @(for ($i = 0; $i -lt 8; $i++) { 100 * [double]$car[$i] / $ct })
-      @{ n = "$($r.k) ($ag)"; title = (Get-KitContextTip $c "$($r.k)"); v = @([double]$c.s0, $pa, $sh) + $pc; tx = @((& $Tk $c.s0), (& $Tk $pa), "$([math]::Round($sh))%") + @($pc | ForEach-Object { if ($_ -ge 0.5) { "$([math]::Round($_))%" } else { '' } })
-        tips = @("avg start $(& $Tk $c.s0): the first call's context (system prompt, tools, instructions, prompt)", "avg peak $(& $Tk $pa) (highest $(& $Tk $c.pk))", "the start load is $([math]::Round($sh))% of the avg peak") + @(for ($i = 0; $i -lt 8; $i++) { "$($script:KitCtxCats[$i][1]): $(& $Tk $car[$i]) re-sent, $([math]::Round($pc[$i]))%" }) } })
-  "$(Format-KitMetricHeat $rows (@('avg start', 'avg peak', 'start / peak') + @($script:KitCtxCats | ForEach-Object { $_[1] })) 'role · context' 'context-role')$(Format-KitLegend "context per role · shade = column peak · $(Format-KitContextLegend)" 'start = the first model call''s context (the instruction load) · peak = the largest call · the source columns: each source''s share of the tokens re-sent with every call (carried); hover a role for the waste signals · bossy.ps1 usage -Context -Type <role>')"
+      $wr = if ($wc["$($r.k)"]) { $wc["$($r.k)"] } else { $w0 }
+      @{ n = "$($r.k) ($ag)"; title = "$(Get-KitContextTip $c "$($r.k)")$(if ($wr.ignored) { "`nwaste ignored:`n$($wr.ignored)" })"; v = @([double]$c.s0, $pa, $sh) + $pc + @($wr.v); tx = @((& $Tk $c.s0), (& $Tk $pa), "$([math]::Round($sh))%") + @($pc | ForEach-Object { if ($_ -ge 0.5) { "$([math]::Round($_))%" } else { '' } }) + @($wr.tx)
+        tips = @("avg start $(& $Tk $c.s0): the first call's context (system prompt, tools, instructions, prompt)", "avg peak $(& $Tk $pa) (highest $(& $Tk $c.pk))", "the start load is $([math]::Round($sh))% of the avg peak") + @(for ($i = 0; $i -lt 8; $i++) { "$($script:KitCtxCats[$i][1]): $(& $Tk $car[$i]) re-sent, $([math]::Round($pc[$i]))%" }) + @($wr.tips) } })
+  "$(Format-KitMetricHeat $rows (@('avg start', 'avg peak', 'start / peak') + @($script:KitCtxCats | ForEach-Object { $_[1] }) + $script:KitWasteCols) 'role · context' 'context-role')$(Format-KitLegend "context per role · shade = column peak · waste: last $script:KitWasteDays days · $(Format-KitContextLegend)" ('start = the first model call''s context (the instruction load) · peak = the largest call · the source columns: each source''s share of the tokens re-sent with every call (carried); hover a role for the waste signals · bossy.ps1 usage -Context -Type <role> · ' + (Format-KitWasteLegend)))"
 }
 function Format-KitContextLegend { "<span class=kleg>$(@($script:KitCtxCats | ForEach-Object { "<i class='lgk x-$($_[0])'></i>$($_[1])" }) -join ' ')</span>" }
 
@@ -756,18 +758,25 @@ function Add-KitWasteSignals($Items) {
     Write-KitLog signals '' ([ordered]@{ skill = $i.role; kind = 'friction'; text = "waste: $($i.role) $($i.kind) in $($i.runs) runs, $(Format-KitCompactNum $tk) tokens; fix: $($script:KitWasteFix[$i.kind])"; ref = $g.Name; source = 'supervise' }); $n++ }
   $n
 }
-# the Waste panel: a filter chip per tag (counts), every item (fixable / open first, ignored muted), its reason in the tooltip
-function Format-KitWastePanel($Items, $Fold, [int]$Days = 7) {
-  $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; $rk = @{ fixable = 0; open = 1; fixed = 2; ignored = 3 }
-  # one row per pattern (role + kind; owner 2026-11-24: 298 rows of one kind): its most urgent tag, its runs, tokens added up
-  $its = @(@($Items | Where-Object { $_ }) | Group-Object { "$($_.role)|$($_.kind)" } | ForEach-Object { $gi = @($_.Group | Sort-Object { $rk["$($_.tag)"] }, { -[double]$_.tokens }); $g0 = $gi[0]
+# waste per role (owner 2026-11-24: no panel of its own, a column group of the role heat map): one item per role + kind (its most urgent
+# tag, its runs, tokens summed); per role the fixable / open / fixed counts, each cell's tooltip its items and reasons, the ignored ones apart
+$script:KitWasteDays = 7; $script:KitWasteCols = @('waste fixable', 'waste open', 'waste fixed')   # the days: the usage pass's window
+function Group-KitWasteItems($Items) {
+  $rk = @{ fixable = 0; open = 1; fixed = 2; ignored = 3 }
+  @(@($Items | Where-Object { $_ }) | Group-Object { "$($_.role)|$($_.kind)" } | ForEach-Object { $gi = @($_.Group | Sort-Object { $rk["$($_.tag)"] }, { -[double]$_.tokens }); $g0 = $gi[0]
       $gr = @($gi | ForEach-Object { if ("$($_.run)") { "$($_.run)" } else { "$($_.who)" } } | Sort-Object -Unique).Count
-      [pscustomobject]@{ tag = $g0.tag; why = $g0.why; role = $g0.role; run = $g0.run; tokens = [long](@($gi.tokens) | Measure-Object -Sum).Sum; what = $(if ($gi.Count -gt 1) { "$($g0.what) · $($gi.Count) items" } else { $g0.what }); who = $(if ($gr -gt 1) { "$gr runs" } else { $g0.who }) } } | Sort-Object { $rk["$($_.tag)"] }, { -$_.tokens })
-  $cnt = [ordered]@{}; foreach ($t in 'fixable', 'open', 'fixed', 'ignored') { $cnt[$t] = @($its | Where-Object tag -eq $t).Count }
-  $chips = "<div class=wsf role=group aria-label='waste tag'>$(@($cnt.Keys | ForEach-Object { "<button type=button data-w=$_ aria-pressed=false title='show only $_ items (again: all)'><span class='wtg t-$_'>$_</span> $($cnt[$_])</button>" }) -join '')</div>"
-  $rows = @($its | ForEach-Object { "<div class='wr t-$($_.tag)' title='$(& $e "$($_.why)`n$($_.role) · $($_.who) · $($_.run)")'><span class='wtg t-$($_.tag)'>$($_.tag)</span><span>$(& $e $_.role)</span><span class=wwh>$(& $e $_.what) · $(& $e $_.who)</span><b>$(& $e (Format-KitCompactNum ([double]$_.tokens)))</b></div>" }) -join ''
-  $hd = "<span class=fsm>last $Days days · $(@($cnt.Keys | Where-Object { $cnt[$_] } | ForEach-Object { "$($cnt[$_]) $_" }) -join ' · ')</span>"
-  & $Fold 'u-waste' 'Waste' $its.Count -tag h4 -cls 'sub st' -extra $hd -inner "<div class=wsx data-w=all>$chips$(if ($rows) { $rows } else { '<p class=empty>No waste recorded.</p>' })</div>$(Format-KitLegend 'tag: fixable · open · fixed · ignored (muted)' "fixable = over $(Format-KitCompactNum ([double](Get-KitParam 'usage.context.wasteMinTokens'))) tokens or in $(Get-KitParam 'usage.context.actRuns')+ runs (supervise raises a retro signal) · open = signal raised, not fixed · fixed = a win signal or a kit commit's Waste-Fix: trailer, and no run after it shows the pattern · ignored = under the threshold, one-off, or closed by /tidy with its reason · a row = one role + kind · hover an item for why")"
+      [pscustomobject]@{ tag = $g0.tag; why = $g0.why; role = $g0.role; kind = $g0.kind; run = $g0.run; tokens = [long](@($gi.tokens) | Measure-Object -Sum).Sum; what = $(if ($gi.Count -gt 1) { "$($g0.what) · $($gi.Count) items" } else { $g0.what }); who = $(if ($gr -gt 1) { "$gr runs" } else { $g0.who }) } } | Sort-Object { $rk["$($_.tag)"] }, { -$_.tokens })
+}
+# role -> @{ v = 3 counts; tx; tips = the items of each tag ("<kind>: <what> · <who> · <tokens>: <why>"); ignored = their lines }
+function Get-KitWasteRoleCells($Items) {
+  $by = @{}; foreach ($g in @(Group-KitWasteItems $Items | Group-Object role)) { $gi = @($g.Group)
+    $ln = { param($t) @($gi | Where-Object tag -eq $t | ForEach-Object { "$($_.kind): $($_.what) · $($_.who) · $(Format-KitCompactNum ([double]$_.tokens)): $($_.why)" }) }
+    $c = @(foreach ($t in 'fixable', 'open', 'fixed') { , @(& $ln $t) })
+    $by[$g.Name] = @{ v = @($c | ForEach-Object { [double]$_.Count }); tx = @($c | ForEach-Object { if ($_.Count) { "$($_.Count)" } else { '' } }); tips = @($c | ForEach-Object { if ($_.Count) { $_ -join "`n" } else { 'none' } }); ignored = (@(& $ln ignored) -join "`n") } }
+  $by
+}
+function Format-KitWasteLegend([int]$Days = $script:KitWasteDays) {
+  "waste, last $Days days, one item per role + kind: fixable = over $(Format-KitCompactNum ([double](Get-KitParam 'usage.context.wasteMinTokens'))) tokens or in $(Get-KitParam 'usage.context.actRuns')+ runs (supervise raises a retro signal) · open = signal raised, not fixed, or seen again after its fix · fixed = a win signal or a kit commit's Waste-Fix: trailer, no run after it shows the pattern · ignored (the role's tooltip) = under the threshold, one-off, or closed by /tidy with its reason · hover a cell for its items"
 }
 
 # ---- split: tokens, cost and time by type in one stacked form (owner 2026-11-20: a single "tokens" number misleads, 96% are cache reads)

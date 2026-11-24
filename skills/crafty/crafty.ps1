@@ -19,7 +19,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L25 init · L34 wt · L328 stack · L427 gate · L761 check · L1087 pipes · L1149 guard · L2074 dir · L2084 checkpoint ·
-  L2124 prior · L2163 tracker · L2185 task spec · L2388 scope · L2436 host
+  L2124 prior · L2163 tracker · L2185 task spec · L2390 scope · L2438 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2244,6 +2244,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
     $pf = @(@($pf | Where-Object { $_ -notmatch '^\(all\): \d+ words' }) + @(Test-KitProse -Kind task-description -Text "$($r.name)`n`n$(Format-KitTaskText $pq)$dt" | Where-Object { $_ -match '^\(all\): \d+ words' }))
   }
   if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }
+  $r.name = Get-KitKeptName $Task $Spec $r.name "$($sp.key)"
   if ($DryRun) { return $r }
   if ($Task) {   # kept from the live text: doc links the spec lacks, rollup sections
     Clear-TrackerMemo $Task; $cur = "$((Get-TrackerTask $Task).description)" -replace "`r`n", "`n"; $nd = $r.description
@@ -2347,11 +2348,12 @@ function Invoke-Tracker {
       $old = if ($kf -and (Test-Path -LiteralPath $kf)) { Get-Content -LiteralPath $kf -Raw | ConvertFrom-Json }
       $ot = if ($old.id) { Get-TrackerTask $old.id }
       if ($ot.name -and -not (Test-TrackerStatus $ot.status 'closed')) {
-        $null = Set-TrackerName $old.id $(if ($__ky = Get-KitNameKey "$($ot.name)") { Format-KitKeyedName $__trOpt.Name $__ky } else { $__trOpt.Name }); $null = Set-TrackerDescription $old.id $__trOpt.Description
+        Update-KitKeyedTask $kf $old "$($ot.name)" $__trOpt.Name $__trOpt.Key
+        $null = Set-TrackerDescription $old.id $__trOpt.Description
         __TrOut ([pscustomobject]@{ id = $old.id; url = (Get-TrackerUrl $old.id); reused = $true }); return
       }
       $nt = New-TrackerTask -List $__trOpt.List -Name $__trOpt.Name -Description $__trOpt.Description -Parent $__trOpt.Parent -Assignee $__trOpt.Assignee -Priority $__trOpt.Priority -NewTask $__trOpt.NewTask -Related @(Split-KitList $__trOpt.Related) -Area ((@($__trOpt.Product, $__trOpt.Area) | Where-Object { $_ }) -join '-')
-      if ($kf -and $nt.id) { Write-KitState $kf ([ordered]@{ key = $__trOpt.Key; id = $nt.id }) }
+      if ($kf -and $nt.id) { Save-KitKeyedTask $kf $__trOpt.Key $nt.id }
       __TrOut $nt
     }
     'bug' {   # ONE open QA collector [Bug] per ask (lib.ps1 Add-KitAskBug)
