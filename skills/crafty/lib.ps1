@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L96 state · L177 config · L258 OS · L460 leases · L879 status · L1179 tracker · L1498 prior ·
-  L1517 ask bugs · L1703 git-host · L1889 kitlog · L1999 params · L2304 entry-scripts
+  L1517 ask bugs · L1702 git-host · L1888 kitlog · L1998 params · L2303 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1415,7 +1415,7 @@ function Get-TrackerOwner {
 }
 # -NewTask '<why>' skips the duplicate check (logged); -Related: tasks the owner named this session
 function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [string]$Parent, [string]$Assignee, [string]$Priority, [string]$NewTask, [string[]]$Related, [string]$Area) {
-  $Name = Resolve-KitTaskName $Name $Parent $Area -NoAllocate; $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask })   # no bare subtasks (owner, 2026-11-11)
+  $sub = $Parent -and $Parent -ne '-'; $gap = @(if ($sub) { Get-KitTaskTextGaps $Name $Description -Subtask }); $Name = Resolve-KitTaskName $Name $Parent $Area -NoAllocate   # no bare subtasks (owner, 2026-11-11)
   if ($gap.Count) { throw "tracker create refused: subtask '$Name' of $Parent lacks $($gap -join ', ') (templates.md task-description): crafty.ps1 tracker create -Spec <json> (crafty.ps1 ""task spec"")" }
   if (-not $List) { $List = [string](Get-KitSetting 'tracker.list' '') }
   # under -Parent the check sees only siblings: the reason acks them
@@ -1428,7 +1428,7 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
   if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
   if ($Name -cmatch '^([A-Z]{2,6}-[A-Z]{2,6})-0+\s') { $Name = Resolve-KitTaskName (Remove-KitNameKey $Name) $Parent $Matches[1] }   # naming: the key only after every check passed
   $nt = __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
-  if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild }   # the parent follows its new open child
+  Set-KitNewTaskTags "$($nt.id)"; if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild }   # parent follows
   $nt
 }
 # a priority word -> the kit's 1 (urgent) .. 4 (low), as every adapter takes it (each maps the number to its own names)
@@ -1535,7 +1535,6 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
   if ($Key.Length -gt 80) { $Key = $Key.Substring(0, 70) + '-' + (Get-KitHash $Key SHA256).Substring(0, 8) }
   Invoke-KitLocked (Join-Path (Get-KitTemp) "claude-kit-bug-$("$(if ($Ask) { $Ask } else { $Key })" -replace '[^\w.-]', '_')") {
     $open = { param($i) if (-not $i) { return }; Clear-TrackerMemo $i; $v = Get-TrackerTask $i; if ($v.name -and -not (Test-TrackerStatus "$($v.status)" 'closed')) { $v } }
-    $pre = Get-KitKindPrefix 'bug'
     $put = { param($bug)
       $text = "$($bug.description)".TrimEnd()   # markers read back markdown-escaped too ("\[kit:bug:a\_b\]")
       $ms = @([regex]::Matches($text, '(?m)^[^\r\n]*\\?\[kit:bug:(?<k>[^\]\r\n]+?)\\?\][ \t]*\r?$'))
@@ -1556,14 +1555,14 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
     }
     $bug = & $open $Id; if ($bug -and -not ($Mine -or (Test-KitBugCollector $bug))) { $bug = $null }   # a hand-made [Bug] adopted before
     if (-not $bug -and $Ask -and $Ask -ne '-' -and -not $Single) { Clear-TrackerMemo $Ask   # -Single: its own [Bug], never the ask's collector
-      $bug = @(foreach ($sb in @((Get-TrackerTask $Ask).subtasks | Where-Object { "$($_.name)".StartsWith($pre) -and -not (Test-TrackerStatus "$($_.status)" 'closed') })) { if (($v = & $open $sb.id) -and (Test-KitBugCollector $v)) { $v; break } }) | Select-Object -First 1 }
+      $bug = @(foreach ($sb in @((Get-TrackerTask $Ask).subtasks | Where-Object { (Test-KitBugTask $_) -and -not (Test-TrackerStatus "$($_.status)" 'closed') })) { if (($v = & $open $sb.id) -and (Test-KitBugCollector $v)) { $v; break } }) | Select-Object -First 1 }
     if ($bug) { return & $put $bug }
     $s0 = & $put ([pscustomobject]@{ id = $null; description = '' })
     $t = try { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority } catch {   # owner rule: grow a related open task
       if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask 'ask bug: duplicate check unavailable' }
       elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid) -and (Test-KitBugCollector $b2) -and (Test-KitSameArea $b2.name $Ask)) { return & $put $b2 }   # naming: never another area's collector
         New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask "ask bug: the related task $rid is closed or not a QA collector" } else { throw } }
-    if ($t.id) { [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
+    if ($t.id) { $null = Set-KitTaskTags $t.id @('origin=qa-found') -Soft; [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
   }
 }
 # gate before work (wt lease / new, devtools.py mr / finish / doc): -Override is logged

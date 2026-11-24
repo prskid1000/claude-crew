@@ -197,7 +197,7 @@ $pid0 = (Publish-KitTaskSpec ($base + @{ title = 'Order parent'; items = @(@{ co
 $mk = { param($t, $w, $wv) (Publish-KitTaskSpec ($base + @{ title = $t; parent = $pid0; items = @(@{ code = $t; desc = $t }); waitsOn = $w; wave = $wv })).id }
 $a = & $mk 'Alpha' @() 'v2 wave 1'; $b = & $mk 'Beta' @($a) 'v2 wave 2'; $c = & $mk 'Gamma' @() 'v2 wave 1'; $d = & $mk 'Delta' @($b, $c) 'v2 wave 3'
 $o = Get-KitTaskOrder $pid0; "waves:$((@($o.tasks | Sort-Object wave, id | ForEach-Object { "$($_.wave)=$($_.id)" })) -join ',')"
-"section:$((Get-TrackerTask $b).description -match "(?s)<!-- kit:order -->\n\*\*Waits on:\*\* $a\n\*\*Wave:\*\* v2 wave 2\n<!-- /kit:order -->")"
+"section:$((Get-TrackerTask $b).description -match "(?s)<!-- kit:order -->\n\*\*Waits on:\*\* $a\n<!-- /kit:order -->" -and "$((Get-TrackerTask $b).tags)" -eq 'Wave: v2 wave 2')"   # tracker none labels natively (owner 2026-11-24 tags)
 "flags:$(@($o.flags).Count)"; "table:$((Format-KitTaskOrder $o) -join '//')"
 $null = Set-KitTaskOrder $a @($d) 'v2 wave 1'; "cycle:$(@((Get-KitTaskOrder $pid0).flags) -join '//')"
 $e = & $mk 'Eps' @() 'v2 wave 2'; "missing:$(@((Get-KitTaskOrder $pid0).flags -match "^MISSING: $e").Count)"

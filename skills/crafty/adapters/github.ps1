@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L82 git-host · L118 ci
+# Sections: L6 gh · L17 tracker · L83 git-host · L120 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -21,9 +21,9 @@ Register-KitAdapter 'tracker' 'github' @{
   'view' = { param($a)
     $r, $n = __TrRef $a.id
     $j = __TrJson (__GhCli @('issue', 'view', $n, '-R', $r, '--json', 'number,title,state,url,labels,assignees,body')); if (-not $j.number) { return }
-    __TrIssue $j.number $j.title (__TrLabelStatus @($j.labels.name) ($j.state -eq 'CLOSED')) $j.url @($j.assignees.login) $r ([string]$j.body) {
+    Add-KitTags (__TrIssue $j.number $j.title (__TrLabelStatus @($j.labels.name) ($j.state -eq 'CLOSED')) $j.url @($j.assignees.login) $r ([string]$j.body) {
       $s = __TrJson (__GhCli @('issue', 'view', $_, '-R', $r, '--json', 'number,title,state,labels'))
-      __TrSub "$_" $s.title (__TrLabelStatus @($s.labels.name) ($s.state -eq 'CLOSED')) (Get-TrackerUrl $_) }
+      Add-KitTags (__TrSub "$_" $s.title (__TrLabelStatus @($s.labels.name) ($s.state -eq 'CLOSED')) (Get-TrackerUrl $_)) @($s.labels.name) }) @($j.labels.name)
   }
   'status' = { param($a)
     $r, $n = __TrRef $a.id; $name = $a.status
@@ -76,7 +76,8 @@ Register-KitAdapter 'tracker' 'github' @{
     foreach ($on in @($a.on | ForEach-Object { "$_" -replace '^.*#' } | Where-Object { $_ -and $_ -notin $have })) {
       $iid = "$(__GhCli @('api', "repos/$r/issues/$on", '--jq', '.id'))".Trim(); $null = __GhCli @('api', '-X', 'POST', "repos/$r/issues/$n/dependencies/blocked_by", '-F', "issue_id=$iid"); $have += $on }
     $have }
-  'labels' = { param($a) $r, $n = __TrRef $a.id; foreach ($l in @($a.add)) { $null = __GhCli @('label', 'create', $l, '-R', $r, '--force', '--color', 'ededed'); $null = __GhCli @('issue', 'edit', $n, '-R', $r, '--add-label', $l) } }
+  'labels' = { param($a) $r, $n = __TrRef $a.id; foreach ($l in @($a.add | Where-Object { $_ })) { $null = __GhCli @('label', 'create', $l, '-R', $r, '--force', '--color', 'ededed'); $null = __GhCli @('issue', 'edit', $n, '-R', $r, '--add-label', $l) }
+    foreach ($l in @($a.remove | Where-Object { $_ })) { $null = __GhCli @('issue', 'edit', $n, '-R', $r, '--remove-label', $l) } }
   'owner' = { param($a) [string](__GhCli @('api', 'user', '--jq', '.login')) }
 }
 # ---- git-host: pull requests, repos, branch protection
@@ -96,6 +97,7 @@ Register-KitAdapter 'git-host' 'github' @{
   'mr.changes' = { param($a) [pscustomobject]@{ changes = (__Files (__GhApi "repos/$($a.repo)/pulls/$($a.n)/files?per_page=100")) } }
   'mr.create' = { param($a) __GhMr (__GhApi "repos/$($a.repo)/pulls" 'POST' @{ head = $a.source; base = $a.target; title = $a.title; body = $a.body } -Json) }
   'mr.update' = { param($a) __GhMr (__GhApi "repos/$($a.repo)/pulls/$($a.n)" 'PATCH' @{ title = $a.title; body = $a.body } -Json) }   # devtools.py mr re-run: the open PR
+  'mr.labels' = { param($a) $null = __GhApi "repos/$($a.repo)/issues/$($a.n)/labels" 'POST' @{ labels = @($a.labels) } -Json; [pscustomobject]@{ labels = @($a.labels) } }   # a PR is an issue: missing labels are made
   'mr.merge' = { param($a)
     $x = @('pr', 'merge', $a.n, '-R', $a.repo, "--$(if ($a.method -in 'merge', 'rebase') { $a.method } else { 'squash' })"); if (__Del $a) { $x += '--delete-branch' }; if ($a.sha) { $x += @('--match-head-commit', $a.sha) }
     if (-not $a.auto -or ("$((__Gh ($x + '--auto')).err)" -match 'clean status' -and (Invoke-HostVerb 'ci.status' @{ repo = $a.repo; sha = $(if ($a.sha) { $a.sha } else { (__GhPr $a).sha }) } -NoMemo).status -eq 'success')) { $null = __Gh $x }

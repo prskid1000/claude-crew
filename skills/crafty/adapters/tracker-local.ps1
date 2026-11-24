@@ -7,7 +7,7 @@
 function __TrCan([string]$Cap) { Test-KitCap 'tracker' $__trType $Cap }
 # adapter:tracker/command: tracker.commands.<verb> = a CLI line, {placeholders} = $a keys; prints the kit's JSON
 Register-KitAdapter 'tracker' 'command' @{ 'caps' = { $c = Get-KitSetting 'tracker.commands' $null; $h = @{}
-    foreach ($p in @(@('checklist', 'checklist'), @('statuses', 'statuses'), @('commentEdit', 'comment-edit'), @('commentDelete', 'comment-delete'), @('move', 'move'), @('attach', 'attach'))) { $h[$p[0]] = [bool](Get-KitMember $c $p[1]) }
+    foreach ($p in @(@('checklist', 'checklist'), @('statuses', 'statuses'), @('commentEdit', 'comment-edit'), @('commentDelete', 'comment-delete'), @('move', 'move'), @('attach', 'attach'), @('labels', 'labels'))) { $h[$p[0]] = [bool](Get-KitMember $c $p[1]) }
     $h }
   '*' = { param($a, $v)
     $c = Get-KitSetting 'tracker.commands' $null; if ($v -in 'url', 'owner' -and -not (Get-KitMember $c $v)) { return $(if ($v -eq 'url') { $a.id } else { $a.name }) }
@@ -18,7 +18,7 @@ Register-KitAdapter 'tracker' 'none' @{
   'url' = { param($a) Join-Path $__trNoneDir "$($a.id -replace '[^\w.-]', '_').json" }
   'view' = { param($a)
     $o = __TrNone $a.id 'view' $null; if (-not $o) { return }
-    __TrTask $o.id $o.name $o.status (Get-TrackerUrl $o.id) $o.parent @($o.assignees) $o.list @(__TrNoneAll | Where-Object { $_.parent -eq $a.id } | ForEach-Object { __TrSub $_.id $_.name $_.status (Get-TrackerUrl $_.id) }) $o.description
+    Add-KitTags (__TrTask $o.id $o.name $o.status (Get-TrackerUrl $o.id) $o.parent @($o.assignees) $o.list @(__TrNoneAll | Where-Object { $_.parent -eq $a.id } | ForEach-Object { Add-KitTags (__TrSub $_.id $_.name $_.status (Get-TrackerUrl $_.id)) @($_.tags) }) $o.description) @($o.tags)
   }
   'status' = { param($a) $null = __TrNone $a.id "status $($a.status)" { param($o) $o.status = $a.status }; "status of $($a.id): $($a.status) (tracker none)" }
   'comment' = { param($a) $null = __TrNone $a.id "comment $($a.text)" { param($o) __TrNoneNote $o $a.text }; "commented on $($a.id) (tracker none)" }
@@ -33,6 +33,7 @@ Register-KitAdapter 'tracker' 'none' @{
   }
   'describe' = { param($a) $null = __TrNone $a.id 'describe' { param($o) $o.description = $a.text }; "described $($a.id) (tracker none)" }
   'rename' = { param($a) $null = __TrNone $a.id "rename $($a.name)" { param($o) $o.name = $a.name }; "renamed $($a.id) (tracker none)" }
+  'labels' = { param($a) $null = __TrNone $a.id "labels +$(@($a.add) -join ',') -$(@($a.remove) -join ',')" { param($o) $o | Add-Member -Force -NotePropertyName tags -NotePropertyValue @(@($o.tags) + @($a.add) | Where-Object { $_ -and $_ -notin @($a.remove) } | Select-Object -Unique) }; "tags of $($a.id) (tracker none)" }
   'move' = { param($a) $null = __TrNone $a.id "move $($a.parent)$($a.list)" { param($o) if ($a.top) { $o.parent = $null } elseif ($a.parent) { $o.parent = $a.parent }; if ($a.list) { $o.list = $a.list } }; "moved $($a.id) (tracker none)" }
   'attach' = { param($a) $null = __TrNone $a.id "attach $($a.file)" { param($o) __TrNoneNote $o "$($a.text) [attachment: $($a.file)]" }; "attached $($a.leaf) to $($a.id) (tracker none)" }
   'list' = { param($a) @(__TrNoneAll | Where-Object { (-not $a.list -or "$($_.list)" -eq $a.list) -and ((Test-TrackerStatus "$($_.status)" $a.logical) -or "$($_.status)" -ieq $a.status) } | ForEach-Object { __TrRow $_.id $_.name $_.status @($_.assignees | ForEach-Object { __TrWho $_ $_ }) }) }

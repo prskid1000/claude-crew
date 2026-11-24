@@ -31,14 +31,14 @@ Register-KitAdapter 'tracker' 'clickup' @{
       $o = @(Invoke-KitHttp 'POST' "https://api.clickup.com/api/v2/task/$($a.id)/dependency" @{ depends_on = $on } @{ Authorization = (__TrClickupToken) } 3>&1)
       $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) dependency $($a.id) -> ${on}: $($w[0].Message)" }; $have += $on }
     $have }
-  # tags (lower case in ClickUp): REST v2 add tag to task
-  'labels' = { param($a) foreach ($l in @($a.add)) { $u = "https://api.clickup.com/api/v2/task/$($a.id)/tag/$([uri]::EscapeDataString("$l".ToLower()))"
-      if ($__trDry) { Write-Host "DRYRUN: POST $u"; continue }
-      $o = @(Invoke-KitHttp 'POST' $u @{} @{ Authorization = (__TrClickupToken) } 3>&1); $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) tag ${l}: $($w[0].Message)" } } }
+  # tags (lower case in ClickUp): REST v2 add / remove a tag on a task; view: .tags (task-items.ps1 Set-KitTaskTags)
+  'labels' = { param($a) foreach ($op in @(@('POST', @($a.add)), @('DELETE', @($a.remove)))) { foreach ($l in $op[1] | Where-Object { $_ }) { $u = "https://api.clickup.com/api/v2/task/$($a.id)/tag/$([uri]::EscapeDataString("$l".ToLower()))"
+      if ($__trDry) { Write-Host "DRYRUN: $($op[0]) $u"; continue }
+      $o = @(Invoke-KitHttp $op[0] $u @{} @{ Authorization = (__TrClickupToken) } 3>&1); $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) tag $($op[0]) ${l}: $($w[0].Message)" } } } }
   'url' = { param($a) "https://app.clickup.com/t/$($a.id)" }
   'view' = { param($a)
     $j = __TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json')); if (-not $j.id) { return }
-    __TrTask $j.id $j.name ([string]$j.status.status) $(if ($j.url) { $j.url } else { Get-TrackerUrl $j.id }) $j.parent @($j.assignees | Where-Object { $_ } | ForEach-Object { if ($_.username) { $_.username } else { $_.id } }) ([string]$j.list.id) @($j.subtasks | Where-Object { $_ } | ForEach-Object { __TrSub $_.id $_.name ([string]$_.status.status) (Get-TrackerUrl $_.id) }) ([string]$(if ($j.markdown_description) { $j.markdown_description } else { $j.description }))
+    Add-KitTags (__TrTask $j.id $j.name ([string]$j.status.status) $(if ($j.url) { $j.url } else { Get-TrackerUrl $j.id }) $j.parent @($j.assignees | Where-Object { $_ } | ForEach-Object { if ($_.username) { $_.username } else { $_.id } }) ([string]$j.list.id) @($j.subtasks | Where-Object { $_ } | ForEach-Object { Add-KitTags (__TrSub $_.id $_.name ([string]$_.status.status) (Get-TrackerUrl $_.id)) @($_.tags.name) }) ([string]$(if ($j.markdown_description) { $j.markdown_description } else { $j.description }))) @($j.tags.name)
   }
   'status' = { param($a)
     $names = @($a.names | Where-Object { $_ }); if (-not $names.Count) { $names = @($a.status) }   # the role's names in the task's list (lib.ps1 __Set-TrackerStatus)

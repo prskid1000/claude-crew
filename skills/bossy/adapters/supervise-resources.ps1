@@ -1246,7 +1246,7 @@ function Test-KitLaunchTasks($A, [string]$File, [string]$RunName = '') {
   $roll = & $gc Invoke-TaskRollup; $itemsFn = & $gc Update-KitTaskItems; $triFn = & $gc Read-KitTriage; $par = @{}; $read = 0
   $out = @(foreach ($id in $ids) {
       $t = try { Get-TrackerTask $id } catch { $null }; if (-not $t.name) { continue }; $read++; $p = "$($t.parent)"
-      $il = Get-KitItemsLabel; $gap = @(Get-KitTaskTextGaps $t.name $t.description -Subtask | Where-Object { $p -or $_ -in 'a description', $il })   # the owner's own task: Items only
+      $il = Get-KitItemsLabel; $gap = @(Get-KitTaskTextGaps $t.name $t.description -Subtask -Bug:(Test-KitBugTask $t) | Where-Object { $p -or $_ -in 'a description', $il })   # the owner's own task: Items only
       if ((Read-KitState (Get-KitTaskFile $id)).itemsSig) { $gap = @($gap | Where-Object { $_ -ne $il }) }   # a kit checklist
       if ($gap.Count) { "TASKS REFUSED ${id}: its description lacks $($gap -join ', ') (templates.md task-description): $(if ($p) { "crafty.ps1 tracker update $id -Spec <json> (crafty.ps1 'task spec')" } else { "crafty.ps1 tracker scope -Task $id -Add '**$($il):** <ids>' (the owner's text stays)" })" }
       elseif ($itemsFn -and -not $File) { try { & $itemsFn $id $t } catch { "ITEMS $id failed: $("$_".Split("`n")[0])" } }
@@ -1276,7 +1276,7 @@ function New-KitAreaTasks($A, [string]$RunName, [string]$RecFile) {
   $map = [ordered]@{}
   foreach ($t in @($by.Keys)) { $gs = @($by[$t]); if ($gs.Count -lt 2) { continue }
     $pt = Get-TrackerTask $t; if (-not $pt.name) { "AREA TASKS UNKNOWN ${t}: not read from the tracker"; continue }
-    $known = (Read-KitState (Get-KitTaskFile $t)).areaTasks; $nk = Get-KitNameKind "$($pt.name)"; $nm = $nk.rest; $kind = $nk.kind
+    $known = (Read-KitState (Get-KitTaskFile $t)).areaTasks; $nk = Get-KitNameKind "$($pt.name)"; $nm = $nk.rest; $kind = if (Test-KitBugTask $pt) { 'Bug' } else { $nk.kind }
     $h1 = if ($A.brief -and (Test-Path -LiteralPath $A.brief)) { "$(@(Get-Content -LiteralPath $A.brief -TotalCount 3 | Where-Object { $_ -match '^#\s' })[0])" -replace '^#\s*(?:[\w -]*brief:\s*)?' -replace [regex]::Escape($t) -replace ',?\s*\d{4}-\d{2}-\d{2}\s*$' }   # "# Wave brief: <name> <id>, <date>"
     $prod = if ($nm -match ' [—-] ') { ($nm -split ' [—-] ', 2)[0].Trim() } elseif ("$h1".Trim()) { "$h1".Trim() } else { ($nm -replace '\s*\([^)]*\)\s*$').Trim() }
     $url = if ($pt.url) { "$($pt.url)" } else { Get-TrackerUrl $t }

@@ -3,7 +3,7 @@
 # gitlab: GitLab / self-hosted GitLab through the glab CLI: git host (MRs, merge, auto-merge, branch.protect), CI
 # (pipelines, jobs, logs) and tracker (issues; status = a <tracker.statusLabelPrefix><name> label, closed = closed issue).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Enc, __Del, __CiStat, __Tr*).
-# Sections: L7 glab · L13 git-host · L37 ci · L49 tracker
+# Sections: L7 glab · L13 git-host · L38 ci · L50 tracker
 # ---- glab: host and API calls
 # glab reads GITLAB_HOST: a self-hosted GitLab (git host or tracker) sets it before the first call
 function __GlEnv { if (-not $env:GITLAB_HOST -and $KitConf.GitHost -and $KitConf.GitHost -ne 'gitlab.com' -and ($script:HostType -eq 'gitlab' -or $script:__trType -eq 'gitlab')) { $env:GITLAB_HOST = $KitConf.GitHost } }
@@ -19,6 +19,7 @@ Register-KitAdapter 'git-host' 'gitlab' @{
   'mr.changes' = { param($a) __Gp $a "/merge_requests/$($a.n)/changes" }
   'mr.create' = { param($a) __Gp $a "/merge_requests" 'POST' @{ source_branch = $a.source; target_branch = $a.target; title = $a.title; description = $a.body; remove_source_branch = (__Del $a); squash = $a.method -eq 'squash' } -Json }
   'mr.update' = { param($a) __Gp $a "/merge_requests/$($a.n)" 'PUT' @{ title = $a.title; description = $a.body } -Json }   # devtools.py mr re-run: the open MR
+  'mr.labels' = { param($a) $null = __Gp $a "/merge_requests/$($a.n)" 'PUT' @{ add_labels = (@($a.labels) -join ',') } -Json; [pscustomobject]@{ labels = @($a.labels) } }   # devtools.py mr_labels: the task's tags
   'mr.merge' = { param($a) $f = @{ squash = "$($a.method -eq 'squash')".ToLower(); should_remove_source_branch = "$((__Del $a))".ToLower() }; if ($a.sha) { $f.sha = $a.sha }; if ($a.auto) { $f.merge_when_pipeline_succeeds = 'true' }; __Gp $a "/merge_requests/$($a.n)/merge" 'PUT' $f }
   'mr.unauto' = { param($a) __Gp $a "/merge_requests/$($a.n)/cancel_merge_when_pipeline_succeeds" 'POST' }
   'mr.url' = { param($a) "https://$($KitConf.GitHost)/$($a.repo)/-/merge_requests/$($a.n)" }
@@ -63,8 +64,8 @@ Register-KitAdapter 'tracker' 'gitlab' @{
   'url' = { param($a) $r, $n = __TrRef $a.id; "https://$($KitConf.GitHost)/$r/-/issues/$n" }
   'view' = { param($a)
     $j = __TrGl 'GET' (__TrGlPath $a.id) $null; if (-not $j.iid) { return }
-    __TrIssue $j.iid $j.title (__TrLabelStatus @($j.labels) ($j.state -eq 'closed')) $j.web_url @($j.assignees.username) (__TrRef $a.id)[0] ([string]$j.description) {
-      $s = __TrGl 'GET' (__TrGlPath $_) $null; __TrSub "$_" $s.title (__TrLabelStatus @($s.labels) ($s.state -eq 'closed')) $s.web_url }
+    Add-KitTags (__TrIssue $j.iid $j.title (__TrLabelStatus @($j.labels) ($j.state -eq 'closed')) $j.web_url @($j.assignees.username) (__TrRef $a.id)[0] ([string]$j.description) {
+      $s = __TrGl 'GET' (__TrGlPath $_) $null; Add-KitTags (__TrSub "$_" $s.title (__TrLabelStatus @($s.labels) ($s.state -eq 'closed')) $s.web_url) @($s.labels) }) @($j.labels)
   }
   'status' = { param($a)
     $p = __TrGlPath $a.id; $name = $a.status; $j = __TrGl 'GET' $p $null
@@ -107,6 +108,6 @@ Register-KitAdapter 'tracker' 'gitlab' @{
     $have = @(@(__TrGl 'GET' (__TrGlPath $a.id '/links') $null) | Where-Object { "$($_.link_type)" -eq 'is_blocked_by' } | ForEach-Object { "$($_.iid)" })
     foreach ($on in @($a.on | ForEach-Object { "$_" -replace '^.*#' } | Where-Object { $_ -and $_ -notin $have })) { $null = __TrGl 'POST' (__TrGlPath $a.id '/links') @{ target_project_id = $r; target_issue_iid = $on; link_type = 'is_blocked_by' }; $have += $on }
     $have }
-  'labels' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id) @{ add_labels = (@($a.add) -join ',') } }
+  'labels' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id) @{ add_labels = (@($a.add) -join ','); remove_labels = (@($a.remove) -join ',') } }
   'owner' = { param($a) [string](__TrGl 'GET' 'user' $null).username }
 }

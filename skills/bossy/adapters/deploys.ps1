@@ -7,7 +7,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L15 helpers · L106 intest · L277 deploy · L482 restart · L546 supervise
+Sections: L15 helpers · L106 intest · L278 deploy · L483 restart · L547 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -261,6 +261,7 @@ foreach ($rd in $ready) {
   try {
     if ("$(Set-TrackerStatus $id 'inTest')" -match '^SKIPPED: (.*)') { Add-Tally $(if ($Matches[1] -match 'has no inTest status') { 'kept (its scope has no inTest status)' } else { 'kept (follows its subtasks)' }) $id; Out-Line "KEPT  $id  $($Matches[1]) | $short"; continue }
     $null = Set-TrackerKitComment $id 'comment-intest' ("In test: every MR is deployed on a test env (checked " + [datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm') + " UTC): " + (@($live | ForEach-Object { $_ -replace '^\S+', { Format-KitMrLink $_.Value } }) -join '; ') + '.')   # full MR URLs (owner)
+    if (@($live) -join ' ' -match ' on (?!every )([\w.-]+)') { $null = Set-KitTaskTags $id @("env=$($Matches[1])") -Soft }   # on-<first test target> (kitbag.py TAG_GROUPS env)
     Add-Tally 'moved to in test' $id; Out-Line "MARKED  $id  in test ($($live -join '; ')) | $short"
   } catch { Add-Tally 'blocked' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  could not set status: $($_.Exception.Message)" }
 }

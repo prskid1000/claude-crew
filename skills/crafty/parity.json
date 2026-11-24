@@ -13,28 +13,31 @@
         "checklist": "an Items block in the description (<!-- kit:<name> -->)",
         "statuses": "tracker.statuses / vocab.json names per role",
         "dependencies": "a **Waits on:** line in the description",
-        "labels": "a **Wave:** line in the description"
+        "labels": "tags (kitbag.py naming tags): a <!-- kit:tags --> **Tags:** line in the description (task-items.ps1 Set-KitTaskTags)"
       }
     },
     "git-host": {
       "config": "gitHostType",
       "file": "skills/crafty/lib.ps1",
       "verbs": "mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect",
+      "caps": "mr.labels",
       "names": "command",
       "vendors": "github gitlab bitbucket azure gitea",
       "fallback": {
-        "mr.parseRef": "core ConvertFrom-KitMrRef (an MR URL or <repo>!<n>)"
+        "mr.parseRef": "core ConvertFrom-KitMrRef (an MR URL or <repo>!<n>)",
+        "mr.labels": "a Tags: line in the MR body (devtools.py mr_labels)"
       }
     },
     "report": {
       "config": "reports.type",
       "file": "skills/crafty/devtools.py",
       "verbs": "publish",
-      "caps": "evidence",
+      "caps": "evidence tags",
       "names": "markdown html command",
       "vendors": "gdocs pdf confluence notion",
       "fallback": {
-        "evidence": "reports.evidence local (the run folder) or command (a bucket / share CLI)"
+        "evidence": "reports.evidence local (the run folder) or command (a bucket / share CLI)",
+        "tags": "the Tags: line under the doc title (devtools.py with_tags, every store); gdocs: Drive properties, confluence: page labels"
       },
       "gaps": {
         "markdown,html,command/selftest": "no self-check: the first publish reports the error"

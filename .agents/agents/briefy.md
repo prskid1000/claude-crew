@@ -74,7 +74,7 @@ Non-negotiables:
    rest with its `parent` (another list: an Items link); flat ones: `tracker group -Parent <p> -Tasks <ids>`; the item
    table `items.md` (`ID | Area | Title`, optional Sev, Ports) beside the brief with `{ agents: [{ id: <Area>, task }] }`
    in a `.json`, then `bossy.ps1 track rollup -Task <parent> -From <brief dir>` (Items checklists, delivery section) and
-   `crafty.ps1 tracker order <parent> -Apply <brief>.order.json` (waits-on links + Wave labels; titles stay clean).
+   `crafty.ps1 tracker order <parent> -Apply <brief>.order.json` (waits-on links + wave-<n> tags; titles stay clean).
 **rule-change:** append the owner's words (verbatim, timestamp) under the brief's "Rule changes during the wave" and to the
 contracts file; a spec it changes: `spec write` with a `change` line (prints `RETEST <task>: <S-ids>`; the task's Spec line
 shows them); `board show` -> `board msg -Kind rule` every agent whose area or task it touches (what changed, the S-ids,

@@ -3,7 +3,9 @@
 # tests/adapters.tests.ps1: adapter contracts (README "Adapters"): capabilities (Test-KitCap, UNSUPPORTED, fallbacks), the
 # secret store, evidence store, partition models, data-store caps, deploy strategies, login profiles. Next to <kit>/tests/harness.ps1.
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/tracker-clickup.ps1', 'skills/bossy/adapters/deploy-merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed-checks.ps1')
+$TestKitFiles = @('skills/crafty/adapters/tracker-clickup.ps1', 'skills/crafty/adapters/tracker-jira.ps1', 'skills/crafty/adapters/tracker-azure.ps1', 'skills/crafty/adapters/tracker-linear.ps1',
+  'skills/crafty/adapters/tracker-youtrack.ps1', 'skills/crafty/adapters/github.ps1', 'skills/crafty/adapters/gitlab.ps1', 'skills/crafty/adapters/gitea.ps1', 'skills/crafty/adapters/bitbucket.ps1',
+  'skills/crafty/adapters/azure-devops.ps1', 'skills/bossy/kitbag_naming.py','skills/bossy/adapters/deploy-merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed-checks.ps1')
 $k = New-TestKit adapters
 
 # caps: declared entry wins, config <kind>.caps.<cap> false switches it off, else the verb; a declared adapter throws UNSUPPORTED
@@ -21,6 +23,41 @@ $capR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $o.clickup = & { . (Join-Path $k 'skills/crafty/adapters/tracker-clickup.ps1'); @('checklist', 'commentEdit', 'commentDelete', 'statuses', 'move', 'attach' | Where-Object { -not (Test-KitCap tracker clickup $_) }).Count -eq 0 }
   $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
 Expect-Each $capR 'caps: #' @('declOff', 'verb', 'noVerb', 'unsupported', 'cfgOff', 'cmd', 'attachFallback', 'clickup') -Show 9
+
+# tags parity (owner 2026-11-24): every tracker has verb labels (add + remove) or the description fallback, every git host mr.labels or
+# the body line; the fallback writes / reads a Tags line; status promoted -> needs-deploy, closed clears it; tracker retag dry run + apply
+Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue' } } }
+$tagR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
+  foreach ($af in 'tracker-clickup', 'tracker-jira', 'tracker-azure', 'tracker-linear', 'tracker-youtrack', 'github', 'gitlab', 'gitea', 'bitbucket', 'azure-devops') { . (Join-Path $k "skills/crafty/adapters/$af.ps1") }
+  $o = [ordered]@{}; $natT = 'azure clickup github gitlab jira jira-server none'; $natH = 'azure github gitlab'   # README "Adapters": native; the rest fall back
+  $tn = @($KitAdapters.tracker.Keys | Where-Object { $_ -ne 'fk' } | Sort-Object); $o.trackers = $tn.Count -ge 10
+  $o.trackerNative = (@($tn | Where-Object { Test-KitCap tracker $_ labels }) -join ' ') -eq $natT
+  $o.trackerRemove = -not @($natT -split ' ' | Where-Object { $_ -ne 'jira-server' -and "$($KitAdapters.tracker[$_].labels)" -notmatch 'remove' }).Count
+  $o.trackerFallback = -not @($tn | Where-Object { -not (Test-KitCap tracker $_ labels) -and -not $KitAdapters.tracker[$_].Contains('describe') -and -not $KitAdapters.tracker[$_].Contains('*') }).Count
+  $o.hostNative = (@($KitAdapters['git-host'].Keys | Where-Object { $KitAdapters['git-host'][$_].Contains('mr.labels') } | Sort-Object) -join ' ') -eq $natH
+  $mem = @{ T1 = [pscustomobject]@{ id = 'T1'; name = 'SHOP-CAT-004 grid'; status = 'open'; description = "Problem: x" } }
+  Register-KitAdapter 'tracker' 'fkt' @{ caps = @{ labels = $false }; view = { param($a) $mem[$a.id] }; describe = { param($a) $mem[$a.id].description = $a.text; 'ok' }; url = { param($a) $a.id } }
+  $__trType = 'fkt'; $null = Set-KitTaskTags T1 @('key=SHOP-CAT-004', 'kind=Bug', 'wave=3')
+  $o.fallbackLine = $mem.T1.description -match '\*\*Tags:\*\* bug, shop, catalogue, wave-3' -and ((Get-KitTaskTags T1) -join ',') -eq 'bug,shop,catalogue,wave-3'
+  $null = Set-KitTaskTags T1 @('env=needs-deploy'); $null = Set-KitTaskTags T1 @('env=-'); $o.exclusive = ((Get-KitTaskTags T1) -join ',') -eq 'bug,shop,catalogue,wave-3'
+  $o.bugByTag = (Test-KitBugTask $mem.T1) -and -not (Test-KitBugName $mem.T1.name)
+  $o.bugGaps = -not @(Get-KitTaskTextGaps $mem.T1.name 'free text' -Subtask -Bug:(Test-KitBugTask $mem.T1)).Count   # a keyed bug: no template gaps
+  $null = Format-KitKeyedName '[ui] fix button' 'SHOP-CAT-004'; $o.oddKind = ($script:KitNameTags -join ',') -eq 'key=SHOP-CAT-004,kind=Feature'
+  $lab = [Collections.Generic.List[string]]::new(); Register-KitAdapter 'tracker' 'fkl' @{ labels = { param($x) $lab.AddRange([string[]]@($x.add)) }; view = { param($x) $mem[$x.id] }; describe = { 'ok' }; url = { param($x) $x.id } }
+  $__trType = 'fkl'; function Test-KitNamingOn { $false }; $null = Set-KitTaskOrder T1 @() 'v2 wave 2'; $o.namingOffWave = ($lab -join ',') -eq 'Wave: v2 wave 2'; $__trType = 'fkt'
+  $o.names = -not @((Get-KitTaskTags T1) | Where-Object { $null = & (Get-Python) -X utf8 $KitCmd.kitbag naming check tag $_ 2>&1; $LASTEXITCODE }).Count
+  $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
+Expect-Each $tagR 'tags parity: #' @('trackers', 'trackerNative', 'trackerRemove', 'trackerFallback', 'hostNative', 'fallbackLine', 'exclusive', 'bugByTag', 'bugGaps', 'oddKind', 'namingOffWave', 'names') -Show 12
+$env:KIT_TRACKER_TYPE = 'none'; $Dc = Join-Path $k 'skills/crafty/crafty.ps1'; $tnd = TkPath $k tracker-none -Create
+Set-JsonFile (Join-Path $tnd 'LOCAL-90.json') @{ id = 'LOCAL-90'; name = 'SHOP-CAT-001 [Feature] Catalogue: price grid'; status = 'open'; parent = $null; list = 'L'; assignees = @(); description = 'd'; comments = @(); tags = @('wave: shop v2 wave 2') }
+Set-JsonFile (Join-Path $tnd 'LOCAL-91.json') @{ id = 'LOCAL-91'; name = 'SHOP-CAT-002 [Bug] Catalogue: crash on save'; status = 'open'; parent = 'LOCAL-90'; list = 'L'; assignees = @(); description = 'd'; comments = @() }
+$rtD = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 -DryRun 2>&1 | Out-String; $rt0 = (Get-Content (Join-Path $tnd 'LOCAL-90.json') -Raw | ConvertFrom-Json).name
+$rtA = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 2>&1 | Out-String; $rv = pwsh -NoProfile -File $Dc tracker view LOCAL-90 2>$null | ConvertFrom-Json
+$rpo = pwsh -NoProfile -File $Dc tracker status LOCAL-91 promoted 2>&1 | Out-String; $rp = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','
+$null = pwsh -NoProfile -File $Dc tracker status LOCAL-91 closed 2>&1; $rc = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','; Remove-Item Env:KIT_TRACKER_TYPE
+Expect "tracker retag: dry run = table only; apply = <KEY> <outcome> + tags, the old wave label gone; promoted -> needs-deploy, closed clears ($($rv.name) | $($rv.tags -join ',') | $rp | $rc | $rpo)" (
+  $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \| SHOP-CAT-002 \| SHOP-CAT-002 crash on save \| bug, shop, catalogue \|' -and $rtD -match 'DRY RUN: 2 keyed' -and $rt0 -like '*`[Feature`]*' -and
+  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'SHOP-CAT-001 price grid' -and ($rv.tags -join ',') -eq 'feature,shop,catalogue,wave-2' -and $rp -eq 'bug,shop,catalogue,needs-deploy' -and $rc -eq 'bug,shop,catalogue')
 
 # secret store: file round trip (targets.local.json shape kept), names only, env read-only, secret:<name> refs, a fake store,
 # the guard denies the configured store's backing file and keeps the file store's default

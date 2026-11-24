@@ -7,7 +7,9 @@
   python -X utf8 skills/bossy/kitbag.py naming scan [--json]                       # live names (tasks, docs, board, launches) vs the standard
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
-Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 [Feature] Catalogue: <outcome>`
+  python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug wave=2 env=- ...   # JSON {tags, add, remove}
+Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, product, area: tags)
+ · tag `wave-2` (lowercase kebab, from the TAG_GROUPS vocabulary)
  · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-0042` · agent `devy-01` · area `area-CAT` (`-2`: a second one
    in a run) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
  · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-0398`.
@@ -15,10 +17,10 @@ NO-DATE: no name holds a date (owner 2026-11-24): the date lives in the record's
 run / id (`buildy-20261123-01`) is read as an alias until the next minor version, never made.
 PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code: name}); an unknown code or a key without
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
-DUP-WORDS: a name never repeats what its key or type says (product, a leading area word, a [Type] tag, a repo list); make and
-rename strip them.
+DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
+rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags).
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L26 model · L87 no repeats
+Sections: L28 model · L93 no repeats · L187 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -32,7 +34,8 @@ DOC_KINDS = ('Spec', 'Brief', 'Testing goals', 'Testing doc', 'Testing doc (AI)'
 def naming_cfg(kit=None):
     c = local_config(kit or KIT_DIR, 'kit.local.json').get('naming') or {}
     codes = lambda k: {str(x).upper(): str(v) for x, v in (c.get(k) or {}).items() if re.match(r'^[A-Za-z]{2,6}$', str(x))}
-    return {'products': codes('products'), 'areas': codes('areas'), 'digits': int(c['digits']) if str(c.get('digits') or '').isdigit() else 3}   # a bad value: the default
+    return {'products': codes('products'), 'areas': codes('areas'), 'digits': int(c['digits']) if str(c.get('digits') or '').isdigit() else 3,   # a bad value: the default
+            'tags': c['tags'] if isinstance(c.get('tags'), dict) else {}}
 
 
 def patterns(cfg):
@@ -41,7 +44,7 @@ def patterns(cfg):
     key = rf'(?:{alt(cfg["products"])})-(?:{alt(cfg["areas"])})-\d{{{cfg["digits"]},}}'
     ty, slug = '|'.join(TYPES), r'[a-z0-9]+(?:-[a-z0-9]+)*'
     return {'key': rf'^{key}$', 'item': rf'^{key}\.\d+ {slug}$', 'case': rf'^{key}-TC\d{{2,}}$',
-            'title': rf'^{key}(?:\.\d+)? \[(?:{"|".join(TITLE_TYPES)})\] [^:]+: \S.*$',
+            'title': rf'^{key}(?:\.\d+)? \S.*$', 'tag': r'^[a-z0-9]+(?:-[a-z0-9]+)*$',
             'doc': rf'^{key}(?:\.\d+)? (?:{"|".join(map(re.escape, DOC_KINDS))}) v\d+ — \S.*$',
             'run': r'^[a-z]+(?:-[a-z]+)*-\d{4,}$', 'id': r'^[a-z]+-\d{4,}$', 'agent': r'^[a-z]+-\d{2,}$',
             'area': rf'^area-(?:{alt(cfg["areas"])})(?:-\d+)?$', 'lane': r'^lane-\d{2,}$', 'label': r'^\S.*$',
@@ -56,6 +59,9 @@ def name_problem(kind, name, cfg=None):
         return f'unknown kind {kind!r} ({", ".join(patterns(cfg))})'
     if (dm := DATE_RX.search(name)):
         return f'NO-DATE: {dm[0]!r} is a date; the record\'s fields hold it, a counter makes it unique ({EXAMPLES[kind]})'
+    codes = {c for reg in ('products', 'areas') for c, n in cfg[reg].items() if slugify(n, 6) != c.lower()}   # a name equal to its code is the name
+    if kind == 'tag' and re.match(rx, name) and (len(name) > 30 or name.upper() in codes):
+        return f'a tag is 1-30 characters and never a PRODUCT / AREA code (the key says it): {name!r}'
     if re.match(rx, name):
         return dup_words(kind, name, cfg)
     m = re.search(r'\b([A-Z]{2,6})-([A-Z]{2,6})-\d+', name)
@@ -72,7 +78,7 @@ def name_problem(kind, name, cfg=None):
 
 
 EXAMPLES = {'key': 'SHOP-CAT-004', 'item': 'SHOP-CAT-004.2 add-price-projection', 'case': 'SHOP-CAT-004-TC03',
-            'title': 'SHOP-CAT-004 [Feature] Catalogue: <outcome>', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
+            'title': 'SHOP-CAT-004 <outcome>', 'tag': 'wave-2', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
             'run': 'buildy-0042', 'id': 'dec-0398', 'agent': 'devy-01', 'area': 'area-CAT', 'lane': 'lane-01', 'label': 'fix: rest',
             'branch': 'feat/SHOP-CAT-004-public-catalogue', 'mr': 'feat(web): <summary> [SHOP-CAT-004]'}
 
@@ -142,11 +148,8 @@ def dup_words(kind, name, cfg):
     if not km or kind not in ('title', 'doc', 'branch', 'mr', 'item'):
         return ''
     key = km[0]
-    if kind == 'title':
-        free, ty = name.split('] ', 1)[1], re.search(r'\[(\w+)\]', name)[1]
-        head, _, free = free.partition(': ')
-        if (a := cfg['areas'].get(key.split('-')[1], '')) and head.strip().lower() != a.lower():
-            return f'DUP-WORDS: "{head}" before ":" is the area name {a!r} only (the key carries the product)'
+    if kind == 'title':   # <KEY> <outcome>: a [Type] or a leading area word is a tag now (owner 2026-11-24)
+        ty, free = '', re.sub(rf'^{re.escape(key)}(?:\.\d+)?\s+', '', name)
     elif kind == 'doc':
         ty, free = '', name.split(' — ', 1)[1]
         ty = next((k for k in DOC_KINDS if name[len(key):].strip().startswith(k)), '')
@@ -164,16 +167,14 @@ def dup_words(kind, name, cfg):
 
 
 def make(kind, p, cfg=None):
-    """A name from its parts, free text cleaned of what the key / type say: title (key type outcome; area from the key) · doc (key
+    """A name from its parts, free text cleaned of what the key / type say: title (key outcome; type cleaned) · doc (key
     kind ver title) · branch (type key slug tag?) · mr (type scope summary key) · case (key n) · item (key m slug)."""
     cfg = cfg or naming_cfg()
     g = lambda k, d='': str(p.get(k) or d)
     key = g('key')
-    ac = (key.split('-') + ['', ''])[1] or g('area').upper()
-    area = cfg['areas'].get(ac, g('area'))
     cl = lambda t, ty='': clean(t, key, cfg, ty)
     tag = slugify(g('tag'), 3)   # a tracker's native branch tag (CU-<id>): kept so its links and the kit's branch parsers still match
-    out = {'title': lambda: f'{key} [{g("type", "Feature")}] {area}: {cl(g("outcome"), g("type", "Feature"))}',
+    out = {'title': lambda: f'{key} {cl(g("outcome"), g("type", "Feature"))}',   # type, product, area: tags (naming tags)
            'doc': lambda: f'{key} {g("kind", "Spec")} v{g("ver", "1")} — {cl(g("title"), g("kind", "Spec"))}',
            'branch': lambda: f'{g("type", "feat")}/{key}-' + '-'.join(x for x in (tag, slugify(cl(g("slug") or g("title"), g("type", "feat")))) if x),
            'mr': lambda: f'{g("type", "feat")}{"(" + g("scope") + ")" if g("scope") else ""}: {cl(g("summary"), g("type", "feat"))} [{key}]',
@@ -181,6 +182,93 @@ def make(kind, p, cfg=None):
     if kind not in out:
         raise SystemExit(f'naming make: kind {kind!r} ({", ".join(out)})')
     return out[kind]()
+
+
+# ---- tags: what a title no longer says (owner 2026-11-24); tracker labels / tags, MR labels, doc properties carry them
+# group: (exclusive: one value at a time, values | a value regex | None: the registries' names / repo names); the comment: who sets it
+TAG_GROUPS = {
+    'kind': (True, ('feature', 'bug', 'chore', 'spike', 'docs', 'test')),   # tracker create (the old [Type]), a QA bug
+    'product': (True, None), 'area': (True, None),                         # tracker create: the key's PRODUCT / AREA names
+    'wave': (True, r'wave-\d+'),                                            # tracker order (brief waves)
+    'phase': (True, ('spec', 'build', 'review', 'qa')),                     # by hand: tracker tags <id> phase=qa
+    'repo': (False, None),                                                  # by hand / brief repos: api-code -> api
+    'env': (True, r'needs-deploy|on-[a-z0-9]+(?:-[a-z0-9]+)*'),           # promoted: needs-deploy · in test: on-<env> · closed: cleared
+    'risk': (False, ('migration', 'security', 'breaking', 'feature-flag-off')),   # by hand / brief
+    'decision': (True, ('needs-owner', 'blocked')),                         # blocked status / decide ask; work or an answer clears it
+    'origin': (True, ('qa-found', 'tester-report', 'retro')),               # a QA run's bug: qa-found; others by hand
+    'test': (False, ('ui', 'api', 'mobile')),                               # by hand / testing doc
+}
+KIND_TAG = {'feat': 'feature', 'fix': 'bug', 'refactor': 'chore', 'perf': 'chore'}
+
+
+def tag_groups(cfg):
+    """{group: (exclusive, values)}; naming.tags.<group>: a list replaces its values, false turns it off (repo: {repo: tag} map)."""
+    over = cfg.get('tags') or {}
+    return {g: (one, tuple(map(str, over[g])) if isinstance(over.get(g), list) else vals) for g, (one, vals) in TAG_GROUPS.items() if over.get(g) is not False}
+
+
+def tag_value(group, value, cfg):
+    """A part as its tag: product / area code -> its name, feat -> feature, 2 -> wave-2, staging -> on-staging, api-code -> api."""
+    v = str(value or '').strip()
+    if group in ('product', 'area'):
+        v = cfg[group + 's'].get(v.upper(), v)
+    elif group == 'kind':
+        v = KIND_TAG.get(v.lower(), v)
+    elif group == 'wave' and (m := re.search(r'(\d+)\s*$', v)):
+        v = f'wave-{m[1]}'
+    elif group == 'repo':
+        rm = (cfg.get('tags') or {}).get('repo')
+        v = rm.get(v, v) if isinstance(rm, dict) and v in rm else re.split(r'[-_.]', v.replace('\\', '/').rsplit('/', 1)[-1])[0]
+    elif group == 'env' and v and v != 'needs-deploy' and not v.startswith('on-'):
+        v = f'on-{v}'
+    return slugify(v, 6)
+
+
+def tag_known(group, t, cfg, vals):
+    """t is a value of group: in its list, its regex, a registry name (product / area); repo: any slug."""
+    if vals is None:
+        return group == 'repo' or t in {slugify(x, 6) for x in cfg[group + 's'].values()}
+    return bool(re.fullmatch(vals, t)) if isinstance(vals, str) else t in vals
+
+
+def tag_group(t, cfg, groups):
+    """The group of a live tag ('' = a person's own tag, kept); an old '<group>: ...' label (Wave: x wave 2) counts as its group."""
+    lt = str(t).strip().lower()
+    return next((g for g, (_, vals) in groups.items() if g != 'repo' and (tag_known(g, lt, cfg, vals) or re.match(rf'{g}\s*:', lt) or (g == 'wave' and re.match(r'wave-.*\d$', lt)))), '')   # Jira kept 'wave-x-wave-2'
+
+
+def tags(parts, have=(), cfg=None):
+    """{tags, add, remove}: the live tags <have> with parts {group: value | 'a,b' | '-' (clear)}; key=<KEY> gives product + area,
+    type= is kind. An exclusive group keeps one value; a value off the vocabulary raises ValueError; others' tags stay."""
+    cfg = cfg or naming_cfg()
+    groups, p, bad = tag_groups(cfg), dict(parts), []
+    if (km := re.match(r'([A-Z]{2,6})-([A-Z]{2,6})-\d+', str(p.pop('key', '') or ''))):
+        p.setdefault('product', km[1]); p.setdefault('area', km[2])
+    if 'type' in p:
+        p.setdefault('kind', p.pop('type'))
+    have = [str(h).strip() for h in have if str(h).strip()]
+    keep = list(have)
+    for g, raw in p.items():
+        if g not in TAG_GROUPS:
+            bad.append(f'unknown tag group {g!r} ({", ".join(TAG_GROUPS)})')
+        if g not in groups:   # unknown, or off in naming.tags
+            continue
+        one, vals = groups[g]
+        xs = [x.strip() for x in str(raw).split(',') if x.strip() and x.strip() != '-']
+        new = [tag_value(g, x, cfg) for x in xs if not x.startswith('-')]
+        drop = {tag_value(g, x[1:], cfg) for x in xs if x.startswith('-')}   # -needs-owner: that value only
+        bad += [f'{g} tag {t!r}: {w or "not in the vocabulary"}' for t in new if (w := name_problem('tag', t, cfg) if g != 'repo' else '') or not tag_known(g, t, cfg, vals)]   # a repo word may equal an AREA code
+        bad += [f'{g}: one value at a time ({", ".join(new)})'] if one and len(new) > 1 else []
+        bad += [f'{g}=: an empty value (clear the group with {g}=-)'] if not str(raw).strip() else []
+        keep = [h for h in keep if h.lower() not in drop]
+        if (one and new) or not xs:   # one value at a time; '-' clears the group
+            keep = [h for h in keep if tag_group(h, cfg, groups) != g or h.lower() in new]
+        keep += [t for t in new if t not in [k.lower() for k in keep]]
+    if bad:
+        raise ValueError('; '.join(bad))
+    keep.sort(key=lambda t: list(TAG_GROUPS).index(g) if (g := tag_group(t, cfg, groups)) else -1)   # others' first, then kind, product, area, wave ...
+    low = lambda xs: {x.lower() for x in xs}   # trackers lower-case tags (ClickUp)
+    return {'tags': keep, 'add': [t for t in keep if t.lower() not in low(have)], 'remove': [h for h in have if h.lower() not in low(keep)]}
 
 
 def next_key(product, area, cfg=None):
@@ -221,25 +309,34 @@ def plan_rows(plan, cfg):
         area = str(it.get('area') or (km and km[2]) or plan.get('area') or '').upper()
         bad = [f'unknown PRODUCT {prod}'] if prod not in cfg['products'] else []
         bad += [f'unknown AREA {area}'] if area not in cfg['areas'] else []
-        if km:   # already renamed: same key, the outcome after "<area>: "
+        if km:   # already keyed: same key; an old "<Area>: " head goes (the area tag says it)
             key, rest = km[0].split()[0], old[km.end():]
-            rest = rest.split(': ', 1)[1] if ': ' in rest else rest
-            bad += [f'old title {w}' for w in [name_problem('title', old, cfg)] if w.startswith('DUP-WORDS')]
+            head, sep, tail = rest.partition(': ')
+            rest = tail if sep and head.strip().lower() == cfg['areas'].get(area, '').lower() else rest
         else:
             base = int(plan.get('start', {}).get(f'{prod}-{area}', 0)) if isinstance(plan.get('start'), dict) else 0
             seq[(prod, area)] = seq.get((prod, area), base) + 1
             key, rest = f'{prod}-{area}-{seq[(prod, area)]:0{cfg["digits"]}d}', old.split(f' {code} ', 1)[-1] if code else old
-        rest = re.sub(r'\s*\(was [^)]*\)\s*$', '', rest)
+        was = re.search(r'\s*(\(was [^)]*\))\s*$', rest)   # an earlier rename's old code stays searchable
+        rest = rest[:was.start()] if was else rest
         outcome = it.get('outcome') or re.sub(r'^\s*v\d+\s+', '', re.sub(REPO_LIST, '', rest)).strip()
-        ty = it.get('type') or (km and km[4]) or (re.match(rf'\s*\[({"|".join(TITLE_TYPES)})\]', old) or [None, 'Feature'])[1]
+        live = it.get('tags') or []   # a keyed title without [Type]: its live kind tag (a re-run never flips a bug)
+        lk = next((str(h).capitalize() for h in live if str(h).lower() in ('bug', 'chore', 'spike', 'feature', 'docs', 'test')), '')
+        ty = it.get('type') or (km and km[4]) or (re.match(rf'\s*\[({"|".join(TITLE_TYPES)})\]', old) or [None, lk or 'Feature'])[1]
         title = make('title', {'key': key, 'type': ty, 'outcome': outcome}, cfg)
-        title += f' (was {code})' if code and code != key else ''
-        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad})
+        title += f' (was {code})' if code and code != key else f' {was[1]}' if was else ''
+        bad += [f'new title {w}' for w in [name_problem('title', title, cfg)] if w]
+        wave = next((m[1] for h in live if (m := re.match(r'(?i)wave\b.*?(\d+)\s*$', str(h)))), '') or it.get('wave') or ''   # a live label, else the kit's order record
+        try:
+            tg = tags({'key': key, 'kind': ty, **({'wave': wave} if wave else {})}, live, cfg)
+        except ValueError as e:
+            tg, bad = {'tags': live, 'add': [], 'remove': []}, bad + [str(e)]
+        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad, **tg})
     return rows
 
 
 def cmd_naming(rest):
-    a = [x for x in rest if not x.startswith('--')]
+    a = [x for i, x in enumerate(rest) if not x.startswith('--') and not (i and rest[i - 1] in ('--have', '--plan'))]   # a flag's value is no part
     js = '--json' in rest
     cfg = naming_cfg()
     if not a or a[0] in ('help', '-h') or '--help' in rest:
@@ -263,6 +360,14 @@ def cmd_naming(rest):
             print(f'NAME {a[1]} {n!r}: {w}', file=sys.stderr)
             return 1
         print(n)
+        return 0
+    if verb == 'tags':   # JSON for the adapters (task-items.ps1 Set-KitTaskTags, devtools.py doc / MR labels)
+        hv = rest[rest.index('--have') + 1] if '--have' in rest and rest.index('--have') + 1 < len(rest) else ''
+        try:
+            print(json.dumps(tags(dict(x.split('=', 1) for x in a[1:] if '=' in x), [h for h in hv.split(',') if h.strip()], cfg), ensure_ascii=False))
+        except ValueError as e:
+            print(f'naming tags: {e}', file=sys.stderr)
+            return 1
         return 0
     if verb == 'seed' and len(a) == 3 and a[2].isdigit():   # after an applied rename: the counter starts past the migrated keys
         f = kit_path('naming', create=True)
@@ -290,9 +395,10 @@ def cmd_naming(rest):
         if js:
             print(json.dumps(rows, ensure_ascii=False, indent=1))
         else:
-            print('| Old code | Tracker id | Old title | New key | New title | Problems |\n|---|---|---|---|---|---|')
+            print('| Old code | Tracker id | Old title | New key | New title | Tags | Tags removed | Problems |\n|---|---|---|---|---|---|---|---|')
             for r in rows:
-                print('| ' + ' | '.join(str(r[k]).replace('|', '\\|') for k in ('old', 'id', 'oldTitle', 'key', 'title')) + f' | {"; ".join(r["problems"]) or "—"} |')
+                print('| ' + ' | '.join(str(r[k]).replace('|', '\\|') for k in ('old', 'id', 'oldTitle', 'key', 'title')) + ' | '
+                      + ' | '.join(', '.join(r[k]) or '—' for k in ('tags', 'remove')) + f' | {"; ".join(r["problems"]) or "—"} |')
             top = {}
             for r in rows:
                 g, n = r['key'].rsplit('-', 1)
@@ -356,4 +462,4 @@ def warn_hook(k):
 
 
 COMMANDS = {'naming': cmd_naming}
-ARGS = {'naming': ({'--json', '--help'}, {'--plan'}, False)}
+ARGS = {'naming': ({'--json', '--help'}, {'--plan', '--have'}, False)}

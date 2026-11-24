@@ -3,7 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L87 move · L130 status roles · L282 task text · L299 naming · L407 track lines · L412 task ids · L428 order
+# Sections: L8 items · L88 move · L131 status roles · L286 task text · L303 naming · L415 track lines · L420 task ids ·
+#   L436 tags · L491 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -248,6 +249,9 @@ function Complete-KitStatusWrite([string]$Id, [string]$Status, $R, $Was, [string
     if ($Status -in 'promoted', 'inTest', 'closed' -and (Read-KitState $tf).statusOwner) { Update-KitTaskIndex $Id { param($x) $x.Remove('statusOwner') } }
     elseif ($ag -and $Status -in 'inProgress', 'review' -and ($Back -or -not (Read-KitState $tf).statusOwner)) { Update-KitTaskIndex $Id { param($x) $x.statusOwner = $ag } } } catch { Write-Warning "tracker: round owner of $Id not kept: $_" }
   if ($Was.parent) { $null = Sync-TrackerParent $Id (Resolve-TrackerStatus $Status) -ParentId "$($Was.parent)" -Reopen:(Test-TrackerStatus "$($Was.status)" 'closed') }
+  # env tags follow the status (kitbag.py TAG_GROUPS): promoted waits for a deploy; in test: deploys.ps1 sets on-<env>; closed: no env / decision
+  $tg = switch ($Status) { 'promoted' { @('env=needs-deploy') } 'closed' { @('env=-', 'decision=-') } { $_ -in 'inProgress', 'failedTesting', 'failedReview' } { @('env=-') } }
+  if ($tg) { $null = Set-KitTaskTags $Id $tg -Soft }
 }
 # the status a parent should have: the least advanced of its open subtasks, back too (a child's new fix round);
 # a closed parent opens again for a new child or a reopened one (-Reopen); '' = leave it
@@ -281,8 +285,8 @@ function Sync-TrackerParent([string]$ChildId, [string]$ChildStatus, [string]$Par
 }
 # ---- task text: kind prefixes, the task template and its gaps (lib.ps1 New-TrackerTask checks them)
 # missing labels of a task text (templates.md task-description; -Subtask: Items too); a [Bug] keeps its own shape
-function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask) {
-  if (-not "$Text".Trim()) { return @('a description') }; if (Test-KitBugName $Name) { return @() }
+function Get-KitTaskTextGaps([string]$Name, [string]$Text, [switch]$Subtask, [switch]$Bug) {   # -Bug: a keyed bug (its kind is a tag)
+  if (-not "$Text".Trim()) { return @('a description') }; if ($Bug -or (Test-KitBugName $Name)) { return @() }
   @(foreach ($sec in @(Get-KitTaskTemplate)) { if ("$($sec.required)" -eq 'subtask' -and -not $Subtask) { continue }; if ("$($sec.required)" -eq 'False') { continue }
       $lb = (@($sec.label) + @($sec.alt) | Where-Object { $_ } | ForEach-Object { [regex]::Escape("$_") }) -join '|'
       if ($Text -notmatch "(?im)^(?:\s*\d+[.)])?\W{0,6}(?:$lb)\b(?:\s+\w+){0,2}(?:\s*\([^)\r\n]*\))?\W{0,3}(?::|\s+[-–—]|\s*$)") { "$($sec.label)" } })
@@ -296,7 +300,7 @@ function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kind
   $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { (Get-KitProps $kp).Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
   $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
 }
-# ---- naming: the kit key (kitbag.py naming, kit.local.json naming) at a name's start: <KEY> [Type] <Area>: <outcome>
+# ---- naming: the kit key (kitbag.py naming, kit.local.json naming) at a name's start: <KEY> <outcome> (+ tags)
 function Get-KitNameKey([string]$Name) { if ("$Name".TrimStart() -cmatch '^([A-Z]{2,6}-[A-Z]{2,6}-\d{2,})(?:\.\d+)?(?=\s|$)') { $Matches[1] } else { '' } }
 function Remove-KitNameKey([string]$Name) { "$Name".TrimStart() -creplace '^[A-Z]{2,6}-[A-Z]{2,6}-\d{2,}(?:\.\d+)?\s+', '' }
 function Test-KitNamingOn { [bool]@(Get-KitProps (Get-KitSetting 'naming.areas' $null)).Count }
@@ -333,11 +337,14 @@ function Get-KitNewTaskKey([string]$Name, [string]$Parent, [string]$Area, [switc
   if ($NoAllocate) { return "$p-$a-000" }   # a dry run: the counter is not used
   Invoke-KitNaming @('next', 'key', $p, $a)
 }
-# <KEY> [Type] <Area>: <outcome> (kitbag.py naming make title: nothing the key or tag says twice); naming off or no key: the name as given
+# <KEY> <outcome> (kitbag.py naming make title; owner 2026-11-24: the [Type] and area are tags); naming off or no key: the name as given.
+# A [Type] prefix names the kind; a re-format of the made title keeps it ($script:KitTitleKind); $script:KitNameTags: the tags for create
+$script:KitTitleKind = @{}
 function Format-KitKeyedName([string]$Name, [string]$Key) {
-  if (-not $Key) { return $Name }; $nk = Get-KitNameKind (Remove-KitNameKey $Name)
-  $ty = if ("$($nk.kind)" -in 'Feature', 'Bug', 'Chore', 'Spike') { (Get-Culture).TextInfo.ToTitleCase("$($nk.kind)".ToLower()) } else { 'Feature' }
-  Invoke-KitNaming @('make', 'title', "key=$Key", "type=$ty", "outcome=$($nk.rest)")
+  if (-not $Key) { return $Name }; $bare = (Remove-KitNameKey $Name).Trim(); $nk = Get-KitNameKind $bare
+  $ty = if ($nk.rest -cne $bare) { $tk = (Get-Culture).TextInfo.ToTitleCase("$($nk.kind)".ToLower()); if ($tk -in 'Feature', 'Bug', 'Chore', 'Spike') { $tk } else { 'Feature' } } elseif ($script:KitTitleKind[$bare]) { $script:KitTitleKind[$bare] } else { 'Feature' }
+  $nm = Invoke-KitNaming @('make', 'title', "key=$Key", "type=$ty", "outcome=$($nk.rest)")
+  $script:KitTitleKind[(Remove-KitNameKey $nm).Trim()] = $ty; $script:KitNameTags = @("key=$Key", "kind=$ty"); $nm
 }
 # tracker update of an existing task (owner 2026-11-24): its live name stays (a hand rename, never re-made from the brief's area text); a
 # typed title renames it; a key the live name lost comes back
@@ -347,20 +354,21 @@ function Get-KitKeptName([string]$Task, $Spec, [string]$Rendered, [string]$Key) 
   if ($Key -and $Key -notlike '*-000' -and -not (Get-KitNameKey $Live)) { "$Key $Live" } else { $Live }
 }
 # tracker create -Key: the keyed defect record with the name the kit gave it (a re-run renames only while the task still has it)
-function Save-KitKeyedTask([string]$File, [string]$Key, [string]$Id) { Write-KitState $File ([ordered]@{ key = $Key; id = $Id; name = "$((Get-TrackerTask $Id).name)" }) }
+function Save-KitKeyedTask([string]$File, [string]$Key, [string]$Id) { Write-KitState $File ([ordered]@{ key = $Key; id = $Id; name = "$((Get-TrackerTask $Id).name)" })
+  if ($Key -match '^qa-') { $null = Set-KitTaskTags $Id @('origin=qa-found') -Soft } }   # a QA run's defect
 # a re-run: renamed while it holds that name; an older record without one only learns the live name (never renamed blind)
 function Update-KitKeyedTask([string]$File, $Old, [string]$Live, [string]$Name, [string]$Key) {
   if ($Old.name -and $Live -ceq "$($Old.name)") { $null = Set-TrackerName $Old.id $Name }
   if (-not $Old.name -or $Live -ceq "$($Old.name)") { Save-KitKeyedTask $File $Key $Old.id }
 }
-function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) { if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area -NoAllocate:$NoAllocate) }
+function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) { $script:KitNameTags = @(); if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area -NoAllocate:$NoAllocate) }
 # wt new / lease -Task without -Branch: <feat|fix>/<KEY>-<tracker tag>-<slug> (kitbag.py naming make branch; the tag keeps every
 # branch -> task parser and the tracker's own links working); a task without a key: throw (pass -Branch)
 function Get-KitTaskBranch([string]$Task) {
-  $nm = "$((Get-TrackerTask $Task).name)"; $ky = Get-KitNameKey $nm
+  $tk = Get-TrackerTask $Task; $nm = "$($tk.name)"; $ky = Get-KitNameKey $nm
   if (-not $ky) { throw "wt: task $Task has no kit key in its name ('$nm'): pass -Branch, or key the task first (kitbag.py naming)" }
-  $nk = Get-KitNameKind $nm; $rest = $nk.rest -creplace '^[^:]+:\s*', '' -creplace '\s*\(was [^)]*\)\s*$', ''
-  Invoke-KitNaming @('make', 'branch', "key=$ky", "type=$(if ("$($nk.kind)" -ieq 'bug') { 'fix' } else { 'feat' })", "slug=$rest", "tag=$($KitConf.TrackerTag)$Task")
+  $nk = Get-KitNameKind $nm; $rest = $nk.rest -creplace '\s*\(was [^)]*\)\s*$', ''   # an old "<Area>: " head: make's clean drops it
+  Invoke-KitNaming @('make', 'branch', "key=$ky", "type=$(if (Test-KitBugTask $tk) { 'fix' } else { 'feat' })", "slug=$rest", "tag=$($KitConf.TrackerTag)$Task")
 }
 # an explicit -Branch of a keyed task off the standard: a warning (old-style names accepted one version)
 function Test-KitTaskBranch([string]$Task, [string]$Branch) {
@@ -425,13 +433,70 @@ function Save-TrackerKey($Task) {   # a keyed task read: key -> native id, once 
   $f = Join-Path (Get-KitPath cache -Create) 'task-keys.json'; $script:KitKeyIds[$ky] = "$($Task.id)"
   try { Invoke-KitLocked $f { $m = Read-KitState $f; if (-not $m) { $m = @{} }; if ($m[$ky] -ne "$($Task.id)") { $m[$ky] = "$($Task.id)"; Write-KitState $f $m } } } catch { Write-KitLog calls task-keys @{ key = $ky; error = "$_" } }
 }
-# ---- order: waits-on links and wave labels (owner 2026-11-23: order and parallel work readable without titles)
-# native when the tracker can (caps dependencies / labels), else a <!-- kit:order --> description section; titles never change
+# ---- tags: kitbag.py naming tags (vocabulary, exclusive groups; owner 2026-11-24) on the tracker: native when the adapter can (caps
+# labels: verb labels {id; add; remove}, view .tags), else a <!-- kit:tags --> "**Tags:** a, b" description line; naming off: none
+function Add-KitTags($O, $Tags) { if ($O) { $O | Add-Member -Force -NotePropertyName tags -NotePropertyValue @(@($Tags) | Where-Object { "$_".Trim() -and "$_" -notlike "$__trLp*" } | ForEach-Object { "$_" }) -PassThru } }   # an adapter's view: its labels minus status labels
+function Get-KitTaskTags([string]$Task, $T) {
+  if (-not $T) { Clear-TrackerMemo $Task; $T = Get-TrackerTask $Task }
+  if (__TrCan labels) { return @($T.tags | Where-Object { $_ }) }
+  if (("$($T.description)" -replace "`r`n", "`n") -match '(?m)^\*\*Tags:\*\* (.+)$') { @($Matches[1] -split ',\s*' | Where-Object { $_.Trim() }) } else { @() }
+}
+# -Parts group=value | group=a,b | group=- (clear) | group=-value (drop one); key=<KEY> gives product + area. -Soft: a failure warns
+function Set-KitTaskTags([string]$Task, [string[]]$Parts, [switch]$Soft) {
+  $Parts = @($Parts | Where-Object { "$_".Trim() }); if (-not ($Task -and $Parts.Count -and (Test-KitNamingOn))) { return }
+  try {
+    $t = if (-not $__trDry) { Clear-TrackerMemo $Task; Get-TrackerTask $Task }; if (-not $__trDry -and -not $t.name) { throw "tracker read of $Task failed" }
+    $have = @(if ($t) { Get-KitTaskTags $Task $t }); $j = Invoke-KitNaming (@('tags') + @(if ($have.Count) { '--have', ($have -join ',') }) + $Parts) | ConvertFrom-Json
+    $tl = "tags of ${Task}: $(@($j.tags) -join ', ')$(if (-not (__TrCan labels)) { ' (description)' })"
+    if (-not (@($j.add).Count + @($j.remove).Count)) { return "$tl (unchanged)" }; Write-KitTaskTags $Task $t $j; $tl
+  } catch { if (-not $Soft) { throw }; [Console]::Error.WriteLine("WARNING: tracker tags on $Task not set ($($_.Exception.Message))") }   # stderr: stdout is JSON
+}
+# $J {tags; add; remove} onto the task $T: the labels verb, else its description line; the task index keeps the set
+function Write-KitTaskTags([string]$Task, $T, $J) {
+  if (-not (@($J.add).Count + @($J.remove).Count)) { return }
+  if (__TrCan labels) { $null = __TrA 'labels' @{ id = $Task; add = @($J.add); remove = @($J.remove) } }
+  elseif ($T) { $null = Set-TrackerDescription $Task (Set-KitDescSection $T.description 'tags' $(if (@($J.tags).Count) { "**Tags:** $(@($J.tags) -join ', ')" } else { '' }) '') }
+  Clear-TrackerMemo $Task; if (-not $__trDry) { Update-KitTaskIndex $Task { param($x) $x.tags = @($J.tags) } }   # a later read in this process sees them
+}
+# after tracker create (lib.ps1 New-TrackerTask): kind, product, area of the name Format-KitKeyedName made
+function Set-KitNewTaskTags([string]$Task) { if ($Task -and @($script:KitNameTags).Count) { $null = Set-KitTaskTags $Task $script:KitNameTags -Soft } }
+# a bug: a bug-prefixed name (unkeyed, old titles) or a bug tag (keyed titles carry the kind as a tag), live or in the task index
+function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fallback trackers): its full read
+  if (Test-KitBugName "$($T.name)") { return $true }
+  $tg = @($T.tags) + @(if ($T.id) { (Read-KitState (Get-KitTaskFile "$($T.id)")).tags })
+  if (-not @($tg | Where-Object { $_ }).Count -and $T.id -and -not ($T | Get-Member -Name tags) -and (Test-KitNamingOn) -and (Get-KitNameKey "$($T.name)")) { $tg = @(Get-KitTaskTags "$($T.id)") }
+  'bug' -in $tg
+}
+# tracker tags <id> <group=value> ... | tracker retag <parent>[,<parent>] [-DryRun]: keyed titles + labels of the trees -> <KEY> <outcome>
+# + tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md); -DryRun: the table only (shown to the owner before an apply)
+function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
+  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind product area wave phase repo env risk decision origin test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
+  if (-not $Id) { 'usage: tracker retag <parent>[,<parent>] [-DryRun]'; exit 2 }
+  $Out = Join-Path (Get-KitPath cache -Create) "retag-$((Split-KitList $Id)[0] -replace '[^\w.-]', '_').md"
+  $dry = $__trDry; $script:__trDry = $false   # the reads run for real; the writes below only without -DryRun
+  $seen = @{}; $todo = [Collections.Generic.Queue[string]]::new(); foreach ($p in @(Split-KitList $Id)) { $todo.Enqueue($p) }
+  $items = @(while ($todo.Count) { $k = $todo.Dequeue(); if ($seen.Contains($k)) { continue }; Clear-TrackerMemo $k; $tk = Get-TrackerTask $k; $seen[$k] = $tk
+      if (-not $tk.name) { Write-Warning "retag: $k not readable: skipped"; continue }; foreach ($s in @($tk.subtasks)) { if ($s.id) { $todo.Enqueue("$($s.id)") } }
+      if (Get-KitNameKey $tk.name) { [ordered]@{ id = "$k"; title = "$($tk.name)"; tags = @(Get-KitTaskTags $k $tk); wave = "$((Read-KitState (Get-KitTaskFile $k)).order.wave)" } } })   # wave: tracker order's record
+  $pf = New-KitTempFile; [IO.File]::WriteAllText($pf, (@{ items = $items } | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+  $lec = $global:LASTEXITCODE; $md = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch '^DRY RUN: nothing renamed' })   # keys stay: no seed hint
+  $rows = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf --json 2>$null | ConvertFrom-Json); $global:LASTEXITCODE = $lec; Remove-Item -LiteralPath $pf -Force
+  [IO.File]::WriteAllLines($Out, [string[]]$md, [Text.UTF8Encoding]::new($false))
+  $md; if ($dry) { "DRY RUN: $($rows.Count) keyed task(s), nothing changed; table: $Out"; return }
+  foreach ($r in @($rows | Where-Object { -not @($_.problems).Count })) {
+    if ($r.title -cne "$($seen[$r.id].name)") { $null = Set-TrackerName $r.id $r.title }
+    Write-KitTaskTags $r.id $seen[$r.id] $r; "RETAGGED $($r.id): $($r.title) · $(@($r.tags) -join ', ')" }
+  foreach ($r in @($rows | Where-Object { @($_.problems).Count })) { "SKIPPED $($r.id): $(@($r.problems) -join '; ')" }
+}
+# ---- order: waits-on links and wave tags (owner 2026-11-23: order and parallel work readable without titles)
+# native when the tracker can (caps dependencies; wave: Set-KitTaskTags), else a <!-- kit:order --> description section; titles never change
 function Set-KitTaskOrder([string]$Task, [string[]]$WaitsOn, [string]$Wave) {
   $WaitsOn = @($WaitsOn | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -ne $Task } | Select-Object -Unique); $nat = @()
+  $Wave = "$Wave".Trim(); if ((Test-KitNamingOn) -and $Wave -match '(\d+)\s*$') { $Wave = "wave-$($Matches[1])" }   # naming on: "<brief> wave 2" -> wave-2 (owner 2026-11-24)
   if ($WaitsOn.Count -and (__TrCan dependencies)) { try { $null = __TrA 'dependencies' @{ id = $Task; on = $WaitsOn }; $nat += 'links' } catch { Write-Warning "tracker dependencies on $Task failed ($($_.Exception.Message)): a Waits on line instead" } }
-  if ($Wave -and (__TrCan labels)) { try { $null = __TrA 'labels' @{ id = $Task; add = @("Wave: $Wave") }; $nat += 'label' } catch { Write-Warning "tracker labels on $Task failed ($($_.Exception.Message)): a Wave line instead" } }
-  $ln = @(if ($WaitsOn.Count -and 'links' -notin $nat) { "**Waits on:** $($WaitsOn -join ', ')" }; if ($Wave -and 'label' -notin $nat) { "**Wave:** $Wave" })
+  if ($Wave -and (Test-KitNamingOn)) { try { $null = Set-KitTaskTags $Task @("wave=$Wave"); $nat += 'tag' } catch { Write-Warning "tracker tags on $Task failed ($($_.Exception.Message)): a Wave line instead" } }
+  elseif ($Wave -and (__TrCan labels)) { try { $null = __TrA 'labels' @{ id = $Task; add = @("Wave: $Wave") }; $nat += 'tag' } catch { Write-Warning "tracker labels on $Task failed ($($_.Exception.Message)): a Wave line instead" } }   # naming off: as before
+  $ln = @(if ($WaitsOn.Count -and 'links' -notin $nat) { "**Waits on:** $($WaitsOn -join ', ')" }; if ($Wave -and 'tag' -notin $nat) { "**Wave:** $Wave" })
   if ($ln.Count) { Clear-TrackerMemo $Task; $tk = Get-TrackerTask $Task; if (-not $tk.name) { throw "tracker read of $Task failed" }
     $nd = Set-KitDescSection $tk.description 'order' ($ln -join "`n") ''; if ($nd -ne ("$($tk.description)" -replace "`r`n", "`n")) { $null = Set-TrackerDescription $Task $nd } }
   Update-KitTaskIndex $Task { param($x) $x.order = [ordered]@{ waitsOn = $WaitsOn; wave = $Wave } }

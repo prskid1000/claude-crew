@@ -36,6 +36,7 @@ Register-KitAdapter 'git-host' 'azure' @{
   'mr.changes' = { param($a) $it = @((__Az $a.repo "git/repositories/{repo}/pullRequests/$($a.n)/iterations").value)[-1].id
     [pscustomobject]@{ changes = @((__Az $a.repo "git/repositories/{repo}/pullRequests/$($a.n)/iterations/$it/changes").changeEntries | ForEach-Object { [pscustomobject]@{ new_path = "$($_.item.path)".TrimStart('/'); old_path = "$(if ($_.originalPath) { $_.originalPath } else { $_.item.path })".TrimStart('/') } }) } }
   'mr.create' = { param($a) __AzMr (__Az $a.repo 'git/repositories/{repo}/pullrequests' 'POST' @{ sourceRefName = "refs/heads/$($a.source)"; targetRefName = "refs/heads/$($a.target)"; title = $a.title; description = $a.body }) }
+  'mr.labels' = { param($a) foreach ($l in @($a.labels)) { $null = __Az $a.repo "git/repositories/{repo}/pullRequests/$($a.n)/labels" 'POST' @{ name = $l } }; [pscustomobject]@{ labels = @($a.labels) } }   # devtools.py mr_labels
   'mr.merge' = { param($a)
     $sha = if ($a.sha) { $a.sha } else { (__AzMr (__Az $a.repo "git/repositories/{repo}/pullrequests/$($a.n)")).sha }
     $b = @{ completionOptions = @{ mergeStrategy = @{ merge = 'noFastForward'; rebase = 'rebase' }["$($a.method)"] ?? 'squash'; deleteSourceBranch = (__Del $a) } }

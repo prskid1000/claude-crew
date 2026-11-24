@@ -8,7 +8,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force]  gated checks (e2e: the diff's specs only; -AllTests = whole suite;
    a pass on the same sources + command is not rerun, -Force reruns)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text kept in desc-backups), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), order <parent> [-Apply <brief>.order.json] (waves, waits-on links, wave labels), list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text backed up), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), order <parent> [-Apply <brief>.order.json] (waves, waits-on links, wave tags), tags <id> <group>=<value>, retag <parents> [-DryRun], list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
  pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch> [-Sha <commit>]  wait for MR pipelines, or a branch's newest one (of that commit) (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -19,7 +19,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L25 init · L34 wt · L328 stack · L427 gate · L761 check · L1087 pipes · L1149 guard · L2074 dir · L2084 checkpoint ·
-  L2124 prior · L2163 tracker · L2185 task spec · L2390 scope · L2438 host
+  L2124 prior · L2163 tracker · L2185 task spec · L2391 scope · L2439 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1002,7 +1002,7 @@ foreach ($s in $steps) {
     # commas reached runners as one name, spaces broke -Dtest
     $tl = @($Tests -split '[,\s]+' | Where-Object { $_ })
     $pyRun = if ($st.stack -eq 'python' -and $cmd -match '^(?<py>.+?)\s+-m\s+(pytest|unittest)\b') { $Matches.py } else { $null }
-    # a folder of plain test_*.py scripts (no test cases): the scripts, run below (the runner found 0 tests, exit 5: retro 1709); a folder with cases stays the runner's
+    # plain test_*.py scripts (no test cases): run below (the runner found 0 tests, exit 5: retro 1709); a folder with cases: the runner's
     $tcRx = '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)'
     if ($pyRun) { $tl = @(foreach ($t in $tl) { $td = Join-Path $st.dir $t; $tdf = if (Test-Path -LiteralPath $td -PathType Container) { @(Get-ChildItem -LiteralPath $td -Filter 'test_*.py' -File -Recurse) } else { @() }
         if ($tdf.Count -and -not @($tdf | Where-Object { Select-String -LiteralPath $_.FullName -Pattern $tcRx -Quiet }).Count) { @($tdf | ForEach-Object { [IO.Path]::GetRelativePath($st.dir, $_.FullName) -replace '\\', '/' }) } else { $t } }) }
@@ -2186,7 +2186,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 # description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
 # (lib.ps1 Format-KitDecisionItems), parent items (adapters/task-items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
-# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<label>' (adapters/task-items.ps1 order), proseOk }.
+# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<n>' (task-items.ps1 order), proseOk }.
 # what a spec lacks (bug: name + problem), a link or MR no full URL
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
@@ -2196,7 +2196,7 @@ function Test-KitTaskSpec($Spec) {
 }
 # tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a typed known kind prefix ([Bug]) is swapped, another "[...]" stays
 function Get-KitSpecName($Spec) {
-  if ($Spec.key) { $nk = [hashtable]::new($Spec); $nk.Remove('key'); return (Format-KitKeyedName (Get-KitSpecName $nk) "$($Spec.key)") }   # naming: <KEY> [Type] <Area>: <outcome>
+  if ($Spec.key) { $nk = [hashtable]::new($Spec); $nk.Remove('key'); return (Format-KitKeyedName (Get-KitSpecName $nk) "$($Spec.key)") }   # naming: <KEY> <outcome> + tags
   $t = (Remove-KitNameKey "$($Spec.title)").Trim(); if (-not $Spec.kind) { return $t }
   $nk = Get-KitNameKind $t
   if ($nk.rest -ne $t -and $nk.kind -ieq "$($Spec.kind)") { $t = $nk.rest } elseif ($t -match '^\[') { return $t }   # another kind typed: kept as written
@@ -2377,13 +2377,14 @@ function Invoke-Tracker {
     'group' {   # K54: tasks under one parent (made from -Spec if missing)
       if (-not ($__trOpt.Tasks -and ($__trOpt.Parent -or $__trOpt.Spec))) { 'usage: tracker group -Parent <p> | -Spec <parent spec json> -Tasks <id,id,...> [-DryRun]'; exit 2 }
       Invoke-KitTaskGroup -Parent "$($__trOpt.Parent)" -Tasks @(Split-KitList $__trOpt.Tasks) -Spec $(if ($__trOpt.Spec) { $__sp }) -DryRun:([bool]$__trOpt.DryRun) }
-    'order' {   # waits-on links + wave labels (owner 2026-11-23); -Apply <brief>.order.json (devtools.py render wave-brief) sets them first
+    'order' {   # waits-on links + wave tags (owner 2026-11-23); -Apply: devtools.py render wave-brief's order.json first
       if (-not $__id) { 'usage: tracker order <parent> [-Apply <brief>.order.json] [-Json]'; exit 2 }
       if ($__trOpt.Apply) { foreach ($__ot in @((Get-Content -LiteralPath $__trOpt.Apply -Raw | ConvertFrom-Json).tasks)) { Set-KitTaskOrder "$($__ot.task)" @($__ot.waitsOn) "$($__ot.wave)" } }
       $__o = Get-KitTaskOrder $__id; if ($__trOpt.Json) { $__o | ConvertTo-Json -Depth 6 } else { Format-KitTaskOrder $__o }; if (@($__o.flags -match '^CYCLE').Count) { exit 1 } }
     'attach' { Add-TrackerAttachment $__id $__trPos[2] $__trOpt.Text }
+    { $_ -in 'tags', 'retag' } { Invoke-KitTagVerb $__v $__id @($__trPos | Select-Object -Skip 2) }
     'list' { __TrOut @(Get-TrackerTasks $__id $__x) }
-    default { 'usage: crafty.ps1 tracker view|statuses|status|comment|comments|uncomment|create|update|render|bug|scope|owner|url|describe|rename|move|group|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
+    default { 'usage: crafty.ps1 tracker view|statuses|status|comment|comments|uncomment|create|update|render|bug|scope|owner|url|describe|rename|move|group|order|tags|retag|attach|list <id> ... [-Type <backend>] [-DryRun]'; exit 2 }
   }
 }
 

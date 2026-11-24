@@ -81,9 +81,9 @@ function __TrJira([string]$Method, [string]$Path, $Body, [string]$FilePath) {
 Register-KitAdapter 'tracker' 'jira' @{
   'url' = { param($a) "$(__TrBase JIRA_BASE_URL)/browse/$($a.id)" }
   'view' = { param($a)
-    $j = __TrJira 'GET' "issue/$($a.id)?fields=summary,status,parent,assignee,subtasks,project,description" $null; if (-not $j.key) { return }
+    $j = __TrJira 'GET' "issue/$($a.id)?fields=summary,status,parent,assignee,subtasks,project,description,labels" $null; if (-not $j.key) { return }
     $f = $j.fields
-    __TrTask $j.key $f.summary ([string]$f.status.name) (Get-TrackerUrl $j.key) $f.parent.key @($f.assignee | Where-Object { $_ } | ForEach-Object { $_.displayName }) ([string]$f.project.key) @($f.subtasks | Where-Object { $_ } | ForEach-Object { __TrSub $_.key $_.fields.summary ([string]$_.fields.status.name) (Get-TrackerUrl $_.key) }) (__TrAdfText $f.description).Trim()
+    Add-KitTags (__TrTask $j.key $f.summary ([string]$f.status.name) (Get-TrackerUrl $j.key) $f.parent.key @($f.assignee | Where-Object { $_ } | ForEach-Object { $_.displayName }) ([string]$f.project.key) @($f.subtasks | Where-Object { $_ } | ForEach-Object { __TrSub $_.key $_.fields.summary ([string]$_.fields.status.name) (Get-TrackerUrl $_.key) }) (__TrAdfText $f.description).Trim()) @($f.labels)
   }
   'status' = { param($a)
     $id = $a.id; $name = $a.status; $t = __TrJira 'GET' "issue/$id/transitions" $null
@@ -127,8 +127,8 @@ Register-KitAdapter 'tracker' 'jira' @{
     $have = @(@((__TrJira 'GET' "issue/$($a.id)?fields=issuelinks" $null).fields.issuelinks) | Where-Object { "$($_.type.name)" -eq $lt -and $_.inwardIssue.key } | ForEach-Object { "$($_.inwardIssue.key)" })
     foreach ($on in @($a.on | Where-Object { $_ -and $_ -notin $have })) { $null = __TrJira 'POST' 'issueLink' @{ type = @{ name = $lt }; inwardIssue = @{ key = $on }; outwardIssue = @{ key = $a.id } }; $have += $on }
     $have }
-  # labels hold no spaces: 'Wave: v2 wave 1' -> wave-v2-wave-1
-  'labels' = { param($a) $null = __TrJira 'PUT' "issue/$($a.id)" @{ update = @{ labels = @(@($a.add) | ForEach-Object { @{ add = (("$_".ToLower() -replace '[^a-z0-9]+', '-').Trim('-')) } }) } } }
+  # labels hold no spaces (kit tags are kebab already); add + remove in one update
+  'labels' = { param($a) $null = __TrJira 'PUT' "issue/$($a.id)" @{ update = @{ labels = @(@($a.add | Where-Object { $_ } | ForEach-Object { @{ add = (("$_".ToLower() -replace '[^a-z0-9]+', '-').Trim('-')) } }) + @($a.remove | Where-Object { $_ } | ForEach-Object { @{ remove = (("$_".ToLower() -replace '[^a-z0-9]+', '-').Trim('-')) } })) } } }
   'owner' = { param($a)
     if (-not $a.name) { return }
     $cl = $__trType -eq 'jira'; $k = if ($cl) { 'accountId' } else { 'name' }
@@ -137,4 +137,4 @@ Register-KitAdapter 'tracker' 'jira' @{
   }
 }
 # adapter:tracker/jira-server: Server / Data Center = jira verbs on REST v2 (JIRA_TOKEN bearer or email + token)
-Register-KitAdapter 'tracker' 'jira-server' @{ '*' = { param($a, $v) & $KitAdapters.tracker.jira[$v] $a $v } }
+Register-KitAdapter 'tracker' 'jira-server' @{ '*' = { param($a, $v) & $KitAdapters.tracker.jira[$v] $a $v }; 'labels' = { param($a) & $KitAdapters.tracker.jira.labels $a } }   # labels: a cap (tags native)

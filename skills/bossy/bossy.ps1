@@ -1360,7 +1360,7 @@ else {
   foreach ($par in $parents) {
     if (-not (Within 'QA bug tasks')) { break }
     $subs = Get-KitQaBugSubtasks $par ([math]::Min(20.0, (Left)))
-    $new = @($subs | Where-Object { $_.name.StartsWith((Get-KitKindPrefix 'bug')) -and (Test-TrackerStatus $_.status 'open') -and $_.id -notin $tracked })
+    $new = @($subs | Where-Object { (Test-KitBugTask $_) -and (Test-TrackerStatus $_.status 'open') -and $_.id -notin $tracked })
     if (-not $new.Count) { continue }
     $list = ($new | ForEach-Object { "$($_.id) $($_.name.Substring(0, [math]::Min(70, $_.name.Length)))" }) -join '; '
     $note = if ($openRuns[$par]) { " (run $($openRuns[$par]) is still testing: later bugs go into the next wave)" } else { '' }
@@ -1739,7 +1739,7 @@ function Publish-KitDecisions([string]$Task, [string]$Link) {
   if (-not $Link) { $Link = "$((Read-KitState (Get-KitTaskFile $Task)).decisions.link)" }
   $items = @(Format-KitDecisionItems $rows $Link $Task)
   $null = Test-KitProse -Kind decisions -Text (@($items.text) -join "`n")   # warnings only: the records are the facts
-  $r = Set-KitTaskChecklist $Task 'Decisions' $items
+  $r = Set-KitTaskChecklist $Task 'Decisions' $items; $null = Set-KitTaskTags $Task @("decision=$(if (@($items | Where-Object { -not $_.done }).Count) { 'needs-owner' } else { '-needs-owner' })") -Soft
   Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-KitStamp) } }
   "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
 }

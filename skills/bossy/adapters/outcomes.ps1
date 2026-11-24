@@ -27,7 +27,7 @@ function Get-KitOutcomeContext {
   $c = @{ ix = @{}; agents = @{}; local = @{}; review = @{}; bugs = @{}; decisions = @{}; spend = @{} }
   foreach ($x in @(Read-KitJsonFiles (Get-KitPath tasks))) { if ($x.task) { $c.ix["$($x.task)"] = $x } }
   $c.bugAt = @{}
-  foreach ($x in $c.ix.Values) { if ($x.parent -and ("$($x.spec.kind)" -match '(?i)bug' -or (Test-KitBugName "$($x.spec.title)"))) { $p = "$($x.parent)"; $c.bugs[$p] = [int]$c.bugs[$p] + 1; $b = ConvertTo-KitOutcomeIso $x.track.created; if ($b -and (-not $c.bugAt[$p] -or $b -lt $c.bugAt[$p])) { $c.bugAt[$p] = $b } } }
+  foreach ($x in $c.ix.Values) { if ($x.parent -and ("$($x.spec.kind)" -match '(?i)bug' -or (Test-KitBugName "$($x.spec.title)") -or 'bug' -in @($x.tags))) { $p = "$($x.parent)"; $c.bugs[$p] = [int]$c.bugs[$p] + 1; $b = ConvertTo-KitOutcomeIso $x.track.created; if ($b -and (-not $c.bugAt[$p] -or $b -lt $c.bugAt[$p])) { $c.bugAt[$p] = $b } } }
   foreach ($w in @(Read-KitJsonFiles (Get-KitPath waves))) {
     foreach ($p in @(Get-KitProps $w.agents)) { foreach ($t in @($p.Value.done | Where-Object { $_ })) {
       $c.agents[$t] = @(@($c.agents[$t]) + $p.Name | Where-Object { $_ } | Select-Object -Unique)

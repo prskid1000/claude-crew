@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L969 merge · L1300 docs ·
-  L1463 publish · L1958 render · L2527 spec · L3071 plugins · L3085 keepboth · L3104 selftest · L3802 CLI
+Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
+  L1504 publish · L2002 render · L2571 spec · L3115 plugins · L3129 keepboth · L3148 selftest · L3850 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -531,7 +531,7 @@ def bug_twins(tid, ts):
         if why := view_failed(o, x):   # tid itself read fine (auth works): the word is no task id here
             print(f'[finish] {why}: skipped' + (f'; tracker auth works ({tid} read), so {o} is no task id: the cases "tasks" row names tracker task ids only'
                   if AUTH_FAIL.search(view_why(x)) else f'; if {o} is a [Bug] task this fixes, add its doc links by hand'), file=sys.stderr)
-        elif str(x.get('name') or '').startswith(bp):
+        elif str(x.get('name') or '').startswith(bp) or 'bug' in [str(t).lower() for t in x.get('tags') or []]:   # keyed: the kind is a tag
             out.append(x)
     return out
 
@@ -652,7 +652,7 @@ def _host(verb, **a):
     with os.fdopen(fd, 'w', encoding='utf-8') as fh:
         json.dump(a, fh)
     try:
-        out = _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'host', verb, '@' + p], write=verb in ('mr.create', 'mr.update', 'mr.merge', 'mr.unauto'))
+        out = _run([PWSH, '-NoProfile', '-NonInteractive', '-File', DEV, 'host', verb, '@' + p], write=verb in ('mr.create', 'mr.update', 'mr.merge', 'mr.unauto', 'mr.labels'))
     finally:
         os.remove(p)
     if verb == 'ci.log':
@@ -911,6 +911,7 @@ def mr_create(worktree, title, body_md, tgt=None, check=False):
         up = _host('mr.update', type=host, repo=proj, n=old.get('iid') or old.get('number'), title=title, body=body_md)
         if not (isinstance(up, dict) and up.get('web_url')):
             print(f'[mr] {old["web_url"]} is open from {src}; its body was not updated (git host has no mr.update: {str(up)[:200]}) - edit it by hand', file=sys.stderr)
+        mr_labels(host, proj, old, src, title, body_md)
         scope_note(old['web_url'], globs, src)
         return old['web_url']
     m = _host('mr.create', type=host, repo=proj, source=src, target=tgt, title=title, body=body_md)
@@ -922,8 +923,26 @@ def mr_create(worktree, title, body_md, tgt=None, check=False):
             print(f'[mr] an open MR from {src} already exists (a previous call opened it): {url} - update its description if needed', file=sys.stderr)
     if not url:
         raise SystemExit(f'MR not created: {str(m)[:500]}')
+    mr_labels(host, proj, m if isinstance(m, dict) and (m.get('iid') or m.get('number')) else {'iid': (re.search(r'(\d+)/?$', url) or [0, ''])[1]}, src, title, body_md)
     scope_note(url, globs, src)
     return url
+
+
+def mr_labels(host, proj, m, src, title, body_md):
+    """MR / PR labels = its task's tags + its repo (owner 2026-11-24): git-host verb mr.labels ({labels} back), else a 'Tags:' body line."""
+    tid, n = task_of_branch(src), str(m.get('iid') or m.get('number') or '')
+    if not (tid and n and naming_on()):
+        return
+    k, have = task_key(tid), (state_read(task_file(tid)) or {}).get('tags') or []
+    try:
+        tg = naming().tags({**({'key': k} if k else {}), 'repo': proj.rsplit('/', 1)[-1]}, have)['tags']
+    except ValueError as e:
+        return print(f'[mr] labels skipped: {e}', file=sys.stderr)
+    if isinstance(r := _host('mr.labels', type=host, repo=proj, n=n, labels=tg), dict) and 'labels' in r:
+        return
+    line, b = 'Tags: ' + ', '.join(tg), re.sub(r'(?m)^Tags: .*\n?', '', body_md).rstrip()
+    if line not in body_md:
+        _host('mr.update', type=host, repo=proj, n=n, title=title, body=b.replace(FOOTER, f'{line}\n\n{FOOTER}') if FOOTER and FOOTER in b else f'{b}\n\n{line}\n')
 
 
 def of_mr(items, url, urls):
@@ -1433,12 +1452,34 @@ def _html_of(a):
     return conv
 
 
-def make_doc(title, path, parent=None, url=None):
+def make_doc(title, path, parent=None, url=None, tags=(), old_tags=()):
     """Publish via reports.type -> URL or kept path; parent: a remote id or a folder to keep it in; url: an earlier publish of
-    this doc, updated in place where the adapter can."""
+    this doc, updated in place where the adapter can; tags: its task's (a 'tags' adapter sets them natively too, old ones off)."""
     ad = ADAPTERS['report'].get(REPORT_TYPE) or no_report_adapter()
     keep = parent if parent and os.path.isdir(parent) else None
-    return ad['publish']({'title': title, 'path': path, 'parent': None if keep else parent, 'keep': keep, 'url': url})
+    return ad['publish']({'title': title, 'path': path, 'parent': None if keep else parent, 'keep': keep, 'url': url, 'tags': list(tags), 'oldTags': list(old_tags)})
+
+
+def doc_tags(tid):
+    """A doc's tags = its task's (task index, else from its kit key): specs, testing docs, QA reports filter like tasks (owner 2026-11-24)."""
+    if not (tid and naming_on()):
+        return []
+    have, k = (state_read(task_file(tid)) or {}).get('tags') or [], task_key(tid)
+    try:
+        return list(have) or (naming().tags({'key': k}, [])['tags'] if k else [])
+    except ValueError:
+        return list(have)
+
+
+def with_tags(text, ext, tags):
+    """The 'Tags: a, b' line under the title (Markdown) or first in the body (HTML), an older one replaced: every doc store shows it."""
+    line = 'Tags: ' + ', '.join(tags)
+    if ext == '.html':
+        t = re.sub(r'<p>Tags: [^<]*</p>', '', text)
+        return t if not tags else t.replace('<body>', f'<body><p>{html.escape(line)}</p>', 1) if '<body>' in t else f'<p>{html.escape(line)}</p>' + t
+    t = re.sub(r'(?m)^Tags: .*\n\n?', '', text)
+    m = re.match(r'# .*\n', t)
+    return t if not tags else t[:m.end()] + f'\n{line}\n' + t[m.end():] if m else f'{line}\n\n' + t
 
 
 def make_evidence(name, files, folder=None, parent=None, key=None):
@@ -1885,18 +1926,21 @@ def doc_title(scope, kind, title, ver):
             print(f'[publish] {scope}:{kind}: no kit key on {scope}: old-style title {title!r} kept (one version; tracker create keys new tasks)', file=sys.stderr)
         return title
     nm = re.sub(r'\s*\(was [^)]*\)\s*$', '', _KEYS.get(f'name:{scope}', ''))
-    out = nm.split(': ', 1)[1] if re.match(KEY_RX, nm) and ': ' in nm else re.sub(rf'^\S+ v\d+ — ', '', str(title))
+    out = nm[km.end():].strip() if (km := re.match(KEY_RX, nm)) else re.sub(rf'^\S+ v\d+ — ', '', str(title))   # make's clean drops an old [Type] Area: head
     return naming().make('doc', {'key': k, 'kind': DOC_KIND_NAMES.get(kind, kind.replace('-', ' ').capitalize()), 'ver': ver, 'title': out})
 
 
 def _render(key, rec, title, rounds, runs, parent=None):
     """Compose a key's rounds and runs and publish them over its earlier doc -> URL."""
     text, ext = _compose(title, rounds, runs, key.rpartition(':')[2])
+    tg = doc_tags(key.rpartition(':')[0])
+    text = with_tags(text, ext, tg) if naming_on() else text   # naming off: the doc as before
     out = os.path.join(kit_path('docs', create=True), re.sub(r'[^\w.-]+', '_', key) + ext)
     with open(out, 'w', encoding='utf-8', newline='') as fh:
         fh.write(text)
     own = {'markdown': out, 'html': os.path.splitext(out)[0] + '.doc.html'}.get(REPORT_TYPE)   # kept types: one file per key, never per title
-    url = make_doc(title, out, parent, rec.get('url') or own)
+    url = make_doc(title, out, parent, rec.get('url') or own, tg, rec.get('tags') or ())
+    rec['tags'] = tg   # the caller writes rec: the next publish nulls tags gone since
     if rec.get('url') and url != rec['url']:
         print(f'[publish] {key}: reports.type {REPORT_TYPE} could not update {rec["url"]} in place: new link {url}', file=sys.stderr)
     return url
@@ -2464,7 +2508,7 @@ def wave_order(s):
 
 
 def order_tasks(s):
-    """<brief>.order.json for `crafty.ps1 tracker order <parent> -Apply`: per area task its wave label and the tasks it waits on
+    """<brief>.order.json for `crafty.ps1 tracker order <parent> -Apply`: per area task its wave label (naming on: tag wave-<n>) and the tasks it waits on
     (an area sharing its task with another: skipped, its subtask gets links once made)."""
     waves, waits = wave_order(s)
     tk = {a['id']: a.get('task') or s.get('task') or '' for a in s['agents']}
@@ -3165,7 +3209,7 @@ def selftest():
     wo = {'name': 'v2', 'agents': [{'id': 'A', 'task': 't1'}, {'id': 'B', 'task': 't2', 'dependsOn': ['A']}, {'id': 'C', 'task': 't3'}, {'id': 'D', 'task': 't4'}, {'id': 'E', 'task': 't4'}],
           'contracts': [{'producer': 'B', 'consumers': 'C, D'}]}
     ot = order_tasks(wo); cy = wave_order({'agents': [{'id': 'X', 'dependsOn': ['Y']}, {'id': 'Y', 'dependsOn': ['X']}, {'id': 'Z'}]})[0]
-    expect('wave order: A then B (dependsOn) then C (contract consumer); D / E share t4 (skipped); labels "<name> wave <n>"; a cycle is its own row',
+    expect('wave order: A then B (dependsOn) then C (contract consumer); D / E share t4 (skipped); labels "<name> wave <n>" (naming on: tracker order makes them wave-<n>); a cycle is its own row',
            wave_order(wo)[0] == [(1, ['A', 'E']), (2, ['B']), (3, ['C', 'D'])] and [(t['task'], t['wave'], t['waitsOn']) for t in ot['tasks']] == [('t1', 'v2 wave 1', []), ('t2', 'v2 wave 2', ['t1']), ('t3', 'v2 wave 3', ['t2'])]
            and cy == [(1, ['Z']), ('cycle', ['X', 'Y'])] and '| 2 | B | t2 | A |' in render_wave_brief(wo) and 'b.order.json' in wave_files({**wo, 'mandate': ['m']}, 'b.md'))
     agent_env = {n: os.environ.pop(n, None) for n in ('CLAUDE_AGENT', 'KIT_AGENT')}
@@ -3792,6 +3836,10 @@ def _report_selftest(expect):
                 make_doc('T', md)
         except SystemExit as e:
             expect('a report type with no adapter: exit 3 + one line naming it', e.code == 3 and 'reports.type no-such-type: no such report adapter' in err.getvalue())
+        tl = with_tags('# T\n\nx\n', '.md', ['wave-2'])   # every store: the line; gdocs / confluence: native too (owner 2026-11-24)
+        expect('doc tags: a Tags line under the title (once, replaced), first in an HTML body; native: gdocs, confluence',
+               tl == '# T\n\nTags: wave-2\n\nx\n' and with_tags(tl, '.md', ['bug']) == '# T\n\nTags: bug\n\nx\n' and with_tags(tl, '.md', []) == '# T\n\nx\n'
+               and with_tags('<body><p>x</p>', '.html', ['bug']) == '<body><p>Tags: bug</p><p>x</p>' and {n for n, x in ADAPTERS['report'].items() if x.get('tags')} == {'confluence', 'gdocs'} & set(ADAPTERS['report']))   # a test kit may load only some
         for name, adapter in ADAPTERS['report'].items():
             if adapter.get('selftest'):
                 use(name, {}); adapter['selftest'](expect, tmp, md)

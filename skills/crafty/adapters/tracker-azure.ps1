@@ -55,9 +55,9 @@ Register-KitAdapter 'tracker' 'azure' @{
   'view' = { param($a)
     $j = __TrAz 'GET' "wit/workitems/$($a.id)?`$expand=relations" $null; if (-not $j.id) { return }
     $f = $j.fields; $rel = { param($t) @($j.relations | Where-Object { $_.rel -eq "System.LinkTypes.Hierarchy-$t" } | ForEach-Object { $_.url -replace '^.*/' }) }; $kids = @(& $rel Forward)
-    [pscustomobject]@{ id = "$($j.id)"; name = $f.'System.Title'; status = [string]$f.'System.State'; url = Get-TrackerUrl $j.id; parent = @(& $rel Reverse)[0]
+    Add-KitTags ([pscustomobject]@{ id = "$($j.id)"; name = $f.'System.Title'; status = [string]$f.'System.State'; url = Get-TrackerUrl $j.id; parent = @(& $rel Reverse)[0]
       assignees = @($f.'System.AssignedTo'.displayName | Where-Object { $_ }); list = [string]$f.'System.AreaPath'; description = (__TrUnHtml $f.'System.Description')
-      subtasks = @(if ($kids) { (__TrAz 'GET' "wit/workitems?ids=$($kids -join ',')&fields=System.Title,System.State" $null).value | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; name = $_.fields.'System.Title'; status = [string]$_.fields.'System.State'; url = Get-TrackerUrl $_.id } } }) }
+      subtasks = @(if ($kids) { (__TrAz 'GET' "wit/workitems?ids=$($kids -join ',')&fields=System.Title,System.State" $null).value | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; name = $_.fields.'System.Title'; status = [string]$_.fields.'System.State'; url = Get-TrackerUrl $_.id } } }) }) @("$($f.'System.Tags')" -split ';\s*')
   }
   'status' = { param($a) $null = __TrAzSet $a.id @{ 'System.State' = $a.status }; "status of $($a.id): $($a.status)" }
   'comment' = { param($a) $null = __TrAz 'POST' "wit/workItems/$($a.id)/comments" @{ text = (__TrHtml $a.text) }; "commented on $($a.id)" }
@@ -72,6 +72,9 @@ Register-KitAdapter 'tracker' 'azure' @{
   }
   'describe' = { param($a) $null = __TrAzSet $a.id @{ 'System.Description' = (__TrHtml $a.text) }; "described $($a.id)" }
   'rename' = { param($a) $null = __TrAzSet $a.id @{ 'System.Title' = $a.name }; "renamed $($a.id)" }
+  # tags: System.Tags ('a; b'), the whole set written back
+  'labels' = { param($a) $h = @("$((__TrAz 'GET' "wit/workitems/$($a.id)?fields=System.Tags" $null).fields.'System.Tags')" -split ';\s*' | Where-Object { $_ -and $_ -notin @($a.remove) })
+    $null = __TrAzSet $a.id @{ 'System.Tags' = (@($h + @($a.add | Where-Object { $_ -and $_ -notin $h })) -join '; ') } }
   # move (K54): the old parent link out (top or a new parent), the new one in; -List = area path
   'move' = { param($a)
     $rels = @((__TrAz 'GET' "wit/workitems/$($a.id)?`$expand=relations" $null).relations)

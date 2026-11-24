@@ -3,10 +3,12 @@
 reports.share (anyone (default) | domain:<domain> | none); evidence = a Drive folder (reports.driveParent / driveParent), one
 image src per file. Loaded by devtools.py from skills/crafty/adapters/."""
 import json, os, re, sys
+# Sections: L11 drive · L50 publish · L85 selftest
 
 dt = None   # devtools.py, set by register
 
 
+# ---- drive: gws calls, share, create, update, tag properties
 def gws(*args, params=None, body=None, upload=None, sec=None):
     if not dt.GWS:
         raise SystemExit('reports.type is gdocs but the gws CLI is not on PATH (or set "reports": {"type": "markdown"})')
@@ -36,6 +38,16 @@ def _update(fid, path, sec=None):
     return gws('drive', 'files', 'update', params={'fileId': fid, 'supportsAllDrives': True, 'fields': 'id'}, upload=path, sec=sec)
 
 
+def _tag_props(fid, a):
+    """Drive file properties kit-tag-<tag> = 1 per task tag (search: properties has { key='kit-tag-wave-2' and value='1' }), old
+    ones nulled; Drive labels need an admin-published label, so the kit uses properties + the doc's 'Tags:' line."""
+    new, old = list(a.get('tags') or []), [t for t in a.get('oldTags') or [] if t not in (a.get('tags') or [])]
+    if new or old:
+        gws('drive', 'files', 'update', params={'fileId': fid, 'supportsAllDrives': True, 'fields': 'id'},
+            body={'properties': {**{f'kit-tag-{t}': None for t in old}, **{f'kit-tag-{t}': '1' for t in new}}})
+
+
+# ---- publish: a doc, its evidence folder
 def publish(a):
     m = re.search(r'docs\.google\.com/document/d/([\w-]+)', a.get('url') or '')
     if m:   # an earlier publish of this key: the same doc and link
@@ -45,6 +57,7 @@ def publish(a):
             print(f'warning: gws timed out updating {a["url"]}: retrying once with {2 * dt.net_sec()} s', file=sys.stderr)
             r = _update(m.group(1), html, sec=2 * dt.net_sec())
         if isinstance(r, dict) and r.get('id') == m.group(1):
+            _tag_props(m.group(1), a)
             return f'https://docs.google.com/document/d/{m.group(1)}/edit'
         print(f'warning: gws could not update {a["url"]} ({str(r)[:200]}): publishing a new doc', file=sys.stderr)
     r = _create(a['title'], 'application/vnd.google-apps.document', a.get('parent') or dt.CFG.get('driveParent'), dt._html_of(a))
@@ -52,6 +65,7 @@ def publish(a):
         raise SystemExit(f'gws upload failed: {r}')
     url = f"https://docs.google.com/document/d/{r['id']}/edit"
     _share(r['id'], url)
+    _tag_props(r['id'], a)
     return url
 
 
@@ -68,6 +82,7 @@ def evidence(a):
     return {'folderId': fid, 'folderLink': link, 'label': 'Drive folder', 'files': out}
 
 
+# ---- selftest: recorded gws replies
 def selftest(expect, tmp, md):
     """On recorded gws replies (no network); devtools.py selftest calls it with reports.type gdocs set."""
     global gws
@@ -103,6 +118,8 @@ def selftest(expect, tmp, md):
         expect('gdocs: an earlier link is updated in place (files.update, same id and link, no create / share); tables upload as HTML tables',
                u2 == 'https://docs.google.com/document/d/1AbC/edit' and len(up) == 1 and len(calls) == 1 and calls[0][1]['params']['fileId'] == '1AbC'
                and '<b>Steps</b></th>' in html_up and '>T1</td>' in html_up)
+        use({}); dt.make_doc('T', tmd, url='https://docs.google.com/document/d/1AbC/edit', tags=['wave-2'], old_tags=['wave-1'])
+        expect('gdocs: task tags as Drive properties kit-tag-<tag> = 1, a tag gone since nulled', [k['body'] for a, k in calls if k.get('body')] == [{'properties': {'kit-tag-wave-1': None, 'kit-tag-wave-2': '1'}}])
         use({}, lambda a: {'raw': 'error: timed out after 120 s'} if len(calls) == 1 else FILE)
         u3 = dt.make_doc('T', tmd, url='https://docs.google.com/document/d/1AbC/edit')
         expect('gdocs: an in-place update that timed out is retried once with double the timeout, same link, no new doc',
@@ -122,4 +139,4 @@ def selftest(expect, tmp, md):
 def register(d):
     global dt
     dt = d
-    d.ADAPTERS['report']['gdocs'] = {'publish': publish, 'evidence': evidence, 'selftest': selftest}
+    d.ADAPTERS['report']['gdocs'] = {'publish': publish, 'evidence': evidence, 'selftest': selftest, 'tags': 'Drive properties kit-tag-<tag>'}

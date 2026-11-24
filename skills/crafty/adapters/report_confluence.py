@@ -25,7 +25,9 @@ def publish(a):
     page = {'type': 'page', 'title': a['title'], 'space': {'key': dt.RCFG['space']}, 'body': {'storage': {'value': body, 'representation': 'storage'}}}
     if parent:
         page['ancestors'] = [{'id': str(parent)}]
-    links = _http('POST', base + '/rest/api/content', page, {'Authorization': auth}).get('_links') or {}
+    rep = _http('POST', base + '/rest/api/content', page, {'Authorization': auth}); links = rep.get('_links') or {}
+    if a.get('tags') and rep.get('id'):   # page labels = the task's tags (search: label = wave-2)
+        _http('POST', f'{base}/rest/api/content/{rep["id"]}/label', [{'prefix': 'global', 'name': t} for t in a['tags']], {'Authorization': auth})
     return links.get('base', base) + links['webui'] if links.get('webui') else sys.exit(f'confluence: no page link in the reply: {links}')
 
 
@@ -42,6 +44,8 @@ def selftest(expect, tmp, md):
         expect('confluence: a storage page under reports.parent, bearer auth', u == 'https://ex.atlassian.net/wiki/spaces/QA/pages/65601/T'
                and url.endswith('/wiki/rest/api/content') and b['ancestors'] == [{'id': '42'}] and '<hr/>' in b['body']['storage']['value']
                and hd['Authorization'] == 'Bearer tk')
+        calls.clear(); publish({'title': 'T', 'path': md, 'parent': None, 'keep': None, 'tags': ['wave-2']})
+        expect('confluence: task tags as page labels', calls[1][1].endswith('/rest/api/content/65601/label') and calls[1][2] == [{'prefix': 'global', 'name': 'wave-2'}])
         calls.clear(); publish({'title': 'T', 'path': dt.sample_run_doc(tmp), 'parent': None, 'keep': None})
         sv = calls[0][2]['body']['storage']['value']
         expect('confluence: an env run fills the human doc row: result with check ids, the screenshot inline (closed img), the JSON excerpt + link',
@@ -56,4 +60,4 @@ def selftest(expect, tmp, md):
 def register(module):
     global dt
     dt = module
-    dt.ADAPTERS['report']['confluence'] = {'publish': publish, 'selftest': selftest}
+    dt.ADAPTERS['report']['confluence'] = {'publish': publish, 'selftest': selftest, 'tags': 'page labels'}
