@@ -19,6 +19,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- opening an MR -> run kitbag.py prose --kind mr-title and mr-body before ship; title carries the task id, max 3 link bullets, body states UI change truthfully (MR title and body failed the prose check only at ship time)
 - [ship] writing the MR body How tested -> count PASS rows from the diff; say UI change when the diff touches a UI file (MR body marked not a UI change while the AI panel changed (6791)
 - one-off python from Git Bash -> write a scratch .py and run it with pwsh python -X utf8, not python -c (python shim echoes goto :error)
 - a kit worktree push is refused as protected branch -> use git -C <wt> push origin HEAD:main, not from the worktree cwd (guard refuses cwd form)
@@ -109,6 +110,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- launching a .bat launcher (codexl.bat) with a prompt -> pass a one-line prompt (%* cuts a multi-line prompt at the first newline)
+- running pwsh -Command from Bash -> use single quotes or a script file; backticks inside Bash double quotes run as bash commands (the command ran wrong, 0 matches)
 - a command prints a long result (audit, lint, scan, ls-files) -> filter or range it (--warn | head, grep, -First) before it enters context (kitty bigresult: 28 runs, 327k tokens)
 - a kit file is needed again in the same run -> note its facts once; later Read only an offset/limit range or grep the line (kitty reread: 101 runs, 843k tokens in one retro window)
 - writing kit edit scripts -> create each edit .py with the Write tool, not a Bash heredoc (heredoc lost backslashes and missed CRLF anchors (3 failures)
@@ -166,3 +169,5 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 ## rechy
 - a search or fetch returns a large page or list -> narrow it (filter, range, one section) and note the facts once (rechy bigresult 118k + reread 111k tokens in 5 runs)
 - Checking an adapter against a vendor API -> read the vendor reference (an llms.txt index lists .md pages) and diff request and response shapes field by field (adapters drifted from the vendor). (1x)
+## reversy
+- running Ghidra headless -> keep the project path free of dot folders (.claude, .runtime) (Ghidra refuses a path element starting with a dot)
