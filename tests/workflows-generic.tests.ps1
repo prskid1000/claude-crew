@@ -55,7 +55,7 @@ const { calls, agent } = _mock((p, o) => {
  if (o.label === 'build:N5') return _rep(none({ decisionId: 'd-20261121120000-owner-cd34' }))
  if (o.label === 'none-word:N3') return _ok('WORD d-20261121120000-owner-ab12 (merge A3): "ship it" by owner via chat at t | question: q')
  if (o.label === 'none-word:N5') return { ok: false, output: 'NO-WORD id d-20261121120000-owner-cd34: d-20261121120000-owner-cd34 answered by devy-x, no person' }
- if (/^build:/.test(o.label)) return _rep(none())
+ if (/^(build|local):/.test(o.label)) return _rep(none())
  if (/^review:/.test(o.label)) return { findings: [] }
  if (/^ship:/.test(o.label)) return _rep(none(), _merged(1))
 }, '[]')
@@ -65,9 +65,10 @@ console.log(`none-verified:${L.includes('none-word:N5') && !L.includes('ship:N5'
  && logs.some((l) => /N5: .*refused \(NO-WORD/.test(l))}`)
 console.log(`none-held:${!L.includes('review:N1') && !L.includes('ship:N1') && o.blocked.some((b) => b.agent === 'N1' && /local test NONE/.test(b.why))}`)
 console.log(`none-doc:${L.includes('ship:N2')}`)
+console.log(`none-local:${L.filter((l) => l === 'local:N1').length === 1 && !L.includes('local:N2') && !L.includes('local:N3') && logs.some((l) => /N1: reported done with no local loop/.test(l))}`)
 console.log(`none-decided:${L.includes('ship:N3') && !L.includes('ship:N4')}`)
 '@
-Expect-Each (Invoke-Js dw-none $jsn0 $wfd) 'buildy merge gate: localTest NONE # (a code area held, kind doc and a person''s merge word ship; a made-up id or a NO-WORD from decide check -Gate merge,scope,other -Item <area keys> not, 2026-11-21)' 'none-held', 'none-doc', 'none-decided', 'none-verified' -Show 8
+Expect-Each (Invoke-Js dw-none $jsn0 $wfd) 'buildy merge gate: localTest NONE # (a code area held, kind doc and a person''s merge word ship; a made-up id or a NO-WORD from decide check -Gate merge,scope,other -Item <area keys> not, 2026-11-21)' 'none-held', 'none-doc', 'none-decided', 'none-verified', 'none-local' -Show 8
 # repos[].localTest optional / none (CONFIG local): NONE + localFallback ships with no decision; required (unset) or unit without its run: held
 $jslf = @'
 const UR = { command: 'crafty.ps1 check -Dir C:/w', result: 'PASS 12 tests' }, lt = (fb, ur) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...(fb ? { fallback: fb } : {}), ...(ur ? { unitRun: ur } : {}) })

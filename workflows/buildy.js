@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L267 ship-prompt · L284 plan · L303 spike ·
-//   L315 local-loop · L396 stages · L550 ship · L590 debate · L699 deploy · L714 learn
+//   L315 local-loop · L403 stages · L557 ship · L597 debate · L706 deploy · L721 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -375,6 +375,13 @@ async function localLoop(a, r, retries, stage) {
  }
  r = normLocal(r)
  if ((r.needsEnvFix || []).length) return r
+ // done with no local loop (19 fix rounds, retro 1124): one local round before review, never a fix round
+ if (retries && (r.mrs || []).length && (r.localTest || { status: 'NONE' }).status === 'NONE' && await mergeHeld({ status: 'NONE', ...r.localTest }, a, r)) {
+  if (!(await gate(stage))) return { ...r, budgetStopped: true }
+  log(`${a.id}: reported done with no local loop - local round before review`)
+  const r2 = await agent(continuePrompt(a, r, 'You reported done without the local test loop (localTest NONE). Run it now on the local env: every goal, then report localTest.'), dvo(a, 'local', stage))
+  if (r2 && Array.isArray(r2.mrs)) r = normLocal(mergeReports(r, r2, 'Local loop round'))
+ }
  for (let i = 0; i < retries && r.localTest && r.localTest.status === 'FAIL' && holdsMerge(r.localTest); i++) {
   if (!(await gate(stage))) return { ...r, budgetStopped: true }
   log(`${a.id}: local test FAILED (${fails(r.localTest)}) - local round ${i + 2}`)
