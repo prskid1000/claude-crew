@@ -103,8 +103,8 @@ function Get-KitDenyWho($D, $Rows) {
 # an active pause whose runs work (relaunched by hand): their agents stop next beat
 function Get-KitPauseFlags($Pauses, $Active, [int]$WfAgents) {
   foreach ($p in @($Pauses | Where-Object { $_.state -eq 'paused' })) {
-    $hit = @($Active | Where-Object { -not $_.paused -and ($_.run -eq $p.run -or ($p.run -eq '*' -and $_.run -notin @($p.released))) } | ForEach-Object run | Select-Object -Unique)
-    if ($hit.Count -or ($p.run -eq '*' -and $WfAgents)) { [pscustomobject]@{ level = 'ACT'; what = "pause $(Split-Path "$($p.file)" -Leaf) ($($p.reason), since $(([datetime]$p.at).ToString('HH:mm'))) is active while run(s) work: $(if ($hit) { $hit -join ', ' } else { "$WfAgents workflow agent(s)" }); their agents stop at the next beat"; action = "Reason gone: & $($KitCmd.orch) resume -All (or -Run <run>); else pause those runs again." } }
+    $hit = @($Active | Where-Object { -not $_.paused -and (Test-KitPauseCovers $p $_.run) } | ForEach-Object run | Select-Object -Unique)
+    if ($hit.Count -or ($p.run -eq '*' -and "$($p.kind)" -ne 'kit' -and $WfAgents)) { [pscustomobject]@{ level = 'ACT'; what = "pause $(Split-Path "$($p.file)" -Leaf) ($($p.reason), since $(([datetime]$p.at).ToString('HH:mm'))) is active while run(s) work: $(if ($hit) { $hit -join ', ' } else { "$WfAgents workflow agent(s)" }); their agents stop at the next beat"; action = "Reason gone: & $($KitCmd.orch) resume -All (or -Run <run>); else pause those runs again." } }
   }
 }
 # a run silent 2+ days with unfinished agents: one WATCH ($Quiet remembers it), then skipped
@@ -1228,7 +1228,7 @@ function Invoke-KitStopLearn($S, [string]$By) {
 }
 # a (re)launch ends its pause and leaves a '*' pause
 function Clear-KitPauseFor([string]$Run) {
-  foreach ($p in @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) })) {
+  foreach ($p in @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and (Test-KitPauseCovers $_ $Run) })) {
     Invoke-KitLocked $p.file { $j = Get-Content -LiteralPath $p.file -Raw | ConvertFrom-Json
       if ($j.run -eq '*') { $j | Add-Member -Force NoteProperty released @(@($j.released | Where-Object { $_ }) + $Run) } else { $j.state = 'resumed'; $j | Add-Member -Force NoteProperty resumedAt (Get-KitStamp) }
       $j | Add-Member -Force NoteProperty releasedBy @(@($j.releasedBy | Where-Object { $_ }) + "launch $Run $((Get-KitStamp))")
@@ -1307,21 +1307,21 @@ function Get-KitPauseSteps([string]$Session) { "now: let a running git, push or 
 # returns in seconds: record + PAUSE messages + runs marked; waiting for agents, stop-learn and the local-env stop run in the
 # background (-Wait <min> given: inline, as before). An agent stops only at a step boundary: a build or test step takes minutes.
 function Start-KitPause {
-param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone)
+param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone, [ValidateSet('all', 'product', 'kit')][string]$Kind = 'all')
 if ($Status) { Show-KitPause; return }
 if ($Finish) { Complete-KitPause $Finish $Wait; return }
-if (-not ($Run -or $All)) { 'usage: bossy.ps1 pause -Run <run> | -All [-Reason "<why>"] [-Wait <min>: block until agents leave] [-Everyone] | -Status'; exit 2 }
+if (-not ($Run -or $All)) { 'usage: bossy.ps1 pause -Run <run> | -All [-Kind all|product|kit] [-Reason "<why>"] [-Wait <min>: block until agents leave] [-Everyone] | -Status'; exit 2 }
 $board0 = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and (Test-KitHolder $_) -ne $false })
 $foreign = if ($Everyone) { @{} } else { Get-KitForeignRuns @(@(Get-StoppedRuns -Hours 24 -All) + $board0) }   # another live coordinator's runs: its own pause
 if ($Run -and $foreign[$Run]) { "OWNED: run $Run belongs to $($foreign[$Run]): pause it in that session, or add -Everyone"; exit 1 }
 $pf = Join-Path (Get-KitPath pauses -Create) "$(New-KitId pause (Get-KitPath pauses)).json"   # NO-DATE: pause-<nnnn>; the time is its at
-$rec = [ordered]@{ at = (Get-KitStamp); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); state = 'pausing'; wait = $Wait; finisher = $(if ($PSBoundParameters.ContainsKey('Wait')) { $PID }); agents = @(); runs = @(); released = @($foreign.Keys) } + (Get-KitMe)
+$rec = [ordered]@{ at = (Get-KitStamp); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); kind = $Kind; state = 'pausing'; wait = $Wait; finisher = $(if ($PSBoundParameters.ContainsKey('Wait')) { $PID }); agents = @(); runs = @(); released = @($foreign.Keys) } + (Get-KitMe)
 Write-KitState $pf $rec   # from now every board beat prints PAUSE
-$mine = { param($x) ($All -or $x.run -eq $Run) -and -not $foreign["$($x.run)"] }
+$mine = { param($x) ($All -or $x.run -eq $Run) -and -not $foreign["$($x.run)"] -and (Test-KitPauseCovers $rec "$($x.run)") }
 $live = @($board0 | Where-Object { (& $mine $_) -and ($Everyone -or $_.run -or -not (Get-KitRunOwner $_)) })   # a run's agents follow its owner
 foreach ($b in $live) { Send-BoardMsg 'coordinator' $b.agent "PAUSE ($Reason): $(Get-KitPauseSteps $b.session)" 'pause' }
 # a build or test blocks its agent for minutes: stopped now (queued ones leave the gate), the agent redoes that step after resume
-$stoppedBuilds = @(if ($All -and -not $foreign.Count) { Stop-KitAgentBuilds '*' "PAUSE ($Reason): redo this step after resume" } else { foreach ($b in $live) { Stop-KitAgentBuilds $b.agent "PAUSE ($Reason): redo this step after resume" @($b.worktrees) } })
+$stoppedBuilds = @(if ($All -and -not $foreign.Count -and $Kind -eq 'all') { Stop-KitAgentBuilds '*' "PAUSE ($Reason): redo this step after resume" } else { foreach ($b in $live) { Stop-KitAgentBuilds $b.agent "PAUSE ($Reason): redo this step after resume" @($b.worktrees) } })
 $closed = @(Close-KitFinishedRuns 24)   # after PAUSE went out: agents stop at once
 # live runs, or stopped within 24 h: an older crashed run is not running, resume -All lists it
 $runs = @(Get-StoppedRuns -Hours 24 -All | Where-Object { & $mine $_ })

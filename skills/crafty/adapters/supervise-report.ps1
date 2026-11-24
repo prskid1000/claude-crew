@@ -284,7 +284,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   $pauses = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object state -eq 'paused')
   $waitOf = { param([string]$Run, [string[]]$Names)
     foreach ($n in $Names) { foreach ($k in "$Run/$n", "/$n") { if ($waits[$k]) { return $waits[$k] } } }
-    $p = @($pauses | Where-Object { $Run -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) })[0]
+    $p = @($pauses | Where-Object { $Run -and (Test-KitPauseCovers $_ $Run) })[0]
     if ($p) { [pscustomobject]@{ why = "owner pause: $($p.reason)"; at = $p.at; next = "bossy.ps1 resume -Run $Run" } } }
   # a board transcript in a workflow folder maps its folder id to the run
   $recent = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { -not $_.takenOverBy -and ($Now - [datetime]$_.beat).TotalHours -lt $(if ($_.status -eq 'left') { 2 } else { 6 }) })   # supervise's window

@@ -424,7 +424,7 @@ function Get-KitPauseFor([string]$Agent, [string]$Dir) {
   $full = try { [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/') } catch { '' }
   $me = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and ($_.agent -eq $Agent -or ($full -and @($_.worktrees | Where-Object { "$_" -match '[\\/]' -and $full.StartsWith("$_".TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) }).Count)) })[0]
   if (-not $me) { return }
-  @($ps | Where-Object { ($me.run -and ($_.run -eq $me.run -or ($_.run -eq '*' -and $me.run -notin @($_.released)))) -or $me.agent -in @($_.agents.agent) })[0]
+  @($ps | Where-Object { ($me.run -and (Test-KitPauseCovers $_ $me.run)) -or $me.agent -in @($_.agents.agent) })[0]
 }
 # kind: command regex; its starting GB until 2 runs are learned: params.registry.json gate.kindGB.<kind> (other: gate.kindGB.other)
 $script:GateKinds = [ordered]@{

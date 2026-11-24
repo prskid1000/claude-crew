@@ -61,7 +61,7 @@ function Set-KitBoardCrashed {
 }
 function Get-KitCheckpoint([string]$Agent, [string]$Run = '') { $f = Get-KitCheckpointFile $Agent $Run; if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch {} } }
 function Get-KitResumeBriefFile([string]$Agent, [string]$Run = '') { (Get-KitCheckpointFile $Agent $Run) -replace '\.json$', '-brief.md' }   # resume.json -> resume-brief.md
-function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) } | Sort-Object { [datetime]$_.at })[-1] }
+function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and (Test-KitPauseCovers $_ $Run) } | Sort-Object { [datetime]$_.at })[-1] }
 # N3 agent ids <role>-<nn>: one counter per role in .state naming.json (kitbag_naming.py's file, same lock), never reused (an old
 # holder's inbox); $Legacy (the old <role>-<run> form) -> aliases, read by msg -To for one version
 function New-KitAgentId([string]$Type, [string]$Legacy = '') { $f = Get-KitPath naming -Create
@@ -618,7 +618,7 @@ function Set-KitLaunchField([string[]]$Files, [string]$Name, $Value) {
   foreach ($x in @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if ($null -eq $Value) { $j.PSObject.Members.Remove($Name) } else { $j | Add-Member -Force NoteProperty $Name $Value }; Write-KitState $x $j } }
 }
 # back in seconds, -Status, the finisher: supervise-resources.ps1 "pause"
-function Invoke-Pause { param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone) Start-KitPause @PSBoundParameters }
+function Invoke-Pause { param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone, [string]$Kind = 'all') Start-KitPause @PSBoundParameters }
 
 # ---- resume: paused and crashed runs; done steps verified (sha, MR), never redone
 function Test-KitOnline([string]$HostName = $KitConf.GitHost, [int]$Ms = 5000, [int]$Port = [int](Get-KitParam 'net.probePort')) {   # all addresses at once: ConnectAsync(host) hung on dead IPv6

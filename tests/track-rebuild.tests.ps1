@@ -202,8 +202,10 @@ $tf = Join-Path $wd 'agent-a1.jsonl'; @('{"type":"user","message":{"role":"user"
 @{ agent = 'RV'; type = 'revy'; session = 'RV-s'; run = ''; status = 'working'; joined = (Get-Date).AddMinutes(-90).ToString('o'); beat = (Get-Date).AddMinutes(-90).ToString('o') } | ConvertTo-Json | Set-Content (Join-Path $bd 'RV-s.json')
 $rv = @(Get-KitStatusRows (Get-Date) | Where-Object name -eq 'RV (revy)')[0]
 "ended:$($rv.done -eq 'turn complete' -and $rv.tx -eq $tf.ToString() -and $rv.state -ne 'STUCK')"
+$pz = { param($kd) [pscustomobject]@{ run = '*'; kind = $kd; state = 'paused'; at = (Get-Date).ToString('o'); released = @() } }   # pause -Kind: product spares kit runs, kit spares product runs
+"pausekind:$((Test-KitPauseCovers (& $pz product) 'buildy-0042') -and -not (Test-KitPauseCovers (& $pz product) 'kitty-fix-0011') -and -not (Test-KitPauseCovers (& $pz kit) 'testy-0001') -and (Test-KitPauseCovers (& $pz $null) 'kitty-fix-0011') -and -not @(Get-KitPauseFlags @(& $pz product) @([pscustomobject]@{ run = 'kitty-fix-0011' }) 0).Count)"
 '@
-Expect-Each (Invoke-PsTest 'false-flags' $sfTest @($O, (Kd))) 'supervise false flags: # (heir: same-area new agent id continues a handoff; collision: a later delivery clears it; ended: a finished workflow agent row is no STUCK)' @('heir', 'collision', 'ended') 3
+Expect-Each (Invoke-PsTest 'false-flags' $sfTest @($O, (Kd))) 'supervise false flags: # (heir: same-area new agent id continues a handoff; collision: a later delivery clears it; ended: a finished workflow agent row is no STUCK)' @('heir', 'collision', 'ended', 'pausekind') 4
 Expect 'supervise: retro due only with no open workflow (paused, or between agents, counts as open)' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*if (-not `$done) { `$wfOpen++ }*Phase 'retro'; if (-not `$runTotal -and -not `$wfOpen -and -not `$pausedRuns.Count)*")
 Expect 'supervise: a stale planned-area HOLD line is an ACT, other HOLD lines INFO' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*-match '^HOLD \S+: .*\(stale: ') { Flag 'ACT'*")
 $tbr = Invoke-PsTest release-tabrow @'
