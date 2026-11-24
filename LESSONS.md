@@ -19,7 +19,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
-- wt commit -ScopeOk after an owner answer saying scope ok -> record scope with decide record -Gate scope -Item <branch>; the check reads a record keyed by branch (NO-WORD 2x)
+- wt commit -ScopeOk after an owner answer saying scope ok -> record scope with decide record -Gate scope -Item <branch>; the check reads a record keyed by branch (NO-WORD 2x) (2×)
 - opening an MR -> run kitbag.py prose --kind mr-title and mr-body before ship; title carries the task id, max 3 link bullets, body states UI change truthfully (MR title and body failed the prose check only at ship time)
 - [ship] writing the MR body How tested -> count PASS rows from the diff; say UI change when the diff touches a UI file (MR body marked not a UI change while the AI panel changed (6791)
 - one-off python from Git Bash -> write a scratch .py and run it with pwsh python -X utf8, not python -c (python shim echoes goto :error)
@@ -111,6 +111,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- editing files from Git Bash via pwsh -Command with ${...} -> use the Edit tool (bash ate the variable and an empty string emptied testy.js)
+- piping a long kit-tests run through grep | head -> redirect kit-tests output to a file, read it after (no output until the end, run stopped and redone)
 - pushing a kit worktree to main from Git Bash -> run git -C D:/<wt> push origin HEAD:main; no cd /d/... prefix (it hides the kit dir from the guard) (push refused 2x)
 - launching a .bat launcher (codexl.bat) with a prompt -> pass a one-line prompt (%* cuts a multi-line prompt at the first newline)
 - running pwsh -Command from Bash -> use single quotes or a script file; backticks inside Bash double quotes run as bash commands (the command ran wrong, 0 matches)
