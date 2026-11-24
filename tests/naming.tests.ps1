@@ -70,6 +70,11 @@ Set-JsonFile "$wd/plan2.json" @{ items = @(@{ id = 't-9'; title = 'SHOP-CAT-007 
 $tg4 = Kb naming tags key=SHOP-CAT-004 repo=cat-svc --have 'team=core'; $tg5 = Kb naming tags 'wave=1,2'
 Expect "tags review: rerun keeps bug, repo tag 'cat', a person's label kept, one wave ($($tg4.out) | $($rn2.out -replace '\s+', ' '))" ((($rn2.out | ConvertFrom-Json).tags -join ',') -eq 'bug,shop,catalogue' -and
   (($tg4.out | ConvertFrom-Json).tags -join ',') -eq 'team=core,cat,shop,catalogue' -and $tg5.code -eq 1 -and $tg5.out -match 'one value at a time')
+# naming.titleStrip (owner 2026-11-24): org regexes cut old codes from retag titles
+Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' }; titleStrip = @('^Old v1 [A-Z]\d+\s+', '\s*\(was K\d\)') } }
+Set-JsonFile "$wd/plan3.json" @{ items = @(@{ id = 't-8'; title = 'SHOP-CAT-008 [Feature] Catalogue: Old v1 G2 Price list (was K1)' }) }; $rn3 = Kb naming rename --plan "$wd/plan3.json" --json
+Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }
+Expect "titleStrip: old codes cut ($($rn3.out -replace '\s+', ' '))" (($rn3.out | ConvertFrom-Json).title -eq 'SHOP-CAT-008 Price list')
 $sd = Kb naming seed SHOP-CAT 7; $k4 = Kb naming next key SHOP CAT; $mi = Kb naming make title key=BAD-X-1 product=ZZ area=Q outcome=x; $mn = Kb naming make case key=SHOP-CAT-004 n=abc
 Expect "seed: next key after the migrated ones; make refuses a name off the standard (1) or a bad number (2) ($($k4.out) $($mi.code)$($mn.code))" ($sd.code -eq 0 -and $k4.out -eq 'SHOP-CAT-008' -and
   $mi.code -eq 1 -and $mi.out -match 'NAME title' -and $mn.code -eq 2)

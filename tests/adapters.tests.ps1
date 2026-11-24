@@ -57,7 +57,7 @@ $rpo = pwsh -NoProfile -File $Dc tracker status LOCAL-91 promoted 2>&1 | Out-Str
 $null = pwsh -NoProfile -File $Dc tracker status LOCAL-91 closed 2>&1; $rc = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','; Remove-Item Env:KIT_TRACKER_TYPE
 Expect "tracker retag: dry run = table only; apply = <KEY> <outcome> + tags, the old wave label gone; promoted -> needs-deploy, closed clears ($($rv.name) | $($rv.tags -join ',') | $rp | $rc | $rpo)" (
   $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \| SHOP-CAT-002 \| SHOP-CAT-002 crash on save \| bug, shop, catalogue \|' -and $rtD -match 'DRY RUN: 2 keyed' -and $rt0 -like '*`[Feature`]*' -and
-  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'SHOP-CAT-001 price grid' -and ($rv.tags -join ',') -eq 'feature,shop,catalogue,wave-2' -and $rp -eq 'bug,shop,catalogue,needs-deploy' -and $rc -eq 'bug,shop,catalogue')
+  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'SHOP-CAT-001 price grid' -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,shop,catalogue,wave-2' -and $rp -eq 'bug,shop,catalogue,needs-deploy' -and $rc -eq 'bug,shop,catalogue')
 
 # secret store: file round trip (targets.local.json shape kept), names only, env read-only, secret:<name> refs, a fake store,
 # the guard denies the configured store's backing file and keeps the file store's default

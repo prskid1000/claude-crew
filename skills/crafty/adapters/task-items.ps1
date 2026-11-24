@@ -4,7 +4,7 @@
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
 # Sections: L8 items · L88 move · L131 status roles · L286 task text · L303 naming · L415 track lines · L420 task ids ·
-#   L436 tags · L491 order
+#   L436 tags · L494 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -484,8 +484,11 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   [IO.File]::WriteAllLines($Out, [string[]]$md, [Text.UTF8Encoding]::new($false))
   $md; if ($dry) { "DRY RUN: $($rows.Count) keyed task(s), nothing changed; table: $Out"; return }
   foreach ($r in @($rows | Where-Object { -not @($_.problems).Count })) {
-    if ($r.title -cne "$($seen[$r.id].name)") { $null = Set-TrackerName $r.id $r.title }
-    Write-KitTaskTags $r.id $seen[$r.id] $r; "RETAGGED $($r.id): $($r.title) · $(@($r.tags) -join ', ')" }
+    $old = "$($seen[$r.id].name)"; if ($r.title -cne $old) { $null = Set-TrackerName $r.id $r.title }
+    Write-KitTaskTags $r.id $seen[$r.id] $r
+    if ($r.title -cne $old) { Clear-TrackerMemo $r.id; $tk = Get-TrackerTask $r.id   # the old title stays searchable (its codes), written once
+      if ("$($tk.description)" -notmatch '<!-- kit:was -->') { $null = Set-TrackerDescription $r.id (Set-KitDescSection $tk.description 'was' "**Old title:** $old" '') } }
+    "RETAGGED $($r.id): $($r.title) · $(@($r.tags) -join ', ')" }
   foreach ($r in @($rows | Where-Object { @($_.problems).Count })) { "SKIPPED $($r.id): $(@($r.problems) -join '; ')" }
 }
 # ---- order: waits-on links and wave tags (owner 2026-11-23: order and parallel work readable without titles)

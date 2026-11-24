@@ -20,7 +20,7 @@ one is refused. A tracker with native ids keeps them as the link; the kit key li
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags).
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L28 model · L93 no repeats · L187 tags
+Sections: L28 model · L94 no repeats · L188 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -35,7 +35,8 @@ def naming_cfg(kit=None):
     c = local_config(kit or KIT_DIR, 'kit.local.json').get('naming') or {}
     codes = lambda k: {str(x).upper(): str(v) for x, v in (c.get(k) or {}).items() if re.match(r'^[A-Za-z]{2,6}$', str(x))}
     return {'products': codes('products'), 'areas': codes('areas'), 'digits': int(c['digits']) if str(c.get('digits') or '').isdigit() else 3,   # a bad value: the default
-            'tags': c['tags'] if isinstance(c.get('tags'), dict) else {}}
+            'tags': c['tags'] if isinstance(c.get('tags'), dict) else {},
+            'strip': [str(x) for x in c.get('titleStrip') or [] if str(x).strip()] if isinstance(c.get('titleStrip'), list) else []}   # org regexes: old codes out of titles
 
 
 def patterns(cfg):
@@ -323,8 +324,13 @@ def plan_rows(plan, cfg):
         live = it.get('tags') or []   # a keyed title without [Type]: its live kind tag (a re-run never flips a bug)
         lk = next((str(h).capitalize() for h in live if str(h).lower() in ('bug', 'chore', 'spike', 'feature', 'docs', 'test')), '')
         ty = it.get('type') or (km and km[4]) or (re.match(rf'\s*\[({"|".join(TITLE_TYPES)})\]', old) or [None, lk or 'Feature'])[1]
-        title = make('title', {'key': key, 'type': ty, 'outcome': outcome}, cfg)
-        title += f' (was {code})' if code and code != key else f' {was[1]}' if was else ''
+        tail = f' (was {code})' if code and code != key else f' {was[1]}' if was else ''
+        for rx in cfg.get('strip') or []:   # naming.titleStrip (kit.local.json): retag keeps the old title in the description
+            try:
+                outcome, tail = re.sub(rx, ' ', outcome).strip(), re.sub(rx, ' ', tail).rstrip()
+            except re.error as e:
+                bad.append(f'naming.titleStrip {rx!r}: {e}')
+        title = make('title', {'key': key, 'type': ty, 'outcome': re.sub(r'\s{2,}', ' ', outcome)}, cfg) + (' ' + tail.strip() if tail.strip() else '')
         bad += [f'new title {w}' for w in [name_problem('title', title, cfg)] if w]
         wave = next((m[1] for h in live if (m := re.match(r'(?i)wave\b.*?(\d+)\s*$', str(h)))), '') or it.get('wave') or ''   # a live label, else the kit's order record
         try:
