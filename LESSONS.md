@@ -19,6 +19,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- a resumed agent reports done -> confirm the tester guide link exists before finish (area-ASK-2 and -5 reported done with the guide MISSING)
+- wt sync leaves a detached HEAD while the branch ref lags -> before push run git checkout -B <branch> <HEAD sha> (push of the stale branch ref lost the synced commits)
 - wt commit -ScopeOk after an owner answer saying scope ok -> record scope with decide record -Gate scope -Item <branch>; the check reads a record keyed by branch (NO-WORD 2x) (2×)
 - opening an MR -> run kitbag.py prose --kind mr-title and mr-body before ship; title carries the task id, max 3 link bullets, body states UI change truthfully (MR title and body failed the prose check only at ship time)
 - [ship] writing the MR body How tested -> count PASS rows from the diff; say UI change when the diff touches a UI file (MR body marked not a UI change while the AI panel changed (6791)
@@ -35,8 +37,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - [ship] devtools.py finish runs on a task created without a spec (no Problem, Goal, Items, Acceptance, Links) -> write the tracker spec sections before finish, or create tasks through tracker create with a spec (tracker describe refused finish 3 times, task stuck before promoted)
 - [code] A spec-only (test-only) area finds a product bug -> pin today's behaviour in the spec, report BACKEND FIX + `decide ask`, never edit product source (a spec-only area's MR changed 4 service / repository files, passed review and CI, and reached a test env). (1x)
 - [ship] devtools.py finish on a parent task whose description is rendered from a spec -> update the description with crafty.ps1 tracker update -Spec before finish; finish must skip describe on spec-rendered tasks (finish failed 3x at tracker describe after docs and MRs were already posted)
-- looking for a skill, script or file -> Glob / Grep the kit, ~/.claude or the repo; never a whole-drive find (an orphaned whole-drive find held the shell and disk)
-- After `wt lease` / `wt new` -> check the dependency links (node_modules, linkPaths) exist before editing; missing: save the diff, lease again (a worktree without them fails wt remove and can empty the folder). (1×)
 - [ship] Wave branches of one task -> pass `--override` with the wave id to devtools finish and mr on each sibling branch (the prior-work gate refuses siblings until it counts the batch as one task). (3×) (2×)
 - [ship] Writing a shared task doc (one testing-ai key, many wave agents) -> read the current doc first, keep every other area's section and Rounds rows, write patches with the Edit tool or a file (heredoc python collapses backslash-n; areas lost rows). (4x)
 - [local] envy deploy REFUSED by a foreign layer not based on the published head -> board msg its holder; holder off the board: raise an ENV-FIX (deploying over it breaks the holder's test). (2x)
