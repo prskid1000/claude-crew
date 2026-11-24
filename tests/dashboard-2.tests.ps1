@@ -1,25 +1,26 @@
 #Requires -Version 7
 <#
-dashboard-2.tests.ps1: the supervise page's Parity panel (Kit internals, folded): kitbag.py parity --json cached per kit HEAD +
-parity.json time; per family the verbs some adapter lacks natively (gap red, fallback amber, the reason on hover), all-native
-families in one line, the harness rows not ported to both; the context info popover text (from context.tests.ps1); label case, role map, day heat groups (from runtimes.tests.ps1).
+dashboard-2.tests.ps1: the supervise page has no Parity panel (parity stays internal); the PARITY next batch ACT; the context
+info popover text (from context.tests.ps1); label case, role map, day heat groups (from runtimes.tests.ps1).
 Usage: pwsh -NoProfile -File <kit>/tests/dashboard-2.tests.ps1 (or tests/kit-tests.ps1 -Area dashboard-2).
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit dashboard2; $O = Join-Path $k 'skills/bossy/bossy.ps1'
-$pjx = '{"adapters":{"ci":{"github":{"runs":"native","parseUrl":"native","failure":"fallback"},"jenkins":{"runs":"native","parseUrl":"gap","failure":"fallback"}},"stack":{"core":{"detect":"native"}}},' +
-  '"harness":[{"feature":"skill crafty","claude":{"state":"native","note":""},"codex":{"state":"port","note":""},"antigravity":{"state":"port","note":""}},{"feature":"Artifacts","claude":{"state":"native","note":""},"codex":{"state":"gap","note":"no Artifacts tool"},"antigravity":{"state":"port","note":""}}],"problems":[]}'
-$reg = '{"adapters":{"ci":{"gaps":{"jenkins/parseUrl":"no URL parser"},"fallback":{"failure":"core Get-KitCiFailure"}},"stack":{}}}'
-$pq = & { . $O; Set-Content (Join-Path $k 'skills/crafty/parity.json') $reg
-  $global:pqx = 0; function Invoke-KitExe { $global:pqx++; [pscustomobject]@{ code = 0; out = $pjx; err = '' } }
-  $v = Get-KitParityView; $v2 = Get-KitParityView
-  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ parity = $v2 } })
-  $sec = [regex]::Match($h, "<details class='sec sub' id=sec-parity>[\s\S]*?</details>").Value
-  "$global:pqx|$($v2.why.ci.'jenkins/parseUrl')|$($sec -match '<span class=cnt>\(2 gaps &#183; 2 fallbacks\)</span>')|$($sec -match "<span class='pq g' title='gap: no URL parser'>gap</span>")|$($sec -match "<span class='pq f' title='fallback: core Get-KitCiFailure'>fallback</span>")|$($sec -match 'all native: runs')|$($sec -match 'All native: stack')|$($sec -match '>Artifacts<' -and $sec -notmatch '>skill crafty<')|$($sec -match "title='gap: no Artifacts tool'")" }
-Expect "parity panel: one kitbag.py run (cached), folded fold with gap / fallback counts, red gap and amber fallback cells with their reasons, all-native verbs and families, harness gaps only ($pq)" ($pq -eq '1|no URL parser|True|True|True|True|True|True|True')
-$pn = & { . $O; (Format-KitParityHtml $null).h }
-Expect "parity panel: no data yet says so ($pn)" ($pn -match 'No parity data yet')
+# no parity panel (owner 2026-11-24: parity stays internal, kitbag.py parity): an old report's stats.parity renders nothing, no kitbag.py call
+$pq = & { . $O; $global:pqx = 0; function Invoke-KitExe { $global:pqx++; [pscustomobject]@{ code = 0; out = '{}'; err = '' } }
+  $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o'); stats = [pscustomobject]@{ parity = [pscustomobject]@{ adapters = @{ ci = @{} } } } })
+  "$global:pqx|$($h -match 'id=sec-parity|class=.pq')|$($h -match 'id=sec-internals')|$([bool](Get-Command Get-KitParityView, Format-KitParityHtml -ErrorAction SilentlyContinue))" }
+Expect "dashboard: no Parity panel or its functions, Kit internals still there, no kitbag.py parity run ($pq)" ($pq -eq '0|False|True|False')
+# PARITY next batch (owner 2026-11-24): open cells and no live parity kitty = one ACT; a live parity kitty (run or subject) = none; the
+# count is cached per kit HEAD + parity.json time (one kitbag.py run); no open cell = none
+$pfl = & { . $O; $global:pfx = 0; $global:pfo = 'parity next: 7 open cell(s)'; function Invoke-KitExe { $global:pfx++; [pscustomobject]@{ code = 0; out = $global:pfo; err = '' } }
+  $now = "$(Get-Date)"; $kb = @(@{ status = 'working'; type = 'kitty'; agent = 'kitty-3'; run = 'kitty-docker'; subject = 'docker'; beat = $now }, @{ status = 'left'; type = 'kitty'; agent = 'kitty-4'; run = 'kitty-parity'; beat = $now })
+  $a1 = @(Get-KitSuperviseFlagsParity -Board $kb | ForEach-Object { "$($_.level) $($_.what)" }) -join ';'
+  $a2 = @(Get-KitSuperviseFlagsParity -Board @($kb + @{ status = 'working'; type = 'kitty'; agent = 'kitty-5'; run = 'kitty-x'; subject = 'parity'; beat = $now })).Count
+  $a3 = @(Get-KitSuperviseFlagsParity -Board $kb).Count; Remove-Item (Join-Path (Get-KitPath cache) 'parity-next.json'); $global:pfo = 'parity next: 0 open cell(s)'
+  "$a1|$a2|$a3|$global:pfx|$(@(Get-KitSuperviseFlagsParity -Board $kb).Count)" }
+Expect "supervise PARITY: ACT while cells are open and no parity kitty lives; a live one (subject parity) = none; cached; 0 open = none ($pfl)" ($pfl -eq 'ACT PARITY next batch: 7 open cell(s), no parity kitty live|0|1|1|0')
 # the info popover (owner 2026-11-23): one script on the page and each run page (titles stay data, no title rewrite); context tip text
 # the popover structures: empty categories left out, the largest results one per line; tile labels wrap (no ellipsis on the page)
 $popT = & { . $O; $n = [datetime]'2026-01-02T10:00:00'

@@ -1,5 +1,5 @@
 {
-  "_readme": "Parity registry (AGENTS.md \"Parity\"; kitbag.py parity, lint PARITY). adapters.<family>: config key, code file, verbs, caps (Test-KitCap), built-in names, vendor names; fallback.<verb> = what the kit does instead, same outcome (an optional verb); gaps.\"<name>[,<name>]/<verb>[,<verb>]\" = what does not work there and why; capKeys.<cap> = the keys that turn it on; parity = why a family is not walked. harness: hooks (settings.json hook -> the port's command, else \"gap: <why>\" | \"fallback: <how>\"), features (Claude Code-only features, the same values).",
+  "_readme": "Parity registry (AGENTS.md \"Parity\"; kitbag.py parity, lint PARITY). adapters.<family>: config key, code file, verbs, caps (Test-KitCap), built-in names, vendor names; fallback.<verb> = what the kit does instead, same outcome (an optional verb); gaps.\"<name>[,<name>]/<verb>[,<verb>]\" = what does not work there and why (kitbag.py parity next lists it to close; a gap the tool cannot close: \"no such feature: <its doc link> <why>\"); capKeys.<cap> = the keys that turn it on; parity = why a family is not walked. harness: hooks (settings.json hook -> the port's command, else \"gap: <why>\" | \"fallback: <how>\"), features (Claude Code-only features, the same values).",
   "adapters": {
     "_readme": "README Adapters; code: Register-KitAdapter <kind> <name> @{ <verb> = {...} } (ps1) or ADAPTERS['<kind>']['<name>'] = {...} (py)",
     "tracker": {
@@ -133,7 +133,7 @@
         "none/list,drop,import,footprint": "no tenants: every verb works on the db scope",
         "column/drop,import,footprint": "tenants are column values in one shared scope: list only",
         "instance/drop,import,footprint": "one server per tenant: list only",
-        "none,schema,database,column,instance/scopes": "no extra data scopes",
+        "none,column,instance/scopes": "no extra data scopes",
         "none,schema,database,column,instance/create": "no kit verb reads it yet: tenants come from import",
         "none,schema,database,column,instance/snapshot": "no kit verb reads it yet"
       }

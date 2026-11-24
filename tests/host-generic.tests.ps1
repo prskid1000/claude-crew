@@ -39,6 +39,24 @@ Expect "deploy kind command: its isDeployed line answers ($(($rows | Where-Objec
 Expect "deploy kind ssh, manager docker: docker inspect, no systemctl, no sudo ($(($rows | Where-Object target -eq 'box-stg').state))" (($rows | Where-Object target -eq 'box-stg').state -eq 'DEPLOYED' -and $sh -match 'docker inspect' -and $sh -notmatch 'systemctl|sudo -n')
 Expect "deploy kind unregistered (helm): UNKNOWN naming the registry ($(($rows | Where-Object target -eq 'helm-stg').detail))" (($rows | Where-Object target -eq 'helm-stg').state -eq 'UNKNOWN' -and ($rows | Where-Object target -eq 'helm-stg').detail -match 'helm has no isDeployed')
 
+# 1b. GitLab natives (parity next, recorded glab replies, no account): ci.failure lists failed jobs only (scope[]=failed), the job
+# that fails the pipeline before an allowed failure, its reason + log excerpt; mr.parseRef reads !<n> in the given repo, URLs as core
+& $J @{ gitHost = 'git.example'; gitHostType = 'gitlab'; gitHostGroup = 'grp'; repos = @(@{ name = 'shop' }) } $kl
+$sGl = @'
+. $args[0]; $global:glp = @()
+function __Cli { $global:glp += "$($args[1])"
+  if ("$($args[1])" -match '/jobs\?scope\[\]=failed') { @([pscustomobject]@{ id = 11; name = 'lint'; status = 'failed'; allow_failure = $true; failure_reason = 'script_failure'; web_url = 'https://g/j/11' },
+      [pscustomobject]@{ id = 12; name = 'unit'; status = 'failed'; allow_failure = $false; failure_reason = 'runner_system_failure'; web_url = 'https://g/j/12' }) }
+  elseif ("$($args[1])" -match '/jobs/12/trace$') { "2026-01-01T00:00:00Z 01O ok`n2026-01-01T00:00:01Z 01O ERROR: boom" } }
+$f = Invoke-HostVerb 'ci.failure' @{ repo = 'grp/shop'; id = 5 }
+"fail:$($f.job)|$($f.id)|$($f.reason)|$($f.excerpt)|$(@($global:glp | Where-Object { $_ -match '/jobs\?' -and $_ -notmatch 'scope' }).Count)"
+$p1 = Invoke-HostVerb 'mr.parseRef' @{ ref = '!7'; repo = 'shop' }; $p2 = Invoke-HostVerb 'mr.parseRef' @{ ref = 'https://git.example/grp/shop/-/merge_requests/9' }
+"parse:$($p1.repo)|$($p1.n)|$($p1.type)|$($null -eq (Invoke-HostVerb 'mr.parseRef' @{ ref = '!7' }))|$($p2.repo)|$($p2.n)|$($p2.type)|$((Invoke-HostVerb 'mr.parseRef' @{ ref = '!8'; repo = 'other/shop' }).repo)"
+'@
+$oGl = Invoke-PsTest 'hg-gitlab' $sGl @($Q) | Out-String
+Expect "gitlab ci.failure native: failed jobs only, the failing job before an allowed one, infra reason, log excerpt, no all-jobs call ($($oGl -replace '\s+', ' '))" ($oGl -match 'fail:unit\|12\|infra\|ERROR: boom\|0')
+Expect "gitlab mr.parseRef native: !7 in repo shop = grp/shop!7, no repo = none, a GitLab URL as core, a group path kept ($($oGl -replace '\s+', ' '))" ($oGl -match 'parse:grp/shop\|7\|gitlab\|True\|grp/shop\|9\|gitlab\|other/shop')
+
 # 2. no host configured (no gitHost, gitHostType or checkout): verbs UNKNOWN, no vendor CLI, no gitlab.com default
 & $J @{ repos = @(@{ name = 'shop' }) } $kl
 Remove-Item $env:HG_CLI -ErrorAction SilentlyContinue

@@ -1703,9 +1703,9 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   if ($Verb -notin 'mr.create', 'mr.update', 'mr.merge', 'mr.unauto' -and $null -ne $v) { $global:KitHostMemo[$mk] = @{ at = Get-Date; v = $v; ok = $v } }
   $v
 }
-# ci.failure: run $A.id's first failed job
-function Get-KitCiFailure([hashtable]$A) {
-  $h = @{ repo = $A.repo; type = $A.type }; $j = @(@(Invoke-HostVerb 'ci.jobs' ($h + @{ id = $A.id })) | Where-Object { $_ -and (ConvertTo-KitCiState "$($_.status)") -eq 'failed' })[0]; if (-not $j) { return $null }
+# ci.failure: run $A.id's first failed job (-Job: the one a vendor's native failure verb picked) + its log excerpt
+function Get-KitCiFailure([hashtable]$A, $Job) {
+  $h = @{ repo = $A.repo; type = $A.type }; $j = if ($Job) { $Job } else { @(@(Invoke-HostVerb 'ci.jobs' ($h + @{ id = $A.id })) | Where-Object { $_ -and (ConvertTo-KitCiState "$($_.status)") -eq 'failed' })[0] }; if (-not $j) { return $null }
   $log = "$(Invoke-HostVerb 'ci.log' ($h + @{ id = $j.id }))" -replace '\x1b\[[0-9;]*m' -split "`n"
   [pscustomobject]@{ job = "$($j.name)"; id = $j.id; url = "$($j.web_url ?? $j.url)"; reason = "$($j.reason ?? 'unknown')"; raw = "$($j.failure_reason)"; excerpt = @($log -match '(?i)error|fail|invalid|exception' | Select-Object -Last 8) -join "`n" }
 }

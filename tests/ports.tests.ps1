@@ -17,6 +17,7 @@ Expect 'parity: a verb on one adapter only fails (no family list); a family cap 
 Expect 'parity: a renamed verb is missing though a nested @{ status = } remains; a dropped hook is missing though a longer one starts with it' ($res -contains 'parity-nested:True')
 Expect 'parity: a declared gap the adapter now has, or one naming no adapter, fails' ($res -contains 'parity-gaps:True')
 Expect 'parity: a Claude Code hook neither Codex nor Antigravity runs fails both until declared (gap / fallback)' ($res -contains 'parity-harness:True')
+Expect "parity next: the org's adapter first, no none adapter, only fallback / gap cells, a no-such-feature gap left out, one without its link fails ($($res -match '^parity-next:'))" ($res -contains 'parity-next:True|True|True|True|True')
 Expect 'ports: workspace skill links, org rules always-on (split under 24 KB) + AGENTS.override.md, none in the kit' ($res -contains 'ports-workspace:True')
 Expect "ports.targets: every transition (both/codex/antigravity/none) keeps the chosen copies, removes only kit-written ones ($($res -match '^ports-targets:'))" ($res -contains 'ports-targets:True []')
 Expect 'ports.targets: deselected folder gone when empty or clutter only, kept + listed with an authored file; clutter override; old copies by manifest' ($res -contains 'ports-folders:True True True True')

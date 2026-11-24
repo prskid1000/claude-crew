@@ -280,3 +280,14 @@ print(f'parity-nested:{any("tracker/linear/status: a required verb" in x for x i
 print(f'parity-sibling:{any("tracker/github: verb tag-add is in no family list" in x for x in p1) and sum("/tagAdd: an optional verb" in x for x in p2) == 7 and not any("tagAdd" in x for x in p3)}')
 print(f'parity-gaps:{any("clickup/view: declared gap" in x for x in p3) and any("nosuch/view" in x for x in p3)}')
 print(f'parity-harness:{len(p4) == 2 and all("not in the" in x for x in p4) and not p5}')
+# parity next (owner 2026-11-24): the org's adapters first, then code uses, then native siblings; native / config / none cells and
+# `no such feature: <link>` gaps left out; a no-such-feature gap without its link fails lint
+kn = kt.load(kt.KIT_DIR); nx = kt.parity_next(kn, man, {'tracker': {'type': 'linear'}})
+cells = [(f, n, v) for _, f, n, v, s, _ in nx]
+fn = json.loads(json.dumps(man)); fn['adapters']['tracker']['gaps'] = {'youtrack/statuses': 'no such feature: https://example.org/doc no status list API'}
+fn['adapters']['tracker']['fallback'].pop('statuses'); nf = [(f, n, v) for _, f, n, v, s, _ in kt.parity_next(kn, fn, {})]
+fn['adapters']['tracker']['gaps'] = {'youtrack/statuses': 'no such feature (no link)'}; p8 = par(kn, fn)
+print(f'parity-next:{cells[0][:2] == ("tracker", "linear") and all(n == "linear" for f, n, v in cells[:3] if f == "tracker")}'
+      f'|{not [c for c in cells if c[1] == "none"]}|{all(s in ("fallback", "gap") for *_, s, _ in nx)}'
+      f'|{("tracker", "youtrack", "statuses") in cells and ("tracker", "youtrack", "statuses") not in nf}'
+      f'|{any("says no such feature without its doc link" in x for x in p8)}')

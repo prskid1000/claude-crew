@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1534 publish · L2035 render · L2622 spec · L3167 plugins · L3181 keepboth · L3200 selftest · L3921 CLI
+  L1534 publish · L2043 render · L2630 spec · L3175 plugins · L3189 keepboth · L3208 selftest · L3940 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2015,7 +2015,15 @@ def _command(a):
     return u if u and not r.returncode else sys.exit(f'reports.command failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}')
 
 
-ADAPTERS['report']['command'] = {'publish': _command}
+# evidence (reports.evidence report, the default): the same org CLI family, reports.evidenceCommand; unset: the run folder, said once
+def _command_evidence(a):
+    if RCFG.get('evidenceCommand'):
+        return _evidence_command(a)
+    if not _command_evidence.said:
+        _command_evidence.said = print('reports.type command: no reports.evidenceCommand, evidence stays in the run folder', file=sys.stderr) or True
+    return {}
+_command_evidence.said = False
+ADAPTERS['report']['command'] = {'publish': _command, 'evidence': _command_evidence}
 # adapter-end:report
 
 
@@ -3855,6 +3863,17 @@ def _publish_selftest(expect, refused):
         ADAPTERS['report']['markdown']['evidence'] = lambda a: seen.append(a['folder']) or {'folderId': a['folder'] or 'F1', 'folderLink': 'https://f/F1', 'files': {}}
         make_evidence('e', [], key='T9:evidence'); ev = make_evidence('e', [], key='T9:evidence')
         expect('evidence by key: the second run reuses the task folder', seen == [None, 'F1'] and ev['folderLink'] == 'https://f/F1')
+        rk = {k: g[k] for k in ('REPORT_TYPE', 'RCFG', '_evidence_command')}
+        try:   # report command, reports.evidence report (default): its evidence = reports.evidenceCommand; unset: the run folder, said
+            g.update(REPORT_TYPE='command', RCFG={})
+            with contextlib.redirect_stderr(io.StringIO()) as se:
+                _command_evidence.said = False; e0 = make_evidence('e', []); make_evidence('e', [])
+            g.update(RCFG={'evidenceCommand': 'up {files}'}, _evidence_command=lambda a: {'folderLink': 'https://f/E1', 'label': a['name'], 'files': {}})
+            e1 = make_evidence('e', [])
+        finally:
+            g.update(rk)
+        expect('report command: evidence goes to reports.evidenceCommand (native); unset: stays in the run folder, said once',
+               e0 == {} and se.getvalue().count('no reports.evidenceCommand') == 1 and e1.get('folderLink') == 'https://f/E1')
         w(os.path.join(kp('agents'), 'd1', 'resume.json'), json.dumps({'steps': [{'step': 'loop', 'item': 'T6', 'evidence': 'round 1 PASS', 'at': '2026-10-29T10:00:00'}]}))
         calls.clear(); finish('T6', human, '**Solution** — x', ai='https://x/ai-doc')
         expect('finish: an unreadable AI doc (a URL) skips the case checks', any(a[0] == 'comment' for a in calls))

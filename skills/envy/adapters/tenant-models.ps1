@@ -7,6 +7,8 @@
 # Verbs: list @{ e } -> { name, registry, keep, mb } · drop @{ e; names; dryRun } -> lines · import @{ e; from; tenant; as; mask;
 #   dryRun; refresh } -> lines · footprint @{ e; name } -> { steps, schema, mb } · scopes @{ e } -> extra data scopes (optional).
 # A model without a verb refuses it ("tenant-model <m>: verb <v> not implemented"). A local adapter adds a model the same way.
+# Sections: L11 models · L41 envy.ps1 tenant
+# ---- models: the model lookup and each tenant-model registration
 function Get-TenantModel([string]$e) { $m = "$((Get-EnvCfg $e).tenants.model)".ToLower(); if ($m) { $m } else { 'none' } }
 function Invoke-TenantModel([string]$e, [string]$Verb, [hashtable]$a = @{}) {
   $m = Get-TenantModel $e; $ad = $KitAdapters['tenant-model'][$m]
@@ -19,7 +21,11 @@ Register-KitAdapter tenant-model none @{}
     list      = { param($a) Get-TenantList $a.e }
     footprint = { param($a) Get-TenantPlan $a.e $a.name @() -NoUsers }
     drop      = { param($a) Invoke-TenantDrop $a.e $a.names -DryRun:([bool]$a.dryRun) }
-    import    = { param($a) Invoke-TenantImport $a.e -From $a.from -Tenant $a.tenant -As $a.as -Mask $a.mask -DryRun:([bool]$a.dryRun) -Refresh:([bool]$a.refresh) } }
+    import    = { param($a) Invoke-TenantImport $a.e -From $a.from -Tenant $a.tenant -As $a.as -Mask $a.mask -DryRun:([bool]$a.dryRun) -Refresh:([bool]$a.refresh) }
+    # an env with neither db.schemas nor db.schemasQuery: marks / restores cover the registry schema + every existing registered tenant schema
+    scopes    = { param($a) $db = (Get-EnvCfg $a.e).db; if (@($db.schemas | Where-Object { $_ }).Count -or $db.schemasQuery) { return @() }
+      try { $t = TenantCfg $a.e; $have = @(Invoke-DbSql $a.e 'SELECT SCHEMA_NAME FROM information_schema.SCHEMATA' | ForEach-Object { "$($_[0])" })
+        @(@([string]$t.schema) + @(Get-TenantRows $a.e | ForEach-Object { "$($_.name)" }) | Where-Object { $_ -in $have }) } catch { Write-Warning "[$($a.e)] tenant scopes: $_ (db.name only)"; @() } } }
   Register-KitAdapter tenant-model schema $schema
   Register-KitAdapter tenant-model database $schema.Clone() }
 Register-KitAdapter tenant-model column @{

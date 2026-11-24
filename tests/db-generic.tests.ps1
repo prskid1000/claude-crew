@@ -57,6 +57,13 @@ try {
   Expect "column model lists the column's values (keep marked); one-DB scopes = db.name ($cl | $sc)" ($cl -eq 'a*,b' -and $sc -eq 'shop')
   $il = & { . $L; function Get-EnvCfg { @{ tenants = @{ model = 'instance'; instances = @(@{ name = 'eu' }, @{ name = 'us' }); keep = @('us') } } }; @(Invoke-TenantModel c 'list' | ForEach-Object { "$($_.name)$(if ($_.keep) { '*' })" }) -join ',' }
   Expect "instance model lists tenants.instances names, keep marked ($il)" ($il -eq 'eu,us*')
+  # schema / database models' scopes (parity next): no db.schemas / schemasQuery -> db.name + the registry schema + existing tenant schemas;
+  # configured scopes win unchanged; no registry = db.name only, with a warning
+  $ssc = & { . $L; $global:sdb = @{ name = 'app' }; function Get-EnvCfg { @{ tenants = @{ model = 'schema' }; db = $global:sdb } }; function Get-TenantRows { [pscustomobject]@{ name = 't1' }; [pscustomobject]@{ name = 'gone' } }
+    function Invoke-DbSql { param($e, $sql) if ($sql -match 'SCHEMATA') { , @('adm'); , @('t1'); , @('app') } }; function TenantCfg { @{ schema = 'adm' } }; $x = @(Get-DataScopes x) -join ','
+    $global:sdb = @{ name = 'app'; schemas = @('base') }; $y = @(Get-DataScopes x) -join ','; $global:sdb = @{ name = 'app' }; function TenantCfg { throw 'no registry' }
+    "$x|$y|$(@(Get-DataScopes x 3>$null) -join ',')|$($KitAdapters['tenant-model']['database'].scopes -is [scriptblock])" }
+  Expect "schema model scopes: unconfigured env = db.name + registry + existing tenant schemas (a stale row left out); db.schemas wins; no registry = db.name; database model the same ($ssc)" ($ssc -eq 'app,adm,t1|base|app|True')
   # sql verb (parity): each engine's own client, the statement on stdin (mongodb: --eval), rows split on tabs; redis refuses; the
   # mysql client never runs (also not for a schema tenant model on postgres)
   & $J @{ localEnv = @{ envs = @{ pg = @{ services = @(); db = @{ engine = 'postgresql'; user = 'u'; name = 'app' }; tenants = @{ model = 'schema'; schema = 'adm'; table = 'reg'; key = 'id'; name = 'name' } }; lite = @{ services = @(); db = @{ engine = 'sqlite'; name = 'app.db' } }

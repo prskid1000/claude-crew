@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy · L439 collisions
+Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy · L441 collisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -366,6 +366,7 @@ $opt = { param([string]$Fn, [scriptblock]$Call) $c = Get-Command $Fn -CommandTyp
 & $run 'standing rules' { if ($DryRun) { 'skip: dry run' } else { & $opt Invoke-KitStandingRules { param($c) & $c -Propose } } }
 & $run 'lint' { $l = @(& (Get-Python) -X utf8 $KitCmd.kitbag lint --warn --no-flow 2>&1 | ForEach-Object { "$_" }); @($l | Where-Object { $_ -like 'kitbag lint:*' }) + @($l | Where-Object { $_ -notlike 'kitbag lint:*' } | Select-Object -First 10) }   # count first: digest keeps the head
 
+$pn = @(try { & $py @('parity', 'next', '--n', '3') | Where-Object { $_ -notlike 'parity next:*' } } catch { })   # parity proposals (owner 2026-11-24): never judge work
 $sig = @(Get-Content (Get-KitPath signals) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} })
 $new = @($sig | Where-Object { $_.kind -ne 'retired' -and [datetime]$_.at -gt $since })
 $lessons = @(foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) { $sk = ''; foreach ($l in (Read-KitLessonLines $f)) { if ($l -match '^## (.+)$') { $sk = $Matches[1].Trim() } elseif ($l -match '^- (.+)$' -and $sk) { [pscustomobject]@{ skill = $sk; text = $Matches[1] } } } })
@@ -393,6 +394,7 @@ $d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the l
 & $part 'Retired lessons seen again (regression candidates)' @($back | Select-Object -First 10)
 & $part 'Outcomes, 30 days (worst areas, most fix rounds, repeat causes: lesson or rule candidates)' $oc
 & $part 'Standing rules proposed (owner answers repeated 3+ times; the owner approves in one decide ask)' $srs
+& $part 'Parity next (proposals; a parity kitty closes them: supervise PARITY)' $pn
 & $part 'Guard blocks' (& $top $deny { & $cut $_.why 110 })
 & $part 'Script errors (crash or usage)' (& $top $errs { "$($_.script) $($_.verb): $(if ($_.error) { & $cut $_.error 90 } else { "exit $($_.rc), message on stderr only (not a crash)" })" })
 & $part 'Builds per kind (gate)' @($bld | Group-Object kind | ForEach-Object { $q = @($_.Group.sec | ForEach-Object { [double]$_ } | Sort-Object); "$($_.Name): $($_.Count), $(@($_.Group | Where-Object { "$($_.code)" -ne '0' }).Count) failed, p50 $($q[[int][math]::Floor(($q.Count - 1) / 2)]) s, max $($q[-1]) s, wait max $(($_.Group.waitSec | Measure-Object -Maximum).Maximum) s, peak max $(($_.Group.peakGB | Measure-Object -Maximum).Maximum) GB" })
@@ -403,7 +405,7 @@ $file = Join-Path (Get-KitPath retros -Create) "$(New-KitName digest '' (Get-Kit
 [IO.File]::WriteAllText($file, (($d -join "`n") + "`n"))
 $stamped = -not $work -and -not $DryRun -and -not @($steps | Where-Object state -eq 'failed').Count
 if ($stamped) { $null = Invoke-Tidy done -At (Get-KitStamp stored $t0) }   # nothing to judge
-$o = [ordered]@{ digest = $file; at = (Get-KitStamp stored $t0); work = $work; groups = @($groups | Where-Object n -ge 2).Count; minutes = $min; stamped = $stamped; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); steps = @($steps | ForEach-Object { "$($_.step) $($_.state) $($_.sec)s" }) }
+$o = [ordered]@{ digest = $file; at = (Get-KitStamp stored $t0); work = $work; groups = @($groups | Where-Object n -ge 2).Count; minutes = $min; stamped = $stamped; parity = $pn; sec = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); steps = @($steps | ForEach-Object { "$($_.step) $($_.state) $($_.sec)s" }) }
 if ($Json) { $o | ConvertTo-Json -Compress; return }
 "DIGEST $file"; "AT $($o.at)"; "WORK $work ($($o.groups) group(s) of 2+)$(if ($stamped) { '; nothing to judge: last retro stamped' })"; "MINUTES $min"; $o.steps | ForEach-Object { "  $_" }
 }

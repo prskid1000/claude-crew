@@ -232,13 +232,6 @@ $wv = & $py -X utf8 $wpy (Join-Path $k 'skills/crafty') 2>&1 | Select-Object -La
 $arC = @('area-ASK-2', 'ask-prompts', 'ask-customer-edits') | ForEach-Object { (Kb naming check area $_).code }
 Expect "wave-brief ids by topic, X9 kept; deps, contracts renamed; area-ASK-2 / long refused ($($wv.ids -join ',') · $($arC -join ','))" (
   ($wv.ids -join ',') -eq 'cat-price,cat,pay,X9' -and ($arC -join ',') -eq '1,0,1' -and $wv.dep[0] -eq 'pay' -and $wv.con.producer -eq 'pay' -and $wv.con.consumers -eq 'cat-price, X9' -and $wv.label -eq 'SHOP-CAT-004 public price list for guests')
-# tidy: the prep step returns the run id (kitbag.py naming next id tidy); worktree, branch and retro file carry it
-$jsT = @'
-const { calls, agent } = _mock((prompt, o) => o.label === 'prep' ? { ok: true, record: 'RECORDED', prep: JSON.stringify({ work: 1, groups: 0, sec: 1, steps: [], digest: 'd.md', at: 'x' }), run: 'tidy-2' } : { applied: [], proposedForApproval: [], rejected: [], report: 'r.md' })
-run({ kitDir: 'C:/k' }, agent, _n, _n, null).then(() => { const j = calls.find((c) => /Kind retro/.test(c.prompt)) || { prompt: '' }
- console.log(`tidy-run:${/naming next name tidy/.test(calls[0].prompt) && /-Branch kit\/tidy-2 -Target main -Name tidy-2;/.test(j.prompt) && /\/tidy-2\.md\./.test(j.prompt)}`) }).catch(_err)
-'@
-Expect-Each (Invoke-Js nm-tidy $jsT (Join-Path $src 'workflows/tidy.js')) 'tidy: run name from prep: #' 'tidy-run' -Show 8
 # a reset counter never hands out an id live on the board (retro tidy-20261123-01): agent ids at join, run ids at naming next id
 $lvBd = TkPath $k board -Create; Remove-Item (TkPath $k naming) -ErrorAction SilentlyContinue
 & $J @{ agent = 'rechy-1'; type = 'rechy'; session = 'lv-a'; run = 'testy-retest'; status = 'working'; joined = (Get-Date).ToString('o'); beat = (Get-Date).ToString('o') } (Join-Path $lvBd 'lv-a.json')

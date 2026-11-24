@@ -8,7 +8,7 @@ export const meta = {
  ],
 }
 
-// Sections: L12 args · L27 prep · L52 judge
+// Sections: L12 args · L27 prep · L53 judge
 // ---- args: all optional
 /* args (all optional): {
  applyScripts: false,  // true: also apply script/default edits
@@ -47,7 +47,8 @@ Return ok=true when step 3 printed the JSON line.`, { label, phase: 'Prep', sche
 }
 if (!P) return { applied: [], proposedForApproval: [], rejected: [], report: 'tidy prep failed twice: run bossy.ps1 tidy prep by hand' }
 log(`tidy prep: ${P.work} item(s), ${P.groups} group(s) of 2+, ${P.sec} s: ${(P.steps || []).join(', ')}`)
-if (!P.work) return { applied: [], proposedForApproval: [], rejected: [], report: P.digest, stamped: P.stamped }
+const PN = [].concat(P.parity || []).map((c) => `parity next: ${c}`)   // script-ranked (kitbag.py parity next); a parity kitty closes them
+if (!P.work) return { applied: [], proposedForApproval: PN, rejected: [], report: P.digest, stamped: P.stamped }
 
 // ---- judge: one kitty on the digest
 phase('Judge')
@@ -82,5 +83,6 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
 Return the lists and the report path.`, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
 
+if (res) res.proposedForApproval = [].concat(res.proposedForApproval || [], PN)
 log(`applied ${res ? res.applied.length : 0}, awaiting approval ${res ? res.proposedForApproval.length : 0}`)
-return res || { applied: [], proposedForApproval: [], rejected: [], report: `judge returned nothing: digest ${P.digest}, last retro not stamped` }
+return res || { applied: [], proposedForApproval: PN, rejected: [], report: `judge returned nothing: digest ${P.digest}, last retro not stamped` }

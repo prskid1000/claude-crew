@@ -4,7 +4,7 @@ supervise-stats.ps1 (core): the supervise page's history graphs from the logs th
 lease-wait events, live queues), test-run results per day (qa-runs results.json), CPU + RAM per lane process and the top other
 processes (one process snapshot per sweep), flags per hour, agents shell progress (bossy.ps1 shells), the statistics reset (bossy.ps1 stats); their heatmap cards (shared cells, idle-row fold, card fold) and the
 page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence-case labels (Format-KitLabel); the info popover of
-every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages).
+every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages); the PARITY next batch flag.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L725 flags · L944 bands ·
@@ -1216,38 +1216,14 @@ function Select-KitUsageSince($U, [datetime]$StatsFrom) {
   if ($null -ne $U.rates) { $uo.rates = [pscustomobject]@{ n = $endSteps.Count; empty = @($endSteps | Where-Object result -eq 'empty').Count; fail = @($endSteps | Where-Object result -eq 'fail').Count; stopped = @($endSteps | Where-Object result -eq 'stopped').Count; stuck = @($wfSteps | Where-Object result -eq 'stuck').Count; running = @($wfSteps | Where-Object result -eq 'running').Count } }
   $uo
 }
-# ---- parity: the Kit internals Parity panel (folded) from kitbag.py parity --json (AGENTS.md "Parity"), cached per kit HEAD + parity.json time
-# -> @{ key; adapters = family -> name -> verb -> state; harness = [feature, claude, codex, antigravity]; problems; why = family -> "name/verb" -> reason }
-function Get-KitParityView {
-  $kr = Split-Path (Split-Path $KitLibDir); $pj = Join-Path $kr 'skills/crafty/parity.json'; $cf = Join-Path (Get-KitPath cache -Create) 'parity-view.json'
-  $key = "$(git -C $kr rev-parse HEAD 2>$null)|$((Get-Item -LiteralPath $pj -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks)"
-  $c = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }; if ($c -and $c.key -eq $key) { return $c }
-  $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', (Join-Path $kr 'skills/bossy/kitbag.py'), 'parity', '--json') 120
-  $m = try { "$($r.out)" | ConvertFrom-Json } catch { $null }; if (-not $m.adapters) { throw "kitbag.py parity --json gave no matrix (exit $($r.code))" }
-  $why = [ordered]@{}; foreach ($fp in @(Get-KitProps (Get-Content -LiteralPath $pj -Raw | ConvertFrom-Json).adapters)) { if ($fp.Name -like '_*') { continue }; $w = [ordered]@{}
-    foreach ($g in @(Get-KitProps $fp.Value.gaps)) { $ns, $vs = "$($g.Name)" -split '/', 2; foreach ($n in $ns -split ',') { foreach ($v in "$vs" -split ',') { $w["$($n.Trim())/$($v.Trim())"] = "$($g.Value)" } } }
-    foreach ($g in @(Get-KitProps $fp.Value.fallback)) { if ($g.Name -notlike '_*') { $w["*/$($g.Name)"] = "$($g.Value)" } }; $why[$fp.Name] = $w }
-  $v = [pscustomobject]@{ key = $key; adapters = $m.adapters; harness = @($m.harness); problems = @($m.problems); why = $why }
-  Write-KitAtomic $cf ($v | ConvertTo-Json -Depth 8 -Compress); $v
-}
-# the panel: per family a table of the verbs some adapter lacks natively (gap / MISSING red, fallback amber, config slate; the reason on
-# hover), the all-native verbs and families in one line each; the harness rows that are not ported to both. Inside Format-KitSuperviseHtml ($e, $table)
-function Format-KitParityFold($P) { try { $pq = Format-KitParityHtml $P; & $fold 'parity' 'Parity' $pq.n $pq.h -cls sub } catch { "<p class=m>Parity view failed: $(& $e $_.Exception.Message)</p>" } }   # the Kit internals fold
-function Format-KitParityHtml($P) {
-  if (-not $P.adapters) { return @{ n = ''; h = '<p class=empty>No parity data yet: kitbag.py parity --json runs on the next sweep</p>' } }
-  $cls = @{ native = 'n'; config = 'c'; fallback = 'f'; gap = 'g'; MISSING = 'x'; port = 'n' }; $cnt = @{ g = 0; f = 0; x = 0 }
-  $cell = { param([string]$s, [string]$why) $k = $cls[$s]; if (-not $k) { $k = 'c' }; if ($cnt.ContainsKey($k)) { $cnt[$k]++ }; @{ h = "<span class='pq $k'$(if ($why) { " title='$(& $e "${s}: $why")'" })>$(& $e $s)</span>" } }
-  $fams = foreach ($fp in @(Get-KitProps $P.adapters)) { $rows = @(Get-KitProps $fp.Value); if (-not $rows.Count) { continue }
-    $verbs = @($rows | ForEach-Object { @(Get-KitProps $_.Value).Name } | Select-Object -Unique)
-    $odd = @($verbs | Where-Object { $vb = $_; @($rows | Where-Object { "$(Get-KitMember $_.Value $vb)" -notin 'native', '' }).Count })
-    $wy = Get-KitMember $P.why $fp.Name
-    [pscustomobject]@{ name = $fp.Name; n = $rows.Count; odd = $odd; ok = @($verbs | Where-Object { $_ -notin $odd }); html = $(if ($odd.Count) { & $table (@('Adapter') + $odd) @(foreach ($rw in $rows) { , (@($rw.Name) + @(foreach ($vb in $odd) { $s = "$(Get-KitMember $rw.Value $vb)"; & $cell $s $(if ($s -ne 'native') { "$(Get-KitMember $wy "$($rw.Name)/$vb")$(if ($s -eq 'fallback') { Get-KitMember $wy "*/$vb" })" }) })) }) }) } }
-  $hr = @($P.harness | Where-Object { $_ -and ("$($_.codex.state)" -ne 'port' -or "$($_.antigravity.state)" -ne 'port') })
-  $leg = "<p class=pql>$(@(foreach ($s in 'native', 'config', 'fallback', 'gap') { "<span class='pq $($cls[$s])'>$s</span>" }) -join ' ') · hover a cell for its reason · <code>kitbag.py parity</code></p>"
-  $probs = if (@($P.problems).Count) { "<p class=pqp>$(@($P.problems).Count) problem(s): $(@($P.problems | ForEach-Object { & $e $_ }) -join '<br>')</p>" }
-  $body = @(foreach ($f in @($fams | Where-Object { $_.odd.Count })) { "<h4 class=pqh>$(& $e $f.name) <small>$($f.n) adapter(s)$(if ($f.ok.Count) { " · all native: $(& $e ($f.ok -join ' '))" })</small></h4>$($f.html)" }) -join ''
-  $allN = @($fams | Where-Object { -not $_.odd.Count } | ForEach-Object name)
-  $hh = if ($hr.Count) { "<h4 class=pqh>Harness <small>$(@($P.harness).Count - $hr.Count) of $(@($P.harness).Count) ported to Codex and Antigravity</small></h4>" + (& $table @('Feature', 'Claude Code', 'Codex', 'Antigravity') @(foreach ($x in $hr) { , @("$($x.feature)", (& $cell "$($x.claude.state)" ''), (& $cell "$($x.codex.state)" "$($x.codex.note)"), (& $cell "$($x.antigravity.state)" "$($x.antigravity.note)")) })) }
-  $css = '<style>.pq{border-radius:4px;padding:0 6px;white-space:nowrap}.pq.n{color:var(--mt)}.pq.c{background:color-mix(in srgb,var(--slate) 22%,transparent)}.pq.f{background:color-mix(in srgb,var(--watch) 42%,transparent)}.pq.g,.pq.x{background:color-mix(in srgb,var(--act) 40%,transparent)}.pq.x{font-weight:700}.pqh{margin:12px 0 4px;font-size:12px}.pqh small{color:var(--mt);font-weight:400}.pql,.pqp{margin:4px 0}.pqp{color:var(--act)}</style>'
-  @{ n = "$($cnt.g + $cnt.x) gaps · $($cnt.f) fallbacks$(if (@($P.problems).Count) { " · $(@($P.problems).Count) problems" })"; h = "$css$leg$probs$body$(if ($allN.Count) { "<p class=m>All native: $(& $e ($allN -join ', '))</p>" })$hh" }
+# ---- parity: the catch-up ACT (owner 2026-11-24): kitbag.py parity next has cells and no parity kitty (run or subject parity) is live = an ACT,
+# so the next batch starts once the last one pushes; the count is cached per kit HEAD + parity.json time (one kitbag run per change)
+function Get-KitSuperviseFlagsParity([switch]$AutoFix, $Board = $entries) {
+  if (@($Board | Where-Object { $_.status -ne 'left' -and $_.beat -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'supervise.kittyLiveHours') -and ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') -and "$($_.run) $($_.subject)" -match 'parity' }).Count) { return }
+  $pj = Join-Path $KitConf.Kit 'skills/crafty/parity.json'; $cf = Join-Path (Get-KitPath cache -Create) 'parity-next.json'
+  $key = "$(git -C $KitConf.Kit rev-parse HEAD 2>$null)|$((Get-Item -LiteralPath $pj -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks)"
+  $c = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  $n = if ($c -and $c.key -eq $key) { [int]$c.n } else { $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kitbag, 'parity', 'next', '--n', '0') 120
+    if ("$($r.out)" -notmatch 'parity next: (\d+) open') { return }; Write-KitAtomic $cf (@{ key = $key; n = [int]$Matches[1] } | ConvertTo-Json -Compress); [int]$Matches[1] }
+  if ($n) { [pscustomobject]@{ level = 'ACT'; what = "PARITY next batch: $n open cell(s), no parity kitty live"; action = 'Spawn ONE kitty (kind build, subject parity, low priority): kitbag.py parity next --n 5, close those cells, a test each, push (bossy K1).' } }
 }

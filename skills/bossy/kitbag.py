@@ -12,7 +12,7 @@
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show]   # start tokens per role vs START_CAP (lint START-BUDGET); repo and tests totals (INFO)
   python -X utf8 kitbag.py naming check|next|make|scan|rename ...   # the naming standard: keys, titles, docs, runs, branches (kitbag_naming.py)
-  python -X utf8 kitbag.py parity [--json]   # adapter x verb, harness x feature: native / fallback / gap (lint PARITY; skills/crafty/parity.json)
+  python -X utf8 kitbag.py parity [--json] | parity next [--n 3]   # adapter x verb, harness x feature: native / fallback / gap (lint PARITY; skills/crafty/parity.json); next: cells to close first
   python -X utf8 kitbag.py migrate         # one-time: retired install records out (.githooks/post-merge runs it)
   python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers | state todo add|done|lint <file> ...   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L264 kitlog · L366 load · L859 lint · L1273 README graph · L1391 lint command · L1673 audit ·
-  L1821 registry · L1881 tools · L1969 parity · L2422 arch lint · L2695 prose · L2877 sections · L3007 budget · L3025 migrate ·
-  L3173 plugins · L3230 state lint · L3418 main
+  L1821 registry · L1881 tools · L1969 parity · L2478 arch lint · L2751 prose · L2933 sections · L3063 budget · L3081 migrate ·
+  L3229 plugins · L3286 state lint · L3474 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2183,14 +2183,70 @@ def adapter_lint(k, man, bad):
     for fam, a in fams.items():
         if isinstance(a, dict):
             adapter_matrix(k, fam, a, bad)
+            for key, why in (a.get('gaps') or {}).items():
+                if re.match(r'no such feature', why) and not NOFEATURE.match(why):
+                    bad('PARITY', PARITY_JSON, f'{fam}: gaps "{key}" says no such feature without its doc link: "no such feature: https://<the tool\'s doc> <why>"')
     for kind in sorted(adapter_kinds(k) - set(fams)):
         bad('PARITY', PARITY_JSON, f'family {kind}: the code registers it, {PARITY_JSON} adapters has no entry: add it (or "parity": why it is not walked)')
     harness_matrix(k, bad)
 
+NOFEATURE = re.compile(r'^no such feature: https?://\S+')   # a gap the tool itself cannot close: kept, never in parity next
+
+def _org_adapters(cfg, spec):
+    """Adapter names kit.local.json picks for a family's config spec ('tracker.type', 'localEnv db.engine', 'repos[].deploys[] (kind)'):
+    every string under the spec's last word whose path holds its other words."""
+    words, out = re.findall(r'\w+', spec), set()
+    def walk(o, path):
+        for key, v in (o.items() if isinstance(o, dict) else enumerate(o) if isinstance(o, list) else ()):
+            if key == words[-1] and isinstance(v, str) and all(w in path for w in words[:-1]):
+                out.add(v.lower())
+            walk(v, path + [key])
+    walk(cfg, [])
+    return out
+
+def parity_next(k, man, cfg):
+    """[(rank key, fam, name, verb, state, line)] of the cells to close next (owner 2026-11-24): adapters the org's config picks first,
+    then the verbs kit code uses most (no use: last), then the cheapest (most sibling adapters native: a pattern to copy). Skipped: native / config
+    cells, `none` adapters (no tool to call) and gaps declared `no such feature: <link>`."""
+    fams = {f: a for f, a in (man.get('adapters') or {}).items() if isinstance(a, dict)}
+    org = {f: _org_adapters(cfg, a.get('config', '')) for f, a in fams.items()}
+    if 'host' in org.get('ci', set()) or not org.get('ci'):   # ci.type host (the default) = the git host's vendor
+        org['ci'] = (org.get('ci', set()) - {'host'}) | org.get('git-host', set())
+    code = {f: re.sub(AD_COMMENT, '', t) for f, t in k.texts.items() if re.match(r'(skills|workflows)/', f) and f.endswith(AD_EXT + ('.js',)) and '.local.' not in f and '/kitbag' not in f}
+    out = []
+    for fam, a in fams.items():
+        rows, gaps = adapter_matrix(k, fam, a), _gap_keys(a.get('gaps'))
+        near = [t for t in code.values() if re.search(r"""['"]%s['"]""" % re.escape(fam), t)]
+        for n, row in rows.items():
+            for v, s in row.items():
+                why = gaps.get((n, v), ('', a.get('fallback', {}).get(v, '')))[1]
+                if s not in ('fallback', 'gap') or n == 'none' or NOFEATURE.match(why):
+                    continue
+                if '.' in v:   # a dotted git-host verb is its own name: 'mr.parseRef'
+                    uses = sum(len(re.findall(r"""['"]%s['"]""" % re.escape(v), t)) for t in code.values())
+                else:   # a quoted verb or -Cap / -Verb argument in code that names the family; a compared value ($d.kind -eq 'create') is no call
+                    forms = '|'.join(map(re.escape, {v, kebab(v)}))
+                    uses = sum(len(re.findall(r"""['"](?:%s)['"]|-(?:Cap|Verb)\s+(?:%s)\b""" % (forms, forms), t))
+                               - len(re.findall(r"""(?:-c?(?:eq|ne|in|notin)|[=!]=)\s*['"](?:%s)['"]""" % forms, t)) for t in near)
+                sib = sorted(x for x, r in rows.items() if r.get(v) == 'native' and x != 'none')
+                mine = n in org.get(fam, ())
+                out.append(((not uses, not mine, -uses, -len(sib), fam, n, v), fam, n, v, s,   # a verb no code calls: last
+                            f'{fam}/{n}/{v}: {s} -> native{" · org uses it" if mine else ""} · {uses} code use(s) · native in '
+                            f'{len(sib)}/{len(rows)}{" (" + " ".join(sib[:4]) + ")" if sib else ""} · now: {why or "-"}'))
+    return sorted(out)
+
 def cmd_parity(a):
-    """parity [--json]: the family x adapter x verb and harness x feature matrices (README "Adapters", "Install")."""
+    """parity [--json] | parity next [--n 3]: the family x adapter x verb and harness x feature matrices (README "Adapters", "Install");
+    next: the cells to close first (kit-admin.md "Parity")."""
     k = load(KIT_DIR)
     probs, man = [], manifest(KIT_DIR)
+    if 'next' in a:
+        flags, _ = parse_opts(a, ('--n',))
+        cells = parity_next(k, man, local_config(KIT_DIR, 'kit.local.json'))
+        for c in cells[:int(flags.get('--n') or 3)]:
+            print(c[5])
+        print(f'parity next: {len(cells)} open cell(s) (fallback or gap; `no such feature: <link>` gaps and none adapters excluded)')
+        return 0
     fams = {f: adapter_matrix(k, f, a) for f, a in (man.get('adapters') or {}).items() if isinstance(a, dict)}
     hm = harness_matrix(k)
     adapter_lint(k, man, lambda *x: probs.append(x))
@@ -3420,8 +3476,8 @@ def collections_counter(items):
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'budget': (set(), set(), False), 'migrate': (set(), set(), False), 'sections': ({'--fix'}, set(), False),
-  'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False), 'parity': ({'--json'}, set(), False)}
-NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check', 'naming')   # positionals: files, verbs or names, never a kit dir
+  'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False), 'parity': ({'--json'}, {'--n'}, False)}
+NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check', 'naming', 'parity')   # positionals: files, verbs or names, never a kit dir
 COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'migrate': cmd_migrate, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check, 'parity': cmd_parity}
 
 def parse_opts(a, valued=()):
