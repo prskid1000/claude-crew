@@ -13,7 +13,7 @@ network_access = true
 set = { KIT_TOOL = "codex" }
 
 [[hooks.PreToolUse]]
-matcher = "^(Bash|apply_patch)$"
+matcher = "^(Bash|apply_patch|mcp__.*(sql|query).*)$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"

@@ -6,10 +6,10 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L49 login · L133 browsers · L176 tabs · L264 session · L313 actions · L412 ui checks · L419 evidence
+// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L249 session · L301 actions · L400 ui checks · L407 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
@@ -93,24 +93,9 @@ async function step(page, s, f) {
   for (let i = 0; s.waitUrl && i < 120 && !new RegExp(s.waitUrl).test(page.url()); i++) await sleep(500)
 }
 
+// users, profiles, secret: refs and every webLogin.type: adapters/web-login.mjs
 async function login(page, t, tenant, as) {
-  // profiles: a file-store secret reads that user; other stores: pokey.ps1 api and ui login only
-  const pf = (t.profiles || {})[as], pu = /^targets\/[^/]+\/([^/]+)\/password$/.exec(pf?.secret || '')
-  const L = t.webLogin, type = L.type || 'form', [user0, pass, otp] = t.users[as] || (pu && t.users[pu[1]]) || [], user = pf?.login || user0
-  if (!user) throw new Error(`no user "${as}" in this target`)
-  if (/^secret:/.test(pass || '')) throw new Error(`user "${as}": its password is in secrets.store (${pass}); the browser reads the file store only: pokey.ps1 api -As ${as}, or keep this login in targets.local.json`)
-  if (pf?.fields?.tenant && !tenant) tenant = pf.fields.tenant
-  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // adapters/web-login.mjs
-    const ext = await adapter('web-login.mjs')
-    await ext.login({ page, t, tenant, user, pass, otp, type }, { nav, step, applyState, onLogin, fill, here: __HERE })
-  } else {
-    await nav(page, t.web + (L.path || '/'), 'networkidle2')
-    if (!onLogin(page, t)) return   // logged in: never log out
-    const f = (s) => fill(s, user, pass, tenant)
-    await step(page, { fill: L.fields }, f)
-    if (L.rememberMeLabel) await page.evaluate((lb) => { const c = [...document.querySelectorAll('label')].find((e) => e.innerText.trim().toLowerCase() === lb.toLowerCase())?.querySelector('[type=checkbox]'); c?.checked || c?.click() }, L.rememberMeLabel)
-    await step(page, { click: L.submit }, f)
-  }
+  tenant = await (await adapter('web-login.mjs')).login({ page, t, tenant, as }, { nav, step, applyState, onLogin, fill, here: __HERE })
   await settle(page)
   if (onLogin(page, t)) throw new Error('login failed: ' + (await text(page)).slice(0, 300))
   await page.evaluate((m) => localStorage.setItem('qa-session', m), `${tenant}/${as}`)
@@ -280,8 +265,9 @@ export async function session({ target, tenant, as } = {}) {
   BASE = t.web
   let browser, page, port = null
   const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
-  const eg = (await adapter('engine-playwright.mjs')).engine(eng)
+  const eg = (await adapter('engine-playwright.mjs')).engine(eng), served = typeof eg.reuse === 'function'   // Playwright: pwServed
   if (!eg.reuse) ({ browser, page } = await eg.session(eng, bo, VIEW, QUIET_ARGS))
+  else if (served) ({ browser, page } = await eg.reuse(eng, bo, VIEW, QUIET_ARGS, port = await sessionPort(tn, tenant, as), kitPath('sessions', { create: true })))
   else {
     if (!CHROME) throw new Error('no Chrome/Edge found; set CHROME_PATH')
     port = await sessionPort(tn, tenant, as)
@@ -300,7 +286,8 @@ export async function session({ target, tenant, as } = {}) {
     page = await openTab(browser, key, { agent: agentId })
     if (bo.timezone) await page.emulateTimezone(bo.timezone).catch(() => {})
   }
-  const done = async () => { openDone.delete(done); if (port === null) return browser.close().catch(() => {}); await closeTab(page, key); try { browser.disconnect() } catch {} }
+  // served: close() ends its context; the server stays
+  const done = async () => { openDone.delete(done); if (port === null || served) return browser.close().catch(() => {}); await closeTab(page, key); try { browser.disconnect() } catch {} }
   releaseOnExit(done)
   page.__qa = { t, tenant, as, key, agent: agentId }
   page.setDefaultTimeout(20000); page.setDefaultNavigationTimeout(90000)
@@ -308,7 +295,8 @@ export async function session({ target, tenant, as } = {}) {
   if (t.webLogin) { try { await nav(page, t.web + '/'); await ensureLogin(page, t, tenant, as, key) } catch (e) { await done(); throw e } }
   return { browser, page, net, target: t, tenant, as, key, port, engine: eng, done }
 }
-export const killSession = (port) => puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: PROTO_MS }).then((b) => b.close()).catch(() => {})
+// a Playwright server (pwServed) exits within a minute once its .used file is gone
+export const killSession = (port) => (rmSync(`${kitPath('sessions')}/pw-${port}.used`, { force: true }), puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: PROTO_MS }).then((b) => b.close()).catch(() => {}))
 
 // ---- actions: settle, go, clicks, inputs
 // quiet XHR <= 8 s (polling pages never idle), not past 100 JS errors

@@ -15,21 +15,36 @@ export function totp(secret, at = Date.now()) {
   return String((h.readUInt32BE(h[19] & 15) & 0x7fffffff) % 1e6).padStart(6, '0')
 }
 
-export async function login({ page, t, tenant, user, pass, otp, type }, h) {
-  const L = t.webLogin, code = otp && totp(otp)
+// a secret:<name> value (users, profiles; any secrets.store): the kit's secret-store in a child pwsh whose stdout only this
+// process reads (never logged); a plain value passes through
+export function resolveSecret(v, run = spawnSync) {
+  const m = /^secret:(.+)$/.exec(v || ''); if (!m) return v
+  const lib = resolve(import.meta.dirname, '../../crafty/lib.ps1').replace(/'/g, "''")
+  const r = run('pwsh', ['-NoProfile', '-NonInteractive', '-Command', `. '${lib}'; [Console]::Out.Write((Get-KitSecret $env:KIT_SECRET_NAME))`], { encoding: 'utf8', timeout: 60000, env: { ...process.env, KIT_SECRET_NAME: m[1] } })
+  if (r.status !== 0 || !r.stdout) throw new Error(`secret ${m[1]}: not resolved (${String(r.stderr || r.error || '').split('\n')[0].slice(0, 200)})`)
+  return r.stdout
+}
+// the login of user `as` (users[as] = [login, password, totp seed]; a profile: its login, store secret, fields.tenant) -> the tenant
+export async function login({ page, t, tenant, as }, h) {
+  const L = t.webLogin, type = L.type || 'form', pf = (t.profiles || {})[as], pu = /^targets\/[^/]+\/([^/]+)\/password$/.exec(pf?.secret || '')
+  const [user0, pass0, otp] = t.users?.[as] || (pu && t.users?.[pu[1]]) || [], user = pf?.login || user0
+  if (!user) throw new Error(`no user "${as}" in this target`)
+  const pass = resolveSecret(pf?.secret && !pu ? `secret:${pf.secret}` : pass0), code = otp && totp(resolveSecret(otp))
+  if (pf?.fields?.tenant && !tenant) tenant = pf.fields.tenant
   const f = (s) => h.fill(s, user, pass, tenant).replace(/\{totp\}/g, code || '')
   if (type === 'storageState') { await h.applyState(page, JSON.parse(readFileSync(resolve(h.here, L.file), 'utf8'))); await h.nav(page, t.web + '/', 'networkidle2') }
   else if (type === 'script') await (await import(pathToFileURL(resolve(h.here, L.script)).href)).default({ page, user, pass, tenant, target: t, totp: code })
-  else if (type === 'sso-steps') {
+  else if (type === 'sso-steps' || type === 'form') {
     await h.nav(page, t.web + (L.path || '/'), 'networkidle2')
-    if (!h.onLogin(page, t)) return   // logged in: never log out
-    for (const s of L.steps || []) await h.step(page, s, f)
-  } else if (type === 'form') {   // a form whose fields carry {totp}
-    await h.nav(page, t.web + (L.path || '/'), 'networkidle2')
-    if (!h.onLogin(page, t)) return
-    await h.step(page, { fill: L.fields }, f)
-    await h.step(page, { click: L.submit }, f)
+    if (!h.onLogin(page, t)) return tenant   // logged in: never log out
+    if (type === 'sso-steps') for (const s of L.steps || []) await h.step(page, s, f)
+    else {
+      await h.step(page, { fill: L.fields }, f)
+      if (L.rememberMeLabel) await page.evaluate((lb) => { const c = [...document.querySelectorAll('label')].find((e) => e.innerText.trim().toLowerCase() === lb.toLowerCase())?.querySelector('[type=checkbox]'); c?.checked || c?.click() }, L.rememberMeLabel)
+      await h.step(page, { click: L.submit }, f)
+    }
   } else throw new Error(`webLogin.type ${type}: form | sso-steps | script | storageState`)
+  return tenant
 }
 // '<target>-<bird>' / '<target><k>' = a local env lane: the base target's login, its lane-1 URL ports moved to lane k's (as pokey.ps1
 // Get-LaneTarget); lanes = envy.ps1 envs -Json (omitted: run once per process; pokey.ps1's cache key is .NET file ticks)
@@ -50,7 +65,6 @@ export function laneTarget(name, targets, lanes) {
   }
   return null
 }
-// registry (parity.json login): the web surface (browser.mjs login()) reads users and profiles, no secret:<name> ref (a node
-// process gets no value from the store; pokey.ps1 api and ui login read every store)
+// registry (parity.json login): the web surface (browser.mjs login()) reads users, profiles and secret:<name> refs (resolveSecret)
 export const ADAPTERS = { login: {} }
-ADAPTERS['login']['web'] = { users: true, profiles: true }
+ADAPTERS['login']['web'] = { users: true, profiles: true, secretRefs: resolveSecret }

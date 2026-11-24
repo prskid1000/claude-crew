@@ -55,7 +55,7 @@ Register-KitAdapter 'secret-store' 'env' @{ caps = @{ write = $false; list = $tr
 # adapter:secret-store/keychain: the OS store, service = the name (Windows Credential Manager, macOS Keychain, libsecret); a
 # value written goes in on stdin (security -i, secret-tool store) or in-process (Windows), never on a command line
 function __SecQ([string]$s) { '"' + ($s -replace '(["\\])', '\$1') + '"' }
-Register-KitAdapter 'secret-store' 'keychain' @{ caps = @{ write = $true; list = $false; rotate = $true }
+Register-KitAdapter 'secret-store' 'keychain' @{ caps = @{ write = $true; list = $true; rotate = $true }
   get = { param($a)
     if ($KitIsWindows) { return & (Join-Path $KitLibDir 'flagged.ps1') credread -Text $a.name }
     $r = if (Get-Command security -ErrorAction SilentlyContinue) { Invoke-KitNetExe 'security' @('find-generic-password', '-s', $a.name, '-w') } else { Invoke-KitNetExe 'secret-tool' @('lookup', 'service', $a.name) }
@@ -63,11 +63,18 @@ Register-KitAdapter 'secret-store' 'keychain' @{ caps = @{ write = $true; list =
   set = { param($a)
     if ("$($a.value)" -match '[\r\n]') { throw "secret-store keychain: a value with a line break is refused (it would end the security -i command)" }
     if ($KitIsWindows) { $env:KIT_SECRET_VALUE = $a.value; try { $ok = & (Join-Path $KitLibDir 'flagged.ps1') credwrite -Text $a.name } finally { Remove-Item Env:KIT_SECRET_VALUE -ErrorAction SilentlyContinue }; if ("$ok" -ne 'True') { throw "secret-store keychain: write $($a.name) failed" }; return }
-    $r = if (Get-Command security -ErrorAction SilentlyContinue) { Invoke-KitExe 'security' @('-i') 30 -In "add-generic-password -U -a kit -s $(__SecQ $a.name) -w $(__SecQ $a.value)`n" } else { Invoke-KitExe 'secret-tool' @('store', "--label=$($a.name)", 'service', $a.name) 30 -In $a.value }
+    $r = if (Get-Command security -ErrorAction SilentlyContinue) { Invoke-KitExe 'security' @('-i') 30 -In "add-generic-password -U -a kit -s $(__SecQ $a.name) -w $(__SecQ $a.value)`n" } else { Invoke-KitExe 'secret-tool' @('store', "--label=$($a.name)", 'service', $a.name, 'account', 'kit') 30 -In $a.value }
     if ($r.code -or "$($r.err)" -match 'error') { throw "secret-store keychain: write $($a.name) failed: $(@("$($r.err)" -split "`n")[0])" } }
   delete = { param($a)
     if ($KitIsWindows) { $null = & (Join-Path $KitLibDir 'flagged.ps1') creddelete -Text $a.name; return }
     $null = if (Get-Command security -ErrorAction SilentlyContinue) { Invoke-KitExe 'security' @('delete-generic-password', '-s', $a.name) 30 } else { Invoke-KitExe 'secret-tool' @('clear', 'service', $a.name) 30 } }
+  # names of the kit's own items (account kit): Windows CredEnumerate, macOS dump-keychain (attributes, no -d: no values),
+  # libsecret search (its output holds values: parsed in memory, only the service names kept)
+  list = { param($a)
+    if ($KitIsWindows) { return @(& (Join-Path $KitLibDir 'flagged.ps1') credlist) }
+    if (Get-Command security -ErrorAction SilentlyContinue) { $r = Invoke-KitNetExe 'security' @('dump-keychain')
+      return @("$($r.out)" -split '(?m)^keychain: ' | ForEach-Object { if ($_ -match '"acct"<blob>="kit"' -and $_ -match '"svce"<blob>="([^"]*)"') { $Matches[1] } }) }
+    $r = Invoke-KitNetExe 'secret-tool' @('search', '--all', 'account', 'kit'); @([regex]::Matches("$($r.out)", '(?m)^attribute\.service = (.+?)\r?$') | ForEach-Object { $_.Groups[1].Value }) }
 }
 # adapter:secret-store/command: secrets.command.get|set|list|delete = CLI lines ({name}, {prefix}); set reads the value from env
 # KIT_SECRET_VALUE (never argv: process lists show it); get prints the raw value, list the names

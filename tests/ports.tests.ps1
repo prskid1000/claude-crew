@@ -12,6 +12,7 @@ Expect 'ports: a quote and a backslash stay valid TOML / YAML, LF only' ($res -c
 Expect 'ports: port_deploy keeps user files, removes only stale generated ports' ($res -contains 'ports-deploy:True')
 Expect 'ports.targets unset or unknown: off, no workspace copies (owner 2026-11-22)' ($res -contains 'ports-default-off:True')
 Expect 'ports: hooks absolute, no double quotes (agy cmd /c); Codex cleanup + health -Flow async, KIT_TOOL; agy both detached, hidden' ($res -contains 'ports-hooks:True')
+Expect 'ports: the Codex guard hook matches shell, apply_patch and MCP SQL tools (parity: guard on MCP SQL), no other MCP tool' ($res -contains 'ports-codex-mcp:True')
 Expect "parity: every adapter verb and harness feature native, fallback or a declared gap on this kit ($($res -match '^parity-kit:'))" ($res -contains 'parity-kit:True []')
 Expect 'parity: a verb on one adapter only fails (no family list); a family cap fails every sibling without it until a fallback' ($res -contains 'parity-sibling:True')
 Expect 'parity: a renamed verb is missing though a nested @{ status = } remains; a dropped hook is missing though a longer one starts with it' ($res -contains 'parity-nested:True')

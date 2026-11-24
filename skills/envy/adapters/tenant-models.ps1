@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none here (its verbs exit through envy.ps1).
 # tenant-models.ps1: envs.<env>.tenants.model (kind tenant-model; default none) and the envy verb `tenant` (kind envy-verb).
-# Models (caps: create, drop, snapshot): schema = one schema per tenant + a registry (adapters/tenant-schema.ps1, tenants.registry); database = the same on an
+# Models: schema = one schema per tenant + a registry (adapters/tenant-schema.ps1, tenants.registry); database = the same on an
 #   engine whose databases are schemas; column = one shared scope, tenants = the values of tenants.column { table, column } (list
 #   only); none = no tenant verbs (every other verb works on the db scope: db.schemas / db.schemasQuery / db.name).
 # Verbs: list @{ e } -> { name, registry, keep, mb } · drop @{ e; names; dryRun } -> lines · import @{ e; from; tenant; as; mask;
@@ -34,7 +34,7 @@ Register-KitAdapter tenant-model column @{
     @(Invoke-DbSql $e "SELECT DISTINCT $($c.column) FROM $($c.table)" | ForEach-Object { "$($_[0])" } | Where-Object { $_ -and $_ -ne 'NULL' } | ForEach-Object {
         [pscustomobject]@{ name = $_; registry = $true; keep = $(if ($_ -in @($t.keep)) { 'tenants.keep' }); mb = 0 } }) } }
 # instance = one server per tenant: tenants.instances [{ name, db }] (list only: no drop, import or marks across servers)
-Register-KitAdapter tenant-model instance @{ caps = @{ create = $false; drop = $false; snapshot = $false }
+Register-KitAdapter tenant-model instance @{
   list = { param($a) $t = (Get-EnvCfg $a.e).tenants
     @(@($t.instances) | Where-Object { $_.name } | ForEach-Object { [pscustomobject]@{ name = "$($_.name)"; registry = $true; keep = $(if ("$($_.name)" -in @($t.keep)) { 'tenants.keep' }); mb = 0 } }) } }
 

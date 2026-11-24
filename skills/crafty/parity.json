@@ -86,8 +86,7 @@
       "caps": "write list rotate",
       "names": "file env keychain command",
       "gaps": {
-        "env/write,set,delete,rotate": "read-only by design: the environment comes from the owner's shell or CI, which a kit process cannot change (UNSUPPORTED names it; a written file would be a second store: use file or keychain)",
-        "keychain/list": "no name listing: secrets are read by name only"
+        "env/write,set,delete,rotate": "no such feature: https://learn.microsoft.com/en-us/windows/win32/procthread/environment-variables a process changes only its own environment and its children's, never the owner's shell or CI that set it (UNSUPPORTED names it; a written file would be a second store: use file or keychain)"
       }
     },
     "process-gate": {
@@ -116,10 +115,9 @@
         "jdbc": "the env's db.jdbc line"
       },
       "gaps": {
-        "redis,elasticsearch,opensearch/sql": "no statement language with rows: Invoke-DbSql refuses (db.schemasQuery, tenants column model); envy.ps1 sql runs the query preset (raw commands, REST paths)",
+        "redis/sql": "no such feature: https://redis.io/docs/latest/commands/ commands on keys, no statement language with rows: Invoke-DbSql refuses (db.schemasQuery, tenants column model); envy.ps1 sql runs the query preset (raw commands)",
         "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/marks": "no binlog marks: restore by seed",
         "mariadb,postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/temp": "no temp-space watchdog or pool check",
-        "sqlserver,sqlite,oracle,mongodb/sizes": "no data-growth check",
         "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/pos": "marks engines only (supportsMarks)",
         "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/binlogs": "marks engines only (supportsMarks)"
       }
@@ -129,15 +127,12 @@
       "file": "skills/envy/adapters/tenant-models.ps1",
       "verbs": "list drop import footprint scopes",
       "names": "",
-      "caps": "create drop snapshot",
       "vendors": "none schema database column instance",
       "gaps": {
         "none/list,drop,import,footprint": "no tenants: every verb works on the db scope",
         "column/drop,import,footprint": "tenants are column values in one shared scope: list only",
         "instance/drop,import,footprint": "one server per tenant: list only",
-        "none,column,instance/scopes": "no extra data scopes",
-        "none,schema,database,column,instance/create": "no kit verb reads it yet: tenants come from import",
-        "none,schema,database,column,instance/snapshot": "no kit verb reads it yet"
+        "none,column,instance/scopes": "no extra data scopes"
       }
     },
     "migration": {
@@ -165,10 +160,7 @@
       "config": "targets.<t>.users / profiles (targets.local.json)",
       "file": "skills/pokey/pokey.ps1",
       "verbs": "users secretRefs profiles",
-      "names": "api app web",
-      "gaps": {
-        "web/secretRefs": "a node process gets no value from the store: browser.mjs reads targets.local.json and names pokey.ps1 api; api and ui login read every store"
-      }
+      "names": "api app web"
     },
     "device": {
       "config": "devices.type",
@@ -176,7 +168,7 @@
       "verbs": "dump tap tapid tapxy type clear key swipe openurl shot shotmark wait photo log mic",
       "names": "android ios none",
       "gaps": {
-        "ios/dump,tap,tapid,tapxy,type,clear,key,swipe,shotmark,wait,photo,mic": "simctl has no UI driver: pokey.ps1 ui refuses, naming the ios actions; prove the rest on a web screen or in the app log",
+        "ios/photo,mic": "no such feature: https://developer.apple.com/documentation/xcode/testing-in-simulator-versus-testing-on-hardware-devices a Simulator has no camera and no audio injection: pokey.ps1 ui refuses, naming the ios actions; prove it on an android lane or by hand",
         "none/dump,tap,tapid,tapxy,type,clear,key,swipe,openurl,shot,shotmark,wait,photo,log,mic": "no device lanes (devices.type none): app checks are NOT_TESTED"
       }
     },
@@ -185,10 +177,7 @@
       "file": "skills/pokey/adapters/engine-playwright.mjs",
       "verbs": "session",
       "caps": "reuse",
-      "names": "chrome chromium firefox webkit",
-      "gaps": {
-        "chromium,firefox,webkit/reuse": "a browser per process (Playwright, no CDP port to reattach): each call opens and logs in again"
-      }
+      "names": "chrome chromium firefox webkit"
     },
     "scheduler": {
       "config": "supervise.osTimer",
@@ -227,7 +216,7 @@
     },
     "features": {
       "guard on file reads and MCP SQL": {
-        "codex": "gap: only shell and apply_patch are hooked",
+        "codex": "port: PreToolUse matcher Bash|apply_patch|mcp__*(sql|query)* (Codex reads files through its shell; hook input tool_name / tool_input as Claude Code)",
         "antigravity": "gap: only run_command is hooked"
       },
       "test-login read deny": {

@@ -79,12 +79,20 @@ try {
   "Register-KitAdapter envy-verb hello @{ ops = @('wave'); run = { `"hello `$Op from `$e`" } }" | Set-Content (Join-Path $ad 'zz_hello.local.ps1')
   $h = Px $L hello wave -Env pg 2>&1 | Out-String; $hc = $LASTEXITCODE
   $hb = & $flat (Px $L hello jump -Env pg 2>&1 | Out-String); $u = & $flat (Px $L nosuchverb 2>&1 | Out-String); $uc = $LASTEXITCODE
-  # schemaSizes: each engine's own query (supervise data growth); none -> refused, never the mysql client
-  $ssq = & { . $L; "$($KitAdapters['db-engine'].mysql.schemaSizes -match 'information_schema\.tables')|$($KitAdapters['db-engine'].postgres.schemaSizes -match 'pg_total_relation_size')|$([bool]$KitAdapters['db-engine'].sqlite.schemaSizes)" }
-  $ssn = & $flat (Px $L sql -Env lite -Query schemaSizes 2>&1 | Out-String)
+  # schemaSizes: each engine's own query (supervise data growth); sqlserver / sqlite / oracle / mongodb (parity): sizes through the
+  # engine's own sql verb and catalogue -> scope TAB rows TAB MB; never the mysql client
+  $ssq = & { . $L; "$($KitAdapters['db-engine'].mysql.schemaSizes -match 'information_schema\.tables')|$($KitAdapters['db-engine'].postgres.schemaSizes -match 'pg_total_relation_size')" }
+  $ssz = & { . $L; $global:szx = [Collections.Generic.List[string]]::new(); function Invoke-KitExe { param($Exe, $A, $TimeoutSec, $Raw, $Cwd, $In) $global:szx.Add("$Exe|$($A -join ' ')|$In"); [pscustomobject]@{ code = 0; out = "app`t30`t2`n"; err = '' } }
+    @(foreach ($en in 'ms', 'lite', 'ora', 'mg') { "$en=$(@(& (Get-DbEngine $en).sizes @{ e = $en }) -join ',')" }) -join ' ' }
+  $szx = $global:szx -join "`n"
+  # jdbc / exec presets (parity) fill what an env leaves unset
+  $jp = & { . $L; "$((Get-EnvCfg ms).db.jdbc)|$((Get-EnvCfg lite).db.jdbc)|$((Get-EnvCfg ora).db.jdbc)|$((Get-EnvCfg rd).db.exec)|$($script:DbPresets.elasticsearch.jdbc)|$($script:DbPresets.opensearch.jdbc)|$($script:DbPresets.opensearch.exec)" }
+  Expect "jdbc / exec presets: sqlserver, sqlite, oracle jdbc; redis exec from a file; search jdbc + _bulk exec ($jp)" ($jp -eq 'jdbc:sqlserver://127.0.0.1:1433;databaseName=app;encrypt=false|jdbc:sqlite:app.db|jdbc:oracle:thin:@//127.0.0.1:1521/XE|redis-cli -h 127.0.0.1 -p 6379 < "{file}"|jdbc:es://http://{H}:{P}|jdbc:opensearch://http://{H}:{P}|curl -s -H "Content-Type: application/x-ndjson" -X POST http://{H}:{P}/_bulk --data-binary "@{file}"')
   # the migration adapter loads only when config names its tool (here: none)
   $lbOff = & { . $L; [bool](Get-Command Get-LiquibaseCmd -ErrorAction SilentlyContinue) }
-  Expect "schemaSizes: mysql information_schema, postgres pg_total_relation_size, sqlite refused; liquibase.ps1 not loaded without migrations.tool ($ssq | $lbOff)" ($ssq -eq 'True|True|False' -and $ssn -match 'engine sqlite: no schemaSizes query' -and -not (Test-Path $hit) -and -not $lbOff)
+  Expect "schemaSizes: mysql information_schema, postgres pg_total_relation_size; liquibase.ps1 not loaded without migrations.tool ($ssq | $lbOff)" ($ssq -eq 'True|True' -and -not (Test-Path $hit) -and -not $lbOff)
+  Expect "sizes: sqlserver dm_db_partition_stats, sqlite dbstat, oracle user_segments, mongodb listDatabases, each through its own client ($ssz)" ($ssz -eq "ms=app`t30`t2 lite=app`t30`t2 ora=app`t30`t2 mg=app`t30`t2" -and
+    $szx -match '(?m)^sqlcmd\|[^|]*\|SET NOCOUNT ON;\s+SELECT s\.name.*sys\.dm_db_partition_stats' -and $szx -match '(?m)^sqlite3\|.*FROM dbstat d' -and $szx -match '(?m)^sqlplus\|[\s\S]*user_segments' -and $szx -match '(?m)^mongosh\|.*listDatabases' -and -not (Test-Path $hit))
   Expect "envy verbs: a registered verb runs, its ops checked; an unknown verb refused ($hc | $($h.Trim()))" ($hc -eq 0 -and $h -match 'hello wave from pg' -and $hb -match 'hello jump : unknown \(wave\)' -and $uc -ne 0 -and $u -match "unknown verb 'nosuchverb'.*hello")
 } finally { $env:PATH = $oldPath }
 Remove-TestKit $k

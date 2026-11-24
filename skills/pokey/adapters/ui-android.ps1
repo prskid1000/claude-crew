@@ -154,8 +154,8 @@ const t0 = Date.now();   // real-time mode, paced 100 ms packets: the blocking m
 }
 if ($script:uiFailed) { exit 1 }   # NOT FOUND: the caller must not read it as done
 }
-# ---- device: pokey.ps1 ui actions per devices.type (parity.json device): android all, ios what simctl drives (ui-ios.ps1 refuses the rest), none no phones
+# ---- device: pokey.ps1 ui actions per devices.type (parity.json device): android all, ios all but photo / mic (simctl + idb; ui-ios.ps1 refuses those), none no phones
 $__ui = { param($a, $v) Invoke-Ui $v "$($a.arg)" "$($a.arg2)" "$($a.arg3)" "$($a.arg4)" }
 Register-KitAdapter device android @{ dump = $__ui; tap = $__ui; tapid = $__ui; tapxy = $__ui; type = $__ui; clear = $__ui; key = $__ui; swipe = $__ui; openurl = $__ui; shot = $__ui; shotmark = $__ui; wait = $__ui; photo = $__ui; log = $__ui; mic = $__ui }
-Register-KitAdapter device ios @{ shot = $__ui; openurl = $__ui; log = $__ui }
+Register-KitAdapter device ios @{ dump = $__ui; tap = $__ui; tapid = $__ui; tapxy = $__ui; type = $__ui; clear = $__ui; key = $__ui; swipe = $__ui; openurl = $__ui; shot = $__ui; shotmark = $__ui; wait = $__ui; log = $__ui }
 Register-KitAdapter device none @{}

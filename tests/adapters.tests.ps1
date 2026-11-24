@@ -83,13 +83,19 @@ $secR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $null = Set-KitSecret 'targets/x/u/password' '{"p":1}'; $o.command = (Get-KitSecret 'targets/x/u/password') -eq '{"p":1}' -and -not (Test-KitCap 'secret-store' 'command' 'list')
   # keychain writes (parity): Windows Credential Manager round trip on a test name (deleted after); macOS security -i gets the value on stdin
   $__cfg = '{"secrets":{"store":"keychain"}}' | ConvertFrom-Json; $kn = "kit-test-keychain-$PID"; $kv = 'K "3\'
-  $o.keychain = if ($KitIsWindows) { try { $null = Set-KitSecret $kn $kv; (Get-KitSecret $kn) -eq $kv } finally { Remove-KitSecret $kn } } else { $true }
+  $o.keychain = if ($KitIsWindows) { try { $null = Set-KitSecret $kn $kv; (Get-KitSecret $kn) -eq $kv -and $kn -in @(Get-KitSecretNames 'kit-test-keychain-') } finally { Remove-KitSecret $kn } } else { $true }
+  # keychain list (parity): macOS dump-keychain attributes and libsecret search (fixtures: no Mac or Linux keyring here), kit items only
+  $o.keychainList = & { $KitIsWindows = $false; function security { }
+    function Invoke-KitNetExe { param($Exe, $A) [pscustomobject]@{ code = 0; err = ''; out = "keychain: `"/k.db`"`nclass: `"genp`"`nattributes:`n    `"acct`"<blob>=`"kit`"`n    `"svce`"<blob>=`"targets/t/u/password`"`nkeychain: `"/k.db`"`n    `"acct`"<blob>=`"me`"`n    `"svce`"<blob>=`"other`"" } }
+    $mac = @(Get-KitSecretNames) -join ','; Remove-Item Function:security   # no security binary off macOS: libsecret
+    function Invoke-KitNetExe { param($Exe, $A) $script:kcl = "$Exe $($A -join ' ')"; [pscustomobject]@{ code = 0; err = ''; out = "[/1]`nlabel = a`nsecret = s3cret`nattribute.service = targets/t/u/login`nattribute.account = kit" } }
+    $lnx = @(Get-KitSecretNames) -join ','; $mac -eq 'targets/t/u/password' -and $lnx -eq 'targets/t/u/login' -and $script:kcl -eq 'secret-tool search --all account kit' }
   $o.keychain = $o.keychain -and -not $(if ($KitIsWindows) { & (Join-Path $KitLibDir 'flagged.ps1') credread -Text $kn })
   $o.keychainMac = & { $KitIsWindows = $false; function security { }; function Invoke-KitExe { param($Exe, $A, $TimeoutSec, $Raw, $Cwd, $In) $global:kcx = "$Exe|$($A -join ' ')|$In"; [pscustomobject]@{ code = 0; out = ''; err = '' } }
     $nl = try { $null = Set-KitSecret $kn "a`nb"; 'stored' } catch { "$_" }; $null = Set-KitSecret $kn 'v"1'; $nl -match 'line break is refused' -and $global:kcx -eq "security|-i|add-generic-password -U -a kit -s `"$kn`" -w `"v\`"1`"`n" }
   Remove-Item Env:KIT_SECRET_TARGETS_TQ_QA2_PASSWORD
   $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
-Expect-Each $secR 'secret store: #' @('set', 'get', 'shape', 'names', 'guardFile', 'env', 'envRO', 'missing', 'fake', 'guardStore', 'command', 'keychain', 'keychainMac') -Show 14
+Expect-Each $secR 'secret store: #' @('set', 'get', 'shape', 'names', 'guardFile', 'env', 'envRO', 'missing', 'fake', 'guardStore', 'command', 'keychain', 'keychainList', 'keychainMac') -Show 15
 
 # deploy run: each deploys[] row of the target through its kind's deploy verb; command runs without a git host, manual
 # prints the steps, ssh without deployCmd and a kind with no deploy verb (probe) say a person deploys
@@ -111,12 +117,19 @@ Remove-Item $kl
 $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/envy/adapters/db-engines.ps1')
   function Get-EnvCfg { @{ db = @{ host = 'h'; port = 1 } } }; function EnvVars { @{ REDISCLI_AUTH = 'x' } }; function With-Env($v, $b) { $script:dsEnv = $v.REDISCLI_AUTH; & $b }; function Get-DbEngine { $KitAdapters['db-engine'][$script:dsEng] }
   function Invoke-KitExe { [pscustomobject]@{ code = 0; out = "used_memory:20971520`ndb0:keys=30,expires=0`ndb1:keys=10,expires=0"; err = '' } }
-  function Invoke-RestMethod { @([pscustomobject]@{ index = 'orders'; 'docs.count' = '12'; 'store.size' = '3' }, [pscustomobject]@{ index = '.kibana'; 'docs.count' = '1'; 'store.size' = '1' }) }
+  function Get-DbEngineName { $script:dsEng }
+  function Invoke-RestMethod { param($Uri, $Method, $ContentType, $Body, $TimeoutSec)
+    if ($Method -eq 'Post') { $script:dsSql += @("$Uri $Body"); return '{"columns":[{"name":"org"}],"rows":[["a",1],["b",2]],"schema":[{"name":"org"}],"datarows":[["c",3]]}' | ConvertFrom-Json }
+    @([pscustomobject]@{ index = 'orders'; 'docs.count' = '12'; 'store.size' = '3' }, [pscustomobject]@{ index = '.kibana'; 'docs.count' = '1'; 'store.size' = '1' }) }
   $script:dsEng = 'redis'; $rd = @(& $KitAdapters['db-engine'].redis.sizes @{ e = 'x' }) -join '|'
   $script:dsEng = 'opensearch'; $os = @(& $KitAdapters['db-engine'].opensearch.sizes @{ e = 'x' }) -join '|'
   "redis:$($rd -eq "db0`t30`t15|db1`t10`t5" -and $script:dsEnv -eq 'x')"; "search:$($os -eq "orders`t12`t3")"
+  # SQL over REST (parity): elasticsearch _sql rows, opensearch SQL plugin datarows; redis has none
+  $script:dsSql = @(); $script:dsEng = 'elasticsearch'; $esq = @(& $KitAdapters['db-engine'].elasticsearch.sql @{ e = 'x'; sql = 'SELECT org FROM orders;' } | ForEach-Object { $_ -join ':' }) -join ','
+  $script:dsEng = 'opensearch'; $osq = @(& $KitAdapters['db-engine'].opensearch.sql @{ e = 'x'; sql = 'SELECT org FROM orders' } | ForEach-Object { $_ -join ':' }) -join ','
+  "searchSql:$($esq -eq 'a:1,b:2' -and $osq -eq 'c:3' -and $script:dsSql[0] -eq 'http://h:1/_sql?format=json {"query":"SELECT org FROM orders"}' -and $script:dsSql[1] -like 'http://h:1/_plugins/_sql *' -and -not $KitAdapters['db-engine'].redis.sql)"
   "nocaps:$(-not $KitAdapters['db-engine'].redis.supportsMarks -and -not $KitAdapters['db-engine'].elasticsearch.supportsTemp)" }
-Expect-Each $dsR 'data store: #' @('redis', 'search', 'nocaps') -Show 4
+Expect-Each $dsR 'data store: #' @('redis', 'search', 'searchSql', 'nocaps') -Show 5
 
 # transcripts: every read goes through the transcript adapter (workflow dirs, own-transcript search, agent meta); Codex / Antigravity
 # say UNSUPPORTED for Claude-only verbs; no kit file outside the adapter names a CLI's transcript folder
@@ -131,15 +144,42 @@ $txR = & { $tdir = Join-Path $k 'tx'; New-Item -ItemType Directory -Force (Join-
     Select-String -Pattern 'ClaudeProjectDir|\.claude[/\\]projects|\.codex[/\\]sessions|antigravity-cli[/\\]brain' | Where-Object { -not ($_.Path -like '*crafty?lib.ps1' -and ($_.Line -match "^\s*(ClaudeProjectDir =|'root' =|'agent-meta' =)")) })
   "bypass:$(-not $by.Count)"; if ($by.Count) { $by | Select-Object -First 3 | ForEach-Object { "  $($_.Path):$($_.LineNumber)" } } }
 Expect-Each $txR 'transcript adapter: #' @('wfdirs', 'find', 'meta', 'unsupported', 'bypass') -Show 9
-# device registry (parity.json device): android every ui action, ios shot / openurl / log (the iOS refusal names the registry's), none none
+# device registry (parity.json device): android every ui action, ios all but photo / mic through idb (a fixture: no Mac here; the
+# refusal names the registry's), none none
 $dvS = Join-Path $k 'dv.ps1'; $dvA = Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/adapters'
-Set-Content $dvS ". '$k/skills/crafty/lib.ps1'; . '$dvA/ui-android.ps1'; . '$dvA/ui-ios.ps1'; function Get-KitSetting { 'ios' }; function Get-AndroidSdk { '.' }`n`"`$(`$KitAdapters.device.android.Count)|`$(`$KitAdapters.device.none.Count)`"; Invoke-UiIos tap Save"
+$dvBody = @'
+. '{K}/skills/crafty/lib.ps1'; . '{A}/ui-android.ps1'; . '{A}/ui-ios.ps1'; function Get-KitSetting { 'ios' }; function Get-AndroidSdk { '.' }
+$global:idbCalls = @(); function idb { $global:idbCalls += ($args -join ' '); $global:LASTEXITCODE = 0; if ($args[1] -eq 'describe-all') { '[{"AXLabel":"Save","AXUniqueId":"save-btn","type":"Button","frame":{"x":10,"y":20,"width":100,"height":40}},{"AXLabel":null,"AXValue":"","AXUniqueId":"name","type":"TextField","frame":{"x":0,"y":100,"width":200,"height":30}}]' } }
+"$($KitAdapters.device.android.Count)|$($KitAdapters.device.ios.Count)|$($KitAdapters.device.none.Count)"
+Invoke-UiIos dump; Invoke-UiIos tap Save; Invoke-UiIos tapid name; Invoke-UiIos key KEYCODE_ENTER; Invoke-UiIos clear 2; Invoke-UiIos swipe 1 2 3 4
+"calls=$($global:idbCalls -join ';')"
+Invoke-UiIos photo
+'@
+Set-Content $dvS $dvBody.Replace('{K}', $k).Replace('{A}', $dvA)
 $dvO = (pwsh -NoProfile -File $dvS 2>&1 | Out-String); $dvC = $LASTEXITCODE
-Expect "device registry: android 15 actions, none 0; ios refuses tap naming log | openurl | shot (exit $dvC)" ($dvO -match '^15\|0' -and $dvO -match 'ios: no ui tap \(simctl has no UI driver\): use log \| openurl \| shot' -and $dvC -eq 2)
-# browser engines (parity.json browser-engine): chrome reuses its CDP session; the Playwright engines open one per process
+Expect "device registry: android 15, ios 13, none 0; ios dump / tap / tapid / key / clear / swipe through idb; photo refused naming the rest (exit $dvC)" ($dvO -match '^15\|13\|0' -and $dvO -match 'Save @\(60,40\) #save-btn' -and $dvO -match '@\(100,115\) \[edit\] #name' -and
+  $dvO -match "tapped 'Save' at 60,40" -and $dvO -match 'tapped #name at 100,115' -and $dvO -match 'calls=ui describe-all --json;ui describe-all --json;ui tap 60 40;ui describe-all --json;ui tap 100 115;ui key 40;ui key-sequence 42 42;ui swipe 1 2 3 4 --duration 0\.4' -and
+  $dvO -match 'ios: no ui photo \(a Simulator has no camera and no audio injection\): use clear \| dump \| key \| log \| openurl' -and $dvC -eq 2)
+# browser engines (parity.json browser-engine): chrome reuses its CDP session; the Playwright engines a browser server per login,
+# started once, each call connects (a fake Playwright module: none installed here)
 $egU = [Uri]::new((Join-Path $dvA 'engine-playwright.mjs')).AbsoluteUri
-$egR = "$(node -e "import('$egU').then((m) => { const e = m.ADAPTERS['browser-engine']; console.log(Object.keys(e).map((k) => k + ':' + (e[k].reuse ? 'reuse' : typeof e[k].session)).join(' ')) })" 2>&1)"
-Expect "browser engines: chrome reuse, chromium / firefox / webkit a session per process ($egR)" ($egR -eq 'chrome:reuse chromium:function firefox:function webkit:function')
+$egR = "$(node -e "import('$egU').then((m) => { const e = m.ADAPTERS['browser-engine']; console.log(Object.keys(e).map((k) => k + ':' + (e[k].reuse === true ? 'cdp' : typeof e[k].reuse)).join(' ')) })" 2>&1)"
+$pwD = New-Item -ItemType Directory -Force (Join-Path $k 'pwfake'); $env:FAKE_PW_DIR = "$pwD"; $env:KIT_PLAYWRIGHT = Join-Path $pwD 'fake-pw.mjs'
+Set-Content $env:KIT_PLAYWRIGHT @'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+const dir = process.env.FAKE_PW_DIR, noop = async () => {}
+const page = () => ({ goto: noop, waitForNavigation: noop, waitForLoadState: noop })
+export const firefox = {
+  launchServer: async ({ port, wsPath }) => { appendFileSync(`${dir}/served.txt`, `${port}${wsPath} ${process.pid}\n`); setInterval(() => {}, 60000); return { close: noop } },
+  connect: async (ws) => { const f = `${dir}/served.txt`; if (!existsSync(f) || !readFileSync(f, 'utf8').includes(ws.split(':')[2])) throw new Error('refused'); appendFileSync(`${dir}/connects.txt`, ws + '\n'); return { newContext: async () => ({ newPage: async () => page(), cookies: async () => [], addCookies: noop }), close: noop } },
+  launch: async () => { throw new Error('launch: not in this test') } }
+'@
+$pwRun = Join-Path $pwD 'run.mjs'
+Set-Content $pwRun "const m = await import('$egU'); for (let i = 0; i < 2; i++) await m.pwServed('firefox', {}, { width: 9, height: 9 }, [], 45991, process.env.FAKE_PW_DIR); console.log('two sessions'); process.exit(0)"
+$pwO = "$(node $pwRun 2>&1)"; $pwSv = @(Get-Content (Join-Path $pwD 'served.txt') -ErrorAction SilentlyContinue); $pwCn = @(Get-Content (Join-Path $pwD 'connects.txt') -ErrorAction SilentlyContinue)
+foreach ($pwL in $pwSv) { Stop-Process -Id ([int]($pwL -split ' ')[1]) -Force -ErrorAction SilentlyContinue }
+Remove-Item Env:FAKE_PW_DIR, Env:KIT_PLAYWRIGHT
+Expect "browser engines: chrome reuses CDP, chromium / firefox / webkit a served browser; two firefox sessions = one server, two connects ($egR | $pwO | $($pwSv.Count) served, $($pwCn.Count) connects)" ($egR -eq 'chrome:cdp chromium:function firefox:function webkit:function' -and $pwO -eq 'two sessions' -and $pwSv.Count -eq 1 -and $pwSv[0] -like '45991/kit *' -and $pwCn.Count -eq 2 -and (Test-Path (Join-Path $pwD 'pw-45991.used')))
 # login surfaces (parity.json login): api and app share Get-KitLoginPair: a secret:<name> ref resolved, a profile's login + store secret + tenant
 $lgR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $fa = [Management.Automation.Language.Parser]::ParseFile((Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/pokey.ps1'), [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Get-KitLoginPair' }, $true)[0]; . ([scriptblock]::Create($fa.Extent.Text))
@@ -147,6 +187,21 @@ $lgR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $tg = @{ users = @{ qa = @('qa', 'secret:targets/t/qa/password') }; profiles = @{ admin = @{ login = 'root'; secret = 'targets/t/qa/password'; fields = @{ tenant = 'acme' } } } }
   $la = Get-KitLoginPair $tg 'qa'; $lb = Get-KitLoginPair $tg 'admin'; Remove-Item Env:KIT_SECRET_TARGETS_T_QA_PASSWORD; "$($la.u -join ',')|$($lb.u -join ',')|$($lb.pf.fields.tenant)" }
 Expect "login surfaces: api and app resolve a secret:<name> ref and a profile (login, store secret, tenant) alike ($lgR)" ($lgR -eq 'qa,S-1|root,S-1|acme')
+# web login (parity): a secret:<name> ref through the kit's secret-store in a child pwsh (env store here), a profile's store
+# secret, login and tenant; the form fills them
+$wlA = New-Item -ItemType Directory -Force (Join-Path $k 'skills/pokey/adapters'); Copy-Item (Join-Path $dvA 'web-login.mjs') $wlA -Force
+$wlU = [Uri]::new((Join-Path $wlA 'web-login.mjs')).AbsoluteUri; $wlRun = Join-Path $k 'wl.mjs'; $wlCfg = Join-Path $k 'skills/crafty/kit.local.json'
+& $J @{ secrets = @{ store = 'env' } } $wlCfg
+Set-Content $wlRun @"
+const m = await import('$wlU'), filled = []
+const h = { nav: async () => {}, onLogin: () => true, fill: (s, u, p, tn) => String(s).replace('{user}', u).replace('{pass}', p).replace('{tenant}', tn), step: async (pg, s, f) => { for (const v of Object.values(s.fill || {})) filled.push(f(v)) } }
+const t = { web: 'http://x', webLogin: { fields: { '#u': '{user}', '#p': '{pass}@{tenant}' }, submit: '#go' }, users: { qa: ['qa', 'secret:targets/t/qa/password'] }, profiles: { admin: { login: 'root', secret: 'targets/t/qa/password', fields: { tenant: 'acme' } } } }
+const tq = await m.login({ page: {}, t, tenant: '', as: 'qa' }, h), ta = await m.login({ page: {}, t, tenant: '', as: 'admin' }, h)
+console.log([filled.join(','), tq, ta, m.resolveSecret('plain'), typeof m.ADAPTERS.login.web.secretRefs].join('|'))
+"@
+$env:KIT_SECRET_TARGETS_T_QA_PASSWORD = 'W-1'; $wlO = "$(node $wlRun 2>&1)"
+Remove-Item Env:KIT_SECRET_TARGETS_T_QA_PASSWORD; Remove-Item $wlCfg
+Expect "web login: secret:<name> ref and a profile's store secret resolved by the kit's store, profile login + tenant ($wlO)" ($wlO -eq 'qa,W-1@,root,W-1@acme||acme|plain|function')
 
 # local-env caps off (no localEnv, no devices, no tenants): supervise and health print no WATCH / ACT for lanes, marks, partitions, phones
 $k9 = New-TestKit adapters-lec; $env:KIT_TRACKER_TYPE = 'none'

@@ -9,6 +9,7 @@ pwsh 7: & <kit>/skills/crafty/flagged.ps1 <verb> ...
  ipv4  IPv4 addresses of the up, non-loopback, non-tunnel interfaces, in interface order (envy.ps1 LanIp)
  credread -Text <target>  a Windows generic credential's secret, to the caller only (a tracker CLI's stored token)
  credwrite | creddelete -Text <target>  write (value: env KIT_SECRET_VALUE, never argv) or delete one (secret-store keychain); True | False
+ credlist  the names of the generic credentials the kit wrote (user kit), never values
 Exit codes: 0 ok · 2 usage
 #>
 #Requires -Version 7
@@ -38,9 +39,9 @@ switch ($Verb) {
       Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -notin 'Loopback', 'Tunnel' } |
       ForEach-Object { $_.GetIPProperties().UnicastAddresses } | Where-Object { $_.Address.AddressFamily -eq 'InterNetwork' } | ForEach-Object { "$($_.Address)" }
   }
-  { $_ -in 'credread', 'credwrite', 'creddelete' } {   # a generic Windows credential (UTF-8 blob, as go-keyring stores it); a read returns it to the caller, never printed by it; a write takes env KIT_SECRET_VALUE
-    if (-not ('KitCred' -as [type])) {
-      Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class KitCred {
+  { $_ -in 'credread', 'credwrite', 'creddelete', 'credlist' } {   # a generic Windows credential (UTF-8 blob, as go-keyring stores it); a read returns it to the caller, never printed by it; a write takes env KIT_SECRET_VALUE
+    if (-not ('KitCred2' -as [type])) {
+      Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class KitCred2 {
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct C { public int F; public int T; public string N; public string Cm; public long W; public int S; public IntPtr B; public int P; public int A; public IntPtr At; public string Ta; public string U; }
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredReadW(string n, int t, int f, out IntPtr c);
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredWriteW(ref C c, int f);
@@ -48,8 +49,11 @@ switch ($Verb) {
         [DllImport("advapi32.dll")] static extern void CredFree(IntPtr c);
         public static string Read(string n) { IntPtr p; if (!CredReadW(n, 1, 0, out p)) return null; try { var c = (C)Marshal.PtrToStructure(p, typeof(C)); var b = new byte[c.S]; Marshal.Copy(c.B, b, 0, c.S); return System.Text.Encoding.UTF8.GetString(b); } finally { CredFree(p); } }
         public static bool Write(string n, string v) { var b = System.Text.Encoding.UTF8.GetBytes(v); var c = new C(); c.T = 1; c.N = n; c.S = b.Length; c.P = 2; c.U = "kit"; c.B = Marshal.AllocHGlobal(Math.Max(1, b.Length)); try { Marshal.Copy(b, 0, c.B, b.Length); return CredWriteW(ref c, 0); } finally { Marshal.FreeHGlobal(c.B); } }
-        public static bool Delete(string n) { return CredDeleteW(n, 1, 0); } }' }
-    switch ($Verb) { 'credread' { [KitCred]::Read($Text) } 'credwrite' { [KitCred]::Write($Text, "$env:KIT_SECRET_VALUE") } default { [KitCred]::Delete($Text) } }
+        public static bool Delete(string n) { return CredDeleteW(n, 1, 0); }
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredEnumerateW(string f, int fl, out int n, out IntPtr c);
+        public static string[] List() { int n; IntPtr p; var r = new System.Collections.Generic.List<string>(); if (!CredEnumerateW(null, 0, out n, out p)) return r.ToArray();
+          try { for (int i = 0; i < n; i++) { var c = (C)Marshal.PtrToStructure(Marshal.ReadIntPtr(p, i * IntPtr.Size), typeof(C)); if (c.T == 1 && c.U == "kit") r.Add(c.N); } } finally { CredFree(p); } return r.ToArray(); } }' }
+    switch ($Verb) { 'credread' { [KitCred2]::Read($Text) } 'credwrite' { [KitCred2]::Write($Text, "$env:KIT_SECRET_VALUE") } 'credlist' { [KitCred2]::List() } default { [KitCred2]::Delete($Text) } }
   }
-  default { 'usage: flagged.ps1 hash -Text <text> [-Algorithm MD5|SHA1|SHA256] | linkfiles -Text <from> -To <to> [-Release] [-Move] | ipv4 | credread | credwrite | creddelete -Text <target>'; exit 2 }
+  default { 'usage: flagged.ps1 hash -Text <text> [-Algorithm MD5|SHA1|SHA256] | linkfiles -Text <from> -To <to> [-Release] [-Move] | ipv4 | credlist | credread | credwrite | creddelete -Text <target>'; exit 2 }
 }

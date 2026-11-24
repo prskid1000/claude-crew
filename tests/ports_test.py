@@ -57,6 +57,9 @@ cx = tomllib.loads(pt.codex_config_text('D:/w/.claude'))
 cmds = [h['command'] for g in cx['hooks']['SessionStart'] + cx['hooks']['PreToolUse'] for h in g['hooks']]
 ag = json.loads(pt.gravity_hooks_text('D:/w/.claude', True)); agx = json.loads(pt.gravity_hooks_text('/w/.claude', False))
 agc = [h['command'] for h in ag['kit-health']['SessionStart']] + [h['command'] for h in ag['guard']['PreToolUse'][0]['hooks']]
+# Codex PreToolUse (parity): shell, apply_patch and MCP SQL tools reach the guard; other MCP tools do not
+cxm = re.compile(cx['hooks']['PreToolUse'][0]['matcher'])
+print(f"ports-codex-mcp:{all(cxm.search(t) for t in ('Bash', 'apply_patch', 'mcp__db__run_sql', 'mcp__pg__query')) and not cxm.search('mcp__docs__search')}")
 ok_hooks = all('D:/w/.claude/skills/' in c and '"' not in c for c in cmds + agc) and cx['hooks']['SessionStart'][1]['hooks'][0].get('async') is True \
     and cx['hooks']['SessionStart'][2]['hooks'][0].get('async') is True and 'health -Flow -Fetch' in agc[2] and agc[2].count('-WindowStyle Hidden') == 2 \
     and cx['shell_environment_policy']['set']['KIT_TOOL'] == 'codex' and agc[1].count('-WindowStyle Hidden') == 2 and agc[1].endswith("'{}'") \
