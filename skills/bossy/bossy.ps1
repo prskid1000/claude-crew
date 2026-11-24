@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L254 budget · L284 launch · L527 recover · L614 pause · L625 resume · L692 program · L720 param ·
-  L726 track · L1115 supervise · L1462 report · L1542 audit · L1602 storage · L1605 bugbrief · L1607 cleanup · L1694 learn ·
-  L1732 decide · L1902 debate · L1946 health · L2014 setup · L2109 guard-sendmessage
+Sections: L40 init · L51 board · L256 budget · L286 launch · L529 recover · L616 pause · L627 resume · L694 program · L722 param ·
+  L728 track · L1117 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
+  L1734 decide · L1904 debate · L1948 health · L2016 setup · L2111 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -164,6 +164,7 @@ switch ($Action) {
       $rb = Get-KitResumeBriefFile $Agent $Run
       "CHECKPOINT: start at step '$($ck.next)': $(if (Test-Path -LiteralPath $rb) { "$rb (bossy.ps1 resume verified it), " })$((Get-KitCheckpointFile $Agent $Run) -replace 'json$', 'md'). Done steps: verify (sha, MR, doc exist), never redo; an uncommitted diff is the interrupted step's work: keep it"
     }
+    "SESSION $tok   (pass -Session $tok to beat / check / leave)"
     $act = @(Active | Where-Object session -ne $tok)
     Print $act
     $notes | ForEach-Object { $_ }
@@ -172,9 +173,9 @@ switch ($Action) {
     $c = if ($Contracts) { $Contracts } else { (Active | Where-Object { $_.run -eq $Run -and $_.contracts } | Select-Object -First 1).contracts }
     if ($c -and (Test-Path $c)) { "CONTRACTS ($c) - re-read before every push:"; Get-Content $c | Select-Object -First 60 | ForEach-Object { "  $_" } }
     "budget: $($bg.tool) $(if ($bg.model) { $bg.model } else { '(default model)' }) $($bg.budget) tokens, handoff at $($bg.handoff) ($($bg.capBy)), never earlier; instructions cap $($bg.instrCap); design window $($bg.design) (no stop)"
-    "SESSION $tok   (pass -Session $tok to beat / check / leave)"
   }
   'beat' {
+    if (-not $Session) { $Session = Find-KitCallerSession 'board beat' }
     $f = Join-Path $dir "$Session.json"; if (-not $Session -or -not (Test-Path $f)) { "board beat: unknown session '$Session': board join first, then beat with the SESSION it prints"; exit 3 }   # no stack trace
     $script:beatEntry = $null; $script:beatTaken = $null; $ho = $null
     Update-BoardEntry $f { param($x) if ($x.status -eq 'left' -and $x.takenOverBy) { $script:beatTaken = $x; return $null }; $x.beat = (Get-KitStamp); if ($Status) { $x.status = $Status } elseif ($x.status -eq 'left' -and -not $x.handoffBrief) { $x.status = 'working' }; $script:beatEntry = $x; $x }   # a beat proves it lives: a reaped row is back
@@ -212,15 +213,16 @@ switch ($Action) {
     $mine = @(if (-not $Session -and $Agent) { All | Where-Object { $_.agent -eq $Agent -and $_.status -ne 'left' -and (-not $Run -or $_.run -eq $Run) } })
     if ($mine.Count -and -not $Force) { $Session = @($mine | Sort-Object { (Test-KitHolder $_) -ne $false }, { "$($_.beat)" } -Descending)[0].session }   # token lost: the agent's newest live row
     elseif ($Force) { $Session = @($mine | Where-Object { (Test-KitHolder $_) -eq $false -or $_.session -notin (Active).session })[0].session }   # else a gone / quiet one
+    elseif (-not $Session -and -not $Agent) { $Session = Find-KitCallerSession }
     $f = Join-Path $dir "$Session.json"
-    if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left, no handoff; token lost: -Agent [-Run] leaves its newest live row; a gone one: -Force)"; exit 1 }
+    if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left; token lost: -Agent [-Run]; a gone row: -Force)"; exit 1 }
     $paused = $Status -eq 'paused'
     Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-KitStamp); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; if ($paused) { $x | Add-Member -Force NoteProperty paused $x.beat }; $script:leftEntry = $x; $x }
     $cf = Get-KitCheckpointFile $script:leftEntry.agent "$($script:leftEntry.run)"
     if (-not $paused) { Add-KitSpendObs $script:leftEntry $(if ($Handoff) { 'short' } else { 'ok' }) }   # a handoff: the estimate was too low
     if (-not $paused -and -not $Handoff -and (Test-Path -LiteralPath $cf)) { try { Invoke-KitLocked $cf { $c = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json; if (-not $c.run -or "$($c.run)" -eq "$($script:leftEntry.run)") { $c | Add-Member -Force NoteProperty done $true; Write-KitAtomic $cf ($c | ConvertTo-Json -Depth 6) } } } catch {} }   # next join starts fresh
     $twin = @(All | Where-Object { $_.agent -eq $script:leftEntry.agent -and $_.session -ne $Session -and $_.status -ne 'left' -and (Test-KitLive @{ session = $_.session }) })
-    # its phone leases under another id (test:T1hm, holder T1), same process: now
+    # its phone leases under another id (test:T1hm, holder T1)
     $byHolder = @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object { $_.agent -and $_.agent -ne $script:leftEntry.agent -and "$($_.holder)" -eq $script:leftEntry.agent -and $_.holderPid -and "$($_.holderPid)" -eq "$($script:leftEntry.holderPid)" } | ForEach-Object agent | Select-Object -Unique)
     if (-not $paused -and -not $Handoff -and -not $twin.Count) { Invoke-KitReleaseAgent -Agent (@($script:leftEntry.agent) + $byHolder) -Reason "left the board ($Session)" }   # paused / handed off: successor keeps them
     if (-not $paused) { try { Stop-KitLeftShells $script:leftEntry } catch { } }   # shells die with it
@@ -1143,7 +1145,7 @@ Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
-  # report at most ~a beat old: the OS timer ticks every osTimerTickMinutes, sweeps once the last sweep is a beat old; a session skips one under half a beat
+  # report <= a beat old: the OS timer sweeps once the last sweep is a beat old; a session skips one under half a beat
   $lsa = Get-KitLastSweepAt; $agoMin = if ($lsa) { ((Get-Date) - $lsa).TotalMinutes } else { 1e9 }; $asideMin = if ($me -eq 'os-timer') { Get-KitOsBeatAsideMinutes } else { (Get-KitBeatMinutes) * 0.5 }
   if (-not $Takeover -and ($other -or $me -eq 'os-timer') -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"
     # a session that skips still beats: health OVERDUE reads coordAt
@@ -1162,7 +1164,7 @@ $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
 Phase 'prefetch'; $null = @(Invoke-KitHooks Start-KitSupervisePrefetch)   # slow children start now, their sections read them
 function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; $md = Get-KitSweepMode $A; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:($md -eq 'background') -Detached:($md -eq 'detached') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest, scope timed out inline
-Phase 'budget usage'; $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget (gated: skipped most sweeps); own phase: the last prefetch hook was charged with it
+Phase 'budget usage'; $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget (gated); own phase, else the last prefetch hook pays for it
 Phase 'param learn'
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params: 3 s, when due (d-20261029173533)
@@ -1251,7 +1253,7 @@ foreach ($g in $active | Group-Object { "$($_.run)/$($_.agent)" } | Where-Object
 }
 # testers don't beat in long checks
 $liveNames = @($liveLabels | ForEach-Object { LabelNames $_ })
-$runNames = @($runningLabels | ForEach-Object { LabelNames $_ })   # running even idle: an earlier decide:SD result closed a live resume:SD
+$runNames = @($runningLabels | ForEach-Object { LabelNames $_ })   # running even idle (a decide:SD result closed a live resume:SD)
 $doneNames = @($doneLabels | ForEach-Object { LabelNames $_ } | Where-Object { $_ -and $_ -notin $liveNames -and $_ -notin $runNames })
 # workflow steps for Test-KitLive
 Write-KitAtomic (Get-KitPath live-steps -Create) (@{ at = (Get-KitStamp stored $now); running = @($runningLabels); labels = @(@($runningLabels) + @($doneLabels) | Where-Object { $_ } | Select-Object -Unique) } | ConvertTo-Json) -Volatile '"at":\s*"[^"]*"'
@@ -1711,7 +1713,7 @@ function Invoke-Learn {
     if (-not $Skill) { 'usage: learn -Read -Skill <skill>'; exit 2 }
     foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) {
       $L = Read-KitLessonLines $f; $r = Find-KitLessonSection $L $Skill; if (-not $r) { continue }
-      # read cap (learn.readCap, -Max): most-hit lessons; the rest wait for /tidy -Trim
+      # read cap (learn.readCap, -Max): most-hit lessons first
       $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' }); $rcap = if ($PSBoundParameters.ContainsKey('Max')) { $Max } else { [int](Get-KitParam 'learn.readCap') }
       $lines = @(Select-KitLessonScope $lines $Skill $Phase $Project)
       $lsIdx = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -like '- *' }); $lsOut = @($lsIdx | Sort-Object { if ($lines[$_] -match '\((\d+)[x×]\)\s*$') { -[int]$Matches[1] } else { -1 } }, { -$_ } | Select-Object -Skip $rcap)

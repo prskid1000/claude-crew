@@ -338,10 +338,10 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   $txLeftMin = Get-KitParam 'supervise.transcriptLeftMinutes'; $txRetryMin = Get-KitParam 'supervise.transcriptRetryMinutes'
   $txOf = { param($e) if ($e.transcript -or -not $e.session -or ($e.status -eq 'left' -and (($e.txTry -and [datetime]$e.txTry -ge [datetime]$e.beat) -or ($Now - [datetime]$(if ($e.beat) { $e.beat } else { $e.joined })).TotalMinutes -gt $txLeftMin)) -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt $txRetryMin)) { return "$($e.transcript)" }
     $k = Get-KitTranscriptKind $e.tool; if (-not $txCache.ContainsKey($k)) { $txCache[$k] = @(Get-KitLiveTranscripts $Now 360 $k) }
-    $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "(pass -Session $($e.session) to beat" -Quiet) })[0]
+    $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Test-KitTranscriptMarker $_.FullName "(pass -Session $($e.session) to beat") })[0]
     # a workflow agent that joined by hand (revy-18 under review:<area>): its step transcript
     if (-not $hit -and $k -eq 'claude') { if (-not $txCache.ContainsKey('wf')) { $txCache.wf = @(Get-KitRecentWorkflowDirs | ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter 'agent-*.jsonl' -File -ErrorAction SilentlyContinue }) }
-      $hit = @($txCache.wf | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "(pass -Session $($e.session) to beat" -Quiet) })[0] }
+      $hit = @($txCache.wf | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Test-KitTranscriptMarker $_.FullName "(pass -Session $($e.session) to beat") })[0] }
     try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { if ($hit) { $x.transcript = $hit.FullName } else { $x.txTry = (Get-KitStamp stored $Now) }; Write-KitState $e.file $x } } } catch { }   # a miss: 10 min until the next scan
     if ($hit) { $hit.FullName } }
   foreach ($e in @($recent | Group-Object { "$($_.run)/$($_.agent)" } | ForEach-Object { $_.Group | Sort-Object { [datetime]$_.joined } | Select-Object -Last 1 } | Sort-Object -Stable { -not $_.type })) {   # a re-join replaces its older entry; typed first

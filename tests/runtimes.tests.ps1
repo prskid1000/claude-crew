@@ -121,6 +121,18 @@ $lvj = pwsh @np $O board join -Type revy -Agent LV1 | Out-String; $lvs = if ($lv
 @("{""type"":""user"",""text"":""grep: SESSION $lvs""}") | Set-Content (Join-Path $lvd 'agent-aa-other.jsonl'); $null = Px $O board leave -Session $lvs   # another agent that only greps the id: never its transcript
 $lvt = & { . $O; @(Get-KitStatusRows | Where-Object { $_.name -like 'LV1 *' } | ForEach-Object { [IO.Path]::GetFileName("$($_.tx)") }) -join ',' }; Remove-Item Env:KIT_TRANSCRIPTS
 Expect "status: an agent that left before any scan: one transcript scan after it left, by its own join line (a transcript that only greps the id never matches) ($lvt)" ($lvt -eq 'agent-lv1.jsonl')
+# join output persisted (tool-results/*.txt, the transcript names the file): bare beat / leave and status find the row; 2 rows named: no guess
+$sid0 = $env:CLAUDE_CODE_SESSION_ID; $env:CLAUDE_CODE_SESSION_ID = 'sb'; $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'tx-bare'; $bsd = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS 'sb/subagents'), (Join-Path $env:KIT_TRANSCRIPTS 'sb/tool-results')
+$bjl = { param($a) $jo = pwsh @np $O board join -Type revy -Agent $a | Out-String; [pscustomobject]@{ s = $(if ($jo -match 'SESSION (\S+)') { $Matches[1] }); first = $jo.IndexOf('SESSION ') -lt $jo.IndexOf('board') } }
+$bpo = { param($n, [string[]]$Ss) Set-Content (Join-Path $bsd[1] "$n.txt") @($Ss | ForEach-Object { "SESSION $_   (pass -Session $_ to beat / check / leave)" }); '{"c":"X:\\p\\tool-results\\' + $n + '.txt"}' }
+$bcl = { param($v) '{"c":"bossy.ps1 board ' + $v + '"}' }
+$b1 = & $bjl BL1; $p1 = & $bpo j1 $b1.s; $t1 = Join-Path $bsd[0] 'agent-bl1.jsonl'
+@($p1, (& $bcl beat)) | Set-Content $t1; $bbt = pwsh @np $O board beat | Out-String; $bbc = $LASTEXITCODE
+@($p1, (& $bcl leave)) | Set-Content $t1; $bl1 = Px $O board leave | Out-String; $blt = & { . $O; @(Get-KitStatusRows | Where-Object { $_.name -like 'BL1 *' } | ForEach-Object { [IO.Path]::GetFileName("$($_.tx)") }) -join ',' }; (Get-Item $t1).LastWriteTime = (Get-Date).AddMinutes(-10)
+$b2 = & $bjl BL2; $b3 = & $bjl BL3; @((& $bpo j2 $b2.s, $b3.s), (& $bcl leave)) | Set-Content (Join-Path $bsd[0] 'agent-bl2.jsonl'); $bl2 = Px $O board leave | Out-String
+$bst = { param($s) (Get-Content (Join-Path (TkPath $k board) "$s.json") -Raw | ConvertFrom-Json).status }
+$env:CLAUDE_CODE_SESSION_ID = $sid0; Remove-Item Env:KIT_TRANSCRIPTS
+Expect "bare board beat / leave: the caller's row by its persisted join line (SESSION first; status finds the transcript); 2 rows named: unknown session ($bbc $("$bl1".Trim()) // $("$bl2".Trim()) // $blt)" ($b1.first -and $bbc -eq 0 -and "$bbt" -notmatch 'unknown' -and "$bl1" -match "left \($([regex]::Escape($b1.s))\)" -and (& $bst $b1.s) -eq 'left' -and "$bl2" -match 'unknown session' -and (& $bst $b2.s) -ne 'left' -and (& $bst $b3.s) -ne 'left' -and $blt -eq 'agent-bl1.jsonl')
 $qaq = & { . $O; $n = Get-Date; $rd = New-Item -ItemType Directory -Force (Join-Path (Get-KitPath qa-runs -Create) 'qq-run'); $hm = { param($m) $n.AddMinutes(-$m).ToString('HH:mm') }
   Set-Content (Join-Path $rd 'lead-notes.md') @('# Lead notes', '## Answers (newest last)', "- $(& $hm 30) T1: which tenant for step 3?", "- $(& $hm 25) T2: is the flag on?", "- $(& $hm 20) T2: yes, on", "- $(& $hm 3) T3: a fresh one?", "- $(& $hm 40) T4: done, PASS") -Encoding utf8
   $f = @(Get-KitQaQuestionFlags $n); "$($f.Count) $(@($f.what) -join '|') $($f[0].action -match 'lead-notes add -RunDir .*qq-run -Code T1')" }
