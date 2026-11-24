@@ -88,9 +88,21 @@ $gs2 = ${function:Get-KitSetting}; Set-Item function:Get-KitSetting ({ if ($args
 "kinds:$((@('dont deploy hm', 'No', 'hold it', 'wait: not urgent, never cut a live turn', 'Deploy tomorrow', 'yes: standing rule', 'deploy if needed', 'Sure, no problem', 'Please deploy now, no need to hold', 'test prod pipelines also', 'keep hm hanges held', 'dnt deploy hm', 'no deploy for hm yet', 'HM: merge and promote, never deploy', 'No problem, go ahead', 'do not wait, deploy', 'No problem, but hold hm') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
 Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.answerWords') { [pscustomobject]@{ yes = @('ja'); no = @('nein'); noAll = @('nie'); wait = @('später') } } else { & $gs2 @args } }.GetNewClosure())
 "words:$((@('Ja, bitte', 'nein', 'nie wieder', 'später', 'janky', 'yes') | ForEach-Object { Get-KitDeployWordKind $_ }) -join ',')"
+# WAIT-COND: a no on a condition = muted until it holds, then one DEPLOY ASK under any trigger (trigger owner here)
+Set-Item function:Get-KitSetting $gs; $lnd = Get-KitPath launches -Create; Set-Content (Join-Path $lnd 'args-buildy-w9-wave1.json') '{"run":"w9-wave1"}'
+$lnf = Join-Path $lnd 'self-buildy-w9-wave1-aa.json'; @{ run = 'w9-wave1'; script = 'buildy.js'; at = $now.ToString('o'); completed = $null } | ConvertTo-Json | Set-Content $lnf
+& $cacheOf @('api!1'); & $word 'd-20260101000600-coordinator-gg77' 'no: keep stage held until all of w9 wave 1 is merged (owner)' 'deploy stage before w9 wave 1?' -3
+$r = @(Get-KitSuperviseFlagsDeploys -AutoFix); "until:$(-not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held until run w9-wave1 done (gg77)')"
+@{ run = 'w9-wave1'; script = 'buildy.js'; at = $now.ToString('o'); completed = $now.ToString('o') } | ConvertTo-Json | Set-Content $lnf
+$r1 = @(Get-KitSuperviseFlagsDeploys -AutoFix); $r2 = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"met:$((& $acts $r1) -match '^DEPLOY ASK stage: run w9-wave1 done \(wait gg77\)' -and -not (& $acts $r2) -and ($r2.info -join ';') -eq 'deploy stage condition met: run w9-wave1 done (gg77), owner asked')"
+& $word 'd-20260101000700-coordinator-hh88' 'wait until tasks t-1, t-2 merged' 'deploy stage' -4; Update-KitTracking { param($tk) $tk.tasks['t-1'] = @{ task = 't-1'; allMergedAt = $now.ToString('o') } }
+$r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $t0 = -not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held until tasks t-1, t-2 merged (hh88)'
+Update-KitTracking { param($tk) $tk.tasks['t-2'] = @{ task = 't-2'; done = $true } }; $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
+"tasks:$($t0 -and (& $acts $r) -match '^DEPLOY ASK stage: tasks t-1, t-2 merged \(wait hh88\)' -and $null -eq (Get-KitDeployCondition 'no: hold until the moon is merged') -and (Get-KitDeployCondition 'wait until run r-2 done').id -eq 'r-2')"
 '@
 $hr = Invoke-PsTest 'deploy-holds' $ht @($O)
-Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too) (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg')
+Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too); a no until a run / tasks: muted, then one DEPLOY ASK (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg', 'until', 'met', 'tasks')
 Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll,yes,yes,no')
 Expect "deploy.answerWords: an org's own leading words first, whole words only, English still read ($(@($hr) -match '^words:'))" (@($hr) -contains 'words:yes,no,noAll,wait,unclear,yes')
 Remove-TestKit $k

@@ -551,10 +551,29 @@ function Get-KitDeployWordKind([string]$Answer) {
   elseif ($a -match '(?i)^(yes|y|sure|proceed|please|confirmed?|ok|okay|go|approved?|deploy)\b') { 'yes' }
   else { 'unclear' }
 }
+# a wait or no on a condition: 'until run <run> done', 'until tasks <ids> merged', or 'until (all of) <phrase> is merged|done' whose
+# letters and digits name one launched run ('v2 wave 1' = v2-wave1); else $null (a plain wait / no)
+function Get-KitDeployCondition([string]$Answer) {
+  if ($Answer -match '(?i)\buntil\s+run\s+(?<r>[\w.-]+)\s+(is\s+)?(done|finished|ended|merged)\b') { return [pscustomobject]@{ kind = 'run'; id = $Matches.r; text = "run $($Matches.r) done" } }
+  if ($Answer -match '(?i)\buntil\s+tasks?\s+(?<k>[\w-]+(\s*,\s*[\w-]+)*)\s+(is\s+|are\s+)?merged\b') { $ks = @(Split-KitList $Matches.k); return [pscustomobject]@{ kind = 'tasks'; keys = $ks; text = "tasks $($ks -join ', ') merged" } }
+  if ($Answer -notmatch '(?i)\buntil\s+(all\s+of\s+)?(the\s+)?(?<p>[\w .-]+?)\s+(is\s+|are\s+)?(merged|done|finished)\b') { return $null }
+  $want = ($Matches.p -replace '[^A-Za-z0-9]').ToLower(); if (-not $want) { return $null }
+  $rn = @(Get-KitDeployRunRecords | ForEach-Object run | Where-Object { ($_ -replace '[^A-Za-z0-9]').ToLower() -eq $want } | Select-Object -Unique)
+  if ($rn.Count -eq 1) { [pscustomobject]@{ kind = 'run'; id = $rn[0]; text = "run $($rn[0]) done" } }
+}
+# launch records (self-*.json and workflow records, not args files) with their run name
+function Get-KitDeployRunRecords { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { (Split-Path "$($_.file)" -Leaf) -notlike 'args-*' } | ForEach-Object { $r = if ($_.run) { "$($_.run)" } elseif ($_.args.run) { "$($_.args.run)" }; if ($r) { $_ | Add-Member -Force NoteProperty run $r -PassThru } }) }
+# run: launched and every launch record completed; tasks: each tracked (id or key) with all MRs merged (allMergedAt) or done
+function Test-KitDeployCondition($Cond) {
+  if ($Cond.kind -eq 'run') { $rs = @(Get-KitDeployRunRecords | Where-Object run -eq $Cond.id); return ($rs.Count -gt 0 -and -not @($rs | Where-Object { -not $_.completed }).Count) }
+  $tks = @((Read-KitTracking).tasks.Values)
+  -not @($Cond.keys | Where-Object { $k = $_; $tk = @($tks | Where-Object { "$($_.task)" -eq $k -or "$($_.key)" -eq $k })[0]; -not ($tk -and ($tk.allMergedAt -or $tk.done)) }).Count
+}
 # per env of the cached plan, its deploy words (decisions log, 30 d) and kit.local.json deploy.hold (env-wide, no word needed):
 # the newest a no -> held until a later yes or an MR it did not cover (state ask: one fresh ask, then -Fold covers it; it covers its -Mrs,
 # else the env's MRs when first seen, cache held.<env>); noAll / deploy.hold -> held whatever MRs come; a wait -> waiting until its retry
 # (a HH:mm in the answer, else 20 min: the busy wait of deploy restart), then due; a yes after a wait of the last 12 h: that retry; a yes: go
+# a wait / no on a condition (Get-KitDeployCondition): until (muted) -> met (one DEPLOY ASK, cache condAsked.<env> = its id) -> asked
 function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Date), [switch]$Fold) {
   $hold = @{}; if (-not $Cache) { return $hold }
   $tgs = @(@(@($Cache.ask) | ForEach-Object { ("$_" -split ':', 2)[0].Trim() }) + @(@($Cache.ready) | ForEach-Object { "$_" -replace '\s*\(\d+ MR\(s\)\)$' }) | Where-Object { $_ } | Select-Object -Unique)
@@ -571,6 +590,11 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
     if ($t -in $cfgHold) { $hold[$t] = [pscustomobject]@{ target = $t; state = 'held'; sid = 'deploy.hold'; new = @(); text = "$t held by config: deploy.hold" }; continue }
     $ws = @($words[$t] | Where-Object { $_ }); if (-not $ws.Count) { continue }
     $d = $ws[-1]; $sid = ("$($d.id)" -split '-')[-1]; $kind = Get-KitDeployWordKind "$($d.answer)"
+    $cond = if ($kind -in 'wait', 'no', 'noAll') { Get-KitDeployCondition "$($d.answer)" }
+    if ($cond) { $askedId = "$(Get-KitMember $Cache.condAsked $t)"; $met = Test-KitDeployCondition $cond
+      $st = if (-not $met) { 'until' } elseif ($askedId -eq "$($d.id)") { 'asked' } else { 'met' }
+      if ($st -eq 'met' -and $Fold) { if (-not $Cache.condAsked) { $Cache | Add-Member -Force NoteProperty condAsked ([pscustomobject]@{}) }; $Cache.condAsked | Add-Member -Force NoteProperty $t "$($d.id)"; $dirty = $true }   # one ask a word
+      $hold[$t] = [pscustomobject]@{ target = $t; state = $st; sid = $sid; why = $cond.text; text = $(if ($met) { "$t condition met: $($cond.text) ($sid), owner asked" } else { "$t held until $($cond.text) ($sid)" }) }; continue }
     if ($kind -eq 'wait') { $hold[$t] = & $waitOf $t $d }
     elseif ($kind -eq 'yes') {
       $w = @($ws | Where-Object { (Get-KitDeployWordKind "$($_.answer)") -eq 'wait' -and ($Now - (& $atOf $_)).TotalHours -lt (Get-KitParam 'deploy.waitWordHours') } | Select-Object -Last 1)
@@ -682,11 +706,13 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     $holds = Get-KitDeployHolds $cache $pc $now -Fold:$AutoFix
     foreach ($a in @($cache.ask | Where-Object { "$_".Trim() -and ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower() -eq 'ask' })) {
       $h = $holds[("$a" -split ':', 2)[0].Trim()]
-      if ($h.state -in 'held', 'waiting') { continue }   # its muted line below
+      if ($h.state -in 'held', 'waiting', 'until', 'met', 'asked') { continue }   # its muted line below; met: the ask below
       if ($h.state -eq 'due') { & $flag 'ACT' "DEPLOY RETRY $($h.target): $($h.why), wait $($h.sid) due since $($h.retry.ToString('HH:mm'))" "Deploy $($h.target) again per its deploy rules (the busy check runs first); still busy: a new wait with its retry time (decide record -Gate deploy -Item $($h.target) -Answer 'wait: retry HH:mm')."; continue }
       if ($h.state -eq 'go') { & $flag 'ACT' "DEPLOY GO $($h.target): approved ($($h.sid), $($h.by)), $(("$a" -split ':', 2)[1].Trim()) not deployed" "Deploy $($h.target) now with that decision (opsy, bossy E5); no ask."; continue }
       & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open$(if ($h.state -eq 'ask') { " (new since hold $($h.sid): $($h.new -join ', '))" })$askStale" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; their yes: decide record -Gate deploy -Item <env> -Source askuser, its id to opsy; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply."
     }
+    # a condition wait that now holds: the owner asked to be asked (any deploy.trigger), once a word
+    foreach ($h in @($holds.Values | Where-Object state -eq 'met')) { & $flag 'ACT' "DEPLOY ASK $($h.target): $($h.why) (wait $($h.sid)), merged, not deployed" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; their yes: decide record -Gate deploy -Item <env> -Source askuser, its id to opsy." }
   }
   # what waits for a person's deploy <env> (the cached plan): INFO lines of the supervise report; a held or waiting env: one muted line
   $pcf = Join-Path (Get-KitPath deploys) 'plan-cache.json'
@@ -695,5 +721,5 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
   $age = if ($pcd.at) { [int]($now - [datetime]$pcd.at).TotalMinutes } else { 0 }
   $stale = if ($age -ge 60) { "; plan $age min old, refresh pending" } else { '' }
   if (($oa = @($pcd.outOfArea | Where-Object { $_ })).Count) { [pscustomobject]@{ info = "deploy batch has OUT-OF-AREA MR(s): $($oa -join ', ') (bossy.ps1 deploy plan lists the files; tell the owner before any deploy <env>)" } }
-  foreach ($r in @($pcd.ready | Where-Object { $_ })) { $h = $holds["$r" -replace '\s*\(\d+ MR\(s\)\)$']; [pscustomobject]@{ info = $(if ($h.state -in 'held', 'waiting') { "deploy $($h.text)" } else { "deploy ready: $r (waits for a person's deploy <env>$stale)" }) } }
+  foreach ($r in @($pcd.ready | Where-Object { $_ })) { $h = $holds["$r" -replace '\s*\(\d+ MR\(s\)\)$']; [pscustomobject]@{ info = $(if ($h.state -in 'held', 'waiting', 'until', 'asked') { "deploy $($h.text)" } else { "deploy ready: $r (waits for a person's deploy <env>$stale)" }) } }
 }
