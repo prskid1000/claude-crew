@@ -129,13 +129,15 @@ Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ 'cat-1
 # NAME-FILE: a snake_case .ps1 is a problem; a hook entry point (named by settings.json, or by a script it names) is exempt
 $nfA = Join-Path $k 'skills/crafty/adapters/fake_snake.ps1'; Set-Content $nfA '# fixture'
 $nfH = Join-Path $k 'skills/crafty/hook_one.mjs'; Set-Content $nfH "// spawns hook_two.ps1"; Set-Content (Join-Path $k 'skills/crafty/hook_two.ps1') '# fixture'
-$nfK = Join-Path $k 'skills/crafty/adapters/kebab-one.ps1'; Set-Content $nfK '# fixture'; $nfD = Join-Path $k 'skills/crafty/old-ref.md'; Set-Content $nfD 'see adapters/kebab_one.ps1'
+$nfK = Join-Path $k 'skills/crafty/adapters/kebab-one.ps1'; Set-Content $nfK '# fixture'; $nfD = Join-Path $k 'skills/crafty/old-ref.md'; Set-Content $nfD "see adapters/kebab_one.ps1`nor adapters/kebab_one"; $nfL = Join-Path $k 'skills/crafty/adapters/org-x.local.ps1'; Set-Content $nfL '# fixture'
 $nfS = Join-Path $k 'settings.json'; $nfS0 = if (Test-Path $nfS) { Get-Content $nfS -Raw }; Set-Content $nfS '{"hooks":{"PreToolUse":[{"hooks":[{"command":"node skills/crafty/hook_one.mjs"}]}]}}'
 Set-Content (Join-Path $k "AGENTS.md") "# kit"; $ln = Kb lint $k
 Expect 'lint NAME-CONFIG: a lower-case / punctuated area code is a problem' ($ln.out -match "NAME-CONFIG\s+kit.local.json: naming.areas code 'cat-1'")
 Expect "lint NAME-FILE: a snake_case .ps1 counts; hook entry points (settings.json -> hook_one.mjs -> hook_two.ps1) are exempt" ($ln.out -match 'NAME-FILE\s+skills/crafty/adapters/fake_snake.ps1' -and $ln.out -notmatch 'NAME-FILE\s+skills/crafty/hook_(one|two)')
-Expect 'lint OLD-NAME: the snake_case form of a live kebab-case script is its old name (no manifest row)' ($ln.out -match 'OLD-NAME\s+skills/crafty/old-ref.md:1: old name "kebab_one.ps1" \(now "kebab-one.ps1"\)')
-Remove-Item $nfA, $nfH, $nfK, $nfD, (Join-Path $k 'skills/crafty/hook_two.ps1'); if ($null -ne $nfS0) { Set-Content $nfS $nfS0 -NoNewline } else { Remove-Item $nfS }
+Expect 'lint OLD-NAME: the snake_case form of a live kebab-case script is its old name (no manifest row); an org overlay x.local.ps1 is no NAME-FILE' ($ln.out -match 'OLD-NAME\s+skills/crafty/old-ref.md:1: old name "kebab_one.ps1" \(now "kebab-one.ps1"\)' -and $ln.out -notmatch 'NAME-FILE\s+\S+org-x.local.ps1')
+Set-Content $nfD 'or adapters/kebab_one'; $ln2 = Kb lint $k
+Expect 'lint OLD-NAME: adapters/<snake stem> without an extension is the old name too' ($ln2.out -match 'OLD-NAME\s+skills/crafty/old-ref.md:1: old name "kebab_one.ps1"')
+Remove-Item $nfA, $nfH, $nfK, $nfD, $nfL, (Join-Path $k 'skills/crafty/hook_two.ps1'); if ($null -ne $nfS0) { Set-Content $nfS $nfS0 -NoNewline } else { Remove-Item $nfS }
 Set-Content "$lc.bak" '{}'; Set-Content "$lc.bak-20261123-100506" '{}'; $lw = Kb lint $k --warn
 Expect "lint --warn: NAME-BACKUP for a backup off <file>.bak-<yyyyMMdd-HHmmss>, the standard one passes (not counted: exit $($lw.code))" (
   $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.bak:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak-20261123-100506')

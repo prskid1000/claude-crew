@@ -21,8 +21,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L38 paths · L135 state · L192 kitlog · L294 load · L787 lint · L1201 README graph · L1308 lint command · L1589 audit ·
-  L1737 registry · L2073 arch lint · L2346 prose · L2526 sections · L2656 budget · L2674 migrate · L2822 plugins ·
-  L2879 state lint · L3067 main
+  L1737 registry · L2076 arch lint · L2349 prose · L2529 sections · L2659 budget · L2677 migrate · L2825 plugins ·
+  L2882 state lint · L3070 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1933,9 +1933,12 @@ def registry_lint(k, bad):
                 bad('AGENT-TYPE', f'{p}:{ln}', f'agent() without a crew agentType ({at.group(1) if at else "none: a general-purpose agent"}); use one of {sorted(crew)}')
     olds = man.get('renamed') or {}
     live = {osp.basename(x) for x in k.files}   # a live joined name (guard-<old>.ps1) is no old one
-    # FILE-RENAMES: a kebab-case .ps1 / .mjs's snake_case form (dotted or regex-escaped) is its old name, no manifest row each
+    # FILE-RENAMES: a kebab-case .ps1 / .mjs's snake_case form (dotted, regex-escaped, or adapters/<stem>) is its old name, no manifest row each
     snake = {b.replace('-', '_'): b for b in live if '-' in b and b.endswith(('.ps1', '.mjs')) and b.replace('-', '_') not in live}
-    pats = [(o, old_name_rx(o)) for o in olds] + [(o, re.compile(r'(?<![\w.-])' + re.escape(o).replace(r'\.', r'\\?\.') + r'(?![\w-])')) for o in snake]
+    def snake_rx(o):
+        st, ext = (re.escape(x) for x in osp.splitext(o))
+        return re.compile(rf'(?<![\w.-]){st}(?:\\?{ext}(?![\w-])|(?<=adapters/{st})(?![\w.-]))')
+    pats = [(o, old_name_rx(o)) for o in olds] + [(o, snake_rx(o)) for o in snake]
     olds = {**olds, **snake}
     for f in k.files:
         if '.local.' in f or any(f == x or f.startswith(x + '/') for x in k.local_only):

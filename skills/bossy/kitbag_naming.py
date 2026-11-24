@@ -319,8 +319,8 @@ def cmd_naming(rest):
     return 2
 
 
-FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.tests)?\.ps1$', '.mjs': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.mjs$',
-           '.js': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.js$'}
+FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.(?:tests|local))?\.ps1$',
+           '.mjs': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.local)?\.mjs$', '.js': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.local)?\.js$'}   # adapters/*.local.ps1: org overlays
 BAK_RX = re.compile(r'\.(?:bak|bad|orig|old|stale)(?:[-.]|$)', re.I)
 HOOK_CFG = ('settings.json', '.agents/hooks.json', '.codex/config.toml')
 

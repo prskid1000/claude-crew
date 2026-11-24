@@ -94,8 +94,11 @@ $lnf = Join-Path $lnd 'self-buildy-w9-wave1-aa.json'; @{ run = 'w9-wave1'; scrip
 & $cacheOf @('api!1'); & $word 'd-20260101000600-coordinator-gg77' 'no: keep stage held until all of w9 wave 1 is merged (owner)' 'deploy stage before w9 wave 1?' -3
 $r = @(Get-KitSuperviseFlagsDeploys -AutoFix); "until:$(-not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held until run w9-wave1 done (gg77)')"
 @{ run = 'w9-wave1'; script = 'buildy.js'; at = $now.ToString('o'); completed = $now.ToString('o') } | ConvertTo-Json | Set-Content $lnf
+@{ run = 'w9-wave1'; script = 'buildy.js'; at = $now.AddHours(-1).ToString('o'); completed = $null } | ConvertTo-Json | Set-Content (Join-Path $lnd 'self-buildy-w9-wave1-00.json')   # superseded by the relaunch
 $r1 = @(Get-KitSuperviseFlagsDeploys -AutoFix); $r2 = @(Get-KitSuperviseFlagsDeploys -AutoFix)
-"met:$((& $acts $r1) -match '^DEPLOY ASK stage: run w9-wave1 done \(wait gg77\)' -and -not (& $acts $r2) -and ($r2.info -join ';') -eq 'deploy stage condition met: run w9-wave1 done (gg77), owner asked')"
+$pcO = Get-Content $pc -Raw | ConvertFrom-Json; $pcO.at = $now.AddHours(-5).ToString('o'); $pcO | ConvertTo-Json -Depth 5 | Set-Content $pc   # a plan refresh keeps condAsked
+function Invoke-Bounded { '[{"target":"stage","status":"READY","mrs":[{"mr":"api!1"}]}]' }; $r3 = @(Get-KitSuperviseFlagsDeploys -AutoFix); function Invoke-Bounded { @() }
+"met:$((& $acts $r1) -match '^DEPLOY ASK stage: run w9-wave1 done \(wait gg77\)' -and -not (& $acts $r2) -and ($r2.info -join ';') -eq 'deploy stage condition met: run w9-wave1 done (gg77), owner asked' -and -not (& $acts $r3) -and (Get-Content $pc -Raw | ConvertFrom-Json).condAsked.stage -eq 'd-20260101000600-coordinator-gg77')"
 & $word 'd-20260101000700-coordinator-hh88' 'wait until tasks t-1, t-2 merged' 'deploy stage' -4; Update-KitTracking { param($tk) $tk.tasks['t-1'] = @{ task = 't-1'; allMergedAt = $now.ToString('o') } }
 $r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $t0 = -not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held until tasks t-1, t-2 merged (hh88)'
 Update-KitTracking { param($tk) $tk.tasks['t-2'] = @{ task = 't-2'; done = $true } }; $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)

@@ -565,7 +565,9 @@ function Get-KitDeployCondition([string]$Answer) {
 function Get-KitDeployRunRecords { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { (Split-Path "$($_.file)" -Leaf) -notlike 'args-*' } | ForEach-Object { $r = if ($_.run) { "$($_.run)" } elseif ($_.args.run) { "$($_.args.run)" }; if ($r) { $_ | Add-Member -Force NoteProperty run $r -PassThru } }) }
 # run: launched and every launch record completed; tasks: each tracked (id or key) with all MRs merged (allMergedAt) or done
 function Test-KitDeployCondition($Cond) {
-  if ($Cond.kind -eq 'run') { $rs = @(Get-KitDeployRunRecords | Where-Object run -eq $Cond.id); return ($rs.Count -gt 0 -and -not @($rs | Where-Object { -not $_.completed }).Count) }
+  if ($Cond.kind -eq 'run') {   # the newest record per script: a relaunch supersedes an older open one
+    $rs = @(Get-KitDeployRunRecords | Where-Object run -eq $Cond.id | Group-Object { Split-Path "$($_.script)" -Leaf } | ForEach-Object { $_.Group | Sort-Object { try { [datetimeoffset]$_.at } catch { [datetimeoffset]::MinValue } } | Select-Object -Last 1 })
+    return ($rs.Count -gt 0 -and -not @($rs | Where-Object { -not $_.completed }).Count) }
   $tks = @((Read-KitTracking).tasks.Values)
   -not @($Cond.keys | Where-Object { $k = $_; $tk = @($tks | Where-Object { "$($_.task)" -eq $k -or "$($_.key)" -eq $k })[0]; -not ($tk -and ($tk.allMergedAt -or $tk.done)) }).Count
 }
@@ -696,7 +698,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     }
     if ($null -ne $plan) {
       $mrsOf = [ordered]@{}; foreach ($p in @($plan | Where-Object { $_.status -in 'READY', 'ASK' -and $_.target })) { $mrsOf["$($p.target)"] = @(@($p.mrs) | ForEach-Object mr) }
-      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { (Get-KitStamp stored $now) }); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object { $_.status -eq 'ASK' -and $_.target -and @($_.mrs).Count } | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }); mrsOf = [pscustomobject]$mrsOf; held = $cache.held
+      $cache = [pscustomobject]@{ at = $(if ($from) { $from } else { (Get-KitStamp stored $now) }); ready = @($plan | Where-Object status -in 'READY', 'ASK' | ForEach-Object { "$($_.target) ($(@($_.mrs).Count) MR(s))" }); ask = @($plan | Where-Object { $_.status -eq 'ASK' -and $_.target -and @($_.mrs).Count } | ForEach-Object { "$($_.target): $(@($_.mrs).Count) MR(s) ($((@($_.mrs) | ForEach-Object mr) -join ', '))" }); mrsOf = [pscustomobject]$mrsOf; held = $cache.held; condAsked = $cache.condAsked
         outOfArea = @($plan | ForEach-Object { @($_.mrs) } | Where-Object { $_.outOfArea } | ForEach-Object { "$($_.mr) ($(@($_.outOfArea).Count) file(s) outside its area)" } | Select-Object -Unique) }
     }
     if ($asked -and $cache -and $null -eq $plan -and $cache.asked -and -not @($out -match '^WATCH ').Count) { $asked = $null }   # no output: the run of the last ask still goes, keep its time
