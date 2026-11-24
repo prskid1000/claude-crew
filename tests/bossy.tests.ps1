@@ -219,7 +219,8 @@ Expect 'recover: host + tracker state -> RELAUNCH skip list (open: build; merged
   "$($rl.resume.C2.skip)" -eq 'build' -and "$($rl.resume.C1.state)" -eq 'start' -and "$($rl.resume.C3.skip)" -eq 'build review ci merge testing-doc tracker' -and
   (Get-Content (Join-Path (TkPath $k launches) 'cm.resume.md') -Raw) -match '\| tsk123 g/api!6 \| done \| build, .*, tracker \|  \| g/api!6 merged \| promoted')
 $ps = if ((Px $O board join -Agent P1 -Run pr | Out-String) -match 'SESSION (\S+)') { $Matches[1] }; $null = Px $O board join -Agent P2 -Run pr; $null = & $self buildy.js pr '{"brief":"C:/b/pr.md"}'
-$pd = TkPath $k pauses -Create; $pj = Start-ThreadJob { & $using:pwshExe -NoProfile -File $using:O pause -Run pr -Reason 'power off' -Wait 0.2 2>&1 | Out-String }   # P1 confirms, P2 never does
+$pd = TkPath $k pauses -Create; $pzWait = [math]::Round((Get-TestBound 30) / 60, 2)   # P1's beat + leave (2 pwsh starts) must land inside it: 12 s missed under a full run
+$pj = Start-ThreadJob { & $using:pwshExe -NoProfile -File $using:O pause -Run pr -Reason 'power off' -Wait $using:pzWait 2>&1 | Out-String }   # P1 confirms, P2 never does
 while (-not (Get-ChildItem $pd -Filter 'pause-*.json')) { Start-Sleep -Milliseconds 100 }
 $pb = Px $O board beat -Session $ps | Out-String; $pl = Px $O board leave -Session $ps -Status paused -Wait 0 | Out-String; $pz = $pj | Wait-Job | Receive-Job
 $pr = Read-Json (Get-ChildItem (TkPath $k pauses) -Filter 'pause-*.json' | Select-Object -Last 1).FullName; $pll = Px $O launch -List -Brief | Out-String
