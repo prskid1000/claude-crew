@@ -189,12 +189,28 @@ export const firefox = {
   connect: async (ws) => { const f = `${dir}/served.txt`; if (!existsSync(f) || !readFileSync(f, 'utf8').includes(ws.split(':')[2])) throw new Error('refused'); appendFileSync(`${dir}/connects.txt`, ws + '\n'); return { newContext: async () => ({ newPage: async () => page(), cookies: async () => [], addCookies: noop }), close: noop } },
   launch: async () => { throw new Error('launch: not in this test') } }
 '@
-$pwRun = Join-Path $pwD 'run.mjs'
-Set-Content $pwRun "const m = await import('$egU'); for (let i = 0; i < 2; i++) await m.pwServed('firefox', {}, { width: 9, height: 9 }, [], 45991, process.env.FAKE_PW_DIR); console.log('two sessions'); process.exit(0)"
+$pwRun = Join-Path $pwD 'run.mjs'; $pwL0 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $pwL0.Start(); $pwPort = $pwL0.LocalEndpoint.Port; $pwL0.Stop()
+Set-Content $pwRun "const m = await import('$egU'); for (let i = 0; i < 2; i++) await m.pwServed('firefox', {}, { width: 9, height: 9 }, [], $pwPort, process.env.FAKE_PW_DIR); console.log('two sessions'); process.exit(0)"
+$env:KIT_PW_IDLE_MS = '3000'   # the server's idle exit, short here
 $pwO = "$(node $pwRun 2>&1)"; $pwSv = @(Get-Content (Join-Path $pwD 'served.txt') -ErrorAction SilentlyContinue); $pwCn = @(Get-Content (Join-Path $pwD 'connects.txt') -ErrorAction SilentlyContinue)
-foreach ($pwL in $pwSv) { Stop-Process -Id ([int]($pwL -split ' ')[1]) -Force -ErrorAction SilentlyContinue }
-Remove-Item Env:FAKE_PW_DIR, Env:KIT_PLAYWRIGHT
-Expect "browser engines: chrome reuses CDP, chromium / firefox / webkit a served browser; two firefox sessions = one server, two connects ($egR | $pwO | $($pwSv.Count) served, $($pwCn.Count) connects)" ($egR -eq 'chrome:cdp chromium:function firefox:function webkit:function' -and $pwO -eq 'two sessions' -and $pwSv.Count -eq 1 -and $pwSv[0] -like '45991/kit *' -and $pwCn.Count -eq 2 -and (Test-Path (Join-Path $pwD 'pw-45991.used')))
+$pwTk = "$(Get-Content (Join-Path $pwD "pw-$pwPort.token") -Raw -ErrorAction SilentlyContinue)".Trim(); $pwPid = [int](@($pwSv)[0] -split ' ')[1]
+Expect "browser engines: chrome reuses CDP, chromium / firefox / webkit a served browser; two firefox sessions = one server, two connects on its random token path, never /kit ($egR | $pwO | $($pwSv.Count) served, $($pwCn.Count) connects)" ($egR -eq 'chrome:cdp chromium:function firefox:function webkit:function' -and $pwO -eq 'two sessions' -and $pwSv.Count -eq 1 -and $pwTk -match '^[0-9a-f]{48}$' -and $pwSv[0] -like "$pwPort/$pwTk *" -and $pwCn.Count -eq 2 -and @($pwCn | Where-Object { $_ -ne "ws://127.0.0.1:$pwPort/$pwTk" }).Count -eq 0 -and (Test-Path (Join-Path $pwD "pw-$pwPort.used")))
+# idle exit: no client touches <used> for KIT_PW_IDLE_MS -> the server closes and removes its token file
+for ($pwI = 0; $pwI -lt 40 -and (Get-Process -Id $pwPid -ErrorAction SilentlyContinue); $pwI++) { Start-Sleep -Milliseconds 500 }
+$pwIdleGone = -not (Get-Process -Id $pwPid -ErrorAction SilentlyContinue); Stop-Process -Id $pwPid -Force -ErrorAction SilentlyContinue
+Expect "served browser: idle past KIT_PW_IDLE_MS -> the server exits and its token file goes" ($pwIdleGone -and -not (Test-Path (Join-Path $pwD "pw-$pwPort.token")))
+# killSession: browser.mjs removes <used> -> the server exits within 5 s though its idle time is far off
+if (Use-BrowserKit) {
+  $env:KIT_PW_IDLE_MS = '600000'; Remove-Item (Join-Path $pwD 'served.txt') -ErrorAction SilentlyContinue
+  $bmU = [Uri]::new((Join-Path $k 'skills/pokey/browser.mjs')).AbsoluteUri; $pwKs = Join-Path $pwD 'kill.mjs'
+  Set-Content $pwKs "const b = await import('$bmU'), m = await import('$egU'); const d = b.kitPath('sessions', { create: true }); await m.pwServed('firefox', {}, { width: 9, height: 9 }, [], $pwPort, d); console.log(d); process.exit(0)"
+  $pwSd = "$(node $pwKs 2>&1)".Trim(); $pwPid = [int](@(Get-Content (Join-Path $pwD 'served.txt') -ErrorAction SilentlyContinue)[0] -split ' ')[1]
+  $pwKo = "$(node -e "import('$bmU').then(async (b) => { await b.killSession($pwPort); console.log('killed') })" 2>&1)"
+  for ($pwI = 0; $pwI -lt 30 -and $pwPid -and (Get-Process -Id $pwPid -ErrorAction SilentlyContinue); $pwI++) { Start-Sleep -Milliseconds 500 }
+  $pwKillGone = $pwPid -and -not (Get-Process -Id $pwPid -ErrorAction SilentlyContinue); if ($pwPid) { Stop-Process -Id $pwPid -Force -ErrorAction SilentlyContinue }
+  Expect "served browser: killSession removes <used> -> the server exits within 15 s (idle 10 min) and its token goes ($pwKo | $pwSd)" ($pwKo -eq 'killed' -and $pwKillGone -and -not (Test-Path (Join-Path $pwSd "pw-$pwPort.used")) -and -not (Test-Path (Join-Path $pwSd "pw-$pwPort.token")))
+}
+Remove-Item Env:FAKE_PW_DIR, Env:KIT_PLAYWRIGHT, Env:KIT_PW_IDLE_MS
 # login surfaces (parity.json login): api and app share Get-KitLoginPair: a secret:<name> ref resolved, a profile's login + store secret + tenant
 $lgR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $fa = [Management.Automation.Language.Parser]::ParseFile((Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/pokey.ps1'), [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Get-KitLoginPair' }, $true)[0]; . ([scriptblock]::Create($fa.Extent.Text))

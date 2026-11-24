@@ -295,7 +295,7 @@ export async function session({ target, tenant, as } = {}) {
   if (t.webLogin) { try { await nav(page, t.web + '/'); await ensureLogin(page, t, tenant, as, key) } catch (e) { await done(); throw e } }
   return { browser, page, net, target: t, tenant, as, key, port, engine: eng, done }
 }
-// a Playwright server (pwServed) exits within a minute once its .used file is gone
+// a Playwright server (pwServed) exits within 5 s once its .used file is gone
 export const killSession = (port) => (rmSync(`${kitPath('sessions')}/pw-${port}.used`, { force: true }), puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, protocolTimeout: PROTO_MS }).then((b) => b.close()).catch(() => {}))
 
 // ---- actions: settle, go, clicks, inputs
