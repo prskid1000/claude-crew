@@ -154,7 +154,7 @@ $ackRef = Invoke-PsTest ack-ref @'
 . $args[0] 6>$null; $now = Get-Date; $ff = [pscustomobject]@{ level = 'ACT'; what = '2 task(s) failed testing, back to the dev flow, no fix MR linked: ft1 (q1); ft2 (q1)'; action = 'x'; ackNeeds = 'ref' }
 $ok = { param($r, $h) $a = @{}; $a[(Get-KitFlagKey $ff.what)] = @{ at = $now.AddHours(-$h).ToString('o'); reason = $r }; -not @(Select-KitFlags @($ff) $a $now | Where-Object level -eq 'ACT').Count }
 $dd = Get-KitPath decisions -Create; Set-Content (Join-Path $dd 'd-20261121120000-coordinator-ab12.json') '{}'   # api!2: tracked by the route checks above
-$hv = "$(& $ok 'being fixed in the polish wave' 1)/$(& $ok 'fix in api!2' 1)/$(& $ok 'd-20261121120000-coordinator-ab12' 1)/$(& $ok 'fix in api!2' 3)/$(& $ok 'fix in api!9179' 1)/$(& $ok 'd-20261121000000-x-1' 1)"; "hide:$($hv -eq 'False/True/True/False/False/False')"; $hv
+$hv = "$(& $ok 'being fixed in the polish wave' 1)/$(& $ok 'fix in api!2' 1)/$(& $ok 'd-20261121120000-coordinator-ab12' 1)/$(& $ok 'fix in api!2' 3)/$(& $ok 'fix in api!9179' 1)/$(& $ok 'd-20261121000000-x-1' 1)"; Set-Content (Join-Path $dd 'dec-0042.json') '{}'; $hv += "/$(& $ok 'answered: dec-0042' 1)"; "hide:$($hv -eq 'False/True/True/False/False/False/True')"; $hv
 $sf = Get-KitPath supervise-state -Create; Set-Content $sf (@{ lastFlags = @(@{ level = 'ACT'; what = $ff.what; action = 'x'; ackNeeds = 'ref' }) } | ConvertTo-Json -Depth 5)
 $a1 = Add-KitFlagAck '2 task(s) failed testing, back to the dev flow' 'being fixed in the polish wave'; $n1 = @((Get-Content $sf -Raw | ConvertFrom-Json -AsHashtable).acks.Keys | Where-Object { $_ }).Count
 $a2 = Add-KitFlagAck '2 task(s) failed testing, back to the dev flow' 'routed: api!2'

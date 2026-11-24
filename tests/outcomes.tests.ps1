@@ -96,12 +96,12 @@ $lm = @('N1,api!7', 'api!7') | ForEach-Object { pwsh @np $O decide check -Id $lm
 Expect "decide check lists: gate one of -Gate, item any of -Item or the record's MR ($($lg -join ' '))" ("$lg" -eq 'WO NO NO' -and @($lm -match '^WORD ').Count -eq 2)
 # standing rules: one ask, the owner's A, auto-answers (never deploy), a gate check refuses it, revoke
 $po = pwsh @np $O decide rules -Propose | Out-String
-$askId = if ($po -match 'ask (d-\S+)') { $Matches[1] }
+$askId = if ($po -match 'ask (dec-\d{4,})') { $Matches[1] }
 Expect 'decide rules -Propose: two proposals, one pending ask' ($po -match 'PROPOSED 2 standing rule' -and $askId -and (pwsh @np $O decide list -Pending | Out-String) -match 'standing-rules')
 $null = pwsh @np $O decide answer -Id $askId -Answer 'approve all except the deploy one'
 $rx = pwsh @np $O decide rules | Out-String
 Expect 'an unclear pick ("except") approves nothing; the rules wait for the next ask' ($rx -notmatch 'APPROVED' -and ([regex]::Matches($rx, 'PROPOSED')).Count -eq 2)
-$po2 = pwsh @np $O decide rules -Propose | Out-String; $askId2 = if ($po2 -match 'ask (d-\S+)') { $Matches[1] }
+$po2 = pwsh @np $O decide rules -Propose | Out-String; $askId2 = if ($po2 -match 'ask (dec-\d{4,})') { $Matches[1] }
 $null = pwsh @np $O decide answer -Id $askId2 -Answer 'A: approve all'
 $md = Join-Path $k 'rules/standing-rules.local.md'; $rl = pwsh @np $O decide rules | Out-String
 Expect 'owner A -> approved (date, by), rules/standing-rules.local.md written, deploy one marked guidance' ((Test-Path $md) -and (Get-Content $md -Raw) -match 'guidance: never auto-answered' -and (Get-Content $md -Raw) -match 'approved \d{4}-\d\d-\d\d by owner' -and ([regex]::Matches($rl, 'APPROVED')).Count -eq 2)
