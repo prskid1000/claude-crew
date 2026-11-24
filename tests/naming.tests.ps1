@@ -76,8 +76,8 @@ Set-JsonFile "$wd/plan3.json" @{ items = @(@{ id = 't-8'; title = 'SHOP-CAT-008 
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }
 Expect "titleStrip: old codes cut ($($rn3.out -replace '\s+', ' '))" (($rn3.out | ConvertFrom-Json).title -eq 'SHOP-CAT-008 Price list')
 # readable titles (coordinator 2026-11-24): an area word goes only as a label; a lowercase start gets a capital
-$rt1 = Kb naming make title key=SHOP-PAY-001 type=Feature 'outcome=Payments: Payment methods: card'; $rt2 = Kb naming make title key=SHOP-CAT-001 type=Feature 'outcome=Catalogue: menu: list'
-Expect "readable titles ($($rt1.out) | $($rt2.out))" ($rt1.out -ceq 'SHOP-PAY-001 Payment methods: card' -and $rt2.out -ceq 'SHOP-CAT-001 Menu: list')
+$rt1 = Kb naming make title key=SHOP-PAY-001 type=Feature 'outcome=Payments: Payment methods: card'; $rt2 = Kb naming make title key=SHOP-CAT-001 type=Feature 'outcome=Catalogue: menu: list'; $rt3 = Kb naming make title key=SHOP-PAY-001 type=Feature 'outcome=methods: card'
+Expect "readable titles ($($rt1.out) | $($rt2.out))" ($rt1.out -ceq 'SHOP-PAY-001 Payment methods: card' -and $rt2.out -ceq 'SHOP-CAT-001 Catalogue menu: list' -and $rt3.out -ceq 'SHOP-PAY-001 Payment methods: card')
 $sd = Kb naming seed SHOP-CAT 7; $k4 = Kb naming next key SHOP CAT; $mi = Kb naming make title key=BAD-X-1 product=ZZ area=Q outcome=x; $mn = Kb naming make case key=SHOP-CAT-004 n=abc
 Expect "seed: next key after the migrated ones; make refuses a name off the standard (1) or a bad number (2) ($($k4.out) $($mi.code)$($mn.code))" ($sd.code -eq 0 -and $k4.out -eq 'SHOP-CAT-008' -and
   $mi.code -eq 1 -and $mi.out -match 'NAME title' -and $mn.code -eq 2)

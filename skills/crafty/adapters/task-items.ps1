@@ -477,7 +477,7 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   $seen = @{}; $todo = [Collections.Generic.Queue[string]]::new(); foreach ($p in @(Split-KitList $Id)) { $todo.Enqueue($p) }
   $items = @(while ($todo.Count) { $k = $todo.Dequeue(); if ($seen.Contains($k)) { continue }; Clear-TrackerMemo $k; $tk = Get-TrackerTask $k; $seen[$k] = $tk
       if (-not $tk.name) { Write-Warning "retag: $k not readable: skipped"; continue }; foreach ($s in @($tk.subtasks)) { if ($s.id) { $todo.Enqueue("$($s.id)") } }
-      if (Get-KitNameKey $tk.name) { $ot = if ("$($tk.description)" -match '\*\*Old title:\*\* ([^\r\n]+)') { $Matches[1] -replace '\\([\[\]])', '$1' } else { "$($tk.name)" }   # a re-run plans from the first old title
+      if (Get-KitNameKey $tk.name) { $ot = if ("$($tk.description)" -match '\*\*Old title:\*\* ([^\r\n]+)') { "$(Get-KitNameKey $tk.name) $(Remove-KitNameKey ($Matches[1] -replace '\\([\[\]_*`#])', '$1'))" } else { "$($tk.name)" }   # a re-run plans from the first old title, the live key kept
       [ordered]@{ id = "$k"; title = $ot; tags = @(Get-KitTaskTags $k $tk); wave = "$((Read-KitState (Get-KitTaskFile $k)).order.wave)" } } })   # wave: tracker order's record
   $pf = New-KitTempFile; [IO.File]::WriteAllText($pf, (@{ items = $items } | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
   $lec = $global:LASTEXITCODE; $md = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch '^DRY RUN: nothing renamed' })   # keys stay: no seed hint

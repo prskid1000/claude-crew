@@ -20,7 +20,7 @@ one is refused. A tracker with native ids keeps them as the link; the kit key li
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags).
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L28 model · L94 no repeats · L194 tags
+Sections: L28 model · L94 no repeats · L204 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -173,6 +173,16 @@ def sentence(t):
     return t[:1].upper() + t[1:] if re.match(r'[a-z]+(?![a-zA-Z0-9-])', t) else t
 
 
+def readable(t, key, cfg):
+    """A title opening with a bare label ('methods: x': its area word was the noun) gets the area noun back: Payment methods: x."""
+    a = cfg['areas'].get((str(key).split('-') + ['', ''])[1], '')
+    if a and ' ' not in a and re.match(r'[a-z][a-z-]*:', t):   # a multi-word area is a phrase DUP-WORDS bans: only the capital
+        ws = a.split()
+        ws[-1] = ws[-1][:-1] if ws[-1].endswith('s') and len(ws[-1]) > 3 else ws[-1]
+        t = ' '.join(ws) + ' ' + t
+    return sentence(t)
+
+
 def make(kind, p, cfg=None):
     """A name from its parts, free text cleaned of what the key / type say: title (key outcome; type cleaned) · doc (key
     kind ver title) · branch (type key slug tag?) · mr (type scope summary key) · case (key n) · item (key m slug)."""
@@ -181,7 +191,7 @@ def make(kind, p, cfg=None):
     key = g('key')
     cl = lambda t, ty='': clean(t, key, cfg, ty)
     tag = slugify(g('tag'), 3)   # a tracker's native branch tag (CU-<id>): kept so its links and the kit's branch parsers still match
-    out = {'title': lambda: f'{key} {sentence(clean(g("outcome"), key, cfg, g("type", "Feature"), labels=True))}',   # type, product, area: tags (naming tags)
+    out = {'title': lambda: f'{key} {readable(clean(g("outcome"), key, cfg, g("type", "Feature"), labels=True), key, cfg)}',   # type, product, area: tags (naming tags)
            'doc': lambda: f'{key} {g("kind", "Spec")} v{g("ver", "1")} — {cl(g("title"), g("kind", "Spec"))}',
            'branch': lambda: f'{g("type", "feat")}/{key}-' + '-'.join(x for x in (tag, slugify(cl(g("slug") or g("title"), g("type", "feat")))) if x),
            'mr': lambda: f'{g("type", "feat")}{"(" + g("scope") + ")" if g("scope") else ""}: {cl(g("summary"), g("type", "feat"))} [{key}]',
