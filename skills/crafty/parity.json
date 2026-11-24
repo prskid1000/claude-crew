@@ -1,0 +1,237 @@
+{
+  "_readme": "Parity registry (AGENTS.md \"Parity\"; kitbag.py parity, lint PARITY). adapters.<family>: config key, code file, verbs, caps (Test-KitCap), built-in names, vendor names; fallback.<verb> = what the kit does instead, same outcome (an optional verb); gaps.\"<name>[,<name>]/<verb>[,<verb>]\" = what does not work there and why; capKeys.<cap> = the keys that turn it on; parity = why a family is not walked. harness: hooks (settings.json hook -> the port's command, else \"gap: <why>\" | \"fallback: <how>\"), features (Claude Code-only features, the same values).",
+  "adapters": {
+    "_readme": "README Adapters; code: Register-KitAdapter <kind> <name> @{ <verb> = {...} } (ps1) or ADAPTERS['<kind>']['<name>'] = {...} (py)",
+    "tracker": {
+      "config": "tracker.type",
+      "file": "skills/crafty/adapters/tracker-local.ps1",
+      "verbs": "view url status comment comments create describe rename list owner",
+      "caps": "checklist commentEdit commentDelete statuses move attach dependencies labels",
+      "names": "command none",
+      "vendors": "clickup github gitlab jira jira-server linear youtrack azure",
+      "fallback": {
+        "checklist": "an Items block in the description (<!-- kit:<name> -->)",
+        "statuses": "tracker.statuses / vocab.json names per role",
+        "dependencies": "a **Waits on:** line in the description",
+        "labels": "a **Wave:** line in the description"
+      }
+    },
+    "git-host": {
+      "config": "gitHostType",
+      "file": "skills/crafty/lib.ps1",
+      "verbs": "mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect",
+      "names": "command",
+      "vendors": "github gitlab bitbucket azure gitea",
+      "fallback": {
+        "mr.parseRef": "core ConvertFrom-KitMrRef (an MR URL or <repo>!<n>)"
+      },
+      "gaps": {
+        "bitbucket,azure,gitea/mr.update": "no PR edit verb yet: devtools.py prints 'edit it by hand' and the body stays",
+        "bitbucket,azure,gitea/branch.protect": "no protection verb yet: bossy.ps1 health prints the by-hand line",
+        "azure/whoami": "no user lookup yet: host-user filters see no user"
+      }
+    },
+    "report": {
+      "config": "reports.type",
+      "file": "skills/crafty/devtools.py",
+      "verbs": "publish",
+      "caps": "evidence",
+      "names": "markdown html command",
+      "vendors": "gdocs pdf confluence notion",
+      "fallback": {
+        "evidence": "reports.evidence local (the run folder) or command (a bucket / share CLI)"
+      },
+      "gaps": {
+        "markdown,html,command/selftest": "no self-check: the first publish reports the error"
+      }
+    },
+    "ci": {
+      "config": "ci.type",
+      "file": "skills/crafty/lib.ps1",
+      "verbs": "runs jobs log status config failure parseUrl",
+      "names": "command none",
+      "values": "host",
+      "vendors": "github gitlab bitbucket azure gitea jenkins",
+      "fallback": {
+        "failure": "core Get-KitCiFailure (the failed job and its log)"
+      },
+      "gaps": {
+        "bitbucket,azure,gitea,jenkins/parseUrl": "no CI URL parser yet: supervise shows no job for a pasted CI link"
+      }
+    },
+    "transcript": {
+      "config": "board tool",
+      "file": "skills/crafty/lib.ps1",
+      "verbs": "root last",
+      "caps": "agentMeta",
+      "names": "claude codex antigravity none",
+      "gaps": {
+        "codex,antigravity,none/agentMeta": "SendMessage is Claude Code-only: nothing to look up"
+      }
+    },
+    "deploy-kind": {
+      "config": "repos[].deploys[] (kind)",
+      "file": "skills/pokey/adapters/deployed-checks.ps1",
+      "verbs": "isDeployed",
+      "caps": "deploy",
+      "names": "command ci-job branch-mr ssh tag probe manual awsStack laneApk",
+      "gaps": {
+        "probe,awsStack,laneApk/deploy": "check-only kinds: a person deploys, then bossy.ps1 deploy record",
+        "branch-mr,ssh,tag,probe,manual,awsStack,laneApk/isRunning,lastDeploy": "no deploy history read: the deploy board shows no in-flight state or last time",
+        "ci-job,branch-mr,tag,probe,manual,awsStack,laneApk/restart": "no service restart: deploy restart refuses (ssh and command kinds restart)",
+        "command,ssh,probe,awsStack,laneApk/plan": "no hint line: the UNSUPPORTED line names the kind"
+      }
+    },
+    "secret-store": {
+      "config": "secrets.store",
+      "file": "skills/crafty/adapters/secret-store.ps1",
+      "verbs": "get",
+      "caps": "write list rotate",
+      "names": "file env keychain command",
+      "gaps": {
+        "env,keychain/write,set,delete,rotate": "read-only store: the owner sets the value in the store (UNSUPPORTED names it)",
+        "keychain/list": "no name listing: secrets are read by name only"
+      }
+    },
+    "process-gate": {
+      "config": "process.gates.<gate>",
+      "file": "skills/crafty/adapters/process-gates.ps1",
+      "verbs": "promote merge finish bugFix mrBody",
+      "names": "",
+      "vendors": "testingDocs reproRow",
+      "parity": "a built-in is one rule for its own gates (testingDocs: promote here, finish / merge / mrBody in devtools.py; reproRow: bugFix in devtools.py); an unset gate passes"
+    },
+    "db-engine": {
+      "config": "localEnv db.engine",
+      "file": "skills/envy/adapters/db-engines.ps1",
+      "verbs": "query exec jdbc sql",
+      "names": "",
+      "caps": "marks temp sizes",
+      "capKeys": {
+        "marks": "supportsMarks",
+        "temp": "supportsTemp",
+        "sizes": "schemaSizes sizes"
+      },
+      "vendors": "mysql mariadb postgres sqlserver sqlite oracle mongodb redis elasticsearch opensearch",
+      "fallback": {
+        "query": "the env's db.query line (db-presets.ps1 fills only what the env lacks)",
+        "exec": "the env's db.exec line",
+        "jdbc": "the env's db.jdbc line"
+      },
+      "gaps": {
+        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/sql": "no sql block: Invoke-DbSql refuses (db.schemasQuery, tenants column model); envy.ps1 sql runs the query preset",
+        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/marks": "no binlog marks: restore by seed",
+        "mariadb,postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/temp": "no temp-space watchdog or pool check",
+        "sqlserver,sqlite,oracle,mongodb/sizes": "no data-growth check",
+        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/pos": "marks engines only (supportsMarks)",
+        "postgres,sqlserver,sqlite,oracle,mongodb,redis,elasticsearch,opensearch/binlogs": "marks engines only (supportsMarks)"
+      }
+    },
+    "tenant-model": {
+      "config": "localEnv tenants.model",
+      "file": "skills/envy/adapters/tenant-models.ps1",
+      "verbs": "list drop import footprint scopes",
+      "names": "",
+      "caps": "create drop snapshot",
+      "vendors": "none schema database column instance",
+      "gaps": {
+        "none/list,drop,import,footprint": "no tenants: every verb works on the db scope",
+        "column/drop,import,footprint": "tenants are column values in one shared scope: list only",
+        "instance/drop,import,footprint": "one server per tenant: list only",
+        "none,schema,database,column,instance/scopes": "no extra data scopes",
+        "none,schema,database,column,instance/create": "no kit verb reads it yet: tenants come from import",
+        "none,schema,database,column,instance/snapshot": "no kit verb reads it yet"
+      }
+    },
+    "migration": {
+      "config": "migrations.tool",
+      "file": "skills/crafty/adapters/liquibase.ps1",
+      "verbs": "check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes",
+      "names": "",
+      "vendors": "liquibase"
+    },
+    "envy-verb": {
+      "config": "adapters/*.local.ps1",
+      "file": "skills/envy/adapters/tenant-models.ps1",
+      "verbs": "ops run",
+      "names": "",
+      "vendors": "tenant"
+    },
+    "api-auth": {
+      "config": "targets auth.type",
+      "file": "skills/pokey/pokey.ps1",
+      "verbs": "invoke",
+      "names": "",
+      "vendors": ""
+    },
+    "scheduler": {
+      "config": "supervise.osTimer",
+      "file": "skills/bossy/adapters/os-timer.ps1",
+      "verbs": "install uninstall status",
+      "names": "windows cron launchd none"
+    },
+    "guard": {
+      "config": "built-in guard rules",
+      "file": "skills/crafty/adapters/guard-localenv.ps1",
+      "verbs": "check",
+      "names": "local-env deployed-env large-writes secrets runtimes"
+    },
+    "stack": {
+      "config": "repos[] stack detection",
+      "file": "skills/crafty/adapters/stack-presets.ps1",
+      "verbs": "detect",
+      "names": "core presets"
+    }
+  },
+  "harness": {
+    "_readme": "kitbag.py port writes the Codex (.codex/) and Antigravity (.agents/) copies; a hook not listed runs the same script verb there",
+    "hooks": {
+      "PreToolUse guard_client.mjs": {
+        "codex": "crafty.ps1 guard",
+        "antigravity": "crafty.ps1 guard"
+      },
+      "PreToolUse bossy.ps1 guard-sendmessage": {
+        "codex": "gap: no SendMessage tool",
+        "antigravity": "gap: no SendMessage tool"
+      },
+      "PostToolUse ctx_hook.mjs": {
+        "codex": "fallback: board beat prints the CONTEXT-CHECK line",
+        "antigravity": "fallback: board beat prints the CONTEXT-CHECK line"
+      }
+    },
+    "features": {
+      "guard on file reads and MCP SQL": {
+        "codex": "gap: only shell and apply_patch are hooked",
+        "antigravity": "gap: only run_command is hooked"
+      },
+      "test-login read deny": {
+        "codex": "fallback: kit.rules exec policy + the shell guard (best-effort)",
+        "antigravity": "fallback: an always-on rule + the shell guard"
+      },
+      "per-agent tool and MCP lists": {
+        "codex": "gap: every tool loads (agents workspace-write); the guard covers both",
+        "antigravity": "gap: every tool loads; the guard covers both"
+      },
+      "Artifacts": {
+        "codex": "gap: no Artifacts tool",
+        "antigravity": "gap: no Artifacts tool"
+      },
+      "heartbeat cron (CronList)": {
+        "codex": "fallback: bossy.ps1 heartbeat (OS timer)",
+        "antigravity": "fallback: schedule"
+      },
+      "blocking owner questions": {
+        "codex": "fallback: request_user_input in Plan mode, else bossy.ps1 decide ask (blocking)",
+        "antigravity": "fallback: ask_question when listed, else bossy.ps1 decide ask"
+      },
+      "run journals (Runs band, stuck checks, recover)": {
+        "codex": "gap: workflows run by hand, no journal",
+        "antigravity": "port: run_workflow journal in <runtime>/work/port-runs/"
+      },
+      "Monitor and background-shell check": {
+        "codex": "gap: it reads Claude Code transcripts",
+        "antigravity": "gap: it reads Claude Code transcripts"
+      }
+    }
+  }
+}

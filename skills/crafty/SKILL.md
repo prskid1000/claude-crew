@@ -23,6 +23,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 | `spec.mjs` | step 4: `check -Step test` runs it for a web project with no unit-test target |
 | `module-audit.md` | `revy` kind module (`devtools.py findings`) |
 | `kit.example.json` | setup (`bossy.ps1 setup -WriteLocal`; keys: README "Configuration"); `_paths`: every state path |
+| `parity.json` | a new adapter verb or kit feature (AGENTS.md "Parity"; `kitbag.py parity`) |
 | `vocab.json` | built-in defaults (statuses, tracker vendor ids and links, testing docs); config keys override them |
 
 ## Steps (every devy; your brief wins where it differs)

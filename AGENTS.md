@@ -19,6 +19,8 @@ Codex and Antigravity read this file, Claude Code via `CLAUDE.md`; edit only her
   text wraps, never truncates; a changed page ships after `kitbag.py ui-check <page>` passes, shots read.
 - **Corrections:** a correction applies to its whole group: when the owner corrects one output, format or behaviour, fix every
   sibling the same way (all adapters, templates, ports, docs that produce or describe it), a test each; list what changed.
+- **Parity** (owner 2026-11-24): a kit feature works on every adapter of its family (native, or a documented fallback with the
+  same outcome) and in Claude Code, Codex and Antigravity (native, or a documented gap); not done until `kitbag.py parity` passes.
 
 ## The two flows
 - **Dev** (every code change): code -> testing-goals doc -> reproduce / debug + test on the local env (loop) -> review, merge,

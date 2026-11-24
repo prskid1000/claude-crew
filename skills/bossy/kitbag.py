@@ -12,6 +12,7 @@
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show]   # start tokens per role vs START_CAP (lint START-BUDGET); repo and tests totals (INFO)
   python -X utf8 kitbag.py naming check|next|make|scan|rename ...   # the naming standard: keys, titles, docs, runs, branches (kitbag_naming.py)
+  python -X utf8 kitbag.py parity [--json]   # adapter x verb, harness x feature: native / fallback / gap (lint PARITY; skills/crafty/parity.json)
   python -X utf8 kitbag.py migrate         # one-time: retired install records out (.githooks/post-merge runs it)
   python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers | state todo add|done|lint <file> ...   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
@@ -21,9 +22,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L39 paths · L136 state · L193 kitlog · L295 load · L788 lint · L1202 README graph · L1309 lint command · L1590 audit ·
-  L1738 registry · L1795 tools · L2128 arch lint · L2401 prose · L2581 sections · L2711 budget · L2729 migrate · L2877 plugins ·
-  L2934 state lint · L3122 main
+Sections: L40 paths · L137 state · L194 kitlog · L296 load · L789 lint · L1203 README graph · L1321 lint command · L1602 audit ·
+  L1750 registry · L1810 tools · L1898 parity · L2350 arch lint · L2623 prose · L2803 sections · L2933 budget · L2951 migrate ·
+  L3099 plugins · L3156 state lint · L3344 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1232,8 +1233,19 @@ def readme_sections(k, g):
      f"{(m.get('character') or {}).get('traits', '')}: \"{(m.get('character') or {}).get('catchphrase', '')}\" |" for a, m in (man.get('agents') or {}).items()]
     out['table-workflows'] = ['| Workflow | Covers | Crew | Router row |', '|---|---|---|---|'] + [
      f"| `/{w}` | {m.get('covers', '')} | {', '.join('`' + c + '`' for c in m.get('crew', []))} | {m.get('router', '')} |" for w, m in (man.get('workflows') or {}).items()]
-    out['table-adapters'] = ['| Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Code |', '|---|---|---|---|---|---|'] + [
-     f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')}{'; caps: ' + a['caps'] if a.get('caps') else ''} | {', '.join(a.get('names', '').split())} | {', '.join(a.get('vendors', '').split())} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
+    def odd(n, a):   # the family's non-native verbs: fallback / gap, with the adapter count
+        if a.get('parity'):
+            return 'not walked: ' + a['parity']
+        c = defaultdict(int)
+        for row in adapter_matrix(k, n, a).values():
+            for v, s in row.items():
+                if s in ('fallback', 'gap', 'MISSING'):
+                    c[(s, v)] += 1
+        return ' · '.join(f"{s}: " + ', '.join(f'{v} ({c[(s2, v)]})' for s2, v in sorted(c) if s2 == s) for s in ('fallback', 'gap', 'MISSING') if any(x[0] == s for x in c))
+    out['table-adapters'] = ['| Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Not native (adapters) | Code |', '|---|---|---|---|---|---|---|'] + [
+     f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')}{'; caps: ' + a['caps'] if a.get('caps') else ''} | {', '.join(a.get('names', '').split())} | {', '.join(a.get('vendors', '').split())} | {odd(n, a)} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
+    out['table-ports'] = ['| Feature | Codex | Antigravity |', '|---|---|---|'] + [
+     f"| {f} | {' | '.join(c[h][0] + (': ' + c[h][1] if c[h][1] else '') for h in HARNESS)} |" for f, c in harness_matrix(k) if any(c[h][0] != 'port' for h in HARNESS)]
     bd = ((json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}').get('budget') or {}).get('defaults') or {})   # per-tool budget defaults
     out['table-budget'] = ['| Tool / window | Budget | Source |', '|---|---|---|'] + [f"| {n} | {v.get('tokens') or str(v.get('fraction')) + ' x window'} | {v.get('source', '')} |" for n, v in bd.items()]
     ex = json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}')   # config table: each key's _readme, else its _doc row
@@ -1786,9 +1798,12 @@ def schema_errors(obj, sch, where='$'):
             out.append(f'{where}: {len(obj)} chars (max {sch["maxLength"]})')
     return out
 
+PARITY_JSON = 'skills/crafty/parity.json'   # the adapter families (manifest 'adapters') and the harness port table
+
 def manifest(kit=None):
     try:
-        return json.loads(read(osp.join(kit or KIT_DIR, PATHS_JSON)) or '{}').get('_manifest') or {}
+        man = json.loads(read(osp.join(kit or KIT_DIR, PATHS_JSON)) or '{}').get('_manifest') or {}
+        return {**man, 'adapters': (json.loads(read(osp.join(kit or KIT_DIR, PARITY_JSON)) or '{}').get('adapters') or {})} if man else man
     except ValueError:
         return {}
 
@@ -1880,41 +1895,248 @@ def yaml_problems(text):
         out.append(((mk.line + 1) if mk else 0, str(e).split('\n')[0]))
     return out
 
-def adapter_blocks(text, kind):
-    """{name: code} of each `adapter:<kind>/<name>` block (to the next adapter / adapter-end marker)."""
-    out = {}
-    for m in re.finditer(r'adapter:' + re.escape(kind) + r'/([\w-]+)', text):
-        nx = re.compile(r'adapter(?:-end)?:[\w-]+').search(text, m.end())
-        out[m.group(1)] = out.get(m.group(1), '') + text[m.end():nx.start() if nx else len(text)]
+# ---- parity: every adapter x its family's verbs, every harness x kit feature (AGENTS.md "Parity", skills/crafty/parity.json)
+# a registration: Register-KitAdapter <kind> <name> <@{...} | $var[.Clone()]> (ps1) or ADAPTERS['<kind>']['<name>'] = {...} (py)
+AD_REG = re.compile(r"""Register-KitAdapter\s+'?([\w-]+)'?\s+'?([\w-]+)'?|ADAPTERS(?:\[['"]([\w-]+)['"]\]|\.setdefault\(['"]([\w-]+)['"],\s*\{\}\))\[['"]([\w-]+)['"]\]\s*=""")
+AD_KEY = re.compile(r"""(['"]?)([\w.*-]+)\1\s*(=(?!=)|:)""")   # a key of an adapter's hashtable / dict
+AD_DELEGATE = re.compile(r"""\$KitAdapters(?:\.([\w-]+)|\[['"]([\w-]+)['"]\])(?:\.([\w-]+)|\[['"]([\w-]+)['"]\])""")   # '*' = another adapter's verbs
+ktext = lambda k, rel: k.texts.get(rel) or read(osp.join(k.dir, rel))   # port copies and settings.json: not in every k.texts
+HARNESS = ('codex', 'antigravity')
+kebab = lambda v: re.sub('([A-Z])', r'-\1', v).lower()   # Test-KitCap: cap commentEdit = verb comment-edit
+
+def _braced(t, i):
+    """t from its first { at or after i to the matching } (kit adapter code keeps braces in strings balanced)."""
+    j, d = t.find('{', i), 0
+    for x in range(j, len(t) if j >= 0 else j):
+        d += {'{': 1, '}': -1}.get(t[x], 0)
+        if not d:
+            return t[j:x + 1]
+    return t[j:] if j >= 0 else ''
+
+def _var_code(t, name, before, depth=0):
+    """$name's hashtable before offset `before`: its @{...}, through .Clone() chains, plus later $name.<key> = sets."""
+    defs = list(re.finditer(r'\$' + name + r'\s*=\s*', t[:before]))
+    if not defs or depth > 3:
+        return ''
+    d = defs[-1]
+    c = re.match(r'\$(\w+)\.Clone\(\)', t[d.end():])
+    base = _var_code(t, c.group(1), d.start(), depth + 1) if c else _braced(t, d.end())
+    return base + '\n' + '\n'.join(x.group(0) for x in re.finditer(r'\$' + name + r'\.\w+\s*=\s*[^;\n]+', t[d.end():before]))
+
+def _top_keys(b):
+    """{key: its value is code} at brace depth 1 of an adapter's hashtable / dict (scriptblock bodies, nested tables and
+    depth-1 strings skipped); `$var.<key> = ...` lines after it count too."""
+    out, d, i, last = {}, 0, 0, ''
+    while i < len(b):
+        c = b[i]
+        if d == 1 and last in ('{', ';', ',', '\n') and (m := AD_KEY.match(b, i)):
+            nx = b[m.end():m.end() + 40].lstrip()
+            out[m.group(2)] = nx[:1] == '{' if m.group(3) == '=' else bool(re.match(r'lambda|[A-Za-z_]', nx))
+            i, last = m.end(), '='
+            continue
+        if d == 1 and c == '#':   # a trailing comment (an apostrophe in it is no string)
+            i = b.find('\n', i) if '\n' in b[i:] else len(b)
+            continue
+        if d == 1 and c in '\'"':   # skip a string (ps: `" and '' escapes)
+            j = i + 1
+            while j < len(b) and not (b[j] == c and b[j - 1] != '`' and b[j + 1:j + 2] != c):
+                j += 2 if b[j] == c and b[j - 1] != '`' else 1
+            i, last = j + 1, c
+            continue
+        d += (c == '{') - (c == '}')
+        if c not in ' \t\r':
+            last = c
+        i += 1
+    out.update({x: False for x in re.findall(r'\$\w+\.(\w+)\s*=', b)})
     return out
 
+def adapter_code(k, kind):
+    """{name: (code, file)} of every registration of `kind` in the kit's tracked skills/**/*.ps1|py (local overlays and
+    comment lines excluded)."""
+    out = {}
+    for f, t in k.texts.items():
+        if not (f.startswith('skills/') and f.endswith(('.ps1', '.py'))) or '.local.' in f:
+            continue
+        t = re.sub(r'(?m)^[ \t]*#.*$', '', t)
+        for m in AD_REG.finditer(t):
+            kn, n = (m.group(1), m.group(2)) if m.group(1) else (m.group(3) or m.group(4), m.group(5))
+            if kn != kind:
+                continue
+            v = re.match(r'\s+\$(\w+)', t[m.end():])
+            b = _var_code(t, v.group(1), m.start()) if v else _braced(t, m.end())
+            out[n] = (out.get(n, ('', f))[0] + b, f)
+    return out
+
+def adapter_kinds(k):
+    """Every adapter kind the kit's code registers."""
+    return {kn for f, t in k.texts.items() if f.startswith('skills/') and f.endswith(('.ps1', '.py')) and '.local.' not in f
+            for m in AD_REG.finditer(re.sub(r'(?m)^[ \t]*#.*$', '', t)) for kn in [m.group(1) or m.group(3) or m.group(4)]}
+
+def _gap_keys(gaps):
+    """'a,b/v1,v2' keys -> {(name, verb): (key, why)}."""
+    out = {}
+    for key, why in (gaps or {}).items():
+        ns, _, vs = key.partition('/')
+        out.update({(n.strip(), v.strip()): (key, why) for n in ns.split(',') for v in vs.split(',')})
+    return out
+
+def adapter_matrix(k, fam, a, bad=None):
+    """{name: {verb: native | config | fallback | gap | MISSING}} of one family ({} when its `parity` says why it is not walked);
+    bad() gets each PARITY problem. Each verb, cap and fallback key of every adapter: native, else the family's fallback (same
+    outcome), else a declared gap; capKeys: a cap read from its own keys (supportsMarks = $true, a sizes block)."""
+    bad = bad or (lambda *x: None)
+    if a.get('parity'):
+        return {}
+    verbs, caps, fb, ck = a.get('verbs', '').split(), a.get('caps', '').split(), a.get('fallback') or {}, a.get('capKeys') or {}
+    gaps, used, code, out, delegates = _gap_keys(a.get('gaps')), set(), adapter_code(k, fam), {}, {}
+    allv = list(dict.fromkeys(verbs + caps + [x for x in fb if not x.startswith('_')] + [v for _, v in gaps]))
+    for n in a.get('names', '').split() + a.get('vendors', '').split():
+        if n not in code:
+            bad('PARITY', PARITY_JSON, f'{fam}/{n}: registered, but no Register-KitAdapter / ADAPTERS entry registers it')
+            continue
+        b, f = code[n]
+        cm = re.search(r"""['"]?caps['"]?\s*=\s*""", b)
+        ct = _braced(b, cm.end()) if cm else ''
+        cs = dict((x, y == 'true') for x, y in re.findall(r'(\w+)\s*=\s*\$(true|false)', ct)) if re.match(r'\s*@', b[cm.end():] if cm else '') else None
+        body = b.replace(ct, '') if ct else b
+        tops = _top_keys(body)
+        star = '*' in tops
+        dl = AD_DELEGATE.search(body) if star else None
+        if dl and (dl.group(1) or dl.group(2)) == fam:
+            delegates[n] = dl.group(3) or dl.group(4)
+        has = lambda v: v in tops
+        def state(v):
+            if v in ck:   # bool keys: the last assignment wins (a Clone's override); others: present
+                vals = [re.findall(rf'\b{re.escape(x)}\s*=\s*\$(true|false)', b) or ([None] if has(x) else []) for x in ck[v].split()]
+                return 'native' if any(x and (x[-1] in (None, 'true')) for x in vals) else None
+            if cs is not None and v in cs:
+                return 'native' if cs[v] else None
+            if ct and cs is None and v in caps:
+                return 'config'   # a caps scriptblock: what the org's commands configure
+            if has(v) or has(kebab(v)):
+                return 'native'
+            return ('config' if 'Invoke-KitCommand' in body else 'native') if star else None
+        row = {}
+        for v in allv:
+            s = state(v)
+            if s and (n, v) in gaps:
+                bad('PARITY', PARITY_JSON, f'{fam}/{n}/{v}: declared gap "{gaps[(n, v)][0]}", but the adapter has it now: drop it')
+            if not s and (n, v) in gaps:
+                s = 'gap'; used.add(gaps[(n, v)][0])
+            elif not s:
+                s = 'fallback' if v in fb else 'MISSING'
+            if s == 'MISSING':
+                bad('PARITY', f, f'{fam}/{n}/{v}: {"a required verb" if v in verbs else "an optional verb"} with no native code, '
+                    f'fallback or declared gap: add the verb, or a fallback / gaps entry in {PARITY_JSON} adapters.{fam} (AGENTS.md "Parity")')
+            row[v] = s
+        known = set(allv) | {kebab(x) for x in allv} | {x for v in ck.values() for x in v.split()} | {'*', 'caps'}
+        for x in sorted({x for x, code in tops.items() if code} - known):
+            bad('PARITY', f, f'{fam}/{n}: verb {x} is in no family list: add it to adapters.{fam} verbs (every adapter) or fallback (optional) in {PARITY_JSON}, then check every sibling')
+        out[n] = row
+    for n, to in delegates.items():   # '*' -> another adapter: its row (jira-server = jira)
+        if to in out:
+            out[n] = dict(out[to])
+    for key in sorted({x[0] for x in gaps.values()} - used):
+        if not any(gaps[g][0] == key and g[0] in out and out[g[0]].get(g[1]) != 'gap' for g in gaps):
+            bad('PARITY', PARITY_JSON, f'{fam}: gaps "{key}" names no adapter or verb of the family: fix or drop it')
+    return out
+
+def _port_hooks(k):
+    """{harness: [(event, hook text)]} from the kit's ported hook files (kitbag.py port writes them)."""
+    toml = ktext(k, '.codex/config.toml')
+    cx = [(m.group(1), toml[m.end():(nx.start() if (nx := re.compile(r'^\[\[hooks\.\w+\]\]$', re.M).search(toml, m.end())) else len(toml))])
+          for m in re.finditer(r'^\[\[hooks\.(\w+)\]\]$', toml, re.M)]
+    try:
+        agy = json.loads(ktext(k, '.agents/hooks.json') or '{}')
+    except ValueError:
+        agy = {}
+    ag = [(ev, json.dumps(h)) for g in agy.values() if isinstance(g, dict) for ev, hs in g.items() if isinstance(hs, list) for h in hs]
+    return {'codex': cx, 'antigravity': ag}
+
+def harness_matrix(k, bad=None):
+    """[(feature, {claude, codex, antigravity: port | fallback | gap | MISSING, note})]: every Claude Code hook (settings.json),
+    agent, workflow and skill, plus the Claude-only features of parity.json harness.features."""
+    bad = bad or (lambda *x: None)
+    reg = (json.loads(ktext(k, PARITY_JSON) or '{}').get('harness') or {})
+    hk, feats, ports, rows = reg.get('hooks') or {}, reg.get('features') or {}, _port_hooks(k), []
+    word = lambda v: (v.split(':', 1)[0], v.split(':', 1)[1].strip()) if re.match(r'^(gap|fallback|port):', v or '') else (None, v)
+    try:
+        st = json.loads(ktext(k, 'settings.json') or '{}').get('hooks') or {}
+    except ValueError:
+        st = {}
+    for ev, groups in st.items():
+        for h in [h for g in groups for h in g.get('hooks', [])]:
+            av = h.get('args') or []
+            i = next((j for j, x in enumerate(av) if re.search(r'\.(ps1|mjs|py)$', x)), None)
+            feat = f"hook {ev} " + ' '.join([osp.basename(av[i])] + av[i + 1:] if i is not None else [h.get('command', '')])
+            cell, want = {'claude': ('native', '')}, hk.get(feat[5:]) or {}
+            for hn in HARNESS:
+                w, frag = word(want.get(hn) or feat.split(' ', 2)[2])
+                if w in ('gap', 'fallback'):
+                    cell[hn] = (w, frag)
+                else:
+                    hit = re.compile(re.escape(frag) + r"""(?=\s*['"\\]|\s*$)""", re.M)   # the whole command: health is no prefix of health -Flow
+                    cell[hn] = ('port', frag) if any(e == ev and hit.search(t) for e, t in ports[hn]) else ('MISSING', frag)
+            rows.append((feat, cell))
+    for kind, folder, files in (('agent', 'agents', ('.codex/agents/{}.toml', '.agents/agents/{}.md')),
+                                ('workflow', 'workflows', ('.codex/workflows/{}.md', '.agents/kit-workflows/{}.py'))):
+        for f in sorted(x for x in k.files if re.match(rf'{folder}/[\w-]+\.(md|js)$', x) and '.local.' not in x):
+            n = osp.splitext(osp.basename(f))[0]
+            cell = {'claude': ('native', '')}
+            for hn, pat in zip(HARNESS, files):
+                ok = bool(ktext(k, pat.format(n)))
+                cell[hn] = (('fallback', 'by-hand procedure, gates in the doc') if kind == 'workflow' and hn == 'codex' else ('port', pat.format(n))) if ok else ('MISSING', pat.format(n))
+            rows.append((f'{kind} {n}', cell))
+    sk = '.claude/skills' in ktext(k, '.agents/skills.json')
+    for s in sorted(k.skills):
+        rows.append((f'skill {s}', {'claude': ('native', ''), 'codex': ('port', '.agents/skills link'), 'antigravity': ('port', '.agents/skills.json') if sk else ('MISSING', '.agents/skills.json')}))
+    have = {f: c for f, c in rows}
+    for feat, want in feats.items():   # a declared entry: a Claude-only feature, or a gap / fallback of an auto row
+        if not feat.startswith('_'):
+            cell = {hn: (word(want[hn])[0] or 'MISSING', word(want[hn])[1]) for hn in HARNESS if hn in want}
+            if feat in have:
+                have[feat].update(cell)
+            else:
+                rows.append((feat, {'claude': ('native', ''), **{hn: ('MISSING', 'no entry') for hn in HARNESS}, **cell}))
+    for feat, cell in rows:
+        for hn in HARNESS:
+            if cell[hn][0] == 'MISSING':
+                bad('PARITY', PARITY_JSON, f'{feat}: not in the {hn} port ({cell[hn][1] or "no entry"}): port it (kitbag.py port) or declare '
+                    f'harness.{"hooks" if feat.startswith("hook ") else "features"} "{feat[5:] if feat.startswith("hook ") else feat}".{hn} = "gap: <why>" | "fallback: <how>"')
+    return rows
 
 def adapter_lint(k, man, bad):
-    """ADAPTER: each built-in name has every verb of its kind ('*' = all); vendor adapters (`vendors`) register from
-    adapters/*.ps1, not adapter blocks: not checked here."""
-    for kind, a in (man.get('adapters') or {}).items():
-        if not isinstance(a, dict):
-            continue
-        names, blocks, f = a['names'].split(), adapter_blocks(k.texts.get(a['file'], ''), kind), a['file']
-        if a.get('table'):   # a data table (an entry per name), not adapter blocks
-            m = re.search(r'(?ms)^(?:\$script:)?' + re.escape(a['table']) + r' = @?\{\s*\n(.*?)^\}', k.texts.get(f, ''))
-            rows = {}
-            body = (m.group(1) if m else '').split('\n')
-            ind = min((len(x) - len(x.lstrip(' ')) for x in body if x.strip()), default=1)
-            for ln in body:   # rows start at the first indent; continuations are deeper
-                r = re.match(r"^ {%d}'?([\w-]+)'?\s*[:=]\s*@?\{" % ind, ln)
-                if r:
-                    cur_n = r.group(1); rows[cur_n] = ''
-                if rows:
-                    rows[cur_n] += ln + '\n'
-            blocks = rows
-            if set(rows) - set(names):
-                bad('ADAPTER', f, f'{kind}: {a["table"]} entries {sorted(set(rows) - set(names))} not in _manifest.adapters.{kind}.names')
-        for n in names:
-            b = blocks.get(n)
-            miss = [] if b is None or "'*'" in b else [v for v in a['verbs'].split() if not re.search(rf"""['"]{re.escape(v)}['"]|\b{re.escape(v)}\s*=(?!=)""", b)]
-            if b is None or miss:
-                bad('ADAPTER', f, f'{kind}/{n}: {miss or "no block"} (a built-in adapter needs every verb)')
+    """PARITY: every adapter family and harness port (AGENTS.md "Parity")."""
+    fams = man.get('adapters') or {}
+    for fam, a in fams.items():
+        if isinstance(a, dict):
+            adapter_matrix(k, fam, a, bad)
+    for kind in sorted(adapter_kinds(k) - set(fams)):
+        bad('PARITY', PARITY_JSON, f'family {kind}: the code registers it, {PARITY_JSON} adapters has no entry: add it (or "parity": why it is not walked)')
+    harness_matrix(k, bad)
+
+def cmd_parity(a):
+    """parity [--json]: the family x adapter x verb and harness x feature matrices (README "Adapters", "Install")."""
+    k = load(KIT_DIR)
+    probs, man = [], manifest(KIT_DIR)
+    fams = {f: adapter_matrix(k, f, a) for f, a in (man.get('adapters') or {}).items() if isinstance(a, dict)}
+    hm = harness_matrix(k)
+    adapter_lint(k, man, lambda *x: probs.append(x))
+    if '--json' in a:
+        print(json.dumps({'adapters': fams, 'harness': [{'feature': f, **{h: {'state': s, 'note': n} for h, (s, n) in c.items()}} for f, c in hm],
+                          'problems': [f'{c} {w}: {m}' for c, w, m in probs]}, indent=1))
+        return 1 if probs else 0
+    for fam, rows in fams.items():
+        print(f'{fam}: {len(rows)} adapter(s)')
+        for n, row in rows.items():
+            odd = [f'{v}={s}' for v, s in row.items() if s != 'native']
+            print(f'  {n:<14} {"all native" if not odd else " ".join(odd)}')
+    print(f'harness: {"feature":<46} codex            antigravity')
+    for feat, c in hm:
+        if any(c[h][0] != 'port' for h in HARNESS):
+            print(f'  {feat:<54} {c["codex"][0]:<16} {c["antigravity"][0]}')
+    print(f'parity: {len(probs)} problem(s)' + ''.join(f'\n  {c} {w}: {m}' for c, w, m in probs))
+    return 1 if probs else 0
 
 
 def registry_lint(k, bad):
@@ -3124,9 +3346,9 @@ def collections_counter(items):
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'budget': (set(), set(), False), 'migrate': (set(), set(), False), 'sections': ({'--fix'}, set(), False),
-  'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False)}
+  'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False), 'parity': ({'--json'}, set(), False)}
 NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check', 'naming')   # positionals: files, verbs or names, never a kit dir
-COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'migrate': cmd_migrate, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check}
+COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'migrate': cmd_migrate, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check, 'parity': cmd_parity}
 
 def parse_opts(a, valued=()):
     """(flags, positionals) of arguments check_args accepted: a switch maps to True, a value flag to its value."""

@@ -26,6 +26,11 @@
         "type": "command",
         "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/bossy/bossy.ps1 cleanup -IfDue -Quiet",
         "timeout": 600
+      },
+      {
+        "type": "command",
+        "command": "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/bossy/bossy.ps1 health -Flow -Fetch",
+        "timeout": 120
       }
     ]
   }

@@ -188,12 +188,25 @@ them (`none` removes the kit-written copies; unset keeps an earlier deploy). Sta
 `AGENTS.override.md`; local only) and each CLI's mechanics (GEMINI.md, AGENTS.override.md). Antigravity runs the workflows
 (`run_workflow` on `.agents/kit-workflows/<name>.py`, journal in `<runtime>/work/port-runs/`); Codex follows
 `.codex/workflows/*.md` by hand (each phase with the engine's gates). Codex config: `approval_policy = "never"`, workspace-write
-with network (trusted project; Windows: `~/.codex/config.toml` `[windows] sandbox`). Not ported: the SendMessage guard, the guard on non-shell
-edits, per-agent tool / MCP lists (all load, Codex agents workspace-write; the guard covers both),
-Artifacts, the CronList check (heartbeat: agy `schedule`, Codex `bossy.ps1 heartbeat`), Codex blocking questions outside Plan
-mode, Codex run journals (Runs band, stuck checks, `recover`: Claude Code + Antigravity), the Monitor / background-shell check
-(reads Claude transcripts). Test logins: Claude's Read deny, the guard (shell), an agy always-on rule, Codex `kit.rules`
-(best-effort); agy's file viewer rests on the rule alone.
+with network (trusted project; Windows: `~/.codex/config.toml` `[windows] sandbox`). Not ported natively (gaps and
+fallbacks: `skills/crafty/parity.json` `harness`; `kitbag.py parity`, lint PARITY):
+<!-- kit-graph:start table-ports -->
+| Feature | Codex | Antigravity |
+|---|---|---|
+| hook PreToolUse bossy.ps1 guard-sendmessage | gap: no SendMessage tool | gap: no SendMessage tool |
+| hook PostToolUse ctx_hook.mjs | fallback: board beat prints the CONTEXT-CHECK line | fallback: board beat prints the CONTEXT-CHECK line |
+| workflow buildy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/buildy.py |
+| workflow testy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/testy.py |
+| workflow tidy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/tidy.py |
+| guard on file reads and MCP SQL | gap: only shell and apply_patch are hooked | gap: only run_command is hooked |
+| test-login read deny | fallback: kit.rules exec policy + the shell guard (best-effort) | fallback: an always-on rule + the shell guard |
+| per-agent tool and MCP lists | gap: every tool loads (agents workspace-write); the guard covers both | gap: every tool loads; the guard covers both |
+| Artifacts | gap: no Artifacts tool | gap: no Artifacts tool |
+| heartbeat cron (CronList) | fallback: bossy.ps1 heartbeat (OS timer) | fallback: schedule |
+| blocking owner questions | fallback: request_user_input in Plan mode, else bossy.ps1 decide ask (blocking) | fallback: ask_question when listed, else bossy.ps1 decide ask |
+| run journals (Runs band, stuck checks, recover) | gap: workflows run by hand, no journal | port: run_workflow journal in <runtime>/work/port-runs/ |
+| Monitor and background-shell check | gap: it reads Claude Code transcripts | gap: it reads Claude Code transcripts |
+<!-- kit-graph:end -->
 
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`: a recurring durable
@@ -337,22 +350,27 @@ A repo whose stack is detected wrongly: `.claude-stack.json` next to its build f
 ## Adapters
 One interface per kind, chosen by config; `command` = your CLI per verb (`{placeholders}` in, JSON out); `kitbag.py new adapter <kind> <name>` scaffolds one.
 Vendor adapters sit in `skills/crafty/adapters/` and load only when config selects them (env vars / keys: each file's header).
+Registry: `skills/crafty/parity.json` (per family: verbs, caps, fallbacks, declared gaps); `kitbag.py parity [--json]` prints
+adapter x verb (native, config, fallback, gap) and harness x feature; lint PARITY fails a verb or feature with neither.
 <!-- kit-graph:start table-adapters -->
-| Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Code |
-|---|---|---|---|---|---|
-| tracker | `tracker.type` | view url status statuses comment comments create describe rename move attach list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | `skills/crafty/adapters/tracker-local.ps1` |
-| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect | command | github, gitlab, bitbucket, azure, gitea | `skills/crafty/lib.ps1` |
-| report | `reports.type` | publish; caps: evidence | markdown, html, command | gdocs, pdf, confluence, notion | `skills/crafty/devtools.py` |
-| ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | `skills/crafty/lib.ps1` |
-| transcript | `board tool` | root last | claude, codex, antigravity, none |  | `skills/crafty/lib.ps1` |
-| deploy-kind | `repos[].deploys[] (kind)` | isDeployed; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | `skills/pokey/adapters/deployed-checks.ps1` |
-| secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | `skills/crafty/adapters/secret-store.ps1` |
-| process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | `skills/crafty/adapters/process-gates.ps1` |
-| db-engine | `localEnv db.engine` | query exec jdbc schemaSizes; caps: marks temp sizes |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb, redis, elasticsearch, opensearch | `skills/envy/adapters/db-engines.ps1` |
-| tenant-model | `localEnv tenants.model` | list drop import footprint scopes; caps: create drop snapshot |  | none, schema, database, column, instance | `skills/envy/adapters/tenant-models.ps1` |
-| migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes |  | liquibase | `skills/crafty/adapters/liquibase.ps1` |
-| envy-verb | `adapters/*.local.ps1` | ops run |  | tenant | `skills/envy/adapters/tenant-models.ps1` |
-| api-auth | `targets auth.type` | invoke |  |  | `skills/pokey/pokey.ps1` |
+| Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Not native (adapters) | Code |
+|---|---|---|---|---|---|---|
+| tracker | `tracker.type` | view url status comment comments create describe rename list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | fallback: checklist (8), dependencies (4), labels (4), statuses (2) | `skills/crafty/adapters/tracker-local.ps1` |
+| git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect | command | github, gitlab, bitbucket, azure, gitea | fallback: mr.parseRef (5) · gap: branch.protect (3), mr.update (3), whoami (1) | `skills/crafty/lib.ps1` |
+| report | `reports.type` | publish; caps: evidence | markdown, html, command | gdocs, pdf, confluence, notion | fallback: evidence (6) · gap: selftest (3) | `skills/crafty/devtools.py` |
+| ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | fallback: failure (6) · gap: parseUrl (4) | `skills/crafty/lib.ps1` |
+| transcript | `board tool` | root last; caps: agentMeta | claude, codex, antigravity, none |  | gap: agentMeta (3) | `skills/crafty/lib.ps1` |
+| deploy-kind | `repos[].deploys[] (kind)` | isDeployed; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | gap: deploy (3), isRunning (7), lastDeploy (7), plan (5), restart (7) | `skills/pokey/adapters/deployed-checks.ps1` |
+| secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | gap: delete (2), list (1), rotate (2), set (2), write (2) | `skills/crafty/adapters/secret-store.ps1` |
+| process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | not walked: a built-in is one rule for its own gates (testingDocs: promote here, finish / merge / mrBody in devtools.py; reproRow: bugFix in devtools.py); an unset gate passes | `skills/crafty/adapters/process-gates.ps1` |
+| db-engine | `localEnv db.engine` | query exec jdbc sql; caps: marks temp sizes |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb, redis, elasticsearch, opensearch | fallback: exec (4), jdbc (7), query (1) · gap: binlogs (8), marks (8), pos (8), sizes (4), sql (8), temp (9) | `skills/envy/adapters/db-engines.ps1` |
+| tenant-model | `localEnv tenants.model` | list drop import footprint scopes; caps: create drop snapshot |  | none, schema, database, column, instance | gap: create (5), drop (3), footprint (3), import (3), list (1), scopes (5), snapshot (5) | `skills/envy/adapters/tenant-models.ps1` |
+| migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes |  | liquibase |  | `skills/crafty/adapters/liquibase.ps1` |
+| envy-verb | `adapters/*.local.ps1` | ops run |  | tenant |  | `skills/envy/adapters/tenant-models.ps1` |
+| api-auth | `targets auth.type` | invoke |  |  |  | `skills/pokey/pokey.ps1` |
+| scheduler | `supervise.osTimer` | install uninstall status | windows, cron, launchd, none |  |  | `skills/bossy/adapters/os-timer.ps1` |
+| guard | `built-in guard rules` | check | local-env, deployed-env, large-writes, secrets, runtimes |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
+| stack | `repos[] stack detection` | detect | core, presets |  |  | `skills/crafty/adapters/stack-presets.ps1` |
 <!-- kit-graph:end -->
 
 ## Layout, state and safety
@@ -554,6 +572,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"step 4: check -Step test runs it for a web…"| skills_crafty_spec_mjs["spec.mjs"]
   skills_crafty_SKILL_md -->|"revy kind module (devtools.py findings)"| skills_crafty_module_audit_md["module-audit.md"]
   skills_crafty_SKILL_md -->|"setup (bossy.ps1 setup -WriteLocal; keys:…"| skills_crafty_kit_example_json["kit.example.json"]
+  skills_crafty_SKILL_md -->|"a new adapter verb or kit feature (AGENTS.md…"| skills_crafty_parity_json["parity.json"]
   skills_crafty_SKILL_md -->|"built-in defaults (statuses, tracker vendor ids…"| skills_crafty_vocab_json["vocab.json"]
 ```
 <!-- kit-graph:end -->

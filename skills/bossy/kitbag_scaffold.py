@@ -6,7 +6,7 @@
 
 kitbag.py loads it and shares its own names (read, manifest, section, port).
 Exit codes: 0 ok · 1 references left after rename / remove · 2 usage error.
-Sections: L16 helpers · L72 new · L242 shared · L270 rename · L391 remove
+Sections: L16 helpers · L72 new · L246 shared · L274 rename · L395 remove
 """
 import contextlib, datetime, io, json, os, re, shutil, subprocess, sys
 import os.path as osp
@@ -230,7 +230,11 @@ return r || {{ ok: false, summary: 'the agent returned nothing' }}
         body = '\n'.join((f"  '{v}': lambda a: _todo('{v}')," if py else f"  '{v}' = {{ param($a) throw '{TODO}: {v}' }}") for v in ad['verbs'].split())
         blk = f"# adapter:{ak}/{name}: {TODO} what it talks to\n" + (f"ADAPTERS.setdefault('{ak}', {{}})['{name}'] = {{" if py else f"Register-KitAdapter '{ak}' '{name}' @{{") + f"\n{body}\n}}\n"
         _sub_file(kit, ad['file'], lambda t: t.replace(end, blk + end, 1) if end in t else t.rstrip('\n') + '\n' + blk)
-        _edit_manifest(kit, lambda m: m['adapters'][ak].__setitem__('names', f"{m['adapters'][ak]['names']} {name}"))
+        def add_name(t):   # parity.json is json.dumps(indent=2) shaped: a load / dump round trip keeps it
+            reg = json.loads(t); fam = reg['adapters'][ak]
+            fam['names'] = f"{fam.get('names', '')} {name}".strip()
+            return json.dumps(reg, indent=2, ensure_ascii=False) + '\n'
+        _sub_file(kit, PARITY_JSON, add_name)
         _test_stub(kit, f'adapter {ak}/{name} against a recorded API fixture')
     else:
         print(cmd_new.__doc__, file=sys.stderr)

@@ -35,10 +35,15 @@ $okId = (& $mf).events -contains $e2 -and -not ((& $mf).events -contains $e1) -a
 $nskill = @(Get-ChildItem (Join-Path $kc 'skills') -Recurse -File).Count
 $null = & $py -X utf8 $KT remove skill '' 2>&1; $rc = $LASTEXITCODE
 $okEmpty = $rc -ne 0 -and @(Get-ChildItem (Join-Path $kc 'skills') -Recurse -File).Count -eq $nskill
+$pj = Join-Path $kc 'skills/crafty/parity.json'
+if (-not (Test-Path $pj)) { Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/parity.json') $pj }
+$null = & $py -X utf8 $KT new adapter secret-store vaultx 2>&1
+$okAd = (Get-Content $pj -Raw | ConvertFrom-Json).adapters.'secret-store'.names -eq 'file env keychain command vaultx' -and
+  (Get-Content (Join-Path $kc 'skills/crafty/adapters/secret-store.ps1') -Raw) -match "Register-KitAdapter 'secret-store' 'vaultx'"
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 $fails = 0
 foreach ($c in @(@('new agent: file, manifest, Router stub, TODO-STUB lint', $okNew), @('rename agent: file, references, manifest renamed, ports', $okRen),
-    @('remove agent: file, manifest, Router row', $okRem), @('rename event + new adr', $okId), @('remove skill "": refused, no skill touched', $okEmpty))) {
+    @('remove agent: file, manifest, Router row', $okRem), @('rename event + new adr', $okId), @('remove skill "": refused, no skill touched', $okEmpty), @('new adapter: stub block, parity.json names', $okAd))) {
   if ($c[1]) { "PASS scaffold: $($c[0])" } else { "FAIL scaffold: $($c[0])"; $fails++ }
 }
 exit [int]($fails -gt 0)

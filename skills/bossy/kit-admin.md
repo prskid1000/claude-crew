@@ -4,9 +4,10 @@ Read by `kitty` at step 0 and by `revy` (kind kit). README "Extending" points he
 ## Parts
 Parts are added, renamed or removed with the scaffold (`kitbag.py new | rename | remove <kind> <name>`, `new adr <title>`:
 template, manifest, Router / Events rows, test stub; lint TODO-STUB refuses unfilled ones); then `port`, lint 0, tests. A vendor
-adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters/` and runs only when config selects it.
+adapter sits in its skill's `adapters/` and runs only when config selects it.
 - **Registry** [MANIFEST, OLD-NAME]: `_manifest` holds every agent, skill, workflow, Router / Events row and cap; README tables,
   Character blocks and ports are generated from it; `renamed` lists old names (no aliases).
+- **Parity** [PARITY]: `skills/crafty/parity.json`; new verb: `verbs` / `fallback`, a sibling lacking it: `gaps`; ports: `harness`.
 - **Renames**: no forwarders or old-name stand-ins; outside callers of a renamed path or name (settings, scheduled tasks, notes,
   local files) get the exact edit as a coordinator step in the report.
 - **Formats** [SCHEMA, AGENT-TYPE]: SKILL.md and subagent front matter + the Character shape, JSON-Schema checked; every workflow
@@ -65,11 +66,10 @@ idle every `kitTests.fullEveryDays` (kit changed). pre-commit regenerates README
    product, tenant, status, list id, host, path, stack, DB; each such value -> config key with default, org value in report
    additions. Any stack, local env shape, deploy mechanism and tracker must work through config.
 6. **Consistency:** Files indexes vs disk; README "Configuration" vs script keys; manifest vs agents, skills, workflows,
-   Router and Events; ports in sync (`kitbag.py port --check`); README graph current;
-   no desktop open without `--open` (DESKTOP-OPEN); every file reached from root; budgets and file caps (`kitbag.py budget`);
-   script headers (usage, exit codes).
-   Writing: lint PROSE for kit files; `kitbag.py prose --kind <kind> <file>` on sample artefacts (latest MR bodies,
-   tracker comments, briefs, testing docs, QA reports).
+   Router and Events; ports (`kitbag.py port --check`), README graph, DESKTOP-OPEN, reach from root, budgets (`kitbag.py
+   budget`), script headers, parity (`kitbag.py parity`).
+   Writing: lint PROSE for kit files; `kitbag.py prose --kind <kind> <file>` on sample artefacts (MR bodies,
+   comments, briefs, testing docs, QA reports).
 
 ## Flows to trace (kitty step 4)
 | Flow | Hops |

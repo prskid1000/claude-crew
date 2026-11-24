@@ -36,3 +36,12 @@ type = "command"
 command = '''pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/bossy/bossy.ps1 cleanup -IfDue -Quiet'''
 timeout = 600
 async = true
+
+[[hooks.SessionStart]]
+matcher = "*"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = '''pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .claude/skills/bossy/bossy.ps1 health -Flow -Fetch'''
+timeout = 120
+async = true

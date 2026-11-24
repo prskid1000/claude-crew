@@ -104,7 +104,7 @@ def _todo(verb):
 
 def no_report_adapter():
     """reports.type names no adapter (built in or skills/crafty/adapters/report_<type>.py): exit 3."""
-    print(f'reports.type {REPORT_TYPE}: no such report adapter (kit.example.json _manifest.adapters.report)', file=sys.stderr)
+    print(f'reports.type {REPORT_TYPE}: no such report adapter (skills/crafty/parity.json adapters.report)', file=sys.stderr)
     sys.exit(3)
 
 # ---- run: CLI calls and their arguments
@@ -1921,11 +1921,11 @@ def relayout(ref):
     return url
 
 
-R = ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): adapters/report_gdocs.py
+ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): adapters/report_gdocs.py
 # adapter:report/markdown: the file, kept (an earlier publish: the same file)
-R['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'], a.get('url'))}
+ADAPTERS['report']['markdown'] = {'publish': lambda a: keep_doc(a['title'], a['path'], a['keep'], a.get('url'))}
 # adapter:report/html: Markdown -> HTML (md_to_html), kept
-R['html'] = {'publish': lambda a: keep_doc(a['title'], _html_of(a), a['keep'], a.get('url'))}
+ADAPTERS['report']['html'] = {'publish': lambda a: keep_doc(a['title'], _html_of(a), a['keep'], a.get('url'))}
 
 
 # adapter:report/command: reports.command {title} {path} {parent} {url} (earlier publish: update); last output word = URL
@@ -1938,7 +1938,7 @@ def _command(a):
     return u if u and not r.returncode else sys.exit(f'reports.command failed (exit {r.returncode}): {(r.stdout + r.stderr)[-300:]}')
 
 
-R['command'] = {'publish': _command}
+ADAPTERS['report']['command'] = {'publish': _command}
 # adapter-end:report
 
 

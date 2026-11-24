@@ -58,6 +58,7 @@ cmds = [h['command'] for g in cx['hooks']['SessionStart'] + cx['hooks']['PreTool
 ag = json.loads(pt.gravity_hooks_text('D:/w/.claude', True)); agx = json.loads(pt.gravity_hooks_text('/w/.claude', False))
 agc = [h['command'] for h in ag['kit-health']['SessionStart']] + [h['command'] for h in ag['guard']['PreToolUse'][0]['hooks']]
 ok_hooks = all('D:/w/.claude/skills/' in c and '"' not in c for c in cmds + agc) and cx['hooks']['SessionStart'][1]['hooks'][0].get('async') is True \
+    and cx['hooks']['SessionStart'][2]['hooks'][0].get('async') is True and 'health -Flow -Fetch' in agc[2] and agc[2].count('-WindowStyle Hidden') == 2 \
     and cx['shell_environment_policy']['set']['KIT_TOOL'] == 'codex' and agc[1].count('-WindowStyle Hidden') == 2 and agc[1].endswith("'{}'") \
     and agx['kit-health']['SessionStart'][1]['command'].startswith('nohup ') and base64.b64decode(pt.hook_cmd(pt.GUARD, "C:/a b'c/.claude").split()[-1]).decode('utf-16-le') == "& 'C:/a b''c/.claude/skills/crafty/crafty.ps1' guard" \
     and not re.search(r'["&]', pt.hook_cmd(pt.GUARD, "C:/a b'c/.claude")) and not re.search(r'["&]', pt.detached(pt.hook_cmd(pt.CLEANUP, 'C:/a b/.claude'), True))
@@ -251,3 +252,31 @@ line = pt.mcp_line(home, tk.parent)
 ok_m = srv == ['db', 'local1', 'plugin_browse_devtools', 'quiet', 'shared'] \
     and all(s in line for s in ('local1', 'plugin_browse_devtools', 'shared')) and 'quiet' not in line and ' db' not in line
 print(f'ports-tools:{ok_t and ok_f and ok_n and ok_m} {ok_t} {ok_f} {ok_n} {ok_m}')
+
+# parity (AGENTS.md "Parity"): the kit has 0 problems; a verb on one adapter only, a stale or unknown gap, an unported hook fail
+kp = kt.load(kt.KIT_DIR); man = kt.manifest(kp.dir)
+def par(k, m):
+    probs = []
+    kt.adapter_lint(k, m, lambda *x: probs.append(x[2]))
+    return probs
+p0 = par(kp, man)
+gh = 'skills/crafty/adapters/github.ps1'; kp.texts[gh] = kp.texts[gh].replace("Register-KitAdapter 'tracker' 'github' @{", "Register-KitAdapter 'tracker' 'github' @{ 'tag-add' = { 'x' }\n", 1)
+p1 = par(kp, man)
+fam = json.loads(json.dumps(man)); fam['adapters']['tracker']['caps'] += ' tagAdd'
+p2 = par(kp, fam)
+fam['adapters']['tracker']['fallback']['tagAdd'] = 'a Tags line'; fam['adapters']['tracker']['gaps'] = {'clickup/view': 'x', 'nosuch/view': 'y'}
+p3 = par(kp, fam)
+st = json.loads(kp.texts['settings.json']); st['hooks']['Stop'] = [{'hooks': [{'type': 'command', 'command': 'pwsh', 'args': ['-File', 'x/bossy.ps1', 'stop-check']}]}]
+kp.texts['settings.json'] = json.dumps(st); p4 = [x for x in par(kp, man) if 'Stop' in x]
+reg = json.loads(kp.texts[kt.PARITY_JSON]); reg['harness']['hooks']['Stop bossy.ps1 stop-check'] = {'codex': 'gap: no Stop hook', 'antigravity': 'fallback: board beat'}
+kp.texts[kt.PARITY_JSON] = json.dumps(reg); p5 = [x for x in par(kp, man) if 'Stop' in x]
+kq = kt.load(kt.KIT_DIR); ln = 'skills/crafty/adapters/tracker-linear.ps1'   # a verb renamed while a nested @{ status = } stays
+kq.texts[ln] = kq.texts[ln].replace("'status' = {", "'status-x' = {", 1); p6 = par(kq, man)
+for rel, end in (('.codex/config.toml', "'''"), ('.agents/hooks.json', '"')):   # the plain health hook gone, health -Flow -Fetch kept
+    kq.texts[rel] = kt.ktext(kq, rel).replace('bossy.ps1 health' + end, 'bossy.ps1 healthz' + end)
+p7 = [x for x in par(kq, man) if x.startswith('hook SessionStart bossy.ps1 health:')]
+print(f'parity-kit:{not p0} {p0[:3]}')
+print(f'parity-nested:{any("tracker/linear/status: a required verb" in x for x in p6) and len(p7) == 2}')
+print(f'parity-sibling:{any("tracker/github: verb tag-add is in no family list" in x for x in p1) and sum("/tagAdd: an optional verb" in x for x in p2) == 7 and not any("tagAdd" in x for x in p3)}')
+print(f'parity-gaps:{any("clickup/view: declared gap" in x for x in p3) and any("nosuch/view" in x for x in p3)}')
+print(f'parity-harness:{len(p4) == 2 and all("not in the" in x for x in p4) and not p5}')
