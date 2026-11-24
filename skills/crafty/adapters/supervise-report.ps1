@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L156 transcript tails · L188 supervise sweep
+# Sections: L6 supervise report · L156 transcript tails · L188 supervise sweep · L268 status rows
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -264,4 +264,111 @@ function Invoke-KitBackground([string]$Name, [string]$Script, [string[]]$A, [scr
     }
   }
   $res.out
+}
+# ---- status rows: one row per board agent, workflow run and uncovered running step (supervise, board show)
+# rows: board entries, workflow runs (2 h after last write, 48 h unfinished), running steps no entry covers (windows inline)
+function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
+  $stuck = [double](Get-KitParam 'supervise.stuckMinutes'); $rows = [Collections.Generic.List[object]]::new(); $script:KitTxVersions = @{}
+  $last = { param($tool, $file) $t = if ($file) { Get-KitTailCached (Get-KitTranscriptKind $tool) $file }; if ($t.version) { $script:KitTxVersions[($t.version -split ' ')[0]] = $t.version }; $t }
+  $max = { param([object[]]$T) @($T | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1] }
+  $doing = { param($t, [string]$stepNow) Format-KitDoing $t $stepNow }; $nextPh = { param([string]$scr, [string]$ph) Get-KitNextPhase $scr $ph }   # Doing · next: adapters/supervise-report.ps1
+  $outcome = { param($st) if ("$($st.result.summary)") { "$($st.result.summary)" } else { 'done' } }
+  $tok = { param($n) if ($n -ge 1e6) { '{0:0.#}M' -f ($n / 1e6) } else { '{0:0}k' -f ($n / 1e3) } }
+  # waits: "<run>/<agent>" or "/<agent>" -> why, since, next
+  $waits = @{}; $put = { param($k, $why, $at, $nx) if (-not $waits[$k]) { $waits[$k] = [pscustomobject]@{ why = $why; at = $at; next = $nx } } }
+  foreach ($d in @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object status -eq 'pending')) {
+    $e = $d.kind -eq 'envfix'; & $put "$($d.run)/$($d.agent)" "$(if ($e) { 'env fix' } else { 'decision' }) $($d.id)" $d.at "$(if ($e) { 'coordinator fixes the env' } else { 'owner answers' }), then decide answer -Id $($d.id)"
+  }
+  foreach ($g in @((Get-KitGpuState).waiting)) { & $put "/$($g.holder)" "GPU, held by $($g.heldBy)" $g.at 'the GPU frees' }
+  foreach ($h in @(Get-Command 'Get-KitStatusWait*' -CommandType Function -ErrorAction SilentlyContinue)) { foreach ($w in @(& $h)) { & $put "/$($w.agent)" $w.why $w.at $w.next } }   # adapters: build gate, phone lanes
+  $pauses = @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object state -eq 'paused')
+  $waitOf = { param([string]$Run, [string[]]$Names)
+    foreach ($n in $Names) { foreach ($k in "$Run/$n", "/$n") { if ($waits[$k]) { return $waits[$k] } } }
+    $p = @($pauses | Where-Object { $Run -and ($_.run -eq $Run -or ($_.run -eq '*' -and $Run -notin @($_.released))) })[0]
+    if ($p) { [pscustomobject]@{ why = "owner pause: $($p.reason)"; at = $p.at; next = "bossy.ps1 resume -Run $Run" } } }
+  # a board transcript in a workflow folder maps its folder id to the run
+  $recent = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { -not $_.takenOverBy -and ($Now - [datetime]$_.beat).TotalHours -lt $(if ($_.status -eq 'left') { 2 } else { 6 }) })   # supervise's window
+  $runOf = @{}; foreach ($e in $recent) { if ("$($e.transcript)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]agent-' -and $e.run) { $runOf[$Matches[1]] = $e.run } }
+  $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $steps = @{}; $anyRun = @{}; $runSteps = [Collections.Generic.List[object]]::new()
+  foreach ($w in @(Get-KitRecentWorkflowDirs $Session)) {   # oldest first: a relaunch's steps win
+    $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
+    $ev = @(Get-Content $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} }); $jt = (Get-Item $j).LastWriteTime
+    $rec = @(Get-KitWorkflowRecords $w $ev $launch); $lr = @($rec | Where-Object { $_.runId -or $_.wfDir })
+    $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($x in $ev | Where-Object type -eq 'result') { $res[$x.agentId] = $x }
+    $running = @(Get-JournalRunning $started @($res.Keys)); $seen = [Collections.Generic.List[object]]::new(); $seen.Add($jt)
+    # no end marker: no running step for 2+ min (none ever: 10) = ended, unless paused
+    $paused = [bool]@($rec | Where-Object { $_.paused -and -not $_.completed }).Count
+    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($rec | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge 2) -or (-not $started.Count -and ($Now - $jt).TotalMinutes -ge 10))
+    $gone = if (-not $fin) { Get-KitWorkflowStop $w $rec }; $live = -not $fin -and -not $gone   # ended runs have no running steps
+    if (($Now - $jt).TotalHours -ge $(if ($live) { 48 } else { 2 })) { continue }
+    $run = @(@($lr | ForEach-Object run) + $runOf[$w.Name] + $w.Name | Where-Object { $_ })[0]
+    if (-not @($lr).Count) { $lr = @(@($rec) + @($launch | Where-Object { $_.run -eq $run -and $_.cap }) | Where-Object { $_ }) }   # its self record: script, tokens spent, cap
+    foreach ($s in $started) {
+      $st = [pscustomobject]@{ label = [string]$s.label; run = $run; result = $res[$s.agentId].result; tf = Join-Path $w.FullName "agent-$($s.agentId).jsonl"; tx = $null; covered = $false; jt = $jt
+        phase = [string]$s.phase; script = "$(@($lr.script | Where-Object { $_ })[0])" }
+      if ($live -and $s -in $running) { $st.tx = & $last 'claude' $st.tf; $seen.Add($st.tx.at); $runSteps.Add($st)
+        $st | Add-Member -Force NoteProperty created (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime
+        $st | Add-Member -Force NoteProperty type $(try { (Read-KitText ($st.tf -replace '\.jsonl$', '.meta.json') | ConvertFrom-Json).agentType } catch { '' })
+        foreach ($n in @(LabelNames $st.label)) { $anyRun[$n] = if ($anyRun.ContainsKey($n) -and $anyRun[$n] -ne $st) { $false } else { $st } } }   # one running step of a name: its agent, whatever run it joined the board under
+      foreach ($k in @(LabelNames $st.label | ForEach-Object { "$run/$_"; if ($run -like 'wf_*') { "?/$_" } })) { if (-not ($steps[$k].tx -and -not $st.tx)) { $steps[$k] = $st } }   # latest step wins, running first; ?/ = run name unknown
+    }
+    $errs = @($res.Values | Where-Object { $_.result.error }).Count; $spent = @($lr.spent | Where-Object { $_ })[0]; $cap = @($lr.cap | Where-Object { $_ })[0]
+    $cw = @(foreach ($x in @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) })) { & $waitOf $run @(LabelNames $x.label) })   # every running step waits = the run waits
+    $rsNow = @($runSteps | Where-Object { $_.tf.StartsWith($w.FullName) }); $phNow = @($rsNow.phase | Where-Object { $_ } | Select-Object -Unique)   # Doing: phase · running steps; next: the phase after
+    $wp = if ($paused) { [pscustomobject]@{ why = 'owner pause'; at = @($lr.paused)[0]; next = "bossy.ps1 resume -Run $run" } } elseif (-not $running.Count) { & $waitOf $run @() } elseif ($cw.Count -eq $running.Count) { [pscustomobject]@{ why = "$($cw[0].why)$(if ($cw.Count -gt 1) { ", $($cw.Count) steps" })"; at = @($cw.at | Sort-Object)[0]; next = $cw[0].next } }
+    # one row per run: a resumed run's newer folder replaces the older; never a live one by an ended one
+    $prevW = @($rows | Where-Object { $_.name -eq "$run (workflow)" })[0]; if ($prevW) { if ([int]$prevW.left -and -not $live) { continue }; [void]$rows.Remove($prevW) }
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$run (workflow)"; run = $run; left = $(if ($live) { $running.Count } else { 0 })
+          task = "$(@($lr.script | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf })[0]) $($w.Name) · steps $($res.Count)/$($started.Count)$(if ($spent) { " · $(& $tok $spent) tokens$(if ($cap) { " of $(& $tok $cap)" })" })"
+          stopped = $gone; done = $(if ($fin) { "$($res.Count)/$($started.Count) steps$(if ($errs) { ", $errs error(s)" })" })
+          wait = $wp.why; waitAt = $wp.at; waitNext = $wp.next; last = & $max $seen; started = $w.CreationTime; ended = $jt
+          doing = $(if ($live -and $rsNow.Count) { (@(($phNow -join ', '), (@($rsNow.label) -join ', ')) | Where-Object { $_ }) -join ' · ' })
+          next = $(if ($live -and $phNow.Count) { $scr0 = "$(@($rsNow.script | Where-Object { $_ })[0])"; $np = & $nextPh $scr0 "$($phNow[-1])"; if ($np) { "next: $np" } }) }) $Now $stuck))
+  }
+  # a running step of the same name is that agent now
+  $trk = (Read-KitTracking).tasks; $txCache = @{}; $byTx = @{}
+  # Agent-tool subagent: transcript = the one with its join line "(pass -Session <id> to beat" (a bare id is also quoted), kept; a left one: one scan
+  $txOf = { param($e) if ($e.transcript -or -not $e.session -or ($e.status -eq 'left' -and (($e.txTry -and [datetime]$e.txTry -ge [datetime]$e.beat) -or ($Now - [datetime]$(if ($e.beat) { $e.beat } else { $e.joined })).TotalMinutes -gt 360)) -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt 10)) { return "$($e.transcript)" }
+    $k = Get-KitTranscriptKind $e.tool; if (-not $txCache.ContainsKey($k)) { $txCache[$k] = @(Get-KitLiveTranscripts $Now 360 $k) }
+    $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "(pass -Session $($e.session) to beat" -Quiet) })[0]
+    # a workflow agent that joined by hand (revy-18 under review:<area>): its step transcript
+    if (-not $hit -and $k -eq 'claude') { if (-not $txCache.ContainsKey('wf')) { $txCache.wf = @(Get-KitRecentWorkflowDirs | ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter 'agent-*.jsonl' -File -ErrorAction SilentlyContinue }) }
+      $hit = @($txCache.wf | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "(pass -Session $($e.session) to beat" -Quiet) })[0] }
+    try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { if ($hit) { $x.transcript = $hit.FullName } else { $x.txTry = (Get-KitStamp stored $Now) }; Write-KitState $e.file $x } } } catch { }   # a miss: 10 min until the next scan
+    if ($hit) { $hit.FullName } }
+  foreach ($e in @($recent | Group-Object { "$($_.run)/$($_.agent)" } | ForEach-Object { $_.Group | Sort-Object { [datetime]$_.joined } | Select-Object -Last 1 } | Sort-Object -Stable { -not $_.type })) {   # a re-join replaces its older entry; typed first
+    $sq = $steps["?/$($e.agent)"]; $st = @($steps["$($e.run)/$($e.agent)"], $(if ($sq.tx -or $sq.jt -ge [datetime]$e.joined) { $sq }) | Where-Object { $_ })[0]   # an unnamed run's ended step never matches a newer entry
+    $sa = $anyRun["$($e.agent)"]; if (-not $st -and $sa -and $e.status -ne 'left' -and -not $e.crashed -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -ge $sa.created.AddMinutes(-1)) { $st = $sa   # testy testers join under the run folder, the launch is select-<target>
+      if (-not $e.transcript -and $e.file) { try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { $x.transcript = $sa.tf; Write-KitState $e.file $x } } } catch { } } }   # lease grace and shell owners read it too
+    # an older attempt whose name runs as a newer step (a retest): superseded
+    $sup = if (-not $st -and $sa -and $e.status -ne 'left' -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -lt $sa.created.AddMinutes(-1) -and [datetime]$e.beat -le $sa.created.AddMinutes(1)) { $sa }
+    # N3: the run's running step (<phase>:<area>) is the area's progress, any <role>-<nn> id
+    $ar = "$(if ($e.area) { $e.area } elseif ("$($e.agent)" -match '^(?<b>.+)-\d+$') { $Matches.b } else { $e.agent })" -replace '^area-'; $sr = if (-not ($st -or $sup) -and $e.status -ne 'left' -and $ar) { @($steps["$($e.run)/$ar"], $steps["$($e.run)/area-$ar"] | Where-Object { $_ })[0] }
+    if ($sr.tx -and $sr.created) { if ([datetime]$e.joined -lt $sr.created.AddMinutes(-1) -and [datetime]$e.beat -le $sr.created.AddMinutes(1)) { $sup = $sr } else { $st = $sr } }
+    # a quiet "<agent>-<n>" row whose run's base agent beats: a stale pre-pause copy, never STUCK
+    $dupOf = if (-not $st -and $e.status -ne 'left' -and "$($e.agent)" -match '^(?<b>.+)-\d+$' -and ($Now - [datetime]$e.beat).TotalMinutes -ge $stuck) { $bn = $Matches.b; if (@($recent | Where-Object { $_.agent -eq $bn -and $_.run -eq $e.run -and $_.status -ne 'left' -and ($Now - [datetime]$_.beat).TotalMinutes -lt $stuck }).Count) { $bn } }
+    if ($st) { $st.covered = $true }; $on = [bool]$st.tx
+    $t = if ($on) { $st.tx } else { $tx = & $txOf $e; & $last $e.tool $(if ($tx) { $tx } elseif ($st) { $st.tf }) }
+    $w = if ($e.paused -and -not $on) { [pscustomobject]@{ why = 'owner pause'; at = $e.paused; next = "bossy.ps1 resume -Run $($e.run)" } } else { & $waitOf $e.run @($e.agent) }
+    if (-not $w -and "$($e.status)" -match '^(?i)wait' -and ($Now - [datetime]$e.beat).TotalMinutes -lt $stuck) { $w = [pscustomobject]@{ why = "$($e.status)"; at = $e.beat; next = '' } }   # its own words (e.g. waiting for area X1) while it beats
+    $tn = foreach ($i in "$($e.items)" -split '[,\s]+') { $o = if ($i -and $trk) { $trk[$i] }; if ($o -and -not $o.done) { "track $i`: $(@($o.mrs).Count) MR(s) until promoted$(if ($o.holdPromotion) { " (held: $($o.holdPromotion))" })"; break } }
+    $ck = if ($e.status -ne 'left') { Get-KitCheckpointNow "$($e.agent)" "$($e.run)" }; $ph = if ($on) { $st.phase }; $npOn = if ($on) { & $nextPh $st.script $st.phase }
+    $dupKey = "$($e.agent)|$($t.file)"; $twin = if ($t.file) { $byTx[$dupKey] }
+    if ($twin) { if ($twin.state -notmatch '^(FIN|STOP)' -or $e.status -eq 'left') { continue }; [void]$rows.Remove($twin) }   # joined twice: one row, live wins
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$($e.agent) ($($e.type))"; area = $e.area; run = $e.run; session = $e.session; tx = $t.file; task = (@($(if ($on) { $st.label }), $e.items, $e.run) | Where-Object { $_ }) -join ' · '
+          stopped = $(if ($e.crashed -and -not $on) { 'crashed' } elseif ($sup -or $dupOf) { $null } elseif ($e.status -ne 'left' -and (Test-KitHolder $e) -eq $false) { 'session gone' } elseif ($st.result.error) { "error: $($st.result.error)" } elseif ($t.killed) { 'killed' })
+          done = $(if ($on) { '' } elseif ($sup) { "superseded by $($sup.label)" } elseif ($dupOf) { "stale duplicate of $dupOf (it beats)" } elseif ($e.handoffBrief) { 'handoff' } elseif (($e.status -eq 'left' -and -not $e.paused) -or ($st.result -and [datetime]$e.joined -le $st.jt)) { & $outcome $st } elseif ($t.ended) { 'turn complete' })
+          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = & $max @($e.beat, $t.at, (Get-KitAgentProgressAt $e $st)); doing = & $doing $t ((@($ph, $ck.step) | Where-Object { $_ }) -join ' · '); started = $e.joined; ended = $(if ($e.crashed) { $e.crashed } else { $e.beat })
+          budget = $(if ($e.handoff) { "handoff at $(& $tok $e.handoff)$(if ($e.capBy) { " ($($e.capBy))" })$(if ($e.ctxCheck) { " · context check $($e.ctxCheck.decision) at $(& $tok $e.ctxCheck.ctx)" })" })
+          next = $(if ($e.handoffBrief) { "a fresh $($e.type) from $(Split-Path "$($e.handoffBrief)" -Leaf)" } elseif ($tn) { $tn } elseif ("$($e.status)" -notin 'working', 'left') { "$($e.status)" } elseif ($ck.next -and $ck.next -ne 'none') { "next: $($ck.next)" } elseif ($npOn) { "next: $npOn" }) }) $Now $stuck))
+    $byTx[$dupKey] = $rows[$rows.Count - 1]
+  }
+  foreach ($st in @($runSteps | Where-Object { -not $_.covered })) {
+    $w = & $waitOf $st.run @(LabelNames $st.label); $ty = try { (Read-KitText ($st.tf -replace '\.jsonl$', '.meta.json') | ConvertFrom-Json).agentType } catch { '' }
+    $rows.Add((Set-KitStatusState ([pscustomobject]@{ name = "$((($st.label -split ':', 2)[-1] -split '@')[0]) ($(if ($ty) { $ty } else { 'step' }))"; run = $st.run; task = "$($st.label) · $($st.run)"
+          wait = $w.why; waitAt = $w.at; waitNext = $w.next; last = $(if ($st.tx) { $st.tx.at } else { $st.jt }); doing = & $doing $st.tx $st.phase; started = (Get-Item -LiteralPath $st.tf -ErrorAction SilentlyContinue).CreationTime
+          next = $(if ($np = & $nextPh $st.script $st.phase) { "next: $np" } else { '' }) }) $Now $stuck))
+  }
+  Save-KitTailCache
+  @($rows)
 }

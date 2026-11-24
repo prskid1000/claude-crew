@@ -179,13 +179,32 @@ function Get-TrackerTask($id) { [pscustomobject]@{ status = 'for review'; subtas
 @{ agent = 'Z1'; run = 'pz'; status = 'left'; session = 'sz1' } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath board -Create) 'sz1.json')
 $script:planRecs = $null; $null = Invoke-Track add -Task tz1 -Mrs 'g/web!5'; $null = Invoke-Track add -Task tz2 -Mrs 'g/web!6'; $h2 = Invoke-Track run -Detail | Out-String
 "stale:$(-not ($h2 -match 'HOLD tz1') -and $global:sets -contains 'tz1=promoted' -and $h2 -match 'HOLD tz2: .*\(stale: Z2 never joined, run pz ended\)')"
-# S2: LAG only when the live status (no memo) is still before promoted (tz2 stays held: its LAG check runs each round)
+# S2: LAG only when the live status (no memo) is still before promoted; a planned area not delivered (tz2) = its HOLD line, never a LAG
 $global:liveSt = 'promoted'; function __Get-TrackerTask($id) { [pscustomobject]@{ id = $id; name = 'n'; status = $global:liveSt } }
-$old = { param($t) $t.tasks['tz2'].mergedSeenAt = (Get-Date).AddHours(-2).ToString('o'); $t.tasks['tz2'].lagAt = (Get-Date).AddHours(-1).ToString('o') }
+$null = Invoke-Track add -Task tz3 -Mrs 'g/web!7'
+$old = { param($t) foreach ($tk in 'tz2', 'tz3') { $t.tasks[$tk].mergedSeenAt = (Get-Date).AddHours(-2).ToString('o'); $t.tasks[$tk].lagAt = (Get-Date).AddHours(-1).ToString('o'); $t.tasks[$tk].done = $false } }
 Update-KitTracking $old; $l1 = Invoke-Track run -Detail | Out-String; $global:liveSt = 'for review'; Update-KitTracking $old; $l2 = Invoke-Track run -Detail | Out-String
-"lag:$($l1 -notmatch 'LAG tz2' -and $l2 -match 'LAG tz2: all MRs merged')"
+"lag:$($l1 -notmatch 'LAG tz3' -and $l2 -match 'LAG tz3: all MRs merged' -and $l2 -notmatch 'LAG tz2' -and $l2 -match 'HOLD tz2: ')"
 '@
 Expect-Each (Invoke-PsTest 'track-status' $stTest @($O)) 'track run: # (stale: a finished area is delivered, a never-joined one in an ended run = HOLD stale -> supervise ACT; lag: LAG only on the live status)' @('stale', 'lag') 2
+# supervise false flags (2026-11-24): heir = a handoff's area continued by a new agent id in its run (a revy or another area: no);
+# collision = cleared by a later run delivering its area; ended = a workflow agent whose step ended (toolEndsTurn) and whose transcript is found
+$sfTest = @'
+. $args[0]; $bd = Get-KitPath board -Create; Remove-Item (Join-Path $bd 'sz1.json') -ErrorAction SilentlyContinue; $env:KIT_TRANSCRIPTS = Join-Path $args[1] 'tx'
+$row = { param($ag, $ty, $ar, $ago, $ho) $r = @{ agent = $ag; type = $ty; session = "$ag-s"; run = 'wv'; area = $ar; status = $(if ($ho) { 'left' } else { 'working' }); joined = (Get-Date).AddMinutes(-$ago).ToString('o'); beat = (Get-Date).AddMinutes(-$ago).ToString('o') }; if ($ho) { $r.handoffBrief = 'C:/b/h.md' }; $r | ConvertTo-Json | Set-Content (Join-Path $bd "$ag-s.json") }
+& $row HA1 devy DOM 30 $true; & $row HR1 revy DOM 10 $false; & $row HB1 devy CAT 10 $false
+$open = @(Get-KitHandoffs 24).agent -contains 'HA1'; & $row HA2 devy DOM 5 $false
+"heir:$($open -and @(Get-KitHandoffs 24).agent -notcontains 'HA1')"
+$c = @(@{ label = 'build:area-ASK-3'; created = (Get-Date).AddHours(-2) }, @{ label = 'build:CAT'; created = (Get-Date).AddHours(-2) }) | ForEach-Object { [pscustomobject]$_ }
+"collision:$((@(Select-KitOpenCollisions $c @{ 'ASK-3' = (Get-Date).AddHours(-1); CAT = (Get-Date).AddHours(-3) }).label -join ',') -eq 'build:CAT')"
+$wd = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/workflows/wf_e1'); '{"type":"started","agentId":"a1","label":"review:DOM"}' | Set-Content (Join-Path $wd 'journal.jsonl')
+$tf = Join-Path $wd 'agent-a1.jsonl'; @('{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"SESSION RV-s   (pass -Session RV-s to beat / check)"}]}}', '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]},"toolEndsTurn":true}') | Set-Content $tf
+@{ agent = 'RV'; type = 'revy'; session = 'RV-s'; run = ''; status = 'working'; joined = (Get-Date).AddMinutes(-90).ToString('o'); beat = (Get-Date).AddMinutes(-90).ToString('o') } | ConvertTo-Json | Set-Content (Join-Path $bd 'RV-s.json')
+$rv = @(Get-KitStatusRows (Get-Date) | Where-Object name -eq 'RV (revy)')[0]
+"ended:$($rv.done -eq 'turn complete' -and $rv.tx -eq $tf.ToString() -and $rv.state -ne 'STUCK')"
+'@
+Expect-Each (Invoke-PsTest 'false-flags' $sfTest @($O, (Kd))) 'supervise false flags: # (heir: same-area new agent id continues a handoff; collision: a later delivery clears it; ended: a finished workflow agent row is no STUCK)' @('heir', 'collision', 'ended') 3
+Expect 'supervise: retro due only with no open workflow (paused, or between agents, counts as open)' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*if (-not `$done) { `$wfOpen++ }*Phase 'retro'; if (-not `$runTotal -and -not `$wfOpen -and -not `$pausedRuns.Count)*")
 Expect 'supervise: a stale planned-area HOLD line is an ACT, other HOLD lines INFO' ((Get-Content (Join-Path $src 'skills/bossy/bossy.ps1') -Raw) -like "*-match '^HOLD \S+: .*\(stale: ') { Flag 'ACT'*")
 $tbr = Invoke-PsTest release-tabrow @'
 $null = . $args[0] 6>$null

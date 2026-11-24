@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L252 budget · L282 launch · L525 recover · L612 pause · L623 resume · L690 program · L728 param ·
-  L734 track · L1122 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
-  L1734 decide · L1904 debate · L1948 health · L2016 setup · L2111 guard-sendmessage
+Sections: L40 init · L51 board · L252 budget · L282 launch · L525 recover · L612 pause · L623 resume · L690 program · L718 param ·
+  L724 track · L1113 supervise · L1460 report · L1540 audit · L1600 storage · L1603 bugbrief · L1605 cleanup · L1692 learn ·
+  L1730 decide · L1900 debate · L1944 health · L2012 setup · L2107 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -155,7 +155,7 @@ switch ($Action) {
                       status = 'working'; joined = $joined; beat = (Get-KitStamp stored $now); pid = $PID; pidStart = (Get-KitPidStart $PID) } + (Get-KitHolder)
     $bg = Get-KitBudget -Tool $Tool -Model $Model -Role $me.type; $me += [ordered]@{ tool = $bg.tool; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; capBy = $bg.capBy; spend = 0 }
     $mf = Join-Path $dir "$tok.json"; Invoke-KitLocked $mf { Write-KitState $mf $me }
-    $ho = @(Get-KitHandoffs 1e6 $tok | Where-Object { ($_.agent -eq $Agent -and "$($_.run)" -eq "$Run") -or ("$($_.run)" -ne "$Run" -and (Test-KitRunLineage $_ ([pscustomobject]$me))) } | Sort-Object { [datetime]$_.beat } -Descending)[0]
+    $ho = @(Get-KitHandoffs 1e6 $tok | Where-Object { ($_.agent -eq $Agent -and "$($_.run)" -eq "$Run") -or ("$($_.run)" -ne "$Run" -and (Test-KitRunLineage $_ ([pscustomobject]$me))) -or (Test-KitAreaHeir $_ ([pscustomobject]$me)) } | Sort-Object { [datetime]$_.beat } -Descending)[0]
     if ($ho) { Update-BoardEntry $ho.file { param($x) $x | Add-Member -Force NoteProperty continuedBy $tok; $x }; "CONTINUE: the previous $($ho.agent) ($($ho.run)) handed off at its budget: read its resume brief $($ho.handoffBrief) first" }
     $ck = Get-KitCheckpoint $Agent $Run
     if ($ck -and -not $ck.done -and $ck.next -ne 'none' -and (-not $Run -or -not $ck.run -or $ck.run -eq $Run)) {
@@ -706,16 +706,6 @@ if ($Key) { if (-not $p.ContainsKey($Key)) { "program $Program has no key $Key";
 if ($Json -or $p -isnot [string]) { ConvertTo-Json -InputObject $p -Depth 20 } else { $p }
 }
 
-# open = no successor: none marked, no later row of that agent (not $Except) in its run, or any run for a one-per-machine agent
-# named after its type (kitty ran as kit-build); area ids (D1) repeat across runs
-# a handoff's successor: same run, or same type + area on the next letter suffix (kit-x-1520c -> kit-x-1520d)
-function Test-KitRunLineage($Ho, $Row) { "$($Row.run)" -eq "$($Ho.run)" -or ($Ho.run -and $Ho.type -and $Row.type -eq $Ho.type -and "$($Row.area)" -eq "$($Ho.area)" -and ("$($Row.run)" -replace '(?<=\d)[a-z]$') -eq ("$($Ho.run)" -replace '(?<=\d)[a-z]$')) }
-function Get-KitHandoffs([double]$Hours = 48, [string]$Except = '') {
-  $boardRows = @(Read-KitJsonFiles (Get-KitPath board))
-  @($boardRows | Where-Object { $ho = $_; $ho.handoffBrief -and -not $ho.continuedBy -and ((Get-Date) - [datetime]$ho.beat).TotalHours -lt $Hours -and
-      -not @($boardRows | Where-Object { (($_.agent -eq $ho.agent -and ("$($_.run)" -eq "$($ho.run)" -or $ho.agent -eq $ho.type)) -or ($_.agent -ne $ho.agent -and (Test-KitRunLineage $ho $_) -and "$($_.run)" -ne "$($ho.run)")) -and $_.session -ne $Except -and $_.session -ne $ho.session -and $_.joined -and [datetime]$_.joined -gt [datetime]$ho.beat }).Count })
-}
-
 # task '0' broke every promote
 function NormTask($id) {
   $id = "$id".Trim().Trim("'", '"').Trim()
@@ -954,8 +944,9 @@ switch ($Action) {
       }
       $o.checkedAt = (Get-KitStamp); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-      # merged 60+ min, not promoted, not HELD = LAG
-      if ($o.lagLine -and -not $o.holdPromotion -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt (Get-KitParam 'track.lagRecheckMinutes') -and -not $Quiet -and (Test-LagLive $o)) { $o.lagLine }
+      # merged 60+ min, not promoted, not HELD = LAG; planned areas not delivered = the HOLD line below, never a LAG
+      $planHeld = @($o.mrs).Count -and @(Get-KitPlannedAreas $o.task $o.planReleased -Merged).Count
+      if ($o.lagLine -and -not $o.holdPromotion -and -not $planHeld -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt (Get-KitParam 'track.lagRecheckMinutes') -and -not $Quiet -and (Test-LagLive $o)) { $o.lagLine }
       if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge (Get-KitParam 'track.lagRecheckMinutes'))) {
         $o.lagAt = (Get-KitStamp); $o.Remove('lagLine'); Save $o -Run
         $ms = @($o.mrs | Where-Object { -not ((MrState $_) -eq 'closed' -and $_ -in $igRefs) } | ForEach-Object { MrState $_ }); $ls = TaskStatus $o.task
@@ -964,7 +955,7 @@ switch ($Action) {
           if (-not $Quiet) { $lr }
         } elseif ($ls -and -not @($ms | Where-Object { $_ -ne 'merged' }).Count -and (Test-TrackerStatus $ls 'open', 'inProgress', 'review')) {
           if (-not $o.mergedSeenAt) { $o.mergedSeenAt = (Get-KitStamp); Save $o -Run }
-          elseif (-not $o.holdPromotion -and ((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge (Get-KitParam 'track.lagMinutes') -and (Test-LagLive $o)) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
+          elseif (-not $o.holdPromotion -and -not $planHeld -and ((Get-Date) - [datetime]$o.mergedSeenAt).TotalMinutes -ge (Get-KitParam 'track.lagMinutes') -and (Test-LagLive $o)) { $o.lagLine = "LAG $($o.task): all MRs merged at $(([datetime]$o.mergedSeenAt).ToString('HH:mm')), status still '$ls'"; Save $o -Run; if (-not $Quiet) { $o.lagLine } }
         }
       }
       foreach ($pair in @($o.mergeAfter)) {
@@ -1136,7 +1127,7 @@ if ($Ack) {   # flag hidden 24 h
   $ackRes = Add-KitFlagAck $Ack $Reason; $ackRes; if ("$ackRes" -like 'REFUSED*') { exit 1 }; return
 }
 $idleMin = [double](Get-KitParam 'supervise.stuckMinutes')   # no progress longer, waiting on nothing = STUCK
-$wfAgents = New-Object System.Collections.ArrayList; $runTotal = 0; $toolErr = 0; $errRun = ''; $now = Get-Date; $t0 = $now
+$wfAgents = New-Object System.Collections.ArrayList; $runTotal = 0; $wfOpen = 0; $toolErr = 0; $errRun = ''; $now = Get-Date; $t0 = $now
 $liveLabels = New-Object System.Collections.ArrayList; $runningLabels = New-Object System.Collections.ArrayList; $doneLabels = New-Object System.Collections.ArrayList
 $flags = New-Object System.Collections.ArrayList; $lines = New-Object System.Collections.ArrayList
 # $what stays whole for dedupe and -Ack
@@ -1177,13 +1168,15 @@ if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Dat
 
 # 1. workflows
 Phase 'workflows'; $wfDirs = @(Get-KitRecentWorkflowDirs $Session | Sort-Object KitLastWrite -Descending)
-$doneAt = @{}; $finishedRuns = Get-KitFinishedRuns; $lnch = @(Read-KitJsonFiles (Get-KitPath launches)); $pausedRuns = @($lnch | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
+$doneAt = @{}; $shippedAt = @{}; $collisions = @(); $finishedRuns = Get-KitFinishedRuns; $lnch = @(Read-KitJsonFiles (Get-KitPath launches)); $pausedRuns = @($lnch | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
 if (-not $Session) { foreach ($q in $state.quietRuns, $state.closedRuns) { foreach ($k in @($q.Keys)) { if ($k -notin @($wfDirs | ForEach-Object Name)) { $q.Remove($k) } } } }   # -Session sees only its own runs
 foreach ($w in $wfDirs) {
   $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
   $ev = @(Get-Content $j | ForEach-Object { $_ | ConvertFrom-Json })
   $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($r in $ev | Where-Object type -eq 'result') { $res[$r.agentId] = $r }
-  foreach ($r in $res.Values) { $dl = [string]($started | Where-Object agentId -eq $r.agentId | Select-Object -First 1).label; [void]$doneLabels.Add($dl); foreach ($nm in LabelNames $dl) { if (-not $doneAt[$nm] -or $doneAt[$nm] -lt $w.LastWriteTime) { $doneAt[$nm] = $w.LastWriteTime } } }
+  foreach ($r in $res.Values) { $dl = [string]($started | Where-Object agentId -eq $r.agentId | Select-Object -First 1).label; [void]$doneLabels.Add($dl)
+    if (@($r.result.mrs).Count -and -not $r.result.error) { $ak = Get-KitAreaKey $dl; if (-not $shippedAt[$ak] -or $shippedAt[$ak] -lt $w.CreationTime) { $shippedAt[$ak] = $w.CreationTime } }
+    foreach ($nm in LabelNames $dl) { if (-not $doneAt[$nm] -or $doneAt[$nm] -lt $w.LastWriteTime) { $doneAt[$nm] = $w.LastWriteTime } } }
   if ($w.Name -in $finishedRuns) { continue }
   $wrec = @(Get-KitWorkflowRecords $w $ev $lnch); $wsc = "$(@($wrec | Where-Object script)[0].script)"
   $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }) -or ($wsc -and (Get-Command Test-KitJournalFinished -ErrorAction SilentlyContinue) -and (Test-KitJournalFinished $w.FullName (Split-Path $wsc -Leaf) $(if (@($wrec | Where-Object { (Test-KitHolder $_) -eq $true }).Count) { 10 } else { 2 })))   # the engine writes no end marker
@@ -1200,7 +1193,7 @@ foreach ($w in $wfDirs) {
   $silentH = ($now - (Get-Item $j).LastWriteTime).TotalHours
   if ($done -and $silentH -gt 2) { continue }
   if (-not $done) { $sr = Get-KitSilentRun $w.Name $silentH $state.quietRuns $now; if ($sr.flag) { Flag $sr.flag.level $sr.flag.what $sr.flag.action }; if ($sr.skip) { continue } }
-  $running = @(Get-JournalRunning $started @($res.Keys))
+  $running = @(Get-JournalRunning $started @($res.Keys)); if (-not $done) { $wfOpen++ }   # open even paused or between agents: no retro
   if ($w.Name -notin $pausedRuns) { $runTotal += $running.Count }
   $errs = @($res.Values | Where-Object { $_.result.error }).Count; $toolErr += $errs; if ($errs) { $errRun = $w.Name }
   L ("workflow {0}: {1} agents, {2} finished, {3} running{4}" -f $w.Name, $started.Count, $res.Count, $running.Count, $(if ($done) { ' (complete)' }))
@@ -1221,10 +1214,13 @@ foreach ($w in $wfDirs) {
     $sum = [string]$r.result.summary + [string]$r.result.error
     # build-stage merged=false is no proof
     $shipped = $r.result.mrs -and -not @($r.result.mrs | Where-Object { -not $_.merged }).Count
-    if ($running.Count -and -not $shipped -and (Test-KitCollision $sum)) { Flag 'ACT' "$label in $($w.Name) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (bossy.ps1 board check).' @{ kind = 'COLLISION'; who = "$label ($($w.Name))"; problem = 'reported a collision/halt' } }
+    if ($running.Count -and -not $shipped -and (Test-KitCollision $sum)) { $collisions += [pscustomobject]@{ label = $label; run = $w.Name; created = $w.CreationTime } }
     if ($done -and (Test-KitNoMrs $started @($res.Values) $label $r.result $sum)) { Flag 'WATCH' "$label finished without MRs" 'Resume it (buildy mode resume) unless it was deliberately stopped.' @{ kind = 'NO MRS'; who = "$label ($($w.Name))"; problem = 'finished without MRs' } }
   }
 }
+
+# a later run that shipped the same area (relaunched alone) clears its collision
+foreach ($c in Select-KitOpenCollisions $collisions $shippedAt) { Flag 'ACT' "$($c.label) in $($c.run) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (bossy.ps1 board check).' @{ kind = 'COLLISION'; who = "$($c.label) ($($c.run))"; problem = 'reported a collision/halt' } }
 
 # 2. board
 Phase 'board'; $board = Get-KitPath board
@@ -1411,7 +1407,7 @@ foreach ($x in @(Invoke-KitHooks Get-KitSuperviseFlags @{ AutoFix = $AutoFix }))
 if ($script:ramNeed -and $mem.AvailGB -lt $keepFree + $script:ramNeed) { Flag 'ACT' "RAM: $([math]::Round($mem.AvailGB, 1)) GB free < floor $keepFree + the largest waiting build $($script:ramNeed) GB" "Free the biggest: $((@($res | Where-Object { $_.gb } | Sort-Object { -$_.gb } | Select-Object -First 3 | ForEach-Object { "$($_.name) $([math]::Round($_.gb, 1)) GB" })) -join '; ')" }
 
 # 8. retro due, budgets
-Phase 'retro'; if (-not $runTotal) {
+Phase 'retro'; if (-not $runTotal -and -not $wfOpen -and -not $pausedRuns.Count) {
   $since = Get-KitRetroSince
   $finished = @($wfDirs | Where-Object { $_.LastWriteTime -gt $since -and (Select-String (Join-Path $_.FullName 'journal.jsonl') -Pattern '"label":"(build|test|retest|verify|fix):' -Quiet) }).Count
   $due = Get-KitRetroDue -RunFinished:([bool]$finished)

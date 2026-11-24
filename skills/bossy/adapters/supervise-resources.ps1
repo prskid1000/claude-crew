@@ -9,8 +9,8 @@ Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L16 builds · L60 supervise · L364 shells · L543 page · L1042 release · L1088 lines · L1120 cleanup · L1187 launch ·
-  L1304 pause · L1423 heartbeat · L1443 sessions · L1502 ci tasks ·
-  L1567 the kit origin's default branch (kitBranch, else origin/HEAD)
+  L1304 pause · L1423 heartbeat · L1439 sessions · L1498 ci tasks ·
+  L1563 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -1420,7 +1420,7 @@ function Show-KitPause {
   "Safe to power off: nothing after this needs the network.$(if ($open.Count) { " $(@($open.agent) -join ', '): not confirmed, at a checkpoint with a clean worktree and no build (resume starts there)" })"
 }
 
-# ---- heartbeat: the E1 cron call, an overdue coordinator (health), collision words in agent results (supervise)
+# ---- heartbeat: the E1 cron call, an overdue coordinator (health)
 # a coordinator beat within one interval = a heartbeat cron fires: never a second CronCreate (owner 2026-11-24: two supervise crons at once)
 function Get-KitBeatArmLine([datetime]$Now = (Get-Date), [switch]$Arm) {   # -Arm: overdue, the CronCreate text always
   $bmin = [double](Get-KitParam 'supervise.heartbeatMinutes'); $ca = try { [datetime](Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json).coordAt } catch { $null }
@@ -1435,10 +1435,6 @@ function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
   $bm = [double](Get-KitParam 'idle.beatMinutes')
   $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
   if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now; $(Get-KitBeatArmLine -Arm)" }
-}
-# 'another agent' alone appears in normal fix reports (false ACT)
-function Test-KitCollision([string]$Text) {
-  $Text -match '(?i)duplicate (agent|copy|writer|instance|session)|\b(agents?|cop(y|ies)|writers?|sessions?) collid|collid\w* with (an)?other (agent|writer|session)|two (agents|writers|sessions) (on|in|editing|writing) the same|another (agent|writer|session) (is|was) (also )?(editing|writing|running) (in |on )?(the same|this|my)|(halted|stopped editing)\b.{0,60}\b(another|other|duplicate|second) (agent|writer|session)'
 }
 # ---- sessions: several coordinators on one machine (Claude Code, Codex, Antigravity): run owners, routed flags, task claims, step age
 # owner = the session process (holder) that wrote a launch record, board row or pause; this process's own, gone or unknown = mine

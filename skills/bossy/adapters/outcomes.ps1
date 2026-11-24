@@ -3,12 +3,12 @@
 outcomes.ps1: result signals for the learning loop (dot-sourced by bossy.ps1 from skills/bossy/adapters/): per-task outcome rows
 (.state/outcomes.jsonl, one row per state change), their summary (tidy prep digest, dashboard Kit internals), owner decision
 patterns -> standing rule proposals; approved rules answer matching decide asks (never deploy, data, prod or customer-visible);
-the retro-due rule and the tidy verb (from bossy.ps1: its token cap).
+the retro-due rule, open collisions and the tidy verb (from bossy.ps1: its token cap).
 Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-Approve <ids|all>] [-Revoke <id>] [-Json]
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy
+Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy · L439 collisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -436,3 +436,12 @@ function Get-OrphanQaItems([int]$Hours = 48) {
     if ($codes.Count) { [pscustomobject]@{ run = $d.Name; dir = $d.FullName; codes = $codes; fails = $fails } }
   }
 }
+# ---- collisions: a step result that reports a collision / halt, open until a later run delivers its area (supervise)
+# 'another agent' alone appears in normal fix reports (false ACT)
+function Test-KitCollision([string]$Text) {
+  $Text -match '(?i)duplicate (agent|copy|writer|instance|session)|\b(agents?|cop(y|ies)|writers?|sessions?) collid|collid\w* with (an)?other (agent|writer|session)|two (agents|writers|sessions) (on|in|editing|writing) the same|another (agent|writer|session) (is|was) (also )?(editing|writing|running) (in |on )?(the same|this|my)|(halted|stopped editing)\b.{0,60}\b(another|other|duplicate|second) (agent|writer|session)'
+}
+# a step label's area: build:area-ASK-3, fix:ASK-3@2 and resume:ASK-3 share ASK-3
+function Get-KitAreaKey([string]$Label) { ("$Label" -split ':')[-1] -replace '@.*$' -replace '^area-' }
+# collisions still open: no later run (created after) delivered MRs for that area
+function Select-KitOpenCollisions($Collisions, [hashtable]$DeliveredAt) { @($Collisions | Where-Object { -not ($DeliveredAt[(Get-KitAreaKey $_.label)] -gt $_.created) }) }

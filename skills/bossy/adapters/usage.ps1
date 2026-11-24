@@ -1,9 +1,9 @@
 <#
 usage.ps1 (core): tokens, cost and time per run, step, role and model for the supervise page (Statistics "Usage") and bossy.ps1
-budget -Usage, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
+budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L381 context · L726 waste (owner 2026-11-23 · L790 split · L864 budget
+Sections: L9 usage · L381 context · L726 waste (owner 2026-11-23 · L790 split · L864 budget · L932 handoffs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -928,4 +928,16 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
   if ($kc -gt 0 -and $kc -lt $ho) { $ho = $kc; $by = "kit budget $(if ($null -ne $rv) { $Role } else { 'default' })" }
   $ic = Get-KitInstrCap $dw
   [pscustomobject]@{ tool = $Tool; model = $Model; row = $n; budget = $tok; handoff = $ho; capBy = $by; handoffAt = $h; design = $dw; instrCap = $ic.cap; instrWatch = $ic.watch; runStopAt = [double](Get-KitSetting 'budget.runStopAt' $ex.runStopAt); source = $src }
+}
+# ---- handoffs: a budget handoff and its successor (board join CONTINUE, supervise HANDOFF)
+# open = no successor: none marked, no later row of that agent (not $Except) in its run, or any run for a one-per-machine agent
+# named after its type (kitty ran as kit-build); area ids (D1) repeat across runs
+# a handoff's successor: same run, or same type + area on the next letter suffix (kit-x-1520c -> kit-x-1520d)
+function Test-KitRunLineage($Ho, $Row) { "$($Row.run)" -eq "$($Ho.run)" -or ($Ho.run -and $Ho.type -and $Row.type -eq $Ho.type -and "$($Row.area)" -eq "$($Ho.area)" -and ("$($Row.run)" -replace '(?<=\d)[a-z]$') -eq ("$($Ho.run)" -replace '(?<=\d)[a-z]$')) }
+# same run, another agent of its type on its area or worktree (devy-40 continued devy-39's area)
+function Test-KitAreaHeir($Ho, $Row) { "$($Row.run)" -eq "$($Ho.run)" -and $Row.agent -ne $Ho.agent -and (-not $Ho.type -or -not $Row.type -or $Row.type -eq $Ho.type) -and (("$($Ho.area)" -and "$($Row.area)" -eq "$($Ho.area)") -or @(@($Ho.worktrees) | Where-Object { $_ -and $_ -in @($Row.worktrees) }).Count) }
+function Get-KitHandoffs([double]$Hours = 48, [string]$Except = '') {
+  $boardRows = @(Read-KitJsonFiles (Get-KitPath board))
+  @($boardRows | Where-Object { $ho = $_; $ho.handoffBrief -and -not $ho.continuedBy -and ((Get-Date) - [datetime]$ho.beat).TotalHours -lt $Hours -and
+      -not @($boardRows | Where-Object { (($_.agent -eq $ho.agent -and ("$($_.run)" -eq "$($ho.run)" -or $ho.agent -eq $ho.type)) -or ($_.agent -ne $ho.agent -and (Test-KitRunLineage $ho $_) -and "$($_.run)" -ne "$($ho.run)") -or (Test-KitAreaHeir $ho $_)) -and $_.session -ne $Except -and $_.session -ne $ho.session -and $_.joined -and [datetime]$_.joined -gt [datetime]$ho.beat }).Count })
 }
