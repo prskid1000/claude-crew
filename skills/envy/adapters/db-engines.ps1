@@ -5,7 +5,7 @@
 #   (dbtemp, watchdog, pool), query / exec / jdbc (command presets: {H} {P} {U} {N} {URI}, then {sql} {file} {schema}),
 #   schemaSizes (SQL: schema TAB rows TAB MB per schema; envy.ps1 sql -Query schemaSizes, supervise's data-growth check), sizes
 #   (the same rows from a scriptblock: the engine's own catalogue through its sql verb, or a store's API). Caps (README "Adapters" data-store): marks = supportsMarks, temp =
-#   supportsTemp or tempSql, sizes = schemaSizes or sizes; a cap that is off drops its feature (no marks: restore by seed; no sizes: no growth check).
+#   supportsTemp or tempSql, sizes = schemaSizes or sizes, revert = a revert verb or supportsMarks (binlog flashback, db_flashback.py); a cap that is off drops its feature (no marks: restore by seed; no sizes: no growth check).
 #   tempSql: rows id TAB GB TAB seconds TAB query per connection (dbtemp, the watchdog), kill @{ e; id } ends one.
 # Verbs: sql @{ e; sql; sec[; db] } -> rows (string[] each; mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb: mongosh
 #   JavaScript, elasticsearch / opensearch: SQL over REST; redis: none) · pos @{ e } -> "<file>:<pos>" · binlogs @{ e } -> names.

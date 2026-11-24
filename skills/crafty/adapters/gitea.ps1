@@ -50,6 +50,9 @@ Register-KitAdapter 'ci' 'gitea' @{
   'runs' = { param($a) @(@((__Gt "repos/$($a.repo)/actions/tasks?limit=50").workflow_runs) | Where-Object { $_ -and $_.head_branch -eq $a.ref -and (-not $a.sha -or $_.head_sha -eq $a.sha) } | ForEach-Object { __CiRun $_.id $_.head_sha (__CiWord $_.status) $_.created_at $_.updated_at $_.url }) }
   'jobs' = { param($a) @(@((__Gt "repos/$($a.repo)/actions/tasks?limit=50").workflow_runs) | Where-Object { "$($_.id)" -eq "$($a.id)" } | ForEach-Object { __CiJob $_.id $_.name (__CiWord $_.status) $_.updated_at }) }
   'log' = { param($a) "no log API on Gitea: see https://$($KitConf.GitHost)/$($a.repo)/actions/runs/$($a.id)" }
+  # the task's own status (ActionTask: failure | cancelled, docs.gitea.com/api) -> reason; excerpt: the log line (the run link)
+  'failure' = { param($a) $t = @(@((__Gt "repos/$($a.repo)/actions/tasks?limit=50").workflow_runs) | Where-Object { $_ -and "$($_.id)" -eq "$($a.id)" -and "$($_.status)" -in 'failure', 'cancelled' })[0]; if (-not $t) { return $null }
+    Get-KitCiFailure $a -Job ([pscustomobject]@{ id = $t.id; name = $t.name; web_url = $t.url; failure_reason = "$($t.status)"; reason = $(if ($t.status -eq 'cancelled') { 'canceled' } else { 'script' }) }) }
   # .../actions/runs/<run number>[/jobs/<index>] in a text -> @{ url; run; job } as task ids (the tasks of that run_number, by id)
   'parseUrl' = { param($a) $m = [regex]::Match("$($a.text)", '(?<url>https?://[^\s)\]]+?/(?<repo>[^/\s]+/[^/\s]+)/actions/runs/(?<n>\d+)(?:/jobs/(?<j>\d+))?)'); if (-not $m.Success) { return @{} }
     $tk = @(@((__Gt "repos/$($m.Groups['repo'].Value)/actions/tasks?limit=50").workflow_runs) | Where-Object { $_ -and "$($_.run_number)" -eq $m.Groups['n'].Value } | Sort-Object { [long]$_.id })

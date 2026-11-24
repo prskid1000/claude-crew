@@ -42,10 +42,7 @@
       "verbs": "runs jobs log status config failure parseUrl",
       "names": "command none",
       "values": "host",
-      "vendors": "github gitlab bitbucket azure gitea jenkins",
-      "fallback": {
-        "failure": "core Get-KitCiFailure (the failed job and its log)"
-      }
+      "vendors": "github gitlab bitbucket azure gitea jenkins"
     },
     "transcript": {
       "config": "board tool",
@@ -97,17 +94,20 @@
       "capKeys": {
         "marks": "supportsMarks revert",
         "temp": "supportsTemp tempSql",
-        "sizes": "schemaSizes sizes"
+        "sizes": "schemaSizes sizes",
+        "revert": "revert supportsMarks"
       },
       "vendors": "mysql mariadb postgres sqlserver sqlite oracle mongodb redis elasticsearch opensearch",
       "fallback": {
-        "query": "the engine's sql verb when the env sets no db.query line (envy.ps1 Invoke-Hook query: oracle's sqlplus has no one-line form)",
+        "query": "the engine's sql verb when the env sets no db.query line (envy.ps1 Invoke-Hook query)",
         "snap": "none needed: the position (a binlog file:offset, an SCN) is the mark, zero bytes",
-        "unsnap": "none needed: a position mark holds no snapshot",
-        "revert": "the binlog flashback restore (db_flashback.py, mysql / mariadb)",
-        "binlogs": "no expiry list: a mark past the engine retention (oracle undo) is refused at restore"
+        "unsnap": "none needed: a position mark holds no snapshot"
       },
       "gaps": {
+        "mysql,mariadb/snap,unsnap": "no such feature: https://dev.mysql.com/doc/refman/8.0/en/point-in-time-recovery.html no per-schema snapshot on a live server (a clone or dump is a full copy, never made by the kit): the binlog position is the mark and the binlog the undo (revert: db_flashback.py), nothing to make or drop",
+        "oracle/snap,unsnap": "no such feature: https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/CREATE-RESTORE-POINT.html a normal restore point only names an SCN (the mark already is one) and a guaranteed one covers the whole database with flashback logging and DBA rights: nothing per schema to make or drop",
+        "oracle/binlogs": "no such feature: https://docs.oracle.com/en/database/oracle/oracle-database/19/admin/managing-undo.html undo_retention is a target, not a list of restorable SCNs: no expiry list; a mark past it fails the FLASHBACK TABLE revert, which says so",
+        "oracle/query": "no such feature: https://docs.oracle.com/en/database/oracle/oracle-database/19/sqpug/ SQL*Plus reads statements from a script or stdin only, no one-line option (and CONNECT on argv would show the password): the sql verb runs it over stdin",
         "redis/sql": "no such feature: https://redis.io/docs/latest/commands/ commands on keys, no statement language with rows: Invoke-DbSql refuses (db.schemasQuery, tenants column model); envy.ps1 sql runs the query preset (raw commands)",
         "redis/jdbc": "no such feature: https://redis.io/docs/latest/develop/clients/ Redis clients speak RESP, no JDBC driver or SQL: an app takes the env's redis URL from its own config",
         "postgres/marks,pos,binlogs,snap,revert,unsnap": "no such feature: https://www.postgresql.org/docs/current/continuous-archiving.html point-in-time recovery replays WAL into a whole cluster from a base backup with the server stopped; no per-database restore point on a live server (a TEMPLATE copy is a full copy, never made by the kit): restore by seed",
