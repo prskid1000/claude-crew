@@ -9,7 +9,7 @@ function Get-GateRamScale {
   $script:GateRamScale
 }
 # a kind's starting GB until learned: the registry default scaled to this RAM (a kit.local.json pin or a learned value as is)
-function Get-GateKindGB([string]$Kind) { $kk = "gate.kindGB.$Kind"; [double](Get-KitParam $kk ([double](Get-KitParamSpec $kk).default * (Get-GateRamScale))) }
+function Get-GateKindGB([string]$Kind) { $kk = "gate.kindGB.$Kind"; [double](Get-KitParam $kk ([math]::Max(0.5, [double](Get-KitParamSpec $kk).default * (Get-GateRamScale)))) }
 function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]$Need) {
   $tool = if ($Kind -in 'android-build', 'android-test', 'gradle') { 'gradle' } elseif ($Kind -like 'maven*') { 'maven' }
           elseif ($Kind -in 'ng-test', 'web-build', 'js-test', 'tsc-lint', 'typecheck', 'rn-bundle', 'e2e') { 'node' }

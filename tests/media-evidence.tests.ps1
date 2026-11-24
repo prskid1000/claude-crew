@@ -231,5 +231,10 @@ if ($ff -and $cv) {
 }
 $sv = Invoke-TestScript (Join-Path $k 'skills/bossy/bossy.ps1') supervise
 Expect 'media: supervise runs with video.ps1 loaded (no local-ai line when idle)' ($sv.out -notmatch 'local-stt:' -and $sv.out -notmatch 'Get-KitSuperviseGuardLocalAi')
+# one browser list per language: CHROME_PATH wins in devtools.py find_browser (report_pdf.py, mmdc) and browser.mjs CHROME (media-grab.mjs)
+$fbx = Join-Path (Kd) 'fake-chrome.exe'; Set-Content $fbx 'x'; $cpKeep = $env:CHROME_PATH; $env:CHROME_PATH = $fbx
+try { $fbPy = python -X utf8 -c "import sys; sys.path.insert(0, r'$(Join-Path $src 'skills/crafty')'); import devtools as d; print(d.find_browser())" 2>&1 | Select-Object -Last 1
+  $fbJs = node --input-type=module -e "const m = await import('$([Uri]::new((Join-Path $src 'skills/pokey/browser.mjs')).AbsoluteUri)'); console.log(m.CHROME)" 2>&1 | Select-Object -Last 1 } finally { $env:CHROME_PATH = $cpKeep }
+Expect "browser: CHROME_PATH first in the Python and JS lists ($fbPy | $fbJs)" ("$fbPy" -eq $fbx -and "$fbJs" -eq $fbx -and (Get-Content (Join-Path $src 'skills/pokey/adapters/media-grab.mjs') -Raw) -match 'const exe = CHROME\b')
 Remove-TestKit $k
 Complete-Tests

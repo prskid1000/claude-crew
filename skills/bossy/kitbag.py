@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L226 kitlog · L328 load · L821 lint · L1235 README graph · L1353 lint command · L1635 audit ·
-  L1783 registry · L1843 tools · L1931 parity · L2384 arch lint · L2657 prose · L2838 sections · L2968 budget · L2986 migrate ·
-  L3134 plugins · L3191 state lint · L3379 main
+  L1783 registry · L1843 tools · L1931 parity · L2384 arch lint · L2657 prose · L2839 sections · L2969 budget · L2987 migrate ·
+  L3135 plugins · L3192 state lint · L3380 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp

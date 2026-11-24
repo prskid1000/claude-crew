@@ -213,7 +213,7 @@ function Get-KitOutcomeLines([int]$Days = (Get-KitParam 'outcomes.days')) {
 # ---- patterns: one topic, the same owner choice 3+ times, no contrary answer -> a standing rule proposal
 $script:KitRuleNeverGates = @('deploy', 'rollback', 'secret', 'data', 'close', 'merge', 'premerge')
 # words a question never gets a standing rule for (the kit's hard rule) + decide.neverAuto (an org's regex words); over-blocking costs one ask
-$script:KitRuleNeverRx = '(?i)\b(' + ((@('prod\w*', 'deploy\w*', 'release', 'rollback', 'secret\w*', 'credential\w*', 'customer\w*', 'client[- ]facing', '\w+[- ](visible|facing)', 'tenant\w*', 'migrat\w*', 'backfill\w*', 'delete\w*', 'drop', 'truncate', 'purge', 'data') + @(Get-KitSetting 'decide.neverAuto' @() | Where-Object { $_ })) -join '|') + ')\b'
+$script:KitRuleNeverRx = '(?i)\b(' + ((@('prod\w*', 'deploy\w*', 'release', 'rollback', 'secret\w*', 'credential\w*', 'customer\w*', 'client[- ]facing', '\w+[- ](visible|facing)', 'tenant\w*', 'migrat\w*', 'backfill\w*', 'delete\w*', 'drop', 'truncate', 'purge', 'data') + @(Get-KitSetting 'decide.neverAuto' @() | Where-Object { $_ -and $(try { $null = [regex]::new($_); $true } catch { Write-Warning "decide.neverAuto '$_' is no regex: skipped"; $false }) })) -join '|') + ')\b'
 function Get-KitTopicWords([string]$Question) { Get-KitWordSet ("$Question" -replace '\([^)]*\)', ' ' -replace '\b[A-Za-z]+-\d+[a-z]?\b', ' ' -replace '\b[0-9a-z_]*\d[0-9a-z_]*\b', ' ') }
 # choice words keep short ones (no, keep, all): polarity matters
 function Get-KitChoiceWords([string]$Answer) {

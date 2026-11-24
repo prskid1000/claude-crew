@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L321 stack · L420 gate · L750 check · L1076 pipes · L1138 guard · L2063 dir · L2073 checkpoint ·
-  L2113 prior · L2152 tracker · L2174 task spec · L2380 scope · L2428 host
+Sections: L25 init · L34 wt · L321 stack · L420 gate · L751 check · L1077 pipes · L1139 guard · L2064 dir · L2074 checkpoint ·
+  L2114 prior · L2153 tracker · L2175 task spec · L2381 scope · L2429 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -527,7 +527,8 @@ $histFile = Join-Path $ledger 'history.json'
 function Read-History { $h = try { Read-KitText $histFile | ConvertFrom-Json -AsHashtable } catch {}; if ($h) { $h } else { @{} } }
 
 $kind = Get-GateKind $Cmd $Dir
-$default = Get-GateKindGB $(if ($script:GateKinds.Contains($kind)) { $kind } else { 'other' })
+$gk = if ($script:GateKinds.Contains($kind)) { $kind } else { 'other' }   # no adapters/build-heap.ps1: the registry default unscaled
+$default = if (Get-Command Get-GateKindGB -ErrorAction SilentlyContinue) { Get-GateKindGB $gk } else { [double](Get-KitParam "gate.kindGB.$gk") }
 # containers: learned peaks (docker stats growth) hold RAM; until then +2 GB (a DB + a search engine)
 $ctr = $kind -eq 'docker' -or (($kind -match 'test|cypress|e2e|dotnet|^go$' -or ($kind -eq 'python' -and $Cmd -match 'pytest|unittest|\btest_')) -and (Test-GateContainers $Dir))
 if ($ctr -and $kind -ne 'docker') { $default += 2 }
@@ -2297,7 +2298,7 @@ function Invoke-Tracker {
     'view' { __TrOut (Get-TrackerTask $__id) }
     'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-KitStamp)) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise: <id> <at> <status>
     'roles' { Show-KitScopeRoles $__id }
-    'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> [-Back <why>] (read it: tracker view <id>)'; exit 2 }; $__sr = Set-TrackerStatus $__id $__x $__trOpt.Back; $__sr; if ("$__sr" -like 'SKIPPED*') { exit 1 } }   # an empty status set Open
+    'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> [-Back <why>] (read it: tracker view <id>)'; exit 2 }; $__sr = Set-TrackerStatus $__id $__x $__trOpt.Back; $__sr; if ("$__sr" -like 'SKIPPED*' -and "$__sr" -notmatch 'has no \w+ status') { exit 1 } }   # an empty status set Open
     'comment' {   # -Kind required; over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
       if ($__sp -and -not "$__ct".Trim()) {   # -Spec: rendered as -Kind (templates.md "Comment spec")

@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1534 publish · L2032 render · L2610 spec · L3154 plugins · L3168 keepboth · L3187 selftest · L3908 CLI
+  L1534 publish · L2032 render · L2610 spec · L3152 plugins · L3166 keepboth · L3185 selftest · L3906 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2792,9 +2792,7 @@ def mmdc_setup():
     npm, d = shutil.which('npm'), os.path.join(kit_path('tools', create=True), 'mmdc')
     if not npm:
         raise SystemExit('spec setup: npm is not on PATH (install Node.js); diagrams stay Mermaid source blocks')
-    pf = [os.environ.get(v) for v in ('ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA') if os.environ.get(v)]
-    exe = next((b for b in [os.environ.get('CHROME_PATH')] + [os.path.join(x, *y) for x in pf for y in (('Google', 'Chrome', 'Application', 'chrome.exe'),
-               ('Microsoft', 'Edge', 'Application', 'msedge.exe'))] + [shutil.which(n) for n in ('google-chrome', 'chromium', 'chromium-browser')] if b and os.path.isfile(b)), '')
+    exe = globals().get('find_browser', lambda: '')()   # adapters/report_pdf.py: the kit's one Python browser list
     os.makedirs(d, exist_ok=True)
     r = subprocess.run([npm, 'install', '--prefix', d, '--no-audit', '--no-fund', f'@mermaid-js/mermaid-cli@{MMDC_PIN}'], capture_output=True, text=True,
                        errors='replace', timeout=600, env={**os.environ, **({'PUPPETEER_SKIP_DOWNLOAD': '1'} if exe else {})})

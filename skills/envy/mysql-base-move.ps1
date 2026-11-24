@@ -368,7 +368,7 @@ if ($Apply -and -not $Only) {   # copied while that lane's search is down; not i
     $sr = @($cfgNow['localEnv']['envs'][$p.env]['services'] | Where-Object { $_['name'] -eq 'search' -and $_['start'] })[0]
     if (-not $sr -or [string]$sr['start'] -notmatch "(?i)-Epath\.data=($SysDrive[^ ]+)") { continue }
     $old = $Matches[1]; $sp = $sr['port']
-    $lmx = try { [int]$cfgNow['localEnv']['envs'][$p.env]['lanes']['max'] } catch { 1 }   # lane 1 = '', lane k = k
+    $lmx = [int](@($(try { $cfgNow['localEnv']['envs'][$p.env]['lanes']['max'] } catch { }), $(try { $cfgNow['localEnv']['defaults']['lanes']['max'] } catch { }), 3) | Where-Object { $_ } | Select-Object -First 1)   # lane 1 = '', lane k = k; unset: 3 as before
     foreach ($k in @('') + @(if ($lmx -ge 2) { 2..$lmx | ForEach-Object { "$_" } })) {
       $from = $old.Replace('{lane}', $k); $to = "$Lanes/search-$($p.env)-$(Get-Bird $(if ($k) { [int]$k } else { 1 }))/data"
       if (-not (Test-Path -LiteralPath $from)) { if ($k -eq '') { "search $($p.env): no data at $from, nothing to copy" }; continue }

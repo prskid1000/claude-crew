@@ -7,10 +7,17 @@ from pathlib import Path
 dt = None
 
 
+def find_browser():
+    """The kit's one Python list of a local Chrome / Edge / Chromium (devtools.py mmdc_setup too; JS: pokey/browser.mjs CHROME); '' = none."""
+    pf = [os.environ.get(v) for v in ('ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA') if os.environ.get(v)]
+    win = [os.path.join(x, *y) for x in pf for y in (('Google', 'Chrome', 'Application', 'chrome.exe'), ('Microsoft', 'Edge', 'Application', 'msedge.exe'))]
+    names = [shutil.which(n) for n in ('chrome', 'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge', 'msedge')]
+    mac = [f'/Applications/{a}.app/Contents/MacOS/{a}' for a in ('Google Chrome', 'Microsoft Edge', 'Chromium')]
+    return next((b for b in [os.environ.get('CHROME_PATH')] + win + names + mac if b and os.path.isfile(b)), '')
+
+
 def _browser():
-    b = next(filter(None, map(shutil.which, ('chrome', 'google-chrome', 'chromium', 'chromium-browser', 'msedge',
-        r'C:\Program Files\Google\Chrome\Application\chrome.exe', r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'))), None)
+    b = find_browser()
     return b and [b]
 
 
@@ -50,3 +57,4 @@ def register(module):
     global dt
     dt = module
     dt.ADAPTERS['report']['pdf'] = {'publish': publish, 'selftest': selftest}
+    dt.find_browser = find_browser

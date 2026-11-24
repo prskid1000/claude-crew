@@ -3,16 +3,14 @@
 //   node media-grab.mjs <url> image <selector> <out file>    -> {"image": "<src>", "file": "<out file>", "bytes": n}
 // Called by video.py (fetchers jam-public, image). Exit codes: 0 ok · 1 nothing found / page failed · 2 usage.
 import puppeteer from 'puppeteer-core'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { kitPath, QUIET_ARGS } from '../browser.mjs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { CHROME, kitPath, QUIET_ARGS } from '../browser.mjs'
 import { quietProfile } from './engine-playwright.mjs'
 import { join } from 'node:path'
 
 const [url, mode, a3, a4] = process.argv.slice(2)
 if (!url || !['video', 'image'].includes(mode) || (mode === 'image' && (!a3 || !a4))) { console.error('usage: media-grab.mjs <url> video [timeoutMs] | <url> image <selector> <out file>'); process.exit(2) }
-const PF = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].filter(Boolean)
-const exe = [process.env.CHROME_PATH, ...PF.map((d) => `${d}/Google/Chrome/Application/chrome.exe`), ...PF.map((d) => `${d}/Microsoft/Edge/Application/msedge.exe`),
-  '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((p) => p && existsSync(p))
+const exe = CHROME   // browser.mjs: the kit's one Chrome / Edge list (CHROME_PATH first)
 if (!exe) { console.log(JSON.stringify({ error: 'no Chrome/Edge found; set CHROME_PATH' })); process.exit(1) }
 const MEDIA = /\.(m3u8|mpd)(\?|$)|\.(mp4|webm|mov)(\?|$)/i
 const profile = quietProfile(mkdtempSync(join(kitPath('tmp', { create: true }), 'media-grab-')))   // <runtime>/tmp, never the OS temp
