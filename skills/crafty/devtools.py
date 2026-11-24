@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1534 publish · L2032 render · L2610 spec · L3152 plugins · L3166 keepboth · L3185 selftest · L3906 CLI
+  L1534 publish · L2035 render · L2614 spec · L3156 plugins · L3170 keepboth · L3189 selftest · L3910 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -374,7 +374,7 @@ def prose_gate(kind, text):
             cnt = lambda b: f'{len(re.sub(mk, "", b).split())}w {len(re.findall(mk, b))}b'
             print(f'[prose] {kind} per section ({lim or "limits: templates.md"}): '
                   + ' · '.join(f'{s.split(chr(10), 1)[0].strip()} {cnt(s.split(chr(10), 1)[1] if chr(10) in s else "")}' for s in secs), file=sys.stderr)
-        raise SystemExit(f'[prose] {kind} refused: {len(found)} finding(s) above; rewrite to the limits (same facts){f" ({lim})" if lim else ""},'
+        raise SystemExit(f'[prose] {kind} refused: {" | ".join(found[:3])}{f" (+{len(found) - 3} above)" if len(found) > 3 else ""}; limits: {lim or "templates.md Writing standards"}; rewrite (same facts),'   # the last line is all a caller sees (7 refusals, retro 1124)
                          ' or pass --prose-ok "<why>" for a format the brief fixes. Nothing was written.')
     return found
 
@@ -1576,8 +1576,11 @@ def _pub_update(key, **fields):
 
 
 def local_pass(task):
-    """The newest `crafty.ps1 checkpoint -Step loop -Item <task>` evidence across agents: (True|False|None, evidence)."""
-    last = None
+    """The newest `crafty.ps1 checkpoint -Step loop -Item <task>` evidence across agents: (True|False|None, evidence); an item
+    sharing a tracked MR with the task counts too (one loop for a shared MR's items, retro 1124)."""
+    last, tr = None, read_tracking().get('tasks') or {}
+    mrs = set((tr.get(task) or {}).get('mrs') or [])
+    ids = {task} | {t for t, o in tr.items() if mrs & set((o or {}).get('mrs') or [])}
     for f in glob.glob(os.path.join(kit_path('agents'), '*', 'resume*.json')):   # resume-<run>.json; old resume.json
         try:
             with open(f, encoding='utf-8') as fh:
@@ -1585,7 +1588,7 @@ def local_pass(task):
         except (OSError, ValueError):
             continue
         for s in steps:
-            if str(s.get('step', '')).lower() == 'loop' and task in re.split(r'[\s,;]+', str(s.get('item', ''))) and (not last or s.get('at', '') >= last.get('at', '')):
+            if str(s.get('step', '')).lower() == 'loop' and ids & set(re.split(r'[\s,;]+', str(s.get('item', '')))) and (not last or s.get('at', '') >= last.get('at', '')):
                 last = s
     if not last:
         return None, ''
@@ -2094,7 +2097,8 @@ def _ev(cid, ev):
 
 def _verdict(results):
     rs = [str(r).upper() for r in results if r]
-    return 'FAIL' if any(r.startswith('FAIL') for r in rs) else 'PASS' if rs and len(rs) == len(results) and all(r.startswith('PASS') for r in rs) else ''
+    nt = [r for r in rs if r.startswith('NOT_TESTED')]   # PASS + NOT_TESTED_LOCAL: the goal is not tested there (blank read as a gap in review)
+    return 'FAIL' if any(r.startswith('FAIL') for r in rs) else '' if not rs or len(rs) < len(results) else 'PASS' if not nt and all(r.startswith('PASS') for r in rs)         else max(set(nt), key=nt.count) if nt and all(r.startswith(('PASS', 'NOT_TESTED')) for r in rs) else ''
 
 
 def cases_gaps(c):

@@ -114,5 +114,12 @@ Expect "A3: a runbook missing ## Rollback and a bare 'none' refused ($a3BadC), c
 $pgBody = "## Summary`n$((@('word') * 60) -join ' ')`n## Changes`n- a`n- b`n- c`n- d`n## How tested`nunit`n## Risks`nnone`n## Links`nx"
 $pgOut = $pgBody | & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; d.prose_gate('mr-body', sys.stdin.read())" 2>&1 | Out-String
 Expect "mr prose refusal: per-section word / bullet counts with the limits ($(($pgOut -split "`n" | Where-Object { $_ -match 'per section' }) -join ''))" ($pgOut -match 'per section \(mr-body: .*limits .*\): Summary 60w 0b · Changes 4w 4b · How tested 1w 0b' -and $pgOut -match 'refused')
+$pgLast = @($pgOut -split "`r?`n" | Where-Object { $_.Trim() })[-1]
+Expect "mr prose refusal: its last line names the finding and the limits (retro 1124: 7 refusals showed only the count) ($pgLast)" ($pgLast -match 'mr-body refused: .*\(max \d+\).*; limits: mr-body: ')
+$vd = & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; print(','.join(d._verdict(x) for x in (['PASS', 'NOT_TESTED_LOCAL'], ['PASS', 'PASS'], ['PASS', ''], ['FAIL', 'NOT_TESTED_LOCAL'])))" 2>&1
+Expect "render cases: a goal mixing PASS and NOT_TESTED_LOCAL reads NOT_TESTED_LOCAL, not blank; unrecorded stays blank ($vd)" ("$vd" -eq 'NOT_TESTED_LOCAL,PASS,,FAIL')
+# finish: one loop checkpoint under the keyed item covers every item tracked on the same MR (retro 1124: siblings refused)
+$lp = & $py -X utf8 -c "import sys, os, json; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d, kitbag as kb; [kb.state_write(kb.task_file(t), {'task': t, 'track': {'mrs': m}}) for t, m in (('tA', ['g/w!1']), ('tB', ['g/w!1']), ('tC', ['g/w!2']))]; a = os.path.join(kb.kit_path('agents'), 'zz-dt'); os.makedirs(a, exist_ok=True); json.dump({'steps': [{'step': 'loop', 'item': 'tA', 'evidence': 'PASS local', 'at': '2026-11-24T10:00:00'}]}, open(os.path.join(a, 'resume-r.json'), 'w')); print(','.join(str(d.local_pass(t)[0]) for t in ('tA', 'tB', 'tC')))" 2>&1
+Expect "local_pass: a shared MR's sibling item reads the keyed item's loop checkpoint; an item on another MR does not ($lp)" ("$lp" -eq 'True,True,None')
 Remove-TestKit $k
 Complete-Tests
