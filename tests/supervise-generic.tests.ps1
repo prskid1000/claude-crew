@@ -194,11 +194,11 @@ $ih = @(Get-KitSuperviseGuardResources | Where-Object { "$($_.what)" -match 'no 
 '@
 Expect-Each (Invoke-PsTest 'wguard' $wg @($O)) 'waste guards: #' @('api', 'wrap', 'urls', 'idle') -Show 8
 # sweep cost: 500 QA runs (490 older than 7 days) + 3000-row signals and outcomes logs; one beat stays at the measured cost
-# (2026-11-18: 750-950 reads, 40-56 API calls; every run.json was read and each run's parent viewed: 6500 reads, 1000+ calls)
+# (2026-11-18: every run.json + parent read: 6500 reads, 1000+ calls)
 $wc = @'
 param($O, $Fill)
 $null = . $O 6>$null 2>$null
-if ($Fill) { $qa = Get-KitPath qa-runs -Create; $old = (Get-Date).AddDays(-10)
+if ($Fill) { $ErrorActionPreference = 'Stop'; $qa = Get-KitPath qa-runs -Create; $old = (Get-Date).AddDays(-10)
   foreach ($n in 1..500) { $rd = Join-Path $qa "r$n"; New-Item -ItemType Directory -Force "$rd/C1" | Out-Null; Set-Content "$rd/run.json" "{`"tracker`":{`"parent`":`"P$n`"},`"items`":[]}"; Set-Content "$rd/C1/finalize.json" '{}'
     if ($n -gt 10) { foreach ($p in "$rd/run.json", "$rd/C1/finalize.json", "$rd/C1", $rd) { (Get-Item $p).LastWriteTime = $old } } }
   foreach ($lg in 'signals', 'outcomes') { $t0 = (Get-Date).AddDays(-2); Set-Content (Get-KitPath $lg -Create) @(foreach ($i in 1..3000) { "{`"at`":`"$($t0.AddMinutes($i).ToString('o'))`",`"skill`":`"crafty`",`"kind`":`"idea`",`"text`":`"row $i`",`"task`":`"t$i`",`"stage`":`"x`"}" }) }
