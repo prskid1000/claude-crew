@@ -33,7 +33,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L251 budget · L281 launch · L524 recover · L611 pause · L622 resume · L689 program · L740 param ·
-  L746 track · L1135 supervise · L1476 report · L1556 audit · L1616 storage · L1619 bugbrief · L1621 cleanup · L1708 learn ·
+  L746 track · L1134 supervise · L1476 report · L1556 audit · L1616 storage · L1619 bugbrief · L1621 cleanup · L1708 learn ·
   L1745 decide · L1915 debate · L1959 health · L2027 setup · L2122 guard-sendmessage
 #>
 #Requires -Version 7
@@ -771,8 +771,6 @@ function NormRef($r) {
   if ($r -match '^([\w.-]+)!(\d+)$' -and ($al = (Get-KitMember $KitConf.RepoAliases ($Matches[1])))) { "$al!$($Matches[2])" } else { $r }
 }
 function ConvertTo-MrRef([string]$m) { if ($u = ConvertFrom-MrUrl $m) { "$(($u.repo -split '/')[-1])!$($u.n)" } else { $m.Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' } }   # group/repo!n too
-# a cached track-run ATTENTION about missing testing docs / solution whose task moved on since (devtools.py finish promoted it)
-function Test-KitTrackLineStale([string]$Line) { $Line -match '^ATTENTION (?<t>\S+): .*no (solution/testing comment|testing-doc link)' -and (Test-TrackerStatus $(try { [string](Get-TrackerTask $Matches.t).status } catch { '' }) 'promoted', 'inTest', 'closed') }
 function Invoke-Track {
 param([Parameter(Position = 0)][ValidateSet('add', 'run', 'show', 'rebuild', 'ignore', 'remove', 'rollup', 'forget-item', 'route')][string]$Action = 'show', [string]$Reason, [string]$From, [string]$To, [Alias('Items')][string[]]$Item = @(), [switch]$Rebuild, [switch]$Force, [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$OnMerged = 'promoted', [switch]$Quiet, [switch]$Discover, [string[]]$MergeAfter = @(), [string]$Wave, [switch]$Detail, [string]$HoldPromotion, [switch]$Status, [switch]$All, [switch]$Apply)
 $ErrorActionPreference = 'SilentlyContinue'
@@ -903,6 +901,7 @@ switch ($Action) {
     elseif ($titled.Count -eq 1) { $Task = $titled[0]; "NOTE: registering under $Task (MR title)" }
     elseif ($titled.Count) { Fail "add: the MRs name different tasks in their titles ($($titled -join ', ')): register each task with its own MRs" }
     if (-not $Task) { Fail "add needs a real -Task id (got '$given'; the tracker id without its tag, as in the MR title)" }
+    try { $Task = Resolve-TrackerId $Task } catch { Fail "add: $_" }   # kit key -> native id
     $o = Load $Task; if (-not $o) { $o = @{ task = $Task; mrs = @(); onMerged = @($OnMerged -split '\s*,\s*'); done = $false; created = (Get-Date).ToString('o') } }
     $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
     $before = @($o.mrs).Count; $script:trackReadd = @($refs)
@@ -1046,7 +1045,7 @@ switch ($Action) {
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
       $ciTask = Get-KitCiTask $o.task   # a CI job's task: the job passing again is its test, no testing docs
-      if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (process.docs) or the task is unread' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
+      if ($todo -contains 'promoted' -and -not $ciTask -and $KitConf.TrackerType -ne 'none' -and -not ($pg = Test-KitProcessGate promote @{ task = $o.task }).ok) { if (-not $Quiet) { "ATTENTION $($o.task): MRs merged, $(if ($pg.how -eq 'builtin:testingDocs' -and $pg.why -match '^task id not readable') { $pg.why } elseif ($pg.how -eq 'builtin:testingDocs') { 'no testing-doc link (process.docs)' } else { "process.gates.promote refused ($($pg.how)): $($pg.why)" }): not promoted (devtools.py finish $($o.task) <testing.md> <solution.md> --ai <ai.md>); MRs $(@($o.mrs) -join ', ')" }; continue }
       $setFailed = $false; $kept = ''
       $fixBack = if (Test-TrackerStatus $now 'failedTesting') { "failed testing, fixed by $(@($(if (@($o.routedMrs | Where-Object { $_ }).Count) { $o.routedMrs } else { $o.mrs })) -join ', ')" } else { '' }
       foreach ($s in $todo) { try { if (($sr = "$(Set-TrackerStatus $o.task $s $fixBack)") -like 'SKIPPED*' -and $sr -notmatch 'has no \w+ status') { $kept = $sr.Substring(9); break } } catch { $setFailed = $true; if (-not $Quiet) { "ATTENTION $($o.task): could not set status '$s' (retried next run): $_" }; break } }
@@ -1337,6 +1336,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
     elseif ($l -match '^HOLD \S+: .*\(stale: ') { Flag 'ACT' $l 'Its run ended with the area never started: relaunch the area, or drop the hold (the command in the line).' }
     elseif ($l -match '^HOLD') { Flag 'INFO' $l 'Merge/promotion waits for the review or fix round; it resumes by itself.' }
     elseif ($l -match '^ATTENTION \S+: could not set status') { Flag 'ACT' $l "MRs merged, the tracker refused the status (track retries each round): check auth and tracker.statuses (& $($KitCmd.dev) tracker view <id>), or set it by hand." }
+    elseif ($l -match '^ATTENTION \S+: MRs merged, task id not readable') { Flag 'ACT' $l 'Re-track its MRs under the native id: track add -Task <id> -Mrs <refs>; track remove -Task <key> -Mrs <refs>.' }
     elseif ($l -match '^ATTENTION .*no (solution/testing comment|testing-doc link)') { Flag 'ACT' $l "Post the solution, MR links and how-to-test steps (testing doc link) on the task (& $($KitCmd.dev) tracker comment <id> -File <solution.md> -Kind comment-solution: the template, edited in place)." }
     elseif ($l -match '^ATTENTION .* (?<repo>[\w./-]+)!(?<iid>\d+) opened \((conflict|pipeline \w+)\)' -and ($owner = OwnerOf $Matches.repo $Matches.iid)) {
       Flag 'INFO' "$l - being handled by $owner" 'An active agent has that MR branch checked out; re-check next round.'

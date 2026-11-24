@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L878 status · L1176 tracker · L1494 prior ·
-  L1513 ask bugs · L1699 git-host · L1886 kitlog · L2008 params · L2313 entry-scripts
+Sections: L11 paths · L93 state · L174 config · L255 OS · L457 leases · L876 status · L1174 tracker · L1492 prior ·
+  L1511 ask bugs · L1697 git-host · L1884 kitlog · L2006 params · L2311 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -502,8 +502,6 @@ function Get-KitNextBeat([double]$Prev, [double]$Base, [int]$Act, [int]$EnvFix, 
     else { @([math]::Round(($Prev + $Base) / 2), "easing back to $Base min") }
   [pscustomobject]@{ min = [int][math]::Min(30, [math]::Max(5, $r[0])); why = $r[1] }
 }
-# track's LAG / missing-doc ATTENTION of a task held on purpose: dropped (the background run may predate the hold)
-function Test-KitHeldLine([string]$Line, [string[]]$Held) { $Line -match '^(LAG|ATTENTION) (?<tid>[^\s:]+):' -and $Matches.tid -in $Held -and ($Line -match '^LAG' -or $Line -match 'no (solution/testing comment|testing-doc link)') }
 function Update-KitLease($l) {
   $now = Get-Date
   if (Test-KitLive $l) {   # seen at most once a minute: re-confirming a live holder writes nothing
@@ -1292,7 +1290,7 @@ foreach ($__plugin in $script:KitAdapterFiles) { . $__plugin }
 Initialize-KitTracker
 
 # ----- verbs: dispatch to the tracker.type backend
-function __TrA([string]$Verb, [hashtable]$A) { Invoke-KitAdapter 'tracker' $__trType $Verb $A }
+function __TrA([string]$Verb, [hashtable]$A) { if ($A -and $A.id) { $A.id = Resolve-TrackerId "$($A.id)" -Soft:($Verb -eq 'url') }; if ($A -and $A.parent) { $A.parent = Resolve-TrackerId "$($A.parent)" }; Invoke-KitAdapter 'tracker' $__trType $Verb $A }
 $script:KitTrUrl = @{}   # an id's URL once per process (98 adapter calls in one supervise beat)
 function Get-TrackerUrl([string]$Id) { $k = "$__trType|$Id"; if (-not $script:KitTrUrl.ContainsKey($k)) { $script:KitTrUrl[$k] = __TrA 'url' @{ id = $Id } }; $script:KitTrUrl[$k] }
 
@@ -1305,7 +1303,7 @@ function Get-TrackerTask([string]$Id) {
   if ($null -ne $res) { $res } else { __Get-TrackerTask $Id }
 }
 function Clear-TrackerMemo([string]$Id) { $global:KitTrackerMemo.Remove("$($__trType)|$Id") }
-function __Get-TrackerTask([string]$Id) { $v = __TrA 'view' @{ id = $Id }; if ($v.id) { $v } else { __TrStub $Id } }
+function __Get-TrackerTask([string]$Id) { $v = __TrA 'view' @{ id = $Id }; if ($v.id) { Save-TrackerKey $v; $v } else { __TrStub $Id } }
 
 function Add-KitOutbox([string]$Op, [string]$Id, [string]$Arg, [string]$Why) {
   $f = Get-KitPath outbox -Create

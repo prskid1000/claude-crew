@@ -96,5 +96,9 @@ Expect "vocab.json chromeQuietArgs: one list, every kit Chromium start reads it 
 # retro 2205: no upload map yet (-Check) -> plain file names, not 'Cannot index into a null array'
 $qm = pwsh -NoProfile -Command ". '$Q' 6>`$null; (Build-QaReportMd -Title t -Code T2 -Item @{} -Res ([pscustomobject]@{ checks = @([pscustomobject]@{ id = 'C1'; result = 'PASS'; evidence = @('T2-C1_01_a.png') }) }) -Map `$null -Run @{} -Tester x -Date d -Cells @{}) -join ' '" 2>&1 | Out-String
 Expect "report md: a null upload map renders file names ($($qm.Trim().Length) chars)" ($qm -match 'file: T2-C1_01_a\.png' -and $qm -notmatch 'null array')
+# adapters/web-login.mjs laneTarget (browser.mjs session): '<target>-<bird>' / '<target><k>' = the base target's login on lane k's ports (as pokey.ps1)
+$lnT = "import { laneTarget } from '$((Join-Path $src 'skills/pokey/adapters/web-login.mjs').Replace('\', '/') -replace '^', 'file:///')'`nconst tg = { loc: { web: 'http://localhost:4200', api: 'http://localhost:8443/api', users: { u: 1 } } }`nconst ln = [{ env: 'ab-falcon', group: 'ab', lane: 1, ports: { web: 4200, api: 8443 } }, { env: 'ab-kestrel', group: 'ab', lane: 2, ports: { web: 4300, api: 8543 } }]`nconst a = laneTarget('loc-kestrel', tg, ln), b = laneTarget('loc2', tg, ln)`nconsole.log([a.web, a.api, a.users.u, b.web, laneTarget('loc-falcon', tg, ln) === tg.loc, laneTarget('nope-kestrel', tg, ln), tg.loc.web].join('|'))"
+Set-Content "$(Kd)/lane.mjs" $lnT; $lno = node "$(Kd)/lane.mjs" 2>&1 | Out-String
+Expect "browser laneTarget: lane URLs, base login; lane 1 = base; unknown base = null; base unchanged ($lno)" ($lno.Trim() -eq 'http://localhost:4300|http://localhost:8543/api|1|http://localhost:4300|true||http://localhost:4200')
 Remove-TestKit $k
 Complete-Tests

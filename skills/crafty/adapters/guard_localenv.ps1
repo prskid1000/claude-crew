@@ -64,6 +64,12 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
   if ($lwWhy) { "kit guard: that writes large data ($lwWhy). No large writes (AGENTS.md): performance questions -> EXPLAIN / query plans, index checks, the fixtures, the read-only replica; data you add stays under data.maxRows / data.maxMB, on the kit-test or a leased lane DB, dropped at the run's end. A needed exception: bossy.ps1 decide ask (the owner runs it)." }
 } }
 # ---- secrets: test logins (owner 2026-11-19: QA agents printed passwords): no command reads targets.local.json; a grep of the bare name is a pattern
+# crafty.ps1 guard on a file write: an agent work file with a password literal next to a login (2026-11-24: a setup.mjs held QA users' password)
+function Test-KitLoginLiteral([string]$Path, [string]$Text) {
+  if ("$Path" -notmatch '[\\/]work[\\/]agents[\\/]' -or $Text -notmatch '(?i)\b(login|user(name)?|email)\b' -or
+    $Text -notmatch '(?i)\b(pass(word)?|passwd|pwd|pw)\b["'']?\s*[:=]\s*["''](?![{<$])[^"''\s]{4,}["'']') { return '' }
+  "kit guard: $Path holds a password literal next to a login; test logins live only in the secret store ($(@(Get-KitSecretPaths) -join ', ')). New login: pokey.ps1 user create -Target <t> -Name <login> -Role <role>; use it: session({ target, as }) / pokey.ps1 api -As <login>; a script: targetOf('<t>').users['<login>'][1]"
+}
 Register-KitAdapter 'guard' 'secrets' @{ check = { param($a)
   $secRead = '(?i)(^|[\s;|&(`])(cat|type|more|less|head|tail|sed|awk|jq|bat|strings|xxd|od|base64|cp|copy|Copy-Item|cpi|Get-Content|gc|Import-Csv|scp|curl)(\.exe)?\s|open\(|readFile|ReadAll(Text|Lines|Bytes)|json\.load'
   # a commit message is text, not a read (2026-11-21: a message quoting the file name was denied); $( ) or ` in it still runs

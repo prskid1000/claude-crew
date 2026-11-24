@@ -41,6 +41,9 @@ $out = KtPy "sys.exit(k.audited('x.py', ['v'], lambda: int('zz')))" 2>&1 | Out-S
 Expect "audited: an uncaught error prints one line (script verb: type: why (at file:line)), exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $out -match 'x\.py v: ValueError: .*zz.*\(at <string>:1\)' -and $out -notmatch 'Traceback')
 $out = KtPy "g = []; k.kitlog = lambda *a: g.append(a[2]); k.audited('x', ['v'], lambda: (print('usage: x\nx: error: no verb', file=sys.stderr), sys.exit(2))); print(g[-1])" 2>&1 | Out-String
 Expect 'audited: a usage exit 2 keeps its stderr why in the call line' ($out -match "'error': 'x: error: no verb'")
+# retro 2026-11-23: a stderr write that raises Errno 22 (gone pipe) never fails the command (devtools.py doc died at kitbag.py:267)
+$out = KtPy "k.kitlog = lambda *a, **b: None; sys.stderr = type('B', (), {'write': lambda self, s: (_ for _ in ()).throw(OSError(22, 'Invalid argument')), 'flush': lambda self: None})(); print('rc=%s' % k.audited('x', ['v'], lambda: print('note', file=sys.stderr)))" 2>&1 | Out-String
+Expect "audited: an Errno 22 stderr write is swallowed, exit 0 ($($out.Trim()))" ($out.Trim() -eq 'rc=0')
 $out = 'updated stuff' | python -X utf8 $KT prose --kind commit - | Out-String
 Expect 'prose: a non-conventional commit subject is a finding' ($LASTEXITCODE -eq 1 -and $out -match 'conv')
 # K56: a testing doc never tells a tester to change a deployed env's config (an UPPER_CASE switch, env-variable words, a cloud CLI verb)

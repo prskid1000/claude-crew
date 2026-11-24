@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming
+# Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming · L368 track lines · L373 task ids
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -364,4 +364,25 @@ function Get-KitTaskTemplate {
 function Get-KitItemsLabel([switch]$All) {
   $s = @(Get-KitTaskTemplate | Where-Object { "$($_.key)" -eq 'items' })[0]; $l = if ($s) { "$($s.label)" } else { 'Items' }
   if ($All) { @($l) + @(@($s.alt) | Where-Object { $_ }) } else { $l }
+}
+# ---- track lines: ATTENTION / LAG lines a hold or a later status makes stale (lib.ps1 track, bossy.ps1 supervise)
+# track's LAG / missing-doc ATTENTION of a task held on purpose: dropped (the background run may predate the hold)
+function Test-KitHeldLine([string]$Line, [string[]]$Held) { $Line -match '^(LAG|ATTENTION) (?<tid>[^\s:]+):' -and $Matches.tid -in $Held -and ($Line -match '^LAG' -or $Line -match 'no (solution/testing comment|testing-doc link)|task id not readable') }
+# a cached track-run ATTENTION about missing testing docs / solution whose task moved on since (devtools.py finish promoted it)
+function Test-KitTrackLineStale([string]$Line) { $Line -match '^ATTENTION (?<t>\S+): .*(no (solution/testing comment|testing-doc link)|task id not readable)' -and (Test-TrackerStatus $(try { [string](Get-TrackerTask $Matches.t).status } catch { '' }) 'promoted', 'inTest', 'closed') }
+# ---- task ids: a kit key -> the tracker's native id (lib.ps1 __TrA)
+# a kit key (<PRODUCT>-<AREA>-<nnn>, kitbag.py naming) where the tracker wants its native id: the id a read of that keyed task recorded
+# (cache task-keys.json), else refused with the hint (a display key read as unread showed as "no testing-doc link", run 1123)
+function Resolve-TrackerId([string]$Id, [switch]$Soft) {
+  if ($__trType -in 'none', 'local' -or $Id -cnotmatch '^[A-Z]{2,6}-[A-Z]{2,6}-\d{2,}$') { return $Id }
+  $m = Read-KitState (Join-Path (Get-KitPath cache -Create) 'task-keys.json'); if ($m -and $m[$Id]) { return [string]$m[$Id] }
+  if ($Soft) { return $Id }
+  throw "tracker ($__trType): $Id is a kit key, not a $__trType task id: pass the native id (the task URL's id; the task's title starts with $Id)"
+}
+$script:KitKeyIds = @{}
+function Save-TrackerKey($Task) {   # a keyed task read: key -> native id, once per process
+  $ky = if ($Task -and $Task.name) { Get-KitNameKey "$($Task.name)" }
+  if (-not $ky -or -not $Task.id -or "$($Task.id)" -ceq $ky -or $script:KitKeyIds[$ky] -eq "$($Task.id)") { return }
+  $f = Join-Path (Get-KitPath cache -Create) 'task-keys.json'; $script:KitKeyIds[$ky] = "$($Task.id)"
+  try { Invoke-KitLocked $f { $m = Read-KitState $f; if (-not $m) { $m = @{} }; if ($m[$ky] -ne "$($Task.id)") { $m[$ky] = "$($Task.id)"; Write-KitState $f $m } } } catch { Write-KitLog calls task-keys @{ key = $ky; error = "$_" } }
 }

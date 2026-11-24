@@ -1,7 +1,8 @@
 // web-login.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
 // web-login-types: webLogin.type sso-steps (steps: goto, fill {sel: val}, click, wait sel|ms, waitUrl) | script (.mjs:
 // default async ({ page, user, pass, tenant, target, totp })) | storageState (file: cookies, origins); {totp} from users[as][2].
-// Imported by browser.mjs login() from adapters/; h = its helpers { nav, step, applyState, onLogin, fill, here }.
+// Imported by browser.mjs login() from adapters/; h = its helpers { nav, step, applyState, onLogin, fill, here }; session(): laneTarget.
+import { spawnSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -29,4 +30,23 @@ export async function login({ page, t, tenant, user, pass, otp, type }, h) {
     await h.step(page, { fill: L.fields }, f)
     await h.step(page, { click: L.submit }, f)
   } else throw new Error(`webLogin.type ${type}: form | sso-steps | script | storageState`)
+}
+// '<target>-<bird>' / '<target><k>' = a local env lane: the base target's login, its lane-1 URL ports moved to lane k's (as pokey.ps1
+// Get-LaneTarget); lanes = envy.ps1 envs -Json (omitted: run once per process; pokey.ps1's cache key is .NET file ticks)
+let ENVY = null
+export function laneTarget(name, targets, lanes) {
+  const m = /^(.+)-([a-z]+)$/i.exec(name || '') || /^(.+?)(\d+)$/.exec(name || ''), base = m && targets[m[1]]
+  if (!base) return null
+  if (!Array.isArray(lanes)) { try { ENVY ??= [].concat(JSON.parse(spawnSync('pwsh', ['-NoProfile', '-File', resolve(import.meta.dirname, '../../envy/envy.ps1'), 'envs', '-Json'], { encoding: 'utf8', timeout: 60000 }).stdout || '[]')) } catch { ENVY = [] }; lanes = ENVY }
+  const k = /^\d+$/.test(m[2]) ? Number(m[2]) : lanes.find((l) => String(l.env).toLowerCase().endsWith('-' + m[2].toLowerCase()))?.lane
+  if (k === 1) return base
+  const urls = `${base.web || ''} ${base.api || ''}`
+  for (const g of lanes.filter((l) => l.lane === 1)) {
+    const one = Object.entries(g.ports || {}).filter(([, p]) => new RegExp(`:${p}(?!\\d)`).test(urls)), lk = lanes.find((l) => l.group === g.group && l.lane === k)
+    if (!one.length || !lk) continue
+    const t = JSON.parse(JSON.stringify(base))
+    for (const f of ['web', 'api']) for (const [pn, p] of one) if (t[f] && lk.ports?.[pn]) t[f] = t[f].replace(new RegExp(`:${p}(?!\\d)`), `:${lk.ports[pn]}`)
+    return t
+  }
+  return null
 }

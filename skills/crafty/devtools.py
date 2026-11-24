@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L393 process · L602 git host · L675 scope · L767 MR · L963 merge · L1294 docs ·
-  L1457 publish · L1952 render · L2473 spec · L2830 plugins · L2844 keepboth · L2863 selftest · L3551 CLI
+Sections: L55 config · L110 run · L198 tracker · L397 process · L606 git host · L679 scope · L771 MR · L967 merge · L1298 docs ·
+  L1461 publish · L1956 render · L2477 spec · L2834 plugins · L2848 keepboth · L2867 selftest · L3558 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -245,17 +245,21 @@ def view_failed(tid, t):
 
 
 
-def prose(kind, text):
+def prose(kind, text, tool=None):
     """Print kitbag.py prose findings for a text about to be published; never truncates."""
-    tool = os.path.join(KIT_DIR, 'skills', 'bossy', 'kitbag.py')
-    if not os.path.isfile(tool):
-        return []
+    tool = tool or os.path.join(KIT_DIR, 'skills', 'bossy', 'kitbag.py')
     try:
         r = subprocess.run([sys.executable, '-X', 'utf8', tool, 'prose', '--kind', kind, '-', '--json'], input=text, capture_output=True,
             text=True, encoding='utf-8', timeout=30)
         found = json.loads(r.stdout).get('findings', [])
-    except (ValueError, OSError, subprocess.SubprocessError):
-        return []
+    except (ValueError, OSError, subprocess.SubprocessError):   # tool path or call failed: same check in-process, never unchecked (retro 2026-11-23)
+        try:
+            from kitbag import writing_standards, prose_check
+            kinds, banned = writing_standards(KIT_DIR)
+            found = prose_check(kind, text, kinds[kind], banned) if kind in kinds else []
+        except Exception as e:
+            print(f'[prose] {kind} UNCHECKED ({e}): run python -X utf8 {os.path.join(KIT_DIR, "skills", "bossy", "kitbag.py")} prose --kind {kind} <file>', file=sys.stderr)
+            return []
     for f in found:
         print(f'[prose] {kind}: {f} (templates.md "Writing standards": rewrite, nothing was cut)', file=sys.stderr)
     return found
@@ -2442,7 +2446,7 @@ def render_wave_brief(s):
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
         # wrapped: one 340-char line failed the brief's own 130ch prose check (briefys 2026-11-23)
-        *__import__('textwrap').wrap(f'**MR limits** (`devtools.py mr` refuses over them; `kitbag.py prose --kind mr-body` first): {prose_limits("mr-title") or "mr-title"}; '
+        *__import__('textwrap').wrap(f'**MR limits** (`devtools.py mr` refuses over them; `devtools.py mr <worktree> --spec <mr.json> --check` first: the same gates, nothing opened): {prose_limits("mr-title") or "mr-title"}; '
                                      f'{prose_limits("mr-body") or "mr-body"}', 128, break_long_words=False, break_on_hyphens=False),
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
         '## openQuestions', *(qs or ['n/a — no open question']), '## Findings (rechy)', 'n/a — no spike yet (the Spike phase appends here)',
@@ -2911,7 +2915,7 @@ def selftest():
     wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
     expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'svc/api/cypress/**' in render_wave_brief(wb)
            and json.loads(wave_files(wb, 'b.md')['b.args.json'])['agents'][0]['paths'] == spec_only)
-    expect('wave brief: the MR title and body limits from "Writing standards" (retro 2026-11-22)', f'; {prose_limits("mr-body") or "mr-body"}' in render_wave_brief(wb)
+    expect('wave brief: the MR title and body limits from "Writing standards" (retro 2026-11-22)', ' '.join(f'; {prose_limits("mr-body") or "mr-body"}'.split()) in ' '.join(render_wave_brief(wb).split())
            and (not os.path.exists(os.path.join(KIT_DIR, 'skills/crafty/templates.md')) or ' limits ' in prose_limits('mr-body')))   # a test kit may lack templates.md
     td = tempfile.mkdtemp(); wsp, wbp = os.path.join(td, 'w.json'), os.path.join(td, 'wave-x.md')
     with open(wsp, 'w', encoding='utf-8') as fh:
@@ -3184,6 +3188,9 @@ def _publish_selftest(expect, refused):
             long_cell = doc.replace('Newest first.', ' '.join(['word'] * 30) + '.')
             expect('prose: a table doc passes (cell words, no table-syntax findings); a 30-word cell sentence is a finding',
                    not prose('testing-doc', doc) and any('30 words' in f for f in prose('testing-doc', long_cell)))
+            if os.path.exists(os.path.join(KIT_DIR, 'skills/crafty/templates.md')):
+                expect('prose: a missing kitbag.py path falls back in-process (4 Links bullets still a finding)',
+                       any('Links: 4 bullets' in f for f in prose('mr-body', '## Links\n' + '- x\n' * 4, tool=os.path.join(KIT_DIR, 'no-such-kitbag.py'))))
             with contextlib.redirect_stderr(io.StringIO()) as pg_err:
                 g['PROSE_OK'] = ''; refused('prose_gate: the refusal names the kind\'s format and limits (mr-title)', lambda: prose_gate('mr-title', 'x' * 200), 'limits 1l 90ch'); g['PROSE_OK'] = 'selftest'
             expect('prose_gate: a refusal prints the rendered text it checked', 'mr-title as checked (1 words, 200 chars):\n' + 'x' * 200 in pg_err.getvalue())

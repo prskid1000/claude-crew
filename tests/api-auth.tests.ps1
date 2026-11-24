@@ -71,6 +71,9 @@ $uRole = Px $Q user create -Target tu -Name qa-x -Role boss -As admin 2>&1 | Out
 $uMe = Px $Q api -Target tu -As qa-drv -Path '/me' 2>&1 | Out-String; $uLs = Px $Q user list -Target tu 2>&1 | Out-String
 $uLogin = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.u -eq '/login' } | ForEach-Object { ($_.b | ConvertFrom-Json).t })
 Expect "user create again: EXISTS, one POST, same password; unknown role exit 2 naming roles; api -As uses the login's tenant; list names no password ($urc)" ($uc2 -match 'EXISTS qa-drv' -and @(Get-Content $usLog | Where-Object { $_ -match '"POST","u":"/emp"' }).Count -eq 1 -and $uPw2 -eq $uPw -and $urc -eq 2 -and $uRole -match 'driver' -and $uMe -match 'HTTP 200' -and $uLogin[-1] -eq 't2' -and $uLs -match 'qa-drv · created .* tenant t2 · role driver · run r9' -and $uLs -notmatch [regex]::Escape($uPw))
+# retro 2026-11-23: user list on a lane name (<target>-<bird>) lists the base target's logins
+$uLane = Px $Q user list -Target tu-kestrel 2>&1 | Out-String
+Expect "user list -Target tu-kestrel: the base target's logins ($($uLane.Trim()))" ($uLane -match 'qa-drv · created .* tenant t2' -and $uLane -notmatch 'Unknown target')
 # revy: a refused create (answer echoes the body) shows the error redacted and keeps no login; unknown -As names NO-USER; a login user create did not make is never deactivated
 $uBad = Px $Q user create -Target tu -Name qa-bad -Role driver -As admin 2>&1 | Out-String; $ubc = $LASTEXITCODE; $uBadRow = (Get-Content $tjf -Raw | ConvertFrom-Json).targets.tu
 $uNo = Px $Q user create -Target tu -Name qa-y -Role driver -As nosuch 2>&1 | Out-String; $uAd = Px $Q user deactivate -Target tu -Name admin -As admin 2>&1 | Out-String; $uadc = $LASTEXITCODE

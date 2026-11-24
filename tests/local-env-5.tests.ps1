@@ -104,5 +104,10 @@ $pqNo = Px $L5 drop -Env q -Agent PQ 2>&1 | Out-String; & $J @{ run = 'rq'; stat
 $pqYes = Px $L5 drop -Env q -Agent PQ 2>&1 | Out-String
 & $J @{ agent = 'PQ'; session = 'PQ-s'; run = 'rq'; status = 'left'; beat = (Get-Date).ToString('o') } (Join-Path (TkPath $k board) 'PQ-s.json'); $pqLeft = Px $L5 drop -Env q -Agent PQ 2>&1 | Out-String
 Expect "release under an open PAUSE of the agent's run: layers kept, before board leave -Status paused; a finished (left) agent's go ($($pqNo.Trim()) / $($pqYes.Trim()) / $($pqLeft.Trim()))" ($pqNo -match 'PQ has no layer' -and $pqYes -match 'layers of PQ kept: it paused' -and $pqLeft -match 'PQ has no layer')
+# retro 2026-11-23: release without -Env (2 envs) frees the one env the agent leases
+& $J @{ localEnv = @{ envs = @{ shop = @{ services = @() }; mig = @{ services = @() } } } } (Join-Path $k 'skills/crafty/kit.local.json') 6
+& { . $L5; Update-State shop { param($x) $x.leases.rl1 = @{ until = (Get-Date).AddHours(1).ToString('o'); holderPid = $PID } } }
+$rlo = Px $L5 release -Agent rl1 2>&1 | Out-String; $rlc = $LASTEXITCODE; $rln = Px $L5 release -Agent rl2 2>&1 | Out-String
+Expect "localenv: release with no -Env picks the leased env; no lease anywhere still needs -Env ($rlc)" ($rlc -eq 0 -and $rlo -match '\[shop\] lease of rl1 released' -and $rln -match '-Env needed')
 Remove-TestKit $k
 Complete-Tests

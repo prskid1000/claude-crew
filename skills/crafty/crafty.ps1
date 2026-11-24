@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2065 dir · L2075 checkpoint ·
-  L2109 prior · L2147 tracker · L2169 task spec · L2367 scope · L2415 host
+Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2066 dir · L2076 checkpoint ·
+  L2110 prior · L2148 tracker · L2170 task spec · L2368 scope · L2416 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1565,6 +1565,7 @@ function LayoutCheck {
   if ($kc.guard.layout -eq 'block') { $raw = "$($in.tool_name) $($off -join ' ')"; Deny $lw }
   if ($in.session_id) { Write-KitLog guard warn @{ session = "$($in.session_id)"; tool = "$($in.tool_name)"; why = $lw } }; $script:layoutNote = $lw
 }
+foreach ($e in $edits) { if ($pwWhy = Test-KitLoginLiteral $e "$($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)") { $raw = "$($in.tool_name) $e"; Deny $pwWhy } }
 $off = @(foreach ($e in $edits) { OffLayout $e $here })
 if (-not $cmd) {
   LayoutCheck

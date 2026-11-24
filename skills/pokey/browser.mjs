@@ -66,7 +66,7 @@ function watch(page, apiPattern) {
 }
 
 const fill = (s, user, pass, tenant) => String(s).replace(/\{(user|pass|tenant)\}/g, (_, k) => ({ user, pass, tenant })[k] || '')
-// adapters/ load on first use (playwright only then)
+// adapters/ load on first use
 const adapter = (file) => import(pathToFileURL(join(__HERE, 'adapters', file)).href)
 const nav = (page, u, waitUntil = 'domcontentloaded') => page.goto(u, { waitUntil, timeout: 90000 }).catch(() => {})
 // off-host (an IdP) or the login path = a login page
@@ -100,7 +100,7 @@ async function login(page, t, tenant, as) {
   if (!user) throw new Error(`no user "${as}" in this target`)
   if (/^secret:/.test(pass || '')) throw new Error(`user "${as}": its password is in secrets.store (${pass}); the browser reads the file store only: pokey.ps1 api -As ${as}, or keep this login in targets.local.json`)
   if (pf?.fields?.tenant && !tenant) tenant = pf.fields.tenant
-  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // other types, TOTP: adapters/web-login.mjs
+  if (type !== 'form' || JSON.stringify(L.fields || {}).includes('{totp}')) {   // adapters/web-login.mjs
     const ext = await adapter('web-login.mjs')
     await ext.login({ page, t, tenant, user, pass, otp, type }, { nav, step, applyState, onLogin, fill, here: __HERE })
   } else {
@@ -126,7 +126,7 @@ async function restoreLogin(page, t, tenant, as) {
   const f = sessionFile(t, tenant, as)
   if (!existsSync(f)) return false
   await applyState(page, JSON.parse(readFileSync(f, 'utf8'))); await nav(page, t.web + '/')
-  await sleep(1500)   // auth guard redirect
+  await sleep(1500)
   return loggedIn(page, t)
 }
 
@@ -272,7 +272,7 @@ export const tenantOf = (t, as, tenant) => tenant ?? t.created?.[as]?.tenant ?? 
 export async function session({ target, tenant, as } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
   if (pin.length && !pin.includes(tn)) throw new Error(`target '${tn}' is not this QA run's target (${pin.join(', ')})`)
-  const t0 = targetOf(target)
+  const t0 = CFG.targets[tn] || (await adapter('web-login.mjs')).laneTarget(tn, CFG.targets) || targetOf(tn)
   as = as || defaultUser(t0, tn)
   tenant = tenantOf(t0, as, tenant)
   const t = { ...t0, web: fill(t0.web || '', '', '', tenant) }, bo = browserOpts(t0), eng = process.env.KIT_BROWSER_ENGINE || bo.engine
@@ -411,14 +411,14 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 // ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui_checks.mjs)
 // matrix(s, fn): fn({ viewport, fontScale, theme, tag }) per qa.matrix variant; [] = axis off
 export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {} } = {}) => (await adapter('ui_checks.mjs')).matrix(s, fn, m)
-// layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG (ui_checks.mjs)
+// layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG
 export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs')).layoutIssues(...a)
 export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contrast(...a)
 
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names: same literal as pokey.ps1 $script:EvidenceName
 const EVIDENCE_NAME = /^(?:[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-[A-Za-z]*\d+[a-z]?(_verify(_\d{2}m?)?|_\d{2}m?)_[a-z0-9]+([-._][a-z0-9]+)*|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*)\.(jpe?g|png|json|log|mp4|pdf|csv|txt|html|xlsx?|jsonl|ndjson)$/i
-// a relative path wrote <kit>/skills/shots (2026-11-21)
+// a relative path wrote <kit>/skills/shots
 export function checkName(file) {
   if (!EVIDENCE_NAME.test(basename(file))) console.warn(`[evidence] "${basename(file)}" is not <CODE>-<check>_<nn>_<what>.<ext> (F2-T4_01_order-saved.jpeg)`)
   const abs = resolve(file)

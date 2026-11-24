@@ -33,7 +33,7 @@ function Test-KitProcessGate([Parameter(Mandatory)][ValidateSet('promote', 'merg
 Register-KitAdapter 'process-gate' 'testingDocs' @{
   promote = { param($a) if ($KitConf.TrackerType -eq 'none' -and $env:KIT_DOC_GATE -ne '1') { return @{ ok = $true } }   # no tracker: nothing to read (KIT_DOC_GATE=1: tests)
     $l = Test-KitTaskDocLink "$($a.task)"; $need = (@(Get-KitProcessDocs | Where-Object required | ForEach-Object { "'$($_.label):'" }) -join ' and ')
-    @{ ok = $l -eq $true; why = $(if ($l -ne $true) { "its description lacks $need links (devtools.py finish writes them) or the task could not be read" }) } }
+    @{ ok = $l -eq $true; why = $(if ($null -eq $l) { "task id not readable: $($a.task) (a kit key or a wrong id? pass the tracker's native id)" } elseif ($l -ne $true) { "its description lacks $need links (devtools.py finish writes them)" }) } }
 }
 # ---- process docs: testing docs (process.docs, else vocab.json), bug-run args, QA run gaps
 function Get-KitProcessDocs {   # process.docs (an empty list = none), else vocab.json docs; required defaults to true

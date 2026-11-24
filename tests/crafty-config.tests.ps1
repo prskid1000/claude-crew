@@ -141,5 +141,9 @@ $rtv = 'CLAUDE_RUNTIME'; [Environment]::SetEnvironmentVariable($rtv, "$(Split-Pa
 [Environment]::SetEnvironmentVariable($rtv, '.rt2'); "$([IO.Path]::GetFullPath($a) -eq [IO.Path]::GetFullPath((Join-Path $args[1] '.runtime')))|$([IO.Path]::GetFullPath("$p") -eq [IO.Path]::GetFullPath((Join-Path $args[1] '.runtime')))|$(Get-KitRuntime)"
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'), $k, $py)
 Expect "runtime: '<kit name>/.runtime' resolves from the workspace (lib.ps1, kitbag.py), '.rt2' from the kit ($rtw)" ("$rtw" -match "True\|True\|$([regex]::Escape((Join-Path $k '.rt2')))")
+# run 1123: a kit key tracked where the tracker wants its native id read as "no testing-doc link"; now: a read keyed task maps it, else refused
+$rvK = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = 'command'; . '$k/skills/crafty/lib.ps1'; Save-TrackerKey ([pscustomobject]@{ id = 'n42'; name = 'AB-CD-007 [Feature] Ui: x' }); `$x = try { Resolve-TrackerId 'AB-CD-008' } catch { 'refused ' + `$_ }; `"`$(Resolve-TrackerId 'AB-CD-007')|`$(Resolve-TrackerId 'n9')|`$(Resolve-TrackerId 'AB-CD-008' -Soft)|`$x|`$(Test-KitHeldLine 'ATTENTION AB-CD-007: MRs merged, task id not readable: x' @('AB-CD-007'))`"" 2>&1 | Out-String
+$gtx = Get-Content (Join-Path $k 'skills/crafty/adapters/process_gates.ps1') -Raw
+Expect "tracker ids: a kit key -> the native id a read recorded; unknown key refused with the hint (url: kept); an unread task says 'task id not readable', a held one drops that line ($($rvK.Trim()))" ($rvK.Trim() -match '^n42\|n9\|AB-CD-008\|refused .*AB-CD-008 is a kit key, not a command task id: pass the native id.*\|True$' -and $gtx -match 'task id not readable: ')
 Remove-TestKit $k
 Complete-Tests

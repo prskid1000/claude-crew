@@ -18,8 +18,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
   HTML report), ui_ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L160 seat · L234 api · L483 users · L615 finalize · L1156 results · L1189 retest ·
-  L1246 prepare
+Sections: L29 lanes · L43 report · L160 seat · L234 api · L487 users · L621 finalize · L1162 results · L1195 retest ·
+  L1252 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -248,11 +248,15 @@ function Get-TargetLocalEnv([string]$Name) {
   $urls = "$((Get-KitMember $t 'web')) $((Get-KitMember $t 'api'))"; if (-not $urls.Trim()) { return '' }
   "$(@(Get-KitEnvyLanes | Where-Object { $_.lane -eq 1 -and @((Get-KitProps $_.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }).Count })[0].env)"
 }
-function Get-LaneTarget($cfg, [string]$name) {
-  $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
+# '<target>-<bird>' / '<target><k>' -> @{ base; k } when that base target exists, else $null
+function Get-LaneBase($targets, [string]$name) {
   $bk = 0; if ($name -match '^(?<b>.+)-(?<bd>[a-z]+)$') { $bk = @(1..40 | Where-Object { "$(Get-KitBirdName $_)" -ieq $Matches.bd })[0] }
   if ($bk) { $tb = $Matches.b; $k = [int]$bk } elseif ($name -match '^(?<b>.+?)(?<k>\d+)$') { $tb = $Matches.b; $k = [int]$Matches.k } else { return $null }
-  if (-not (Get-KitMember $cfg.targets $tb) -or -not (Test-Path -LiteralPath $envy)) { return $null }
+  if (Get-KitMember $targets $tb) { @{ base = $tb; k = $k } }
+}
+function Get-LaneTarget($cfg, [string]$name) {
+  $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
+  $lb = Get-LaneBase $cfg.targets $name; if (-not $lb -or -not (Test-Path -LiteralPath $envy)) { return $null }; $tb = $lb.base; $k = $lb.k
   $base = (Get-KitMember $cfg.targets $tb); if ($k -eq 1) { return $base }; $urls = [string](@($base.web, $base.api) -join ' ')
   $lanes = Get-KitEnvyLanes
   foreach ($g in @($lanes | Where-Object { $_.lane -eq 1 })) {
@@ -541,6 +545,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $tf = Get-PokeyTargets; $t = $tf.data.targets[$Target]
+# list on a lane (<target>-<bird>): its logins are the base target's (create / deactivate keep the exact target)
+if (-not $t -and $Action -eq 'list' -and ($lb = Get-LaneBase $tf.data.targets $Target)) { $Target = $lb.base; $t = $tf.data.targets[$Target] }
 if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ')" }
 $made = if ($t.created -is [Collections.IDictionary]) { $t.created } else { [ordered]@{} }
 if ($Action -eq 'list') {

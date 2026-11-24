@@ -20,9 +20,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L38 paths · L135 state · L192 kitlog · L291 load · L753 lint · L1165 README graph · L1272 lint command · L1553 audit ·
-  L1701 registry · L2033 arch lint · L2306 prose · L2486 sections · L2616 budget · L2632 migrate · L2780 plugins ·
-  L2837 state lint · L3025 main
+Sections: L38 paths · L135 state · L192 kitlog · L294 load · L756 lint · L1168 README graph · L1275 lint command · L1556 audit ·
+  L1704 registry · L2036 arch lint · L2309 prose · L2489 sections · L2619 budget · L2635 migrate · L2783 plugins ·
+  L2840 state lint · L3028 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -264,7 +264,10 @@ def audited(script, argv, cli):
         def write(self, s):
             if sum(map(len, said)) < 2000:
                 said.append(s)
-            return real_err.write(s)
+            try:
+                return real_err.write(s)
+            except (OSError, ValueError):   # a gone or invalid stderr (Errno 22 on Windows) never fails the command (retro 2026-11-23: devtools.py doc)
+                return len(s)
 
         def __getattr__(self, name):
             return getattr(real_err, name)

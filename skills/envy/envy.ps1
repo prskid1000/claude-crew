@@ -2033,6 +2033,8 @@ if ($EnvName) { $EnvName = ConvertFrom-KitLaneLabel $EnvName }   # -Env takes th
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
 if ($EnvName) { $EnvName = Resolve-EnvAlias $EnvName }
+# release without -Env: the env (lane) the agent leases (retro 2026-11-23: release needed -Env)
+if (-not $EnvName -and $Action -eq 'release') { $relHeld = @(EnvNames | Where-Object { (Read-State $_).leases.ContainsKey($Agent) }); if ($relHeld.Count -eq 1) { $EnvName = $relHeld[0] } elseif ($relHeld.Count) { throw "-Env needed: $Agent leases $($relHeld -join ', ') (envy.ps1 release -Env <env>)" } }
 if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 $e = $EnvName

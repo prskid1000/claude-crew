@@ -10,7 +10,7 @@ function Get-GateHeap([string]$Kind, [double[]]$Peaks, [double]$NeedGB, [double]
   if ($Kind -eq 'cypress' -and -not $env:ELECTRON_EXTRA_LAUNCH_ARGS) { $env:ELECTRON_EXTRA_LAUNCH_ARGS = $script:KitVocab.chromeQuietArgs -join ' ' }
   if (-not $tool) { return $null }
   if (-not $env:GRADLE_OPTS) { $env:GRADLE_OPTS = "-Dorg.gradle.workers.max=$([int](Get-KitParam 'gate.gradleWorkers'))" }
-  $minGB = [double](Get-KitSetting 'gate.heapMinGB' 4)
+  $minGB = [double](Get-KitParam 'gate.heapMinGB')
   $start = [double](Get-KitSetting "gate.startHeapGB.$tool" @{ gradle = 12; maven = 8; node = 4 }[$tool])
   $peakMax = ($Peaks | Select-Object -Last 5 | Measure-Object -Maximum).Maximum
   # G1 free-ratios let the learned peak fall

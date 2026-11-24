@@ -633,7 +633,7 @@ def exclude_in_workspace(paths):
     if not (WORKSPACE / '.git').exists():
         return
     import subprocess
-    r = subprocess.run(['git', '-C', str(WORKSPACE), 'rev-parse', '--git-path', 'info/exclude'], capture_output=True, text=True, timeout=30)
+    r = subprocess.run(['git', '-C', str(WORKSPACE), 'rev-parse', '--git-path', 'info/exclude'], capture_output=True, text=True, timeout=kit_param('flow.gitTimeoutSec'))
     if r.returncode:
         return
     ex = Path(r.stdout.strip()) if Path(r.stdout.strip()).is_absolute() else WORKSPACE / r.stdout.strip()

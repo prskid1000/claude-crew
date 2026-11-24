@@ -30,7 +30,7 @@ $w1 = Test-KitWake; $s = Read-KitParams; $s.boot = (Get-Date).AddDays(-3).ToStri
 # registry: a config key's default, a kit.local.json pin, an unknown key
 "reg:$(Get-KitParam 'supervise.stuckMinutes'):$(Get-KitParam 'logs.keepDays' $null signals):$([int](Get-KitParam 'no.such.key')):$((Get-KitParamSpec 'idle.beatMinutes').how):$(Get-KitParam 'supervise.ramCleanupPct')"
 # K99 (retro 2026-11-20): the tidy and storage literals are registry keys with their old values
-"k99:$((@('tidy.windowDays', 'tidy.busyBeatMinutes', 'tidy.regressionSimilarity', 'tidy.judgeMinutes', 'storage.dbDownRetryMinutes', 'storage.dbFastMinutes', 'storage.dbSlowMinutes', 'storage.rescueEveryMinutes', 'storage.topCacheMinutes') | ForEach-Object { Get-KitParam $_ }) -join ',')"
+"k99:$((@('tidy.windowDays', 'tidy.busyBeatMinutes', 'tidy.regressionSimilarity', 'tidy.judgeMinutes', 'storage.dbDownRetryMinutes', 'storage.dbFastMinutes', 'storage.dbSlowMinutes', 'storage.rescueEveryMinutes', 'storage.topCacheMinutes', 'gate.heapMinGB', 'flow.gitTimeoutSec') | ForEach-Object { Get-KitParam $_ }) -join ',')"
 # load tags and wake on an observation
 $t = [datetime]'2026-03-01T08:00'; $env:KIT_NOW = $t.ToString('o')
 @{ load = @{ at = (Get-Date).ToString('o'); availGB = 9.5; cpu = 91; agents = 2 } } | ConvertTo-Json | Set-Content (Get-KitPath supervise-state -Create)
@@ -57,7 +57,7 @@ $env:KIT_NOW = $t.AddMinutes(470).ToString('o'); Add-KitParamObs gate.waitMinute
 Expect "params: owner decision 3: old lines roll into logs-summary once (month, counts, facts, span), retired stay, raw for logs.keepDays; an appender's handle neither blocks nor loses a line ($(@($pr -match '^trim:') -join ' '))" ($pr -contains 'trim:2:kept,new,late:1:signals:2026-03:2:2:2x old a:30:True')
 Expect 'params: the gap since the last retro is a logs.keepDays observation (each trim); a reboot is one trigger' ($pr -contains 'look:2' -and $pr -contains 'wake:|reboot|1')
 Expect 'params: the registry gives config defaults; kit.local.json pins; an unknown key is null' ($pr -contains 'reg:20:30:0:config:85')
-Expect "params: K99 tidy / storage keys keep the old literals ($(@($pr -like 'k99:*')))" ($pr -contains 'k99:14,20,0.4,3,5,5,15,10,5')
+Expect "params: K99 tidy / storage keys keep the old literals ($(@($pr -like 'k99:*')))" ($pr -contains 'k99:14,20,0.4,3,5,5,15,10,5,4,20')
 Expect "params: an observation carries load (busy at cpu 91), host and minutes since a wake ($(@($pr -match '^tags:') -join ' '))" ($pr -contains 'tags:busy:91:5:True')
 Expect "params: raw 14 d, hourly sketches within 2%, past 90 d gone ($(@($pr -match '^win:') -join ' '))" ($pr -contains 'win:1:2:2:True:2')
 Expect "params: a deploy trigger is queued until the cadence minimum passed, then evaluated; p90 per load bucket ($(@($pr -match '^queue:') -join ' '))" ($pr -contains 'queue:deploy:False:True:6')
