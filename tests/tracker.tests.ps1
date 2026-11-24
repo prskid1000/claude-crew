@@ -200,6 +200,6 @@ Expect 'load: a .git/info/exclude stray is no kit file (org-term scan); a localO
 $bl = Px $O board list 2>&1 | Out-String; $blc = $LASTEXITCODE; $bsh = Px $O board show 2>&1 | Out-String
 Expect "board list = board show (an agent's guess), exit 0 ($blc)" ($blc -eq 0 -and $bl -eq $bsh -and $bl -match 'board \(active agents\)')
 # (cap move from workflows) buildy prompts point devy at its own wave commands
-Expect 'devy.md "In a /buildy wave": the commands buildy prompts point to' ((Get-Content (Join-Path $src 'agents/devy.md') -Raw) -match '(?s)In a /buildy wave.*decide ask -Kind envfix.*LOCAL LOOP until 0 open bugs.*never an earlier round removed.*FIX round.*SHIP step.*PIPELINE_FAILED')
+Expect 'devy.md "In a /buildy wave": the commands buildy prompts point to' ((Get-Content (Join-Path $src 'agents/devy.md') -Raw) -match '(?s)ENV-FIX and decision pauses: crafty D2 / D1.*In a /buildy wave.*LOCAL LOOP until 0 open bugs.*never an earlier round removed.*FIX round.*SHIP step.*PIPELINE_FAILED')
 Remove-TestKit $k
 Complete-Tests
