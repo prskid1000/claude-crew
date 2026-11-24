@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L156 transcript tails · L188 supervise sweep · L268 status rows
+# Sections: L6 supervise report · L157 transcript tails · L189 supervise sweep · L269 status rows
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -85,9 +85,10 @@ function Test-KitAckRef([string]$Reason) {
 }
 # an acknowledged one (answered / proven false) hides 24 h
 function Select-KitFlags($Flags, $Acks, [datetime]$Now) {
-  $seen = @{}; $hid = 0; $live = @($Acks.Keys | Where-Object { ($Now - [datetime]$Acks[$_].at).TotalHours -lt 24 })
+  $seen = @{}; $hid = 0; $ackHours = Get-KitParam 'supervise.ackHideHours'; $ackRefHours = Get-KitParam 'supervise.ackRefHours'
+  $live = @($Acks.Keys | Where-Object { ($Now - [datetime]$Acks[$_].at).TotalHours -lt $ackHours })
   $keep = @(foreach ($f in @($Flags)) { $k = Get-KitFlagKey $f.what; if ($seen[$k]) { continue }; $seen[$k] = 1
-      $fk = if ($f.ackNeeds) { @($live | Where-Object { (Test-KitAckRef $Acks[$_].reason) -and ($Now - [datetime]$Acks[$_].at).TotalHours -lt 2 }) } else { $live }
+      $fk = if ($f.ackNeeds) { @($live | Where-Object { (Test-KitAckRef $Acks[$_].reason) -and ($Now - [datetime]$Acks[$_].at).TotalHours -lt $ackRefHours }) } else { $live }
       if ($f.level -ne 'INFO' -and $fk.Count -and (Test-KitAcked $f $fk)) { $hid++; continue }; $f })
   if ($hid) { $keep += [pscustomobject]@{ level = 'INFO'; what = "$hid acknowledged flag(s) hidden (supervise -Ack, 24 h)"; action = 'Nothing to do.' } }
   $keep
@@ -290,15 +291,16 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   $recent = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { -not $_.takenOverBy -and ($Now - [datetime]$_.beat).TotalHours -lt $(if ($_.status -eq 'left') { 2 } else { 6 }) })   # supervise's window
   $runOf = @{}; foreach ($e in $recent) { if ("$($e.transcript)" -match '[\\/]workflows[\\/]([^\\/]+)[\\/]agent-' -and $e.run) { $runOf[$Matches[1]] = $e.run } }
   $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $steps = @{}; $anyRun = @{}; $runSteps = [Collections.Generic.List[object]]::new()
+  $wfIdleMin = Get-KitParam 'supervise.workflowIdleMinutes'; $wfNoStepMin = Get-KitParam 'supervise.workflowNoStepMinutes'
   foreach ($w in @(Get-KitRecentWorkflowDirs $Session)) {   # oldest first: a relaunch's steps win
     $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
     $ev = @(Get-Content $j | ForEach-Object { try { $_ | ConvertFrom-Json -Depth 30 } catch {} }); $jt = (Get-Item $j).LastWriteTime
     $rec = @(Get-KitWorkflowRecords $w $ev $launch); $lr = @($rec | Where-Object { $_.runId -or $_.wfDir })
     $started = @($ev | Where-Object type -eq 'started'); $res = @{}; foreach ($x in $ev | Where-Object type -eq 'result') { $res[$x.agentId] = $x }
     $running = @(Get-JournalRunning $started @($res.Keys)); $seen = [Collections.Generic.List[object]]::new(); $seen.Add($jt)
-    # no end marker: no running step for 2+ min (none ever: 10) = ended, unless paused
+    # no end marker: no running step for workflowIdleMinutes (none ever: workflowNoStepMinutes) = ended, unless paused
     $paused = [bool]@($rec | Where-Object { $_.paused -and -not $_.completed }).Count
-    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($rec | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge 2) -or (-not $started.Count -and ($Now - $jt).TotalMinutes -ge 10))
+    $fin = -not $paused -and ([bool]@($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }).Count -or [bool]@($rec | Where-Object completed).Count -or ($started.Count -and -not $running.Count -and ($Now - $jt).TotalMinutes -ge $wfIdleMin) -or (-not $started.Count -and ($Now - $jt).TotalMinutes -ge $wfNoStepMin))
     $gone = if (-not $fin) { Get-KitWorkflowStop $w $rec }; $live = -not $fin -and -not $gone   # ended runs have no running steps
     if (($Now - $jt).TotalHours -ge $(if ($live) { 48 } else { 2 })) { continue }
     $run = @(@($lr | ForEach-Object run) + $runOf[$w.Name] + $w.Name | Where-Object { $_ })[0]
@@ -328,7 +330,8 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   # a running step of the same name is that agent now
   $trk = (Read-KitTracking).tasks; $txCache = @{}; $byTx = @{}
   # Agent-tool subagent: transcript = the one with its join line "(pass -Session <id> to beat" (a bare id is also quoted), kept; a left one: one scan
-  $txOf = { param($e) if ($e.transcript -or -not $e.session -or ($e.status -eq 'left' -and (($e.txTry -and [datetime]$e.txTry -ge [datetime]$e.beat) -or ($Now - [datetime]$(if ($e.beat) { $e.beat } else { $e.joined })).TotalMinutes -gt 360)) -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt 10)) { return "$($e.transcript)" }
+  $txLeftMin = Get-KitParam 'supervise.transcriptLeftMinutes'; $txRetryMin = Get-KitParam 'supervise.transcriptRetryMinutes'
+  $txOf = { param($e) if ($e.transcript -or -not $e.session -or ($e.status -eq 'left' -and (($e.txTry -and [datetime]$e.txTry -ge [datetime]$e.beat) -or ($Now - [datetime]$(if ($e.beat) { $e.beat } else { $e.joined })).TotalMinutes -gt $txLeftMin)) -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt $txRetryMin)) { return "$($e.transcript)" }
     $k = Get-KitTranscriptKind $e.tool; if (-not $txCache.ContainsKey($k)) { $txCache[$k] = @(Get-KitLiveTranscripts $Now 360 $k) }
     $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Select-String -LiteralPath $_.FullName -SimpleMatch "(pass -Session $($e.session) to beat" -Quiet) })[0]
     # a workflow agent that joined by hand (revy-18 under review:<area>): its step transcript

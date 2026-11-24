@@ -137,9 +137,10 @@ Expect 'supervise: SETTINGS lines until a heartbeat saw them; a manual run leave
 # the sweep-budget WATCH exists before the acks: in lastFlags (what -Ack matches), hidden once acked
 & $J @{ logs = @{ keepDays = 30 }; supervise = @{ briefSeconds = 0 } } "$k/skills/crafty/kit.local.json"; $null = pwsh @np $O supervise -Brief 2>$null
 $sbl = @((Read-Json (TkPath $k supervise-state)).lastFlags.what -match '^sweep hit its 0 s budget').Count; $null = pwsh @np $O supervise -Ack 'sweep hit its 0 s budget' -Reason 'test'
-$sbh = Invoke-PsTest sbh ". `$args[0]; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; (Select-KitFlags @([pscustomobject]@{ level = 'WATCH'; what = 'sweep hit its 0 s budget: skipped storage' }) `$a (Get-Date)).what" @($O)
+$sbs = ". `$args[0]; `$a = (Get-Content (Get-KitPath supervise-state) -Raw | ConvertFrom-Json -AsHashtable).acks; (Select-KitFlags @([pscustomobject]@{ level = 'WATCH'; what = 'sweep hit its 0 s budget: skipped storage' }) `$a (Get-Date)).what"
+$sbh = Invoke-PsTest sbh $sbs @($O); $env:KIT_PARAM_SUPERVISE_ACKHIDEHOURS = '0'; $sb0 = Invoke-PsTest sb0 $sbs @($O); $env:KIT_PARAM_SUPERVISE_ACKHIDEHOURS = ''
 & $J @{ logs = @{ keepDays = 30 } } "$k/skills/crafty/kit.local.json"
-Expect "supervise: the sweep-budget WATCH is in lastFlags and -Ack hides it ($sbl; $sbh)" ($sbl -eq 1 -and "$sbh" -match '^1 acknowledged flag')
+Expect "supervise: -Ack hides sweep-budget WATCH ackHideHours" ($sbl -eq 1 -and "$sbh" -match '^1 acknowledged' -and "$sb0" -match '^sweep hit')
 # supervise collision words; -Ack from -Brief cells (wrap spaces, \|, one cell); refs (UNTRACKED MR) kept, a new MR flags
 $ac = Invoke-PsTest ack @'
 . $args[0]; "cx:$(Test-KitCollision 'H6a overwrote MR !8543 description with another agent''s body file from /tmp; halted the push')$(Test-KitCollision 'Halted: another agent is editing the same worktree')"

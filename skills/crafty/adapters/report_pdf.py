@@ -3,6 +3,7 @@
 {in} {out}), kept like markdown. Loaded by devtools.py from skills/crafty/adapters/."""
 import os, shutil, subprocess, sys
 from pathlib import Path
+from kitbag import kit_param   # devtools.py put the kitbag folder on sys.path
 
 dt = None
 
@@ -25,15 +26,16 @@ def publish(a):
     src = os.path.abspath(dt._html_of(a))
     out = os.path.abspath(os.path.splitext(a['path'])[0] + '.pdf')
     cmd = dt.RCFG.get('pdfCommand')
+    tmo = kit_param('reports.pdfTimeoutSec')
     if os.path.exists(out):
         os.remove(out)
     if cmd:
-        r = subprocess.run(cmd.replace('{in}', dt._q(src)).replace('{out}', dt._q(out)), shell=True, capture_output=True, text=True, errors='replace', timeout=180)
+        r = subprocess.run(cmd.replace('{in}', dt._q(src)).replace('{out}', dt._q(out)), shell=True, capture_output=True, text=True, errors='replace', timeout=tmo)
     else:
         browser = _browser() or sys.exit('pdf: no Chrome / Chromium / Edge: install one or set reports.pdfCommand')
         quiet = [*dt.VOCAB.get('chromeQuietArgs', []), '--disk-cache-size=1']   # the shared list: no model downloads
         r = subprocess.run(browser + ['--headless', '--disable-gpu', *quiet, '--no-pdf-header-footer', '--print-to-pdf=' + out, Path(src).as_uri()],
-                           capture_output=True, text=True, errors='replace', timeout=180)
+                           capture_output=True, text=True, errors='replace', timeout=tmo)
     if not os.path.isfile(out):
         sys.exit(f'reports.type pdf: {out} not written: {(r.stdout + r.stderr)[-300:]}')
     return dt.keep_doc(a['title'], out, a['keep'])
