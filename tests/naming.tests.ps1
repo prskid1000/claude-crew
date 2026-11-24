@@ -31,7 +31,7 @@ $bad = @{ key = 'WEB-12'; item = 'SHOP-CAT-004.2'; case = 'T1'; title = '[Featur
 $gk = @($good.Keys | Where-Object { (Kb naming check $_ $good[$_]).code -ne 0 }); $bk = @($bad.Keys | Where-Object { (Kb naming check $_ $bad[$_]).code -eq 0 })
 Expect "check: 13 standard names pass, 13 ad hoc ones fail (good failing: $($gk -join ','); bad passing: $($bk -join ','))" ($gk.Count -eq 0 -and $bk.Count -eq 0)
 $ua = Kb naming check key SHOP-ORD-001; $ub = Kb naming check area area-ORD
-Expect 'check: an unregistered AREA is named in the refusal; area-ORD is a numbered area id' ($ua.code -eq 1 -and $ua.out -match 'unknown AREA ORD' -and $ub.out -match 'NUMBERED')
+Expect 'check: unregistered AREA named; area-ORD numbered' ($ua.code -eq 1 -and $ua.out -match 'unknown AREA ORD' -and $ub.out -match 'NUMBERED')
 
 # ---- make: names from parts fit their own check
 $mt = Kb naming make title key=SHOP-CAT-004 type=Feature product=SHOP area=CAT 'outcome=Shop catalogue public page (api, web)'; $mb = Kb naming make branch type=feat key=SHOP-CAT-004 'slug=Public catalogue page'
@@ -183,7 +183,7 @@ Expect 'lint OLD-NAME: adapters/<snake stem> without an extension is the old nam
 Remove-Item $nfA, $nfH, $nfK, $nfD, $nfL, (Join-Path $k 'skills/crafty/hook_two.ps1'); if ($null -ne $nfS0) { Set-Content $nfS $nfS0 -NoNewline } else { Remove-Item $nfS }
 Set-Content "$lc.orig" '{}'; Set-Content "$lc.bak" '{}'; Set-Content "$lc.bak-0042" '{}'; $lw = Kb lint $k --warn
 $bkOut = pwsh -NoProfile -Command ". '$(Lib)'; Get-KitBakName '$lc'"; $bkPrev = Test-Path "$lc.bak.prev"
-Expect "backups: <file>.bak, the one before -> .bak.prev; NAME-BACKUP flags .orig, never .bak / old .bak-<n> ($bkOut)" ($bkOut -eq "$lc.bak" -and $bkPrev -and
+Expect "backups: .bak, older .bak.prev; NAME-BACKUP flags .orig ($bkOut)" ($bkOut -eq "$lc.bak" -and $bkPrev -and
   $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.orig:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak(-0042)?:')
 
 # run lineage: a fresh agent of the same type on the next suffix run (kit-x-1520c -> kit-x-1520d) continues the handoff; another run does not
@@ -199,7 +199,7 @@ $d2 = & $bj @('-Type', 'devy', '-Run', 'buildy-20261123-01', '-Area', 'area-CAT'
 $kc = & $bj @('-Type', 'kitty', '-Run', 'kitty-build-20261123-01', '-Area', 'kit'); $null = pwsh -NoProfile -File $O board msg -Agent t -To kitty-kitty-build-20261123-01 -Text 'via alias'
 $kcIn = pwsh -NoProfile -File $O board inbox -Agent $kc.id | Out-String; $co = & $bj @('-Type', 'coordinator')
 $null = pwsh -NoProfile -File $O board join -Type devy -Agent api -Run buildy-old -Area api; $lg = & $bj @('-Type', 'devy', '-Run', 'buildy-old', '-Area', 'api')
-Expect "board join: <role>-<area>; the next phase of a run's area keeps it; another area its own; kitty (area kit) <role>-<n>; <type>-<run> msg reaches it; the coordinator keeps its name; a live legacy row keeps its id ($($d1.id) $($d2.id) $($d3.id) $($kc.id))" (
+Expect "board join: <role>-<area>, kept by the run's area; kitty <role>-<n>; <type>-<run> msg reaches it; coordinator and a live legacy row keep theirs ($($d1.id) $($d2.id) $($d3.id) $($kc.id))" (
   $d1.id -eq 'devy-cat' -and $d2.id -eq $d1.id -and $d3.id -eq 'devy-pay' -and $kc.id -match '^kitty-[1-9]\d*$' -and $kcIn -match 'via alias' -and -not $co.id -and $co.out -match 'SESSION coordinator-[0-9a-f]{8}' -and $lg.id -eq 'api')
 Set-JsonFile (Join-Path (TkPath $k launches -Create) 'self-buildy-n3.json') @{ script = 'buildy.js'; run = 'buildy-20261123-01'; at = '2026-11-23T10:00:00.000Z'; args = @{ brief = 'b.md'; label = 'SHOP-CAT-004 public price list' } }
 $qd = Join-Path (TkPath $k qa-runs -Create) 'testy-20261123-02'; Set-JsonFile (Join-Path $qd 'run.json') @{ label = 'SHOP-PAY-001 card refunds'; started = '2026-11-23T10:00:00.000Z' }
@@ -230,7 +230,7 @@ print(json.dumps({'ids': [a['id'] for a in s['agents']], 'dep': s['agents'][0]['
 "@
 $wv = & $py -X utf8 $wpy (Join-Path $k 'skills/crafty') 2>&1 | Select-Object -Last 1 | ConvertFrom-Json
 $arC = @('area-ASK-2', 'ask-prompts', 'ask-customer-edits') | ForEach-Object { (Kb naming check area $_).code }
-Expect "wave-brief ids: <area>-<what it covers> (cat-price; no area words: cat), pay, a keyless X9 kept; deps and contracts renamed; check refuses area-ASK-2 and > 12 chars ($($wv.ids -join ',') · $($arC -join ',') · $($wv.label))" (
+Expect "wave-brief ids by topic, X9 kept; deps, contracts renamed; area-ASK-2 / long refused ($($wv.ids -join ',') · $($arC -join ','))" (
   ($wv.ids -join ',') -eq 'cat-price,cat,pay,X9' -and ($arC -join ',') -eq '1,0,1' -and $wv.dep[0] -eq 'pay' -and $wv.con.producer -eq 'pay' -and $wv.con.consumers -eq 'cat-price, X9' -and $wv.label -eq 'SHOP-CAT-004 public price list for guests')
 # tidy: the prep step returns the run id (kitbag.py naming next id tidy); worktree, branch and retro file carry it
 $jsT = @'
@@ -238,7 +238,7 @@ const { calls, agent } = _mock((prompt, o) => o.label === 'prep' ? { ok: true, r
 run({ kitDir: 'C:/k' }, agent, _n, _n, null).then(() => { const j = calls.find((c) => /Kind retro/.test(c.prompt)) || { prompt: '' }
  console.log(`tidy-run:${/naming next name tidy/.test(calls[0].prompt) && /-Branch kit\/tidy-2 -Target main -Name tidy-2;/.test(j.prompt) && /\/tidy-2\.md\./.test(j.prompt)}`) }).catch(_err)
 '@
-Expect-Each (Invoke-Js nm-tidy $jsT (Join-Path $src 'workflows/tidy.js')) 'tidy: the run name from the prep step: #' 'tidy-run' -Show 8
+Expect-Each (Invoke-Js nm-tidy $jsT (Join-Path $src 'workflows/tidy.js')) 'tidy: run name from prep: #' 'tidy-run' -Show 8
 # a reset counter never hands out an id live on the board (retro tidy-20261123-01): agent ids at join, run ids at naming next id
 $lvBd = TkPath $k board -Create; Remove-Item (TkPath $k naming) -ErrorAction SilentlyContinue
 & $J @{ agent = 'rechy-1'; type = 'rechy'; session = 'lv-a'; run = 'testy-retest'; status = 'working'; joined = (Get-Date).ToString('o'); beat = (Get-Date).ToString('o') } (Join-Path $lvBd 'lv-a.json')
@@ -246,7 +246,7 @@ $lvJoin = & $bj @('-Type', 'rechy', '-Run', 'lv-run'); $null = pwsh -NoProfile -
 $nm = @(@('testy', 'retest'), @('testy', 'retest'), @('buildy', 'ask bugs 2026-11-24'), @('kitty', 'Kitty naming fixes')) | ForEach-Object { (Kb naming next name @_).out }
 $dcd = TkPath $k decisions -Create; Set-Content (Join-Path $dcd 'dec-0012.json') '{}'; $dec = pwsh -NoProfile -Command ". '$(Lib)'; Resolve-KitIdAlias dec-12 '$dcd'; Resolve-KitIdAlias dec-0012 '$dcd'; Resolve-KitIdAlias dec-13 '$dcd'"
 $pdc = @('buildy-0042', 'dec-0012', 'buildy-ask', 'dec-12') | ForEach-Object { (Kb naming check $(if ($_ -like 'dec*') { 'id' } else { 'run' }) $_).code }
-Expect "names: live rechy-1 / testy-retest skipped (rechy-2, rlive-1, testy-retest-2); words, no date, <= 12 chars; old dec-0012 resolves from dec-12; padded ids refused ($($lvJoin.id) $($lvRun.out) $($nm -join ' ') | $($dec -join ' ') | $($pdc -join ','))" (
+Expect "names: live ids skipped; words, no date; dec-12 finds dec-0012; padded refused ($($lvJoin.id) $($nm -join ' ') | $($dec -join ' ') | $($pdc -join ','))" (
   $lvJoin.id -eq 'rechy-2' -and $lvRun.out -eq 'rlive-1' -and ($nm -join ' ') -eq 'testy-retest-2 testy-retest-3 buildy-ask kitty-naming' -and ($dec -join ' ') -eq 'dec-0012 dec-0012 dec-13' -and ($pdc -join ',') -eq '1,1,0,0')
 Remove-TestKit $k
 Complete-Tests
