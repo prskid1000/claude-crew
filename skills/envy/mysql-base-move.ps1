@@ -17,7 +17,7 @@ templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (co
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L42 names · L49 ini and config edit · L144 rename · L247 checks · L296 apply · L359 search data
+Sections: L42 names · L49 ini and config edit · L145 rename · L248 checks · L297 apply · L360 search data
 #>
 param([string[]]$Targets, [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
   [string]$Bin, [string]$Service, [int]$VerifyPort = 3399,
@@ -135,9 +135,10 @@ if ($Config) {
   if (-not $Targets) { 'REFUSED: no targets: pass -Targets <env>:<port>,... or set localEnv.baseMove.targets'; exit 1 }
   $ch = Update-BaseMoveConfig $cfg $Targets $DonorPort $Lanes
   $ch | ForEach-Object { "config: $_" }
-  if ($Apply) { $bakN = "$(& python -X utf8 (Join-Path $KitDir 'skills/bossy/kitbag.py') naming next id bak)".Trim() -replace '^bak-'   # NO-DATE: the kit's one counter
-    if ($bakN -notmatch '^\d{4,}$') { "REFUSED: no backup number from kitbag.py naming next id bak ('$bakN'): nothing written"; exit 1 }
-    Copy-Item -LiteralPath $ConfigFile "$ConfigFile.bak-$bakN" -Force; ($cfg | ConvertTo-Json -Depth 50) | Set-Content -LiteralPath $ConfigFile -Encoding utf8; "written: $ConfigFile" } else { 'dry run: -Config -Apply writes it' }
+  if ($Apply) { $pyExe = if ($IsWindows) { 'python' } else { 'python3' }; $bakF = ''   # NO-DATE: <file>.bak-<nnnn> from the kit's one counter, a free one
+    for ($bi = 0; $bi -lt 20 -and (-not $bakF -or (Test-Path -LiteralPath $bakF)); $bi++) { $bakN = "$(& $pyExe -X utf8 (Join-Path $KitDir 'skills/bossy/kitbag.py') naming next id bak)".Trim() -replace '^bak-'
+      if ($bakN -notmatch '^\d{4,}$') { "REFUSED: no backup number from kitbag.py naming next id bak ('$bakN'): nothing written"; exit 1 }; $bakF = "$ConfigFile.bak-$bakN" }
+    Copy-Item -LiteralPath $ConfigFile $bakF; ($cfg | ConvertTo-Json -Depth 50) | Set-Content -LiteralPath $ConfigFile -Encoding utf8; "written: $ConfigFile" } else { 'dry run: -Config -Apply writes it' }
   exit 0
 }
 
@@ -216,12 +217,11 @@ if ($Rename -or $Rollback) {
   'rename plan:'; Show-Plan (@(if ($nnRows.Count) { "${ConfigFile}: localEnv.laneIds nn$(@($keyMoves | ForEach-Object { ", envs.$($_['from']) -> envs.$($_['to'])" }) -join '')" }) + @($tgKeys | ForEach-Object { "${PokeyFile}: target $($_['from']) -> $($_['to'])" }) + @($mysqlMoves | ForEach-Object { "$($_['oldDir']) -> $($_['newDir']) (+ ini rewritten, lane-ready.txt)" }) + @($moves | ForEach-Object { "$($_['from']) -> $($_['to'])" }))
   if ($badR.Count) { 'REFUSED:'; Show-Plan $badR; if ($Apply) { exit 1 } }
   if ($Apply -and ($moves.Count -or $mysqlMoves.Count -or $tgKeys.Count -or $nnRows.Count)) {
-    New-Item -ItemType Directory -Force $bak | Out-Null; $cj = $null
-    if ($nnRows.Count) {   # the config last-but-one: ids, then the keys envy reads them by
-      Copy-Item -LiteralPath $ConfigFile "$bak/kit.local.json" -Force; $cj = @{ file = $ConfigFile; backup = "$bak/kit.local.json" }
-      $ne = [ordered]@{}; foreach ($n in @($envsR.Keys)) { $hit = @($keyMoves | Where-Object { $_['from'] -eq $n })[0]; $ne[$(if ($hit) { $hit['to'] } else { $n })] = $envsR[$n] }
-      $cfgR['localEnv']['envs'] = $ne; $cfgR['localEnv']['laneIds'] = 'nn'; $cfgR | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $ConfigFile -Encoding utf8
-    }
+    New-Item -ItemType Directory -Force $bak | Out-Null; $cj = $null; $pj = $null
+    # backups and the journal before the first change: a failed step leaves -Rollback all it needs (it undoes only what happened)
+    if ($nnRows.Count) { Copy-Item -LiteralPath $ConfigFile "$bak/kit.local.json" -Force; $cj = @{ file = $ConfigFile; backup = "$bak/kit.local.json" } }
+    if ($tgKeys.Count) { Copy-Item -LiteralPath $PokeyFile "$bak/targets.local.json" -Force; $pj = @{ file = $PokeyFile; backup = "$bak/targets.local.json" } }
+    [ordered]@{ moves = $moves; mysql = $mysqlMoves; pokey = $pj; config = $cj } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jf -Encoding utf8
     foreach ($m in $moves) { Move-Item -LiteralPath $m['from'] $m['to'] }
     foreach ($m in $mysqlMoves) {
       Move-Item -LiteralPath $m['oldDir'] $m['newDir']
@@ -232,13 +232,14 @@ if ($Rename -or $Rollback) {
       }
       $rd = "$($m['newDir'])/lane-ready.txt"; if (Test-Path -LiteralPath $rd) { (Get-Content -LiteralPath $rd -Raw).Replace($m['oldDir'], $m['newDir']).Replace($m['oldIni'], $m['newIni']) | Set-Content -LiteralPath $rd -NoNewline }
     }
-    $pj = $null
     if ($tgKeys.Count) {
-      Copy-Item -LiteralPath $PokeyFile "$bak/targets.local.json" -Force; $pj = @{ file = $PokeyFile; backup = "$bak/targets.local.json" }
       $nt = [ordered]@{}; foreach ($n in @($pk['targets'].Keys)) { $hit = @($tgKeys | Where-Object { $_['from'] -eq $n })[0]; $nt[$(if ($hit) { $hit['to'] } else { $n })] = $pk['targets'][$n] }
       $pk['targets'] = $nt; $pk | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $PokeyFile -Encoding utf8
     }
-    [ordered]@{ moves = $moves; mysql = $mysqlMoves; pokey = $pj; config = $cj } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jf -Encoding utf8
+    if ($nnRows.Count) {   # the config last: the ids, then the keys envy reads them by
+      $ne = [ordered]@{}; foreach ($n in @($envsR.Keys)) { $hit = @($keyMoves | Where-Object { $_['from'] -eq $n })[0]; $ne[$(if ($hit) { $hit['to'] } else { $n })] = $envsR[$n] }
+      $cfgR['localEnv']['envs'] = $ne; $cfgR['localEnv']['laneIds'] = 'nn'; $cfgR | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $ConfigFile -Encoding utf8
+    }
     "renamed $($moves.Count) file(s)/dir(s) and $($mysqlMoves.Count) mysql lane(s); journal $jf (-Rollback undoes it)"
   } elseif (-not $Apply) { 'dry run: -Rename -Apply moves them' }
   exit 0
@@ -379,6 +380,6 @@ Show-Plan @(
   '3. pwsh -NoProfile -File mysql-base-move.ps1 -Rename -Apply   (lane dirs + inis to bird names; -Rename -Rollback undoes it)',
   $(if ($Service) { "4. net stop $Service ; sc config $Service start= demand   (rollback: sc config $Service start= auto ; net start $Service)" } else { '4. stop the OS MySQL service and set it to manual start (none named: -Service)' }),
   '5. pwsh -NoProfile -File mysql-base-move.ps1 -Config -Apply   (kit.local.json; envy resolves {bird}), then envy.ps1 envs / doctor',
-  "6. $((@($plan.env) | ForEach-Object { "envy.ps1 up -Env $_ -Services mysql" }) -join ' ; ') ; then seed each (re-marks baseline-<date>)",
+  "6. $((@($plan.env) | ForEach-Object { "envy.ps1 up -Env $_ -Services mysql" }) -join ' ; ') ; then seed each (re-marks baseline-<nnnn>)",
   "7. the DB client config: $((@($plan) | ForEach-Object { "$($_.env) port $($_.port)" }) -join ', '); each answers only while its env runs")
 exit 0

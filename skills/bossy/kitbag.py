@@ -1574,7 +1574,7 @@ def lane_ids_shown(page, kit=None):
     "lane "), lanes from kit.local.json localEnv.envs (lanes.max); each hit with its context. No lanes configured: none."""
     le = local_config(kit or KIT_DIR, 'kit.local.json').get('localEnv') or {}
     envs = le.get('envs') or {}
-    alts = [r'(?<![\w·./\\-])lane-\d{2,}(?= · )|(?<=env )lane-\d{2,}(?![\w·./\\-])'] if envs and le.get('laneIds') == 'nn' else []   # N3 ids, a lane context only (phone lanes may share them)
+    alts = [r'(?<![\w·./\\-])(?<!phone )lane-\d{2,}(?= · )|(?<=env )lane-\d{2,}(?![\w·./\\-])'] if envs and le.get('laneIds') == 'nn' else []   # N3 ids, a lane context only (phone lanes may share them)
     for e, v in envs.items():
         q = re.escape(e)
         alts.append(rf'(?<![\w·./\\-]){q}(?= · )|(?<=env ){q}(?![\w·./\\-])|(?<=lane ){q}(?![\w·./\\-])')

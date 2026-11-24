@@ -63,7 +63,7 @@ function Ensure-Worktree([string]$e, $r) {
   if (Test-LaneWorktree $r.wt) { return }
   if (Test-Path -LiteralPath $r.wt) {   # a plain folder or a dead .git link: moved aside (cleanup sweep judges it), made again below
     if (-not (Test-DeadLaneDir $r.wt)) { throw "[$e] $($r.wt) has a live .git but is not its own git worktree (toplevel: $("$(git -C $r.wt rev-parse --show-toplevel 2>&1)".Trim())): check it by hand (never moved)" }
-    $aside = "$($r.wt).stale-$(Get-Date -Format yyyyMMddHHmmssfff)-$((Get-Random -Maximum 65536).ToString('x4'))"   # unique: Move-Item into an existing folder nests
+    $aside = "$($r.wt).stale-$(New-KitId stale -Number)"   # unique (the counter): Move-Item into an existing folder nests
     Move-Item -LiteralPath $r.wt $aside; git -C $co worktree prune 2>$null | Out-Null
     Write-Warning "[$e] $($r.wt) was not its own git worktree: moved to $aside" }
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
@@ -136,7 +136,7 @@ function Get-Doctor([string]$e, [switch]$Fix) {
   elseif (Get-Command Get-DbMarkDoctor -ErrorAction SilentlyContinue) { foreach ($x in @(Get-DbMarkDoctor $e) + @(Get-DbTempDoctor $e) + @(if (Get-Command Get-DbExpectDoctor -ErrorAction SilentlyContinue) { Get-DbExpectDoctor $e }) + @(if (Get-Command Get-DbPoolDoctor -ErrorAction SilentlyContinue) { Get-DbPoolDoctor $e })) { & $add $x.level $x.what } }
   if ((MarksOn $e) -and -not $dbDown) {
     $st0 = Read-State $e; $b = @($st0.marks | Where-Object { $_ -and $_.kind -eq 'baseline' })[-1]
-    if (-not $b) { & $add 'WARN' "no baseline mark: envy.ps1 seed -Env $e (a green seed marks baseline-<date>)" }
+    if (-not $b) { & $add 'WARN' "no baseline mark: envy.ps1 seed -Env $e (a green seed marks baseline-<nnnn>)" }
     elseif ($st0.binlog.days -and ((Get-Date) - [datetime]$b.at).TotalDays -gt [double]$st0.binlog.days - 3) { & $add 'WARN' "baseline mark $($b.name) expires with the binlog ($($st0.binlog.days) d): seed -Env $e again" }   # TODO-PARAM (fixed default)
   }
   $f = if ($c.envFile) { [string]$c.envFile } else { Join-Path (Get-KitPath localenv-env) "$($c.group).env" }   # a lane's own file is optional

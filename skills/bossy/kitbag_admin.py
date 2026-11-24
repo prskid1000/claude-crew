@@ -7,7 +7,7 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L57 setup · L178 config · L407 recover · L552 release · L603 cost · L710 registry · L714 scan
+Sections: L16 helpers · L57 setup · L178 config · L410 recover · L555 release · L606 cost · L713 registry · L717 scan
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -226,7 +226,10 @@ def cmd_config(kit, fill, ack=False):
             if tk not in {str(r.get('name')) for r in rps} and not any(e == tk or e.startswith(tk + '-') for e in envs):
                 out('WARN', 'CONFIG-TRIGGER', f'{loc_rel} deploy.triggers.{tk}', 'matches no repos[].name nor repos[].deploys target (exact or <key>-*): never a standing word')
         if changed:
-            bak = osp.join(kit_path('cache', create=True, kit=kit), osp.basename(loc_rel) + '.bak-' + next_id('bak')[4:])   # NO-DATE: <file>.bak-<nnnn>
+            for _ in range(20):   # NO-DATE: <file>.bak-<nnnn>, a free one
+                bak = osp.join(kit_path('cache', create=True, kit=kit), osp.basename(loc_rel) + '.bak-' + next_id('bak')[4:])
+                if not osp.exists(bak):
+                    break
             shutil.copyfile(osp.join(kit, loc_rel), bak)
             with open(osp.join(kit, loc_rel), 'w', encoding='utf-8') as f:
                 json.dump(loc, f, indent=2, ensure_ascii=False)

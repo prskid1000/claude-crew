@@ -4,7 +4,7 @@
 # Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env>-<nnnn> pushed, MR per deploy.mergeMethod, merged on green),
 # or tags it (deploys[].tag, {n} = the deploy counter; -Push pushes the tag). A deploy branch itself is never pushed to. NO-DATE: the time is in
 # the tag message and the commit, never in a ref name; old dated deploy branches still resume.
-# Sections: L8 merge · L100 mr
+# Sections: L8 merge · L101 mr
 # ---- merge: tag or trunk, the merge in a worktree
 function Invoke-DeployMerge {
 param(
@@ -34,7 +34,8 @@ if ($dep.tag) {
   if ($LASTEXITCODE) { "fetch origin $From FAILED (exit ${LASTEXITCODE}: offline or wrong -From): no tag"; exit 1 }   # a stale origin/<From> would ship old code
   if ("$($dep.tag)".Contains('{date}')) { Write-Warning "deploys[].tag $($dep.tag): {date} is retired (no date in a ref name): use {n}; it gives the counter now" }
   for ($tn = 0; $tn -lt 20; $tn++) { $dn = if ("$($dep.tag)" -match '\{(n|date)\}') { New-KitId deploy -Number }; $tag = ([string]$dep.tag).Replace('{n}', $dn).Replace('{date}', $dn)
-    git -C $Repo rev-parse -q --verify "refs/tags/$tag" 2>$null | Out-Null; if ($LASTEXITCODE -or -not $dn) { break } }   # a reset counter skips a taken tag
+    if (-not $dn) { break }; git -C $Repo rev-parse -q --verify "refs/tags/$tag" 2>$null | Out-Null   # a reset counter skips a taken tag, here or on origin
+    if ($LASTEXITCODE -and -not "$(git -C $Repo ls-remote --tags origin "refs/tags/$tag" 2>$null)".Trim()) { break } }
   git -C $Repo tag -a $tag "origin/$From" -m "deploy $To $(Get-KitStamp)"; if ($LASTEXITCODE) { "tag $tag FAILED"; exit 1 }
   if (-not $Push) { "tagged ${tag}: git -C $Repo push origin $tag"; exit 0 }
   git -C $Repo push origin $tag; if ($LASTEXITCODE) { "push of $tag FAILED"; exit 1 }; "pushed $tag"; exit 0

@@ -19,7 +19,7 @@ export const meta = {
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
 2. Short form (preferred): { runDir, kitDir (absolute: every form), only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next> }
 3. Full run.json (+ runDir; also written to <runDir>/run.json for pokey.ps1 finalize):
-{ runDir: '<runtime>/work/qa-runs/<date>-<name>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
+{ runDir: '<runtime>/work/qa-runs/<run>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
  envLines: ['Web: ...'], tracker: { list, parent: '<ask of parentless tasks>', owner, closeStatus: 'closed' },
  outOfScope: ['<channel>'] (default qa.outOfScope), <lane>Parallel (webParallel, apiParallel): a lane's parallel cap, verify: true (false: no FAIL re-test),

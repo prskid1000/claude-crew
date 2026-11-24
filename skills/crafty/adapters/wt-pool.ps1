@@ -168,7 +168,7 @@ function ConvertTo-KitLaneText([string]$Text) {
   if (-not $Text) { return $Text }
   $dot = '(?:·|&#0*183;|&middot;|(?i:&#x0*b7;))'   # a middle dot, plain or HTML-encoded: a lane already labelled
   if (-not $script:KitLaneRx -or -not [object]::ReferenceEquals($script:KitLaneRx.cfg, $__cfg)) { $al = Get-KitLaneAlias; $script:KitLaneRx = @{ cfg = $__cfg; map =@(foreach ($l in @(@(Get-KitLaneNames) + @($al.Keys) | Sort-Object Length -Descending)) { $lb = Get-KitPoolLabel env $(if ($al.ContainsKey($l)) { $al[$l] } else { $l }); if ($lb -ne $l) { $q = [regex]::Escape($l)
-          , @($(if ($l -match '\d$' -and $l -notmatch '^lane-\d') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= $dot )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|$dot)" }), $lb) } }) } }   # lane-<nn> only in a lane context: a phone lane may share the name
+          , @($(if ($l -match '\d$' -and $l -notmatch '^lane-\d') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$(if ($l -match '^lane-\d') { '(?<!phone )' })$q(?= $dot )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|$dot)" }), $lb) } }) } }   # lane-<nn> only in an env lane context: a phone lane may share the name
   foreach ($m in $script:KitLaneRx.map) { $Text = [regex]::Replace($Text, $m[0], $m[1]) }; $Text }
 # an older scheme's lane ids -> today's (records from before a rename are read through it): laneIds "bird": <env>, <env><k> -> <env>-<bird>;
 # "nn": <env>, <env><k> and <env>-<bird> -> lane-<nn>

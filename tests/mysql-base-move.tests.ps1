@@ -44,6 +44,8 @@ Expect "config edit: hm init clones from the donor :3306 into its own dir, hm2 c
 Expect "config edit: two mysql, two search, two lane-name and one storage.watch line reported; the lane datadirs watched ($($edit.Count))" ($edit.Count -eq 9 -and @($obj.storage.watch) -contains 'D:/s/lanes')
 $after = & { . (Join-Path $kd 'skills/envy/envy.ps1'); @('rm-falcon', 'hm-falcon', 'rm-kestrel', 'hm-kestrel') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what }; "S=$((@($script:LE.envs.'rm-falcon'.services | Where-Object name -eq 'search')[0]).start)" }
 Expect "lane standard: after the edit no breach, search data under the lane folder ($($after -join ' | '))" (@($after).Count -eq 1 -and $after -match 'S=os.bat -Epath.data=D:/s/lanes/search-rm-falcon/data -Epath.logs=D:/s/lanes/search-rm-falcon/logs')
+$cfC = Join-Path $kd 'cfg-copy.json'; Copy-Item $cf $cfC; $cfo = @(pwsh -NoProfile -File $mv -Config -Apply -ConfigFile $cfC 2>&1) -join ' '
+Expect "-Config -Apply: the backup is <file>.bak-<nnnn> (NO-DATE) ($cfo)" ($cfo -match 'written:' -and @(Get-ChildItem $kd -Filter 'cfg-copy.json.bak-*' | Where-Object Name -match '\.bak-\d{4}$').Count -eq 1)
 
 # dry run: plan printed, nothing created; an existing target dir is refused; -Apply without the donor is refused
 $ld = Join-Path $kd 'lanes'; New-Item -ItemType Directory -Force "$ld/mysql-rm-falcon" | Out-Null; Set-Content "$ld/mysql-hm2.ini" ($tpl -join "`n")
@@ -115,6 +117,11 @@ $nnIds = & { . (Join-Path $kd 'skills/crafty/lib.ps1'); $__cfg = $nnCfg; (Get-Ki
 Expect "rename -Ids nn: plan, then lane-02 / lane-11 state, run, log, env file; mysql dir kept; config laneIds nn, envs.shop-kestrel -> lane-02; ids as Get-KitLaneMap ($nnIds)" ($nnDry -match 'laneIds nn, envs\.shop-kestrel -> envs\.lane-02' -and $nnDry -match 'shop-kestrel\.json -> .*lane-02\.json' -and (Test-Path "$wl/lane-02.json") -and (Test-Path "$wl/lane-11.json") -and (Test-Path "$wl/run/lane-02-api.cmd") -and (Test-Path "$lg/lane-02-api.log") -and (Test-Path "$kd/st/lane-02.env") -and (Test-Path "$ln/mysql-shop-kestrel") -and $nnCfg.localEnv.laneIds -eq 'nn' -and $nnCfg.localEnv.envs.'lane-02'.env.K -eq 'v' -and $nnIds -eq 'lane-01,lane-02,lane-11')
 $null = pwsh -NoProfile -File $mv -Rename -Rollback -Lanes $ln -Runtime $rt -ConfigFile $rnn -PokeyFile $pf 2>&1
 Expect 'rename -Ids nn -Rollback: bird names and the config back' ((Test-Path "$wl/shop-kestrel.json") -and (Test-Path "$wl/desk-falcon.json") -and -not (Test-Path "$wl/lane-02.json") -and (Get-Content $rnn -Raw | ConvertFrom-Json).localEnv.laneIds -eq 'bird')
+if ($IsWindows) {   # a move that throws midway (a locked log): the journal is already there, the config untouched, -Rollback restores the moved ones
+  $lk = [IO.File]::Open("$lg/shop-kestrel-api.log", 'Open', 'ReadWrite', 'None'); try { $null = pwsh -NoProfile -File $mv -Rename -Ids nn -Apply -Lanes $ln -Runtime $rt -ConfigFile $rnn -PokeyFile $pf 2>&1; $fc = $LASTEXITCODE } finally { $lk.Dispose() }
+  $fMid = (Test-Path "$wl/lane-02.json") -and (Test-Path "$ln/rename-journal.json") -and (Get-Content $rnn -Raw | ConvertFrom-Json).localEnv.laneIds -eq 'bird'
+  $null = pwsh -NoProfile -File $mv -Rename -Rollback -Lanes $ln -Runtime $rt -ConfigFile $rnn -PokeyFile $pf 2>&1
+  Expect "rename -Ids nn failing midway (exit $fc): journal written first, config untouched, -Rollback restores" ($fc -ne 0 -and $fMid -and (Test-Path "$wl/shop-kestrel.json") -and -not (Test-Path "$wl/lane-02.json")) }
 # pokey: <target>-<bird> resolves (falcon = the base target), an old <target><k> with an explicit <target>-<bird> key warns and resolves
 $pks = Get-Content (Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/pokey.ps1') -Raw
 Expect 'pokey: the bird target name is parsed (falcon = lane 1 = the base target) and an old <target><k> maps to an explicit bird key with a warning' ($pks.Contains('if ($k -eq 1) { return $base }') -and $pks.Contains('old lane target ''$Target'': use $nk'))

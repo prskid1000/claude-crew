@@ -17,7 +17,7 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 
 ## DB marks, restore, seed
 - Mark = a binlog position + the code live then (zero bytes): `mark -Name <n>` by hand, `release-<n>` before each release's
-  code first runs, `use-<agent>` at each new lease, `baseline-<date>` after a green `seed`.
+  code first runs, `use-<agent>` at each new lease, `baseline-<nnnn>` after a green `seed`.
 - Slices: a release with migrations (layers or the target) also keeps the CREATE text of each table its migrations touch
   (`db.migrateSql` = the tool's dry-run SQL; unset: each migration set's pendingSql, e.g. `liquibase update-sql`; else the changed migration files'
   text), the rows its DDL destroys (dropped / retyped column: primary key + column; dropped table: its rows) and every view /
