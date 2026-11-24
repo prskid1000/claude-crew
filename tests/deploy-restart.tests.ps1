@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-tests/deploy-restart.tests.ps1: a fake ssh on PATH answers busy / free; supervise deploy holds; offline.
+tests/deploy-restart.tests.ps1: a fake ssh on PATH answers busy / free; deploy kind verbs (plan, lastDeploy, isRunning, deploy); supervise deploy holds; offline.
 Usage: pwsh -NoProfile -File tests/deploy-restart.tests.ps1 (its tests.ps1 runs this file)
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -69,7 +69,8 @@ $dkI = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pok
   $g = Join-Path (Kd) 'stackrepo'; $null = New-Item -ItemType Directory -Force $g; git -C $g init -q 2>$null; Set-Content (Join-Path $g 'infra.yml') 'Resources: {}'; git -C $g add . 2>$null; git -C $g -c user.email=t@t -c user.name=t commit -qm i 2>$null
   $dkO = [ordered]@{}
   $dkO.mr = (Invoke-KitDeployKind @{ kind = 'branch-mr'; branch = 'rel'; target = 't' } 'isRunning' @{ repo = 'g/a' }) -eq $true -and (Invoke-KitDeployKind @{ kind = 'branch-mr'; branch = 'main'; target = 't' } 'isRunning' @{ repo = 'g/a' }) -eq $false
-  $dkO.tag = (Invoke-KitDeployKind @{ tag = '^v\d'; target = 't' } 'isRunning' @{ repo = 'g/a' }) -eq $true
+  git -C $g tag v1.4.0 2>$null; $dkGkv = ${function:Get-KitValue}; function Get-KitValue($Name, $Default) { if ($Name -eq 'repos') { @(@{ name = 'a'; checkout = $g }) } else { & $dkGkv $Name $Default } }
+  $dkO.tag = (Invoke-KitDeployKind @{ tag = '^v\d'; target = 't' } 'isRunning' @{ repo = 'g/a'; name = 'a' }) -eq $true
   $rf = Join-Path (Get-KitPath deploys -Create) 'running-tx.json'; @{ pid = $PID } | ConvertTo-Json | Set-Content $rf; $live = Test-KitDeployRunning 'tx'
   @{ pid = 999999 } | ConvertTo-Json | Set-Content $rf; $dkO.marker = $live -and -not (Test-KitDeployRunning 'tx') -and -not (Test-KitDeployRunning 'nothing'); Remove-Item $rf
   $sd = Invoke-KitDeployKind @{ awsStack = 'shop'; template = 'infra.yml'; region = 'eu-west-1'; target = 't' } 'deploy' @{ repo = @{ name = 'a'; checkout = $g } }
@@ -77,6 +78,36 @@ $dkI = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pok
   $dkO.apk = (Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'deploy' @{ repo = @{ name = 'app' } }).note -match 'repos\[\]\.checkout of app unset'
   $dkO.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
 Expect-Each $dkI 'deploy kind isRunning / deploy: #' @('mr', 'tag', 'marker', 'stack', 'apk') -Show 6
+# deploy kinds (parity): a plan hint on every kind; lastDeploy from the stack, the lane APK stamp and the deploy branch head (fixtures:
+# no AWS, phone lane or git host here); isRunning = a stack update in progress
+$dkR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1')
+  function aws { "2026-11-20T10:00:00.000Z`tUPDATE_IN_PROGRESS`t2026-01-01T00:00:00Z" }
+  function LaneApk { [pscustomobject]@{ commit = 'abc1234'; built = '2026-11-21T09:00:00' } }
+  function Invoke-HostVerb { param($Verb, $A) if ($Verb -eq 'repo.commit' -and $A.ref -eq 'release') { [pscustomobject]@{ id = 'f00'; committed_date = '2026-11-22T08:00:00Z' } }
+    # run rows without ref (most hosts): the tag verbs ask per tag
+    if ($Verb -eq 'ci.runs') { $global:dkRefs += @("$($A.ref)"); @{ 'v1.3' = @([pscustomobject]@{ status = 'running' }); 'v1.2' = @([pscustomobject]@{ status = 'success'; updated_at = '2026-11-23T07:00:00Z' }) }["$($A.ref)"] } }
+  # tags in the checkout, newest first by date: v1.3, then v1.2; 'nightly' does not match ^v\d
+  $tgr = Join-Path (Kd) 'tagrepo'; $null = New-Item -ItemType Directory -Force $tgr; git -C $tgr init -q 2>$null
+  foreach ($tv in @(@('v1.2', '2026-11-01T10:00:00Z'), @('v1.3', '2026-11-10T10:00:00Z'), @('nightly', '2026-11-20T10:00:00Z'))) { $env:GIT_COMMITTER_DATE = $tv[1]; git -C $tgr -c user.email=t@t -c user.name=t commit -q --allow-empty -m $tv[0] 2>$null; git -C $tgr tag $tv[0] 2>$null }
+  Remove-Item Env:GIT_COMMITTER_DATE; $dkGkv = ${function:Get-KitValue}; function Get-KitValue($Name, $Default) { if ($Name -eq 'repos') { @(@{ name = 'shop'; checkout = $tgr }) } else { & $dkGkv $Name $Default } }
+  # ssh lastDeploy: shaFile stat (sudo when set), else the HEAD reflog time; the remote command is what the host runs; no answer = none
+  function Invoke-BoundedSsh($A, $Sec) { $global:dkSsh = $A[-1]; if ($A -contains 'dead') { return @() }; if ($A[-1] -match 'stat -c') { '1763884800' } else { 'HEAD@{1763971200}' } }
+  $dkK = [ordered]@{}; $st = @{ awsStack = 'shop-api'; target = 't' }; $ld = Invoke-KitDeployKind $st 'lastDeploy'
+  $dkK.stack = $ld.source -eq 'stack shop-api' -and $ld.at.ToUniversalTime().Hour -eq 10 -and (Invoke-KitDeployKind $st 'isRunning') -eq $true
+  $dkK.apk = (Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'lastDeploy').source -eq 'lane APK abc1234'
+  $dkK.branch = (Invoke-KitDeployKind @{ kind = 'branch-mr'; branch = 'release'; target = 't' } 'lastDeploy' @{ repo = 'g/shop' }).source -eq 'branch release head'
+  $global:dkRefs = @(); $tk = @{ tag = '^v\d'; target = 't' }; $tg = Invoke-KitDeployKind $tk 'lastDeploy' @{ repo = 'g/shop'; name = 'shop' }; $tgRefs = $global:dkRefs -join ','
+  $dkK.tag = $tg.source -eq 'CI tag v1.2' -and $tg.at.ToUniversalTime().Hour -eq 7 -and $tgRefs -eq 'v1.3,v1.2' -and (Invoke-KitDeployKind $tk 'isRunning' @{ repo = 'g/shop'; name = 'shop' }) -eq $true -and
+    $null -eq (Invoke-KitDeployKind $tk 'lastDeploy' @{ repo = 'g/x'; name = 'nocheckout' })
+  $s1 = Invoke-KitDeployKind @{ ssh = @{ host = 'h1'; repoDir = '/srv/app/'; shaFile = '/srv/app/REVISION'; sudo = $true }; target = 't' } 'lastDeploy'; $c1 = $global:dkSsh
+  $s2 = Invoke-KitDeployKind @{ ssh = @{ host = 'h1'; repoDir = '/srv/app' }; target = 't' } 'lastDeploy'
+  $dkK.ssh = $s1.source -eq 'ssh h1 /srv/app/REVISION' -and $c1 -match "^sudo -n stat -c %Y '/srv/app/REVISION'" -and ([DateTimeOffset]$s1.at).ToUnixTimeSeconds() -eq 1763884800 -and
+    $s2.source -eq 'ssh h1 HEAD moved' -and $global:dkSsh -match "^git -C '/srv/app' log -g" -and ([DateTimeOffset]$s2.at).ToUnixTimeSeconds() -eq 1763971200 -and
+    $null -eq (Invoke-KitDeployKind @{ ssh = @{ host = 'dead'; repoDir = '/srv/app' }; target = 't' } 'lastDeploy')
+  $dks = @(@{ command = @{ deploy = 'x' }; target = 't' }, @{ ssh = @{ host = 'h1' }; target = 't' }, @{ probe = 'echo x'; target = 't' }, $st, @{ laneApk = $true; target = 't' })
+  $dkK.plan = @($dks | Where-Object { -not "$(Invoke-KitDeployKind $_ 'plan')" }).Count -eq 0 -and "$(Invoke-KitDeployKind $dks[1] 'plan')" -match 'a person deploys on h1'
+  $dkK.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
+Expect-Each $dkR 'deploy kind: #' @('stack', 'apk', 'branch', 'tag', 'ssh', 'plan') -Show 7
 
 $env:PATH = $path0; Remove-Item Env:FAKE_SSH_LOG, Env:FAKE_SSH_MODE
 # supervise deploy holds (moved from deploys.tests.ps1: its token cap)

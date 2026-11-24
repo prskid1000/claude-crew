@@ -23,7 +23,7 @@ $fx = [ordered]@{
  'GET .*/repos/o/gtrepo/branch_protections/main$' = '{"branch_name":"main","enable_force_push":false}'
  'GET .*/repos/o/gtrepo/branch_protections/dev$' = '{"branch_name":"dev","enable_force_push":true}'
  'POST .*/repos/o/gtrepo/branch_protections$' = '{"rule_name":"new"}'
- 'GET .*/repos/o/gtrepo/actions/tasks' = '{"workflow_runs":[{"id":502,"run_number":7,"name":"build","status":"failure","url":"https://git.example/o/gtrepo/actions/runs/7/jobs/1"},{"id":501,"run_number":7,"name":"lint","status":"cancelled"},{"id":400,"run_number":6,"status":"success"}]}'
+ 'GET .*/repos/o/gtrepo/actions/tasks' = '{"workflow_runs":[{"id":502,"run_number":7,"name":"build","status":"failure","url":"https://git.example/api/v1/repos/o/gtrepo/actions/tasks/502"},{"id":501,"run_number":7,"name":"lint","status":"cancelled"},{"id":400,"run_number":6,"status":"success"}]}'
  'GET .*/_apis/git/repositories/azrepo\?' = '{"id":"r-1","project":{"id":"p-1"}}'
  'GET .*accesscontrollists/2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87\?token=repoV2%2Fp-1%2Fr-1%2Frefs%2Fheads%2F720065006c00&' = '{"count":1,"value":[{"acesDictionary":{"d-1":{"allow":0,"deny":8}}}]}'
  'GET .*accesscontrollists/2e9eb7ed-3c0a-47d4-87c1-0ffdd275fd87\?token=repoV2%2Fp-1%2Fr-1%2Frefs%2Fheads%2F6d00610069006e00&' = '{"count":0,"value":[]}'
@@ -102,7 +102,7 @@ $rows = @(
  ,@('jk-failure', { $f = Invoke-HostVerb 'ci.failure' @{ repo = 'jkrepo'; id = 'f/x#9' }; $g = Invoke-HostVerb 'ci.failure' @{ repo = 'jkrepo'; id = 'main#4' }
    "$($f.job)|$($f.id)|$($f.reason)|$($f.excerpt -replace "`n", '~')" -eq 'Test|f/x#9/12|script|script returned exit code 1~ERROR: tests failed' -and "$($g.job)|$($g.id)" -eq 'main|main#4' })
  ,@('gt-failure', { $x = foreach ($t in '502', '501', '400') { $f = Invoke-HostVerb 'ci.failure' ($gt + @{ id = $t }); "$($f.job)|$($f.id)|$($f.reason)|$($f.raw)|$($f.url)" }
-   ($x -join ' ; ') -eq 'build|502|script|failure|https://git.example/o/gtrepo/actions/runs/7/jobs/1 ; lint|501|canceled|cancelled| ; ||||' })
+   ($x -join ' ; ') -eq 'build|502|script|failure|https://git.example/o/gtrepo/actions/runs/7 ; lint|501|canceled|cancelled|https://git.example/o/gtrepo/actions/runs/7 ; ||||' })
  ,@('gt-labels', { $r = Invoke-HostVerb 'mr.labels' ($gt + @{ n = '3'; labels = @('api', 'bug', 'new') }); $po = @($script:http | Where-Object m -eq 'POST')
    ($r.labels -join ',') -eq 'api,bug,new' -and $po.Count -eq 2 -and $po[0].b.name -eq 'new' -and $po[1].u -match '/issues/3/labels$' -and ($po[1].b.labels -join ',') -eq 'api,bug,new' })
  ,@('ci-task-order', { $fa = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Kit 'skills/bossy/adapters/supervise-resources.ps1'), [ref]$null, [ref]$null).FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Test-KitCiTaskJob' }, $true)[0]

@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L253 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L258 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -175,9 +175,14 @@ Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-Deploye
   plan = { param($a) if ($a.d.ssh.deployCmd) { "deploys[].ssh.deployCmd on $($a.d.ssh.host) (bossy.ps1 deploy run -To $($a.d.target))" } else { "a person deploys on $($a.d.ssh.host), then bossy.ps1 deploy record" } } }
 # adapter:deploy-kind/tag
 Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" }; deploy = { param($a) @{ id = "$(__DkMerge $a -Push)" } }
-  # in flight = the newest CI run on a matching tag still running / pending; last deploy = the newest green one (newest first)
-  isRunning = { param($a) $pl = @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; per_page = 20 } | Where-Object { $_ -and "$($_.ref)" -match $a.d.tag })[0]; if ($pl) { (__CiWord "$($pl.status)") -in 'running', 'pending' } }
-  lastDeploy = { param($a) foreach ($pl in @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; per_page = 20 } | Where-Object { $_ -and "$($_.ref)" -match $a.d.tag })) { if ((__CiWord "$($pl.status)") -eq 'success') { return @{ at = ([datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at })).ToLocalTime(); source = "CI tag $($pl.ref)" } } } } }
+  # in flight = the newest matching tag's newest CI run still running / pending; last deploy = the first green run of the newest 3 tags
+  isRunning = { param($a) $pl = @(__DkTagRuns $a 1)[0]; if ($pl) { (__CiWord "$($pl.status)") -in 'running', 'pending' } }
+  lastDeploy = { param($a) foreach ($pl in @(__DkTagRuns $a 3)) { if ((__CiWord "$($pl.status)") -eq 'success') { return @{ at = ([datetime]$(if ($pl.updated_at) { $pl.updated_at } else { $pl.created_at })).ToLocalTime(); source = "CI tag $($pl.tag)" } } } } }
+# the CI runs of the newest $Max tags matching deploys[].tag (repos[].checkout's tags, newest first; ci.runs per tag as its ref: run rows
+# carry no ref on most hosts), each run tagged with its tag; no checkout or tag = none
+function __DkTagRuns($a, [int]$Max) { $co = @(@(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $a.name })[0].checkout; if (-not $co) { return @() }
+  foreach ($tg in @(git -C $co tag --sort=-creatordate 2>$null | Where-Object { $_ -match $a.d.tag } | Select-Object -First $Max)) {
+    @(Invoke-HostVerb 'ci.runs' @{ repo = $a.repo; ref = $tg; per_page = 5 }) | Where-Object { $_ } | ForEach-Object { $_ | Add-Member -Force NoteProperty tag $tg -PassThru } } }
 # adapter:deploy-kind/probe
 Register-KitAdapter 'deploy-kind' 'probe' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "a person deploys, then bossy.ps1 deploy record; the probe $($a.d.probe) checks it" } }
 # adapter:deploy-kind/manual
