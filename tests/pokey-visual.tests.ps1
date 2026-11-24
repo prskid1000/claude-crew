@@ -71,7 +71,7 @@ process.exit(0)
 $bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
 $bmUsers = @('skills/pokey/adapters/media-grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })
 Expect "browser.mjs: every kit Chrome (sessions, ui-check, media grab) starts with no component, model, safe-browsing or background downloads, no disk cache unless browser.diskCache (missing: $($bmUsers -join ', '))" (
-  $bmSrc.Contains("'vocab.json'), 'utf8')).chromeQuietArgs || []") -and $bmSrc.Contains('.quietProfile(`${PROFILES}/') -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains('.pwPage(eng, bo, VIEW, QUIET_ARGS)') -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
+  $bmSrc.Contains("'vocab.json'), 'utf8')).chromeQuietArgs || []") -and $bmSrc.Contains('.quietProfile(`${PROFILES}/') -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains('eg.session(eng, bo, VIEW, QUIET_ARGS)') -and (Get-Content (Join-Path $src 'skills/pokey/adapters/engine-playwright.mjs') -Raw).Contains("['chromium'] = { session: pwPage }") -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
 # one quiet-flag list (vocab.json chromeQuietArgs) for every kit Chromium: browser.mjs, Playwright chromium, report_pdf.py, Cypress Electron (build-heap.ps1, gate kind cypress)
 $qa = @((Get-Content (Join-Path $src 'skills/crafty/vocab.json') -Raw | ConvertFrom-Json).chromeQuietArgs)
 if ($bk) {
