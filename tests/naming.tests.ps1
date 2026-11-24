@@ -160,9 +160,9 @@ Expect 'lint OLD-NAME: the snake_case form of a live kebab-case script is its ol
 Set-Content $nfD 'or adapters/kebab_one'; $ln2 = Kb lint $k
 Expect 'lint OLD-NAME: adapters/<snake stem> without an extension is the old name too' ($ln2.out -match 'OLD-NAME\s+skills/crafty/old-ref.md:1: old name "kebab_one.ps1"')
 Remove-Item $nfA, $nfH, $nfK, $nfD, $nfL, (Join-Path $k 'skills/crafty/hook_two.ps1'); if ($null -ne $nfS0) { Set-Content $nfS $nfS0 -NoNewline } else { Remove-Item $nfS }
-Set-Content "$lc.bak" '{}'; Set-Content "$lc.bak-20261123-100506" '{}'; $lw = Kb lint $k --warn
-Expect "lint --warn: NAME-BACKUP for a backup off <file>.bak-<yyyyMMdd-HHmmss>, the standard one passes (not counted: exit $($lw.code))" (
-  $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.bak:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak-20261123-100506')
+Set-Content "$lc.bak" '{}'; Set-Content "$lc.bak-0042" '{}'; Set-Content "$lc.bak-20261123-100506" '{}'; $lw = Kb lint $k --warn
+Expect "lint --warn: NAME-BACKUP for a backup off <file>.bak-<nnnn> (NO-DATE; the old dated form passes one version) (not counted: exit $($lw.code))" (
+  $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.bak:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak-(0042|20261123-100506)')
 
 # run lineage: a fresh agent of the same type on the next suffix run (kit-x-1520c -> kit-x-1520d) continues the handoff; another run does not
 & $J @{ agent = 'kitty-kit-x-1520c'; type = 'kitty'; session = 'kx-a'; run = 'kit-x-1520c'; status = 'left'; handoffBrief = 'C:/b/kx.md'; joined = (Get-Date).AddHours(-2).ToString('o'); beat = (Get-Date).AddMinutes(-30).ToString('o') } (Join-Path (TkPath $k board -Create) 'kx-a.json')

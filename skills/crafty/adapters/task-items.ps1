@@ -3,7 +3,7 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L7 items · L87 move · L130 status roles · L282 task text · L299 naming · L401 track lines · L406 task ids · L422 order
+# Sections: L7 items · L87 move · L130 status roles · L282 task text · L299 naming · L402 track lines · L407 task ids · L423 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -305,10 +305,11 @@ function Invoke-KitNaming([string[]]$Argv) {
   $lec = $global:LASTEXITCODE; $o = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming @Argv 2>&1 | ForEach-Object { "$_" }); $rc = $global:LASTEXITCODE; $global:LASTEXITCODE = $lec
   if ($rc) { throw "kitbag.py naming $($Argv -join ' '): $($o -join ' ')" }; "$($o[-1])".Trim()
 }
-# an id from the one locked counter per kind: <kind>-<nnnn>, never a date; -Dir: skips one whose <id>.json exists (a reset counter)
-function New-KitId([string]$Kind, [string]$Dir) {
+# an id from the one locked counter per kind: <kind>-<nnnn>, never a date (names of refs, reports, evidence, backups too); -Dir: skips
+# one whose <id>, <id>.json or <id>.md exists there (a reset counter); -Number: the <nnnn> only (<file>.bak-<nnnn>, deploy/<env>-<nnnn>)
+function New-KitId([string]$Kind, [string]$Dir, [switch]$Number) {
   for ($ni = 0; $ni -lt 100; $ni++) { $nid = Invoke-KitNaming @('next', 'id', $Kind); if ($nid -notmatch "^$([regex]::Escape($Kind))-\d{4,}$") { throw "kitbag.py naming next id $Kind gave '$nid'" }
-    if (-not $Dir -or -not (Test-Path -LiteralPath (Join-Path $Dir "$nid.json"))) { return $nid } }
+    if (-not $Dir -or -not @("$nid", "$nid.json", "$nid.md" | Where-Object { Test-Path -LiteralPath (Join-Path $Dir $_) }).Count) { return $(if ($Number) { $nid.Substring($Kind.Length + 1) } else { $nid }) } }
   throw "New-KitId ${Kind}: 100 ids taken in $Dir"
 }
 # Set-TrackerName: an unkeyed new name of a keyed task keeps its key and [Type] (owner 2026-11-24: a hand rename dropped RM-AGT-001)

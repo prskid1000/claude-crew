@@ -226,7 +226,7 @@ def cmd_config(kit, fill, ack=False):
             if tk not in {str(r.get('name')) for r in rps} and not any(e == tk or e.startswith(tk + '-') for e in envs):
                 out('WARN', 'CONFIG-TRIGGER', f'{loc_rel} deploy.triggers.{tk}', 'matches no repos[].name nor repos[].deploys target (exact or <key>-*): never a standing word')
         if changed:
-            bak = osp.join(kit_path('cache', create=True, kit=kit), osp.basename(loc_rel) + time.strftime('.bak-%Y%m%d-%H%M%S'))
+            bak = osp.join(kit_path('cache', create=True, kit=kit), osp.basename(loc_rel) + '.bak-' + next_id('bak')[4:])   # NO-DATE: <file>.bak-<nnnn>
             shutil.copyfile(osp.join(kit, loc_rel), bak)
             with open(osp.join(kit, loc_rel), 'w', encoding='utf-8') as f:
                 json.dump(loc, f, indent=2, ensure_ascii=False)
@@ -640,7 +640,7 @@ const SAMPLE = {
   agents: [{ id: 'X1', items: 'A1, A2', area: 'order form' }, { id: 'X2', items: 'A3', area: 'order list', complex: true }] },
  'testy': { runDir: '/ws/.claude/<runtime>/work/qa-runs/2026-01-01-sample', kitDir: kit, title: 'Sample epic', target: 'my-staging', tester: 'QA',
   mandate: ['Test the deployed epic tasks and close them.'], context: 'Use tenant acme.', tracker: { list: 'L1', parent: 'P1' },
-  lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556', user: 'qa-user-1' }],
+  lanes: [{ n: 1, name: 'lane-01', serial: 'emulator-5556', user: 'qa-user-1' }],
   items: [{ code: 'W1', title: 'Order form', guideFile: '/ws/guides/W1.md', lane: 'web', subtasks: [{ id: 't1', name: 'Order form', mrs: 'api!1' }] },
    { code: 'P1', title: 'Order app', guideFile: '/ws/guides/P1.md', lane: 'app', subtasks: [{ id: 't2', name: 'Order app', mrs: 'app!3' }] }] },
  'tidy': { kitDir: kit },

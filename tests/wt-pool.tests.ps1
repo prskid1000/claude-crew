@@ -13,16 +13,16 @@ Save-GitRepo $app base; git -C $app remote add origin $orig; git -C $app push -q
 & $J @{ repos = @(@{ name = 'app'; checkout = $app; target = 'main'; poolSize = 2 }); tracker = @{ type = 'none' }; pool = @{ wipRestore = @('one.txt') } } "$k/skills/crafty/kit.local.json"
 $lease = { param($ag, $br, [int]$wm = 0) (pwsh @np $D wt lease -Repo app -Branch $br -Agent $ag -WaitMinutes $wm 2>&1 | ForEach-Object { "$_" }) -join "`n" }
 $slotOf = { param($o) if ($o -match '(?m)^worktree: (.+)$') { $Matches[1].Trim().Replace('\', '/') } }
-$falcon = "$base/wt/falcon-app".Replace('\', '/'); $kestrel = "$base/wt/kestrel-app".Replace('\', '/')
+$falcon = "$base/wt/slot-01-app".Replace('\', '/'); $kestrel = "$base/wt/slot-02-app".Replace('\', '/')
 $atp = foreach ($atpIn in '', $src, "$base/nogit") { try { $null = if ($atpIn -like '*nogit') { Get-TestGitDir $atpIn } else { Assert-TestPath $atpIn }; 'kept' } catch { 'threw' } }
 Expect "harness Assert-TestPath / Get-TestGitDir: an empty dir, one outside the test home, a non-repo throw (no `"/<name>`" write at the drive root) ($($atp -join ','))" (($atp -join ',') -eq 'threw,threw,threw' -and (Assert-TestPath $base) -eq $base)
 
 # task 1: a new slot on a new branch, a commit, the MR's branch pushed
 $o1 = & $lease devA feat/one; $s1 = & $slotOf $o1
 'one' | Set-Content "$(Assert-TestPath $s1)/one.txt"; $c1 = pwsh @np $D wt commit -Dir $s1 -Message 'feat: one' 2>&1 | Out-String; git -C $s1 push -q -u origin feat/one 2>$null
-Expect "lease: the first slot created lazily (app·Falcon), the branch new from origin/main ($($o1 -replace '\s+', ' '))" ($o1 -match 'new slot app·Falcon \(pool 1/2\)' -and $s1 -eq $falcon -and (git -C $s1 branch --show-current) -eq 'feat/one' -and $o1 -match 'new, from origin/main' -and (git -C $s1 log -1 --format=%s) -eq 'feat: one')
+Expect "lease: the first slot created lazily (app·slot-01), the branch new from origin/main ($($o1 -replace '\s+', ' '))" ($o1 -match 'new slot app·slot-01 \(pool 1/2\)' -and $s1 -eq $falcon -and (git -C $s1 branch --show-current) -eq 'feat/one' -and $o1 -match 'new, from origin/main' -and (git -C $s1 log -1 --format=%s) -eq 'feat: one')
 $o2 = & $lease devB feat/two; $o3 = & $lease devC feat/three; $o4 = & $lease devB feat/one
-Expect "lease: a second slot up to poolSize; all leased -> no slot within -WaitMinutes; a branch another agent holds -> refused" ($o2 -match 'new slot app·Kestrel' -and $o3 -match 'no app slot free within 0 min' -and $o4 -match 'two agents never share a slot')
+Expect "lease: a second slot up to poolSize; all leased -> no slot within -WaitMinutes; a branch another agent holds -> refused" ($o2 -match 'new slot app·slot-02' -and $o3 -match 'no app slot free within 0 min' -and $o4 -match 'two agents never share a slot')
 # retro 2205: -Agent from KIT_AGENT, -Repo / -Branch from the linked worktree at -Dir; outside one, the error names what is missing
 $lm = (pwsh @np $D wt lease -Dir (Kd) -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join ' '; $env:KIT_AGENT = 'devA'
 $ld = (pwsh @np $D wt lease -Dir $s1 -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join "`n"; $lo = (pwsh @np $D wt lease -Dir $s1 -Repo (Kd) -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join ' '; Remove-Item Env:KIT_AGENT
@@ -34,7 +34,7 @@ Expect "devtools.py mr / merge read the slot's target record ($py1)" ("$py1".Tri
 
 # release with uncommitted work: a WIP commit on the branch, the slot detached in place (no file written), branch kept
 'wip' | Set-Content "$(Assert-TestPath $s1)/two.txt"; 'rewritten by a test run' | Set-Content "$s1/one.txt"; $null = New-Item -Force "$s1/cypress/reports/r.json" -Value '{}'; $r1 = pwsh @np $D wt release -Agent devA 2>&1 | Out-String
-Expect "release: uncommitted work -> WIP commit; detached at the same commit; the unmerged branch kept ($($r1 -replace '\s+', ' '))" ($r1 -match 'WIP commit' -and $r1 -match 'released app·Falcon' -and $r1 -match 'branch feat/one kept' -and -not (git -C $s1 branch --show-current) -and (git -C $app log -1 --format=%s feat/one) -match '^wip: ' -and "$(git -C $s1 status --porcelain)".Trim() -eq '?? cypress/' -and
+Expect "release: uncommitted work -> WIP commit; detached at the same commit; the unmerged branch kept ($($r1 -replace '\s+', ' '))" ($r1 -match 'WIP commit' -and $r1 -match 'released app·slot-01' -and $r1 -match 'branch feat/one kept' -and -not (git -C $s1 branch --show-current) -and (git -C $app log -1 --format=%s feat/one) -match '^wip: ' -and "$(git -C $s1 status --porcelain)".Trim() -eq '?? cypress/' -and
   "$(git -C $app show --name-only --format= feat/one)".Trim() -eq 'two.txt' -and (Get-Content "$s1/one.txt") -eq 'one')   # pool.wipRestore: one.txt restored, not committed; untracked cypress/reports output left out
 
 # fix round: another agent re-leases by branch: the warm slot that had it
@@ -52,23 +52,23 @@ Expect "next task reuses the slot clean: no new slot, files changed by the switc
 
 # a slot is never removed; sweep leaves it; pool lists the states (the refusal is an error record: wrapped at the host width)
 $rm = pwsh @np $D wt remove -Dir $falcon 2>&1 | Out-String; $sw = pwsh @np $D wt sweep -DryRun -IdleHours 0 2>&1 | Out-String; $pl = pwsh @np $D wt pool 2>&1 | Out-String
-Expect "remove refuses a slot, sweep skips slots, pool lists them ($(($pl -split "`n")[0].Trim()))" (($rm -replace '\s*\|\s*|\s+', ' ') -match 'is a pool slot: never deleted' -and $sw -notmatch 'falcon-app|kestrel-app' -and $pl -match 'pool app: 2/2 slots, 0 free' -and $pl -match 'app·Falcon\s+leased\s+feat/four\s+devD')
+Expect "remove refuses a slot, sweep skips slots, pool lists them ($(($pl -split "`n")[0].Trim()))" (($rm -replace '\s*\|\s*|\s+', ' ') -match 'is a pool slot: never deleted' -and $sw -notmatch 'slot-01-app|slot-02-app' -and $pl -match 'pool app: 2/2 slots, 0 free' -and $pl -match 'app·slot-01\s+leased\s+feat/four\s+devD')
 
 # reaper: a holder gone past the grace -> another agent's lease reclaims the clean slot
-$kf = TkPath $k 'wt-slots'; $kl = Get-Content "$kf/kestrel-app.json" -Raw | ConvertFrom-Json
+$kf = TkPath $k 'wt-slots'; $kl = Get-Content "$kf/slot-02-app.json" -Raw | ConvertFrom-Json
 $kl.agent = 'ghost'; $kl | Add-Member -Force holderPid 999999; $kl | Add-Member -Force seen (Get-Date).AddMinutes(-30).ToString('o'); $kl | Add-Member -Force graceMin 10
-$kl | ConvertTo-Json | Set-Content "$kf/kestrel-app.json"; Remove-Item Env:CLAUDE_AGENT -ErrorAction SilentlyContinue
+$kl | ConvertTo-Json | Set-Content "$kf/slot-02-app.json"; Remove-Item Env:CLAUDE_AGENT -ErrorAction SilentlyContinue
 $o7 = & $lease devE feat/five
-Expect "reaper: a slot with no live holder past the grace is reclaimed by the next lease" ((& $slotOf $o7) -eq $kestrel -and (Get-Content (TkPath $k leases) -Raw) -match '"reclaim".*app·Kestrel.*ghost|ghost.*reclaim')
+Expect "reaper: a slot with no live holder past the grace is reclaimed by the next lease" ((& $slotOf $o7) -eq $kestrel -and (Get-Content (TkPath $k leases) -Raw) -match '"reclaim".*app·slot-02.*ghost|ghost.*reclaim')
 
 # parked: a WIP commit the hooks refuse -> the slot keeps the branch and its files, only that branch gets it
 $hd = "$base/hooks"; New-Item -ItemType Directory -Force $hd | Out-Null; "#!/bin/sh`nexit 1" | Set-Content "$hd/pre-commit" -NoNewline; git -C $app config core.hooksPath $hd; 'u' | Set-Content "$kestrel/u.txt"
 $r3 = pwsh @np $D wt release -Agent devE 2>&1 | Out-String; git -C $app config --unset core.hooksPath
 $o8 = & $lease devF feat/six; $o9 = & $lease devG feat/five
-Expect "parked: dirty + refused WIP keeps the files; another branch waits, the same branch resumes it ($($r3 -replace '\s+', ' '))" ($r3 -match 'PARKED app·Kestrel' -and (Test-Path "$kestrel/u.txt") -and $o8 -match 'no app slot free' -and (& $slotOf $o9) -eq $kestrel)
+Expect "parked: dirty + refused WIP keeps the files; another branch waits, the same branch resumes it ($($r3 -replace '\s+', ' '))" ($r3 -match 'PARKED app·slot-02' -and (Test-Path "$kestrel/u.txt") -and $o8 -match 'no app slot free' -and (& $slotOf $o9) -eq $kestrel)
 
 $br = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') release -Agent devG -Reason 'agent finished' 2>&1 | Out-String
-Expect "bossy.ps1 release -Agent: its slot released too (resumed parked files -> WIP commit) ($($br.Trim()))" ($br -match 'devG slot: released app·Kestrel' -and (git -C $app log -1 --format=%s feat/five) -match '^wip: ' -and -not (Test-Path "$kf/kestrel-app.json"))
+Expect "bossy.ps1 release -Agent: its slot released too (resumed parked files -> WIP commit) ($($br.Trim()))" ($br -match 'devG slot: released app·slot-02' -and (git -C $app log -1 --format=%s feat/five) -match '^wip: ' -and -not (Test-Path "$kf/kestrel-app.json"))
 # migration: a merged per-task worktree goes, one with unpushed work is kept and listed
 $null = pwsh @np $D wt release -Agent devD 2>&1; git -C $app worktree add -q -b old/merged "$base/wt/old1-app" origin/main 2>$null; git -C $app worktree add -q -b old/wip "$base/wt/old2-app" origin/main 2>$null
 'w' | Set-Content "$base/wt/old2-app/w.txt"; git -C "$base/wt/old2-app" add -A; git -C "$base/wt/old2-app" commit -q -m wip
@@ -93,7 +93,7 @@ $sp = pwsh @np $D wt pool -Repo syn -Sync 2>&1 | Out-String
 $syj = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
 Expect "repo sync: main (checked out, clean) and beh fast-forwarded, div diverged kept, gone (merged) + lane/syn-falcon pruned, 1 warm slot ($(($sp -split "`n")[0].Trim()))" ((& $tip main) -eq (& $tip origin/main) -and (& $tip beh) -eq (& $tip origin/beh) -and (& $tip div) -ne (& $tip origin/div) -and -not (git -C $sr branch --list gone lane/syn-falcon) -and @($syj.diverged) -match '^div ' -and $sp -match '1 warm slot' -and $sp -match 'pool syn: 1/3 slots, 1 free' -and $behPv -and $pv -match 'sync syn: 2 fast-forwarded')
 # never under a live agent: a leased slot's branch behind upstream is not moved; a free slot with commits on no branch is not detached
-$wsl = "$base/wt/falcon-syn"; 'x' | Set-Content "$wsl/strand.txt"; git -C $wsl add -A; git -C $wsl commit -q -m strand; $strand = "$(git -C $wsl rev-parse HEAD)".Trim(); $null = pwsh @np $D wt pool -Repo syn -Sync 2>&1; $stOk = "$(git -C $wsl rev-parse HEAD)".Trim() -eq $strand -and @((Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json).dirty) -match 'holds commits on no branch'
+$wsl = "$base/wt/slot-01-syn"; 'x' | Set-Content "$wsl/strand.txt"; git -C $wsl add -A; git -C $wsl commit -q -m strand; $strand = "$(git -C $wsl rev-parse HEAD)".Trim(); $null = pwsh @np $D wt pool -Repo syn -Sync 2>&1; $stOk = "$(git -C $wsl rev-parse HEAD)".Trim() -eq $strand -and @((Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json).dirty) -match 'holds commits on no branch'
 git -C $sx checkout -q beh; 'more' | Set-Content "$sx/beh2.txt"; Save-GitRepo $sx 'beh more'; git -C $sx push -q origin beh 2>$null
 $ls = pwsh @np $D wt lease -Repo syn -Branch beh -Agent devS 2>&1 | Out-String; $lsd = if ($ls -match '(?m)^worktree: (.+)$') { $Matches[1].Trim() }; $b0 = & $tip beh
 $sp2 = pwsh @np $D wt pool -Repo syn -Sync 2>&1 | Out-String; $syj2 = Get-Content (Join-Path (TkPath $k wt-slots) 'sync/syn.json') -Raw | ConvertFrom-Json
@@ -117,7 +117,7 @@ $rb = $args[3]; $vrp = $args[2]; function Get-MergedMrs { param($R, $B) if ($B -
 @('sq', 'lane/old-a', 'lane/old-b') | ForEach-Object { $x = Get-KitBranchVerdict $vrp $_ @{} -IdleHours 0; "$_=$($x.delete) ($($x.why))" }
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/crafty/crafty.ps1'), $vb, $rb)
 $fw = "$base/wt/fx-app"; git -C $app worktree add -q -b old/fx $fw origin/main 2>$null; 'regen' | Set-Content "$fw/a.txt"; [IO.File]::WriteAllText("$fw/f1.txt", "crlf`r`nkept`r`n")
-$fm = pwsh @np $D wt pool -Migrate 2>&1 | Out-String; $pt = @(Get-ChildItem (Join-Path (TkPath $k wt-slots) 'patches') -Filter 'fx-app-*.patch' -ErrorAction SilentlyContinue)
+$fm = pwsh @np $D wt pool -Migrate 2>&1 | Out-String; $pt = @(Get-ChildItem (Join-Path (TkPath $k wt-slots) 'patches') -Filter 'fx-app-*.patch' -ErrorAction SilentlyContinue | Where-Object Name -match '-patch-\d{4}\.patch$')   # NO-DATE name
 $null = git -C $vb apply --check $pt[0].FullName 2>&1; $fm += " apply-check:$LASTEXITCODE"
 Expect "K38: squash-merged rebased branch goes, dead lane with only test merges goes, with its own commit stays; merged worktree with edited fixtures: patch, then gone ($(@($vr) -join ' ') | $($fm -replace '\s+', ' '))" ((@($vr) -join ' ') -match 'sq=True .*lane/old-a=True .*lane/old-b=False' -and $fm -match 'patched\s+\S*fx-app' -and $fm -match 'apply-check:0' -and -not (Test-Path $fw) -and $pt.Count -eq 1 -and (Get-Content $pt[0].FullName -Raw) -match '\+regen')
 # a stray non-lease file in wt-slots (an array, as lanes.json was): supervise, wt release and bossy release skip it (K42)
@@ -146,6 +146,11 @@ $lnt = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{
 $lnb = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{ localEnv = [pscustomobject]@{ laneIds = 'bird'; envs = [pscustomobject]@{ shop = [pscustomobject]@{ lanes = [pscustomobject]@{ max = 2 } } } } }
   "$(@('shop &#183; api', 'shop2 · web', 'env shop', 'shop-falcon · api', 'workshop · x') | ForEach-Object { ConvertTo-KitLaneText $_ })|$(@('shop · api', 'lane shop2', 'shop2', 'shop-kestrel · db', 'other · x') | ForEach-Object { ConvertTo-KitLaneId $_ })" }
 Expect "lane ids bird: old ids shown and grouped as the bird id ($lnb)" ($lnb -eq 'shop·Falcon &#183; api shop·Kestrel · web env shop·Falcon shop·Falcon · api workshop · x|shop-falcon · api lane shop-kestrel shop-kestrel shop-kestrel · db other · x')
+# N3 laneIds nn: lane-<10 x env index + k>, the bird shown only; old and bird ids alias to it; branch lane/<nn>, worktree lane-<nn>-<repo> (the bird one = -Old);
+# a phone's lane-<nn> outside a lane context stays; pool slots slot-<nn>-<repo>, shown <repo>·slot-<nn>
+$lnn = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $__cfg = [pscustomobject]@{ localEnv = [pscustomobject]@{ laneIds = 'nn'; envs = [pscustomobject][ordered]@{ shop = [pscustomobject]@{ lanes = [pscustomobject]@{ max = 2 } }; 'shop-kestrel' = [pscustomobject]@{}; desk = [pscustomobject]@{} } } }
+  "$((Get-KitLaneNames) -join ',')|$(Get-KitPoolLabel env 'lane-02')|$(Get-KitPoolLabel env 'lane-11')|$(ConvertTo-KitLaneId 'shop2 · api')/$(ConvertTo-KitLaneId 'lane shop-kestrel')/$(ConvertTo-KitLaneId 'desk · web')|$(ConvertFrom-KitLaneLabel 'shop·Kestrel')/$(ConvertFrom-KitLaneLabel 'SHOP-KESTREL')/$(ConvertFrom-KitLaneLabel 'shop2')|$(Get-KitLaneBranch 'lane-02')|$(Split-Path (Get-KitLaneWorktree 'lane-02' 'C:/r/app' -New) -Leaf)/$(Split-Path (Get-KitLaneWorktree 'lane-02' 'C:/r/app' -Old) -Leaf)|$(ConvertTo-KitLaneText 'lane-02 · api')/$(ConvertTo-KitLaneText 'phone lane-02 up')|$(Get-KitSlotLeaf 3 'web')/$(Get-KitSlotName 3 'web')" }
+Expect "lane ids nn: lane-01,02,11; labels shop·Kestrel / desk·Falcon; aliases; lane/02, lane-02-app (old lane-shop-kestrel-app); text; slot-03-web ($lnn)" ($lnn -eq 'lane-01,lane-02,lane-11|shop·Kestrel|desk·Falcon|lane-02 · api/lane lane-02/lane-11 · web|lane-02/lane-02/lane-02|lane/02|lane-02-app/lane-shop-kestrel-app|shop·Kestrel · api/phone lane-02 up|slot-03-web/web·slot-03')
 Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 2 } } } } }; $lp = Join-Path (Kd) 'lanes.html'
 Set-Content $lp "<html><body><p>env shop·Kestrel</p><p>shop2 &#183; api</p><script>var a='shop2'</script></body></html>"
 $lhit = python -X utf8 -c "import sys; sys.argv=['kitbag.py']; sys.path.insert(0, r'$k/skills/bossy'); import kitbag; print(len(kitbag.lane_ids_shown(r'$lp', r'$k')))"

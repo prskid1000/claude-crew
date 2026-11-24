@@ -119,7 +119,7 @@ Expect 'decide rules -Revoke: the rule stops answering; the rules file keeps onl
 
 # tidy prep: the digest carries the outcomes section
 $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json
-Expect 'tidy prep: digest has the Outcomes section' ((Get-Content $tp.digest -Raw) -match '## Outcomes, 30 days')
+Expect 'tidy prep: digest-<nnnn>.md has the Outcomes section' ((Get-Content $tp.digest -Raw) -match '## Outcomes, 30 days' -and $tp.digest -match 'digest-\d{4}\.md$')
 # stats reset (owner 2026-11-20): the newest forgotten/stats-reset-<day> folder creation time (not its midnight) cuts what the charts read from kept logs; a wait across it is clipped
 $cutT = & { . $O; $n = (Get-Date).Date.AddHours(12); $y = $n.Date.AddDays(-1); $fgDir = Get-KitPath forgotten -Create
   $cutDirs = @((Join-Path $fgDir "stats-reset-$($n.AddDays(-3).ToString('yyyyMMdd'))"), (Join-Path $fgDir "stats-reset-$($n.ToString('yyyyMMdd'))-101500")); foreach ($cd in $cutDirs) { $null = New-Item -ItemType Directory -Force $cd }; (Get-Item $cutDirs[0]).CreationTime = $n.AddDays(-3).Date; (Get-Item $cutDirs[1]).CreationTime = $n.Date

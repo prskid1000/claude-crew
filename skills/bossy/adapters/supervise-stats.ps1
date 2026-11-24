@@ -1176,7 +1176,7 @@ function Invoke-Shells {
 }
 
 # ---- reset: bossy.ps1 stats [-Reset] (owner 2026-11-20): the files only this page's charts read; -Reset moves them to
-# <state>/forgotten/stats-reset-<yyyyMMdd>/ (relative paths kept), the next sweep starts empty charts. Functional state stays: params,
+# <state>/forgotten/stats-reset-<nnnn>/ (relative paths kept), the next sweep starts empty charts. Functional state stays: params,
 # params-changes (the settings audit log), outcomes, storage (disk verdicts), pool-usage, runtimes, localenv-history, leases, audit logs, run records, supervise-state.
 function Get-KitStatsFiles {
   $rt = Get-KitRuntime; $sd = Split-Path (Get-KitPath disk-writes); $cache = Get-KitPath cache
@@ -1186,8 +1186,7 @@ function Get-KitStatsFiles {
 }
 function Invoke-Stats {
   param([switch]$Reset)
-  $dst = Join-Path (Get-KitPath forgotten) "stats-reset-$((Get-Date).ToString('yyyyMMdd'))"
-  if (Test-Path -LiteralPath $dst) { $dst += "-$((Get-Date).ToString('HHmmss'))" }   # a second reset the same day never overwrites the first
+  $dst = if ($Reset) { Join-Path (Get-KitPath forgotten) (New-KitId stats-reset (Get-KitPath forgotten)) }   # NO-DATE: stats-reset-<nnnn>, the time is the folder's
   $moved = 0
   foreach ($f in @(Get-KitStatsFiles)) {
     if (-not [IO.File]::Exists($f.path)) { "absent  $($f.rel)"; continue }
@@ -1201,7 +1200,7 @@ function Invoke-Stats {
 # the newest reset's time (owner 2026-11-20; its folder's creation, not its day's midnight): charts still built from kept logs (runs,
 # gate, waits, QA, Trends) read nothing before it; the Tuning heatmap and Disk free do; no reset = MinValue
 function Get-KitStatsCutoff {
-  $rd = @(Get-ChildItem -LiteralPath (Get-KitPath forgotten) -Directory -Filter 'stats-reset-*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^stats-reset-\d{8}' } | ForEach-Object { $_.CreationTime } | Sort-Object)
+  $rd = @(Get-ChildItem -LiteralPath (Get-KitPath forgotten) -Directory -Filter 'stats-reset-*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^stats-reset-\d{4,}' } | ForEach-Object { $_.CreationTime } | Sort-Object)
   if ($rd.Count) { $rd[-1] } else { [datetime]::MinValue }
 }
 # a budget -Usage result without what came before $StatsFrom: ended runs started before it (the day they are listed under), its days' values, its MRs; step outcomes recounted

@@ -120,11 +120,11 @@ function Read-KitTracking([switch]$Strict) {
   $t = @{ tasks = @{}; automerge = @{} }; $f = Get-KitPath tracking
   if (Test-Path -LiteralPath $f) {
     try { $old = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable; foreach ($s in 'tasks', 'automerge') { if ((Get-KitMember $old $s) -is [Collections.IDictionary]) { foreach ($k in @((Get-KitMember $old $s).Keys)) { (Get-KitMember $t $s)[$k] = (Get-KitMember $old $s)[$k] } } } }
-    catch { $m = "tracking: $f is not valid JSON ($_)"; if ($Strict) { Copy-Item $f "$f.bak-$(Get-KitStamp file)" -Force; throw "$m - fix or remove it; not writing" }; Write-Warning $m }
+    catch { $m = "tracking: $f is not valid JSON ($_)"; if ($Strict) { Copy-Item $f "$f.bak-$(New-KitId bak -Number)" -Force; throw "$m - fix or remove it; not writing" }; Write-Warning $m }
   }
   foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
     $x = Read-KitState $g.FullName
-    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict -and -not (Test-Path "$($g.FullName).bak-*")) { Copy-Item $g.FullName "$($g.FullName).bak-$(Get-KitStamp file)" -Force; Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
+    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict -and -not (Test-Path "$($g.FullName).bak-*")) { Copy-Item $g.FullName "$($g.FullName).bak-$(New-KitId bak -Number)" -Force; Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
   }
   $am = (Read-KitState (Get-KitPath automerge)).refs; if ($am -is [Collections.IDictionary]) { foreach ($k in @($am.Keys)) { $t.automerge[$k] = $am[$k] } }
   $t
@@ -1443,8 +1443,8 @@ function Set-TrackerDescription([string]$Id, [string]$Text, [switch]$Resolved) {
   $script:KitDescBackup = ''
   if (-not $__trDry) { Clear-TrackerMemo $Id; $otk = Get-TrackerTask $Id; if (-not $otk.name) { throw "tracker describe ${Id}: the old description cannot be read for its backup: nothing written" }; $od = "$($otk.description)"
     if ($od.Trim() -and ($od -replace "`r`n", "`n") -ne ("$nd" -replace "`r`n", "`n")) { $bd = Join-Path (Get-KitPath desc-backups -Create) ($Id -replace '[^\w.-]+', '_'); $null = New-Item -ItemType Directory -Force -Path $bd
-      $bf = Join-Path $bd "$((Get-Date).ToString('yyyyMMdd-HHmmss-fff')).md"; [IO.File]::WriteAllText($bf, $od, [Text.UTF8Encoding]::new($false))
-      @(Get-ChildItem -LiteralPath $bd -Filter '*.md' | Sort-Object Name -Descending | Select-Object -Skip 10) | Remove-Item -ErrorAction SilentlyContinue
+      $bf = Join-Path $bd "$(New-KitId desc $bd).md"; [IO.File]::WriteAllText($bf, $od, [Text.UTF8Encoding]::new($false))
+      @(Get-ChildItem -LiteralPath $bd -Filter '*.md' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 10) | Remove-Item -ErrorAction SilentlyContinue
       $script:KitDescBackup = $bf } }
   Clear-TrackerMemo $Id; __TrA 'describe' @{ id = $Id; text = $nd }
 }

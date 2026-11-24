@@ -1,9 +1,9 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (Get-Doctor: the doctor verb, its rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Resolve-SvcDir, Get-LaneWorktreeRows).
-# lane-standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird", no old <product><k> lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
+# lane-standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird" / "nn", no older lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
 # (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs under the kit, off the system drive, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
-# Sections: L7 lane standard · L53 lane worktrees · L123 doctor
+# Sections: L7 lane standard · L56 lane worktrees · L126 doctor
 # ---- lane standard: doctor rows, port clashes, env aliases
 function Get-LanePathArgs([string]$Text) {
   @([regex]::Matches($Text, '(?i)(path\.data|path\.logs|datadir|data[-_]dir|log[-_]dir|log-error|defaults-file)[= ]\s*"?([^\s"]+)') | ForEach-Object { [pscustomobject]@{ key = $_.Groups[1].Value.ToLower(); path = $_.Groups[2].Value.Replace('\', '/').TrimEnd('/') } })
@@ -13,6 +13,9 @@ function Get-LaneStandardRows([string]$e) {
   $lvl = [string](Opt 'laneStandard' 'WARN'); $out = [Collections.Generic.List[object]]::new()
   $row = { param($t) $out.Add([pscustomobject]@{ level = $lvl; what = "lane standard: $t" }) }
   if ("$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird' -and $e -eq @(EnvNames)[0]) { foreach ($k in @($script:EnvKeysRaw | Where-Object { $_ -match '^(?<b>.+?)\d+$' -and $script:EnvKeysRaw -contains $Matches.b })) { & $row "old lane id envs.${k}: rename the key to <product>-<bird> (localEnv.laneIds bird)" } }
+  if (($lm = @(Get-KitLaneMap)).Count -and $e -eq @(EnvNames)[0]) {   # laneIds "nn": override keys under their lane-<nn> id; an env's lanes stay inside its block of 10
+    foreach ($r in @($lm | Where-Object { $_.k -gt 1 })) { foreach ($k in @($r.old, $r.bird | Where-Object { $_ -in $script:EnvKeysRaw })) { & $row "old lane id envs.${k}: rename the key to $($r.id) (localEnv.laneIds nn; mysql-base-move.ps1 -Config -Ids nn)" } }
+    foreach ($g in @($lm | Group-Object env | Where-Object { $_.Count -gt 9 -and @($lm.env | Select-Object -Unique).Count -gt 1 })) { & $row "env $($g.Name): $($g.Count) lanes, laneIds nn allows 9 per env with 2+ envs (its ids would reach the next env's)" } }
   foreach ($s in EnvServices $e) {
     if ($s.external -and -not $s.start -and $s.port) { & $row "service $($s.name) :$($s.port) of $e is external (always on, shared by lanes and products): give it a start (+ init) per lane, data under the kit" }
     $cmds = @($s.start, $s.init.cmd, $s.prepare) | Where-Object { $_ }
@@ -48,7 +51,7 @@ function Test-PortClash {
     if (@($u | Where-Object { -not $_.external }).Count -or @($u.start | Select-Object -Unique).Count -gt 1) { "port $port is claimed by $(($u.who) -join ', ')" }
   }
 }
-# an old lane id (rm, rm2) -> its <product>-<bird> id (localEnv.laneIds bird), with a warning
+# an old lane id (rm, rm2; laneIds nn: rm-kestrel too) -> today's id (bird: <product>-<bird>, nn: lane-<nn>), with a warning
 function Resolve-EnvAlias([string]$n) { if ($n -and $script:EnvAlias.ContainsKey($n) -and -not (Get-KitMember $script:LE.envs $n)) { Write-Warning "old lane id '$n': use $($script:EnvAlias[$n]) (accepted for now)"; $script:EnvAlias[$n] } else { $n } }
 # ---- lane worktrees: a lane repo's worktree and its dependency links (moved from envy.ps1 at its cap)
 function Ensure-Worktree([string]$e, $r) {

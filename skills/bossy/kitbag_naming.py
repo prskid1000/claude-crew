@@ -183,19 +183,6 @@ def make(kind, p, cfg=None):
     return out[kind]()
 
 
-def _counter(group):
-    """The next number of a counter group under its lock (.state naming.json: {group: last})."""
-    f = kit_path('naming', create=True)
-    with locked(f):
-        x = state_read(f) or {}
-        if group.startswith('id:') and group not in x:   # migrate: the old per-day counters of this kind fold into one, past every id they made
-            days = [k for k in x if k.startswith(group + ':')]
-            x[group] = sum(int(x.pop(k) or 0) for k in days)
-        x[group] = int(x.get(group) or 0) + 1
-        state_write(f, x)
-        return x[group]
-
-
 def next_key(product, area, cfg=None):
     cfg = cfg or naming_cfg()
     product, area = product.upper(), area.upper()
@@ -203,27 +190,6 @@ def next_key(product, area, cfg=None):
         if code not in reg:
             raise SystemExit(f'naming next key: unknown {what} {code} (naming.{what.lower()}s in kit.local.json: {", ".join(reg) or "none"})')
     return f'{product}-{area}-{_counter(f"key:{product}-{area}"):0{cfg["digits"]}d}'
-
-
-def next_id(kind):
-    if not re.match(r'^[a-z]+(?:-[a-z]+)*$', kind):
-        raise SystemExit(f'naming next id: kind {kind!r}: lowercase words joined by -')
-    live = board_live('run')
-    for _ in range(100):   # a reset counter never hands out a run id live on the board
-        rid = f'{kind}-{_counter(f"id:{kind}"):04d}'
-        if rid not in live:
-            return rid
-    raise SystemExit(f'naming next id: 100 {kind} ids live on the board')
-
-
-def board_live(field):
-    """{field value} of the board rows not left (board join, kitbag.py naming next id)."""
-    d, out = kit_path('board'), set()
-    for f in (osp.join(d, n) for n in os.listdir(d) if n.endswith('.json')) if os.path.isdir(d) else []:
-        row, err = load_json(f)
-        if not err and isinstance(row, dict) and row.get('status') != 'left' and row.get(field):
-            out.add(str(row[field]))
-    return out
 
 
 # ---- commands
@@ -378,13 +344,14 @@ def lint_hook(k, problems, flags):
 
 
 def warn_hook(k):
-    """NAME-BACKUP: a backup beside the live config other than `<file>.bak-<yyyyMMdd-HHmmss>` (Get-KitStamp file)."""
+    """NAME-BACKUP: a backup beside the live config other than `<file>.bak-<nnnn>` (NO-DATE, New-KitId bak -Number; the old dated
+    `.bak-<yyyyMMdd-HHmmss>` passes one version)."""
     out = []
     for base in {k.dir, main_clone(k.dir)}:
         for d in sorted(os.listdir(osp.join(base, 'skills'))) if osp.isdir(osp.join(base, 'skills')) else []:
             sd = osp.join(base, 'skills', d)
-            out += [('NAME-BACKUP', f'skills/{d}/{n}', 'one backup form, <file>.bak-<yyyyMMdd-HHmmss> (Get-KitStamp file); or move it to .state/backups/')
-                    for n in sorted(os.listdir(sd)) if BAK_RX.search(n) and not re.search(r'\.bak-\d{8}-\d{6}$', n) and osp.isfile(osp.join(sd, n))]
+            out += [('NAME-BACKUP', f'skills/{d}/{n}', 'one backup form, <file>.bak-<nnnn> (New-KitId bak -Number); or move it to .state/backups/')
+                    for n in sorted(os.listdir(sd)) if BAK_RX.search(n) and not re.search(r'\.bak-(?:\d{4}|\d{8}-\d{6})$', n) and osp.isfile(osp.join(sd, n))]
     return out
 
 

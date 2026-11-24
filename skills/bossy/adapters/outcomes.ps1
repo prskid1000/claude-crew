@@ -398,7 +398,7 @@ $d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the l
 & $part 'Local env failures' (& $top $envF { "$($_.event) $($_.env) $($_.service)".Trim() } 8)
 & $part 'Runs since' @(@($runs | Select-Object -Last 15 | ForEach-Object { "$($_.run) ($(Split-Path "$($_.script)" -Leaf)) spent $([int]$_.spent) of $([int]$_.cap)" }) + @($qa | Select-Object -Last 10 | ForEach-Object { "QA $($_.Name)$(Get-KitQaRunGap $_.FullName)" }))
 & $part 'Upkeep (no LLM)' @(@($steps | ForEach-Object { "$($_.step): $($_.state) ($($_.sec) s)$(if ($_.out) { ': ' + (& $cut ($_.out -join ' | ') 400) })" }) + @(Invoke-KitHooks Get-KitHealthLinesAudit))
-$file = Join-Path (Get-KitPath retros -Create) "digest-$(Get-KitStamp file $t0).md"
+$file = Join-Path (Get-KitPath retros -Create) "$(New-KitId digest (Get-KitPath retros)).md"   # NO-DATE: digest-<nnnn>, its time is the at field
 [IO.File]::WriteAllText($file, (($d -join "`n") + "`n"))
 $stamped = -not $work -and -not $DryRun -and -not @($steps | Where-Object state -eq 'failed').Count
 if ($stamped) { $null = Invoke-Tidy done -At (Get-KitStamp stored $t0) }   # nothing to judge

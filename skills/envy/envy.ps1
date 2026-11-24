@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db-presets.ps1; tenants.model = adapters/tenant-models.ps1 + tenant-schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L238 state · L285 layer drops · L360 leases · L468 code · L479 migrations ·
-  L482 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L629 shared builds · L767 hooks · L839 marks · L1020 seed ·
-  L1087 processes · L1473 daemon · L1935 cleanup · L2007 verbs
+Sections: L36 config · L240 state · L287 layer drops · L362 leases · L470 code · L481 migrations ·
+  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L769 hooks · L841 marks · L1022 seed ·
+  L1089 processes · L1475 daemon · L1937 cleanup · L2009 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -84,11 +84,13 @@ function Get-LaneCfg($base, [string]$g, [int]$k, $over) {
 }
 if ($script:LE.envs) {
   $__envs = [ordered]@{}; $__res = [ordered]@{}; foreach ($__n in @((Get-KitProps $script:LE.envs).Name)) { $__res[$__n] = Resolve-EnvCfg $__n }
-  $__bird = "$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird'; $script:EnvAlias = @{}; $script:EnvKeysRaw = @($__res.Keys)   # laneIds "bird": the lane id is <product>-<bird> (rm-falcon, rm-kestrel)
-  $__lanes = @{}; foreach ($__n in $__res.Keys) { for ($__k = 2; $__k -le [int]$__res[$__n].lanes.max; $__k++) { $__lanes["$__n$__k"] = $true; $__lanes["$__n-$("$(Get-KitBirdName $__k)".ToLower())"] = $true } }
-  foreach ($__n in @($__res.Keys | Where-Object { -not $__lanes.ContainsKey($_) })) {   # envs.<env><k> of a laned env: that lane's keys, no env of its own
-    for ($__k = 1; $__k -le [math]::Max(1, [int]$__res[$__n].lanes.max); $__k++) { $__old = if ($__k -gt 1) { "$__n$__k" } else { $__n }; $__ln = if ($__bird) { "$__n-$("$(Get-KitBirdName $__k)".ToLower())" } else { $__old }; if ($__bird) { $script:EnvAlias[$__old] = $__ln }
-      $__ov = if ($__k -gt 1) { $(if (Get-KitMember $script:LE.envs $__ln) { Get-KitMember $script:LE.envs $__ln } else { Get-KitMember $script:LE.envs $__old }) }; $__envs[$__ln] = Get-LaneCfg $__res[$__n] $__n $__k $__ov }
+  $__bird = "$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird'; $script:EnvAlias = @{}; $script:EnvKeysRaw = @($__res.Keys)   # laneIds "bird": <product>-<bird> (rm-kestrel); "nn": lane-<nn> (wt-pool Get-KitLaneMap)
+  $__lm = @{}; $__lanes = @{}; foreach ($__r in @(Get-KitLaneMap)) { $__lm["$($__r.env)|$($__r.k)"] = $__r.id; $__lanes[$__r.id] = $true }
+  foreach ($__n in $__res.Keys) { for ($__k = 2; $__k -le [int]$__res[$__n].lanes.max; $__k++) { $__lanes["$__n$__k"] = $true; $__lanes["$__n-$("$(Get-KitBirdName $__k)".ToLower())"] = $true } }
+  foreach ($__n in @($__res.Keys | Where-Object { -not $__lanes.ContainsKey($_) })) {   # envs.<lane id> / <env><k> / <env>-<bird> of a laned env: that lane's keys, no env of its own
+    for ($__k = 1; $__k -le [math]::Max(1, [int]$__res[$__n].lanes.max); $__k++) { $__old = if ($__k -gt 1) { "$__n$__k" } else { $__n }; $__bd = "$__n-$("$(Get-KitBirdName $__k)".ToLower())"
+      $__ln = if ($__lm.Count) { $__lm["$__n|$__k"] ?? $__old } elseif ($__bird) { $__bd } else { $__old }; foreach ($__a in @($__old, $__bd)) { if ($__a -ne $__ln -and ($__bird -or $__lm.Count)) { $script:EnvAlias[$__a] = $__ln } }
+      $__ov = if ($__k -gt 1) { @($__ln, $__bd, $__old | ForEach-Object { Get-KitMember $script:LE.envs $_ } | Where-Object { $_ })[0] }; $__envs[$__ln] = Get-LaneCfg $__res[$__n] $__n $__k $__ov }
   }
   $script:LE.envs = [pscustomobject]$__envs
   # a static service runs from a staged copy of its built files, like an artifact

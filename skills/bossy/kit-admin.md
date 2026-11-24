@@ -118,9 +118,9 @@ Sections: L<n> <name> · ... (kitbag.py sections --fix writes it)
 Idempotent where possible; `learn` signals for surprises.
 
 ## Audit report
-Saved to `<runtime>/logs/kitty-audits/audit-<date>.md` (kitty step 9).
+Saved to `<runtime>/logs/kitty-audits/<run>.md` (kitty step 9).
 ```markdown
-# Kit audit <date> (<commit>, branch kit/audit-<date>)
+# Kit audit <run> (<date>, <commit>, branch kit/<run>)
 ## Result
 - <N> fixed (<commits>), <N> proposed, <N> ASK, <N> rejected · lint 0 · ports ok · tests ok · org terms 0 · docs <n>/<cap> · plumbing <n>/<cap> · max start <n>
 ## ASK

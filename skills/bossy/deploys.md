@@ -8,7 +8,7 @@ done` / `until tasks <ids> merged` (or `until all of <run name> is merged`): mut
 question back:
 1. `bossy.ps1 deploy plan -Env <env>`: every session's merged-not-deployed MRs for that env.
 2. Deploy per the org's deploy rules. A deploy branch changes only through a deploy MR: `deploy merge -Repo <checkout> -To <env> -Mr
-   -Mrs <refs> -Decision <id>` pushes `<deploy.branchPrefix, deploy/><env>-<date>`, opens the MR (`deploy.mergeMethod`, merge: squash off; body: MRs, tasks, decision id), merges on
+   -Mrs <refs> -Decision <id>` pushes `<deploy.branchPrefix, deploy/><env>-<nnnn>` (no date in a ref: the counter; tags `deploys[].tag` `{n}`), opens the MR (`deploy.mergeMethod`, merge: squash off; body: MRs, tasks, decision id), merges on
    green; a call waits `-WaitMinutes` (8), a re-run resumes the open deploy MR. Never a push to the deploy branch (`-Push` there is refused, the guard denies it) or a release-job trigger. A
    service restart by hand only through `deploy restart -Env <target>` (busy check re-run on the host right before it;
    REFUSED -> `decide ask`; ssh rows: `ssh.manager` systemd | docker | pm2 | custom restartCmd, `ssh.sudo`; `command` rows: `command.restart`), never a bare service restart.

@@ -22,7 +22,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
     one row per resource: holder, since, last seen, last used (files only)
   release -Agent <id>[,<id>] [-Reason]   every lease of those agents (lanes, env + layers, GPU, builds, tabs), logged in .state/leases.jsonl
   shells [-Json]   agents' background shells: owner, state, CPU / IO / output progress, last output line; recently ended ones (read-only)
-  stats [-Reset]   the dashboard's statistics-only files; -Reset moves them to .state/forgotten/stats-reset-<date>/ (charts start empty)
+  stats [-Reset]   the dashboard's statistics-only files; -Reset moves them to .state/forgotten/stats-reset-<nnnn>/ (charts start empty)
   storage [-Drive] [-Since 24h|7d] [-Folders] [-Scan]   free space per drive, folder sizes, rescues (.state/storage)
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]

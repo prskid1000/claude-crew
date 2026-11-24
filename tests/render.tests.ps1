@@ -177,7 +177,7 @@ $lu = { param($r, $n) "[$r!$n](https://git.example/g/$r/-/merge_requests/$n)" };
 Expect "render with a git host: MR refs are full-URL links in comment-solution, comment-status and the MR body's siblings ($($cs5.out))" ($cs4.out.Contains("**MRs:** $(& $lu web 5) (MERGED) · $(& $lu api 4) (OPEN)") -and $cs5.out.Contains("promoted — $(& $lu web 5) merged · $(& $lu api 4)") -and $mb2.out.Contains("**Sibling MRs:** $(& $lu api 4) (merge order"))
 # ---- run-file schemas (items 10, 17, 19): required + allowed keys; another key = drift (BAD, supervise WATCH)
 $qr = TkPath $k qa-runs -Create; New-Item -ItemType Directory -Force "$qr/r3/A1" | Out-Null
-Set-JsonFile "$qr/r3/A1/results.json" @{ code = 'A1'; checks = @(); colour = 'red' }; Set-JsonFile "$qr/r3/run.json" @{ title = 't'; runDir = 'r3'; items = @() }
+Set-JsonFile "$qr/r3/A1/results.json" @{ code = 'A1'; checks = @(); colour = 'red' }; Set-JsonFile "$qr/r3/run.json" @{ title = 't'; runDir = 'r3'; items = @(); name = 'testy-0001'; label = 'l'; started = 'x' }   # N3 run labels
 Set-JsonFile (Join-Path (TkPath $k programs -Create) 'p1.json') @{ wave = 1 }
 Set-JsonFile (Join-Path (TkPath $k decisions -Create) 'd.json') @{ schemaVersion = 2; id = 'd'; status = 'answered'; question = 'q'; scopeId = 's'; rationale = 'r' }
 $s10 = @(& $py -X utf8 $KB state lint --json 2>$null | ConvertFrom-Json | ForEach-Object { "$($_.name)|$($_.problem)" }) -join "`n"

@@ -115,8 +115,7 @@ flowchart LR
 One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes, worktree slots;
 only owner holds (`envy.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
 Worktree slots (`crafty.ps1 wt lease / release / pool`): a fixed pool per repo (`pool.size`), created lazily, never deleted; a
-released slot keeps its build caches and goes detached, a fair queue when all are leased. One naming scheme, shown on the
-dashboard: member n of any pool (slot, env lane, phone lane) is the n-th bird of `pool.names` (`backend·Falcon`, `shop·Kestrel`).
+released slot keeps its build caches and goes detached, a fair queue when all are leased. Names: "Worktrees and lanes".
 The local STT server (`local-stt`; `skills/pokey/media.md`): one job at a time, bound to the job's process, its RAM through the memory gate.
 GPU (`gpu.exclusive.<kind>`, `lib.ps1` `Use-KitGpu`): one kind at a time (e.g. lane emulators), others wait (`waiting for GPU:
 held by <holder>`); `processes` (regex) hold it; `idleExcept` (the kind's own backend): also waits on any other nvidia-smi process,
@@ -134,19 +133,21 @@ names or sources match `match` (no names: all) holds `lock`; others queue up to 
   session, run, since, reason); past 1 MB the newest half kept. Last used: `bossy.ps1 status`, lane and env status.
 
 ## Worktrees and lanes
-- **Pool slots** (`crafty.ps1 wt lease`): per repo, folder `<bird>-<repo>`, shown as `<repo>·<Bird>`; agents lease one per branch
-  and release it; a free slot sits detached at `origin/<target>`, never on a stale branch; warm free slots: 7-day p90 + 1 (`pool.warm` first).
-- **Lanes** (envy): lane k of env `<product>` runs from worktrees `lane-<product>-<bird>-<repo>` on local branch
-  `lane/<product>-<bird>` (never pushed): the target + task branches merged as layers. Old names (`localenv-<env>-<repo>`,
-  `localenv/<env>`) move when the lane is idle (`envy.ps1 lanes -Migrate [-DryRun]`; supervise each sweep, `-LanesOnly`), which
+- **Pool slots** (`crafty.ps1 wt lease`): per repo, folder `slot-<nn>-<repo>` (older `<bird>-<repo>` serve on), shown
+  `<repo>·slot-<nn>`; agents lease one per branch and release it; a free slot sits detached at `origin/<target>`, never on a
+  stale branch; warm free slots: 7-day p90 + 1 (`pool.warm` first).
+- **Lanes** (envy; ids `localEnv.laneIds`: `skills/envy/reference.md` "Names"): `nn` lane `lane-<nn>`, worktrees
+  `lane-<nn>-<repo>` on local branch `lane/<nn>`; `bird` `<product>-<bird>`, `lane-<product>-<bird>-<repo>`, `lane/<product>-<bird>`;
+  never pushed: the target + task branches merged as layers. Older names (`localenv-<env>-<repo>`, `localenv/<env>`; nn: the
+  bird ones) move when the lane is idle (`envy.ps1 lanes -Migrate [-DryRun]`; supervise each sweep, `-LanesOnly`), which
   also removes clean worktrees of `localenv/*` branches no lane owns, deletes `[gone]` branches merged into the target and
   backups fully on origin, and lists the rest.
-- **One lane name:** output shows `<product>·<Bird>`; state and logs keep the id (records with an old id show and group as its bird); `-Env` takes either (ui-check: LANE-ID).
+- **One lane name:** output shows `<product>·<Bird>`; state and logs keep the id (older ids group as today's); `-Env` takes either (ui-check: LANE-ID).
 - **Lanes in sync** (`wt pool -Sync` -> `envy.ps1 lanes -Sync`): an idle lane is rebuilt as a build would (`origin/<target>` +
   open layers + prepare; merged layers dropped; a conflict: left as it was, listed); `lane/*` track no upstream; Branches tile:
   `base @ <sha> · behind N · test merges N`.
 - **Many to many:** any task branch builds into any lane (merged onto its target); the slot keeps the task's own code. A lane
-  branch no worktree holds is pruned (commits on no remote kept first as tag `backup/<branch>-<yyyyMMdd>-<sha>`).
+  branch no worktree holds is pruned (commits on no remote kept first as tag `backup/<branch>-<sha>`).
 - **Repo sync** (`wt pool -Sync`, plain `wt pool` previews it; supervise every `sync.everyMinutes`): one fetch per repo, every local branch strictly behind its
   upstream fast-forwarded (checked out: only when clean), merged branches whose upstream is gone deleted; diverged or dirty ones
   are listed (dashboard Branches tile), never touched.

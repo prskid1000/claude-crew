@@ -8,7 +8,7 @@ supervise: BAD = WATCH).
 - **Writes:** `Write-KitState` (lib.ps1) / `state_write` (kitbag.py): temp file + move, `schemaVersion`, `updated`,
   `holder`; read-modify-write inside `Invoke-KitLocked` / `locked()` on that file. Log lines: kitlog only.
 - **Reads:** `Read-KitState` / `state_read`: `$null` / `None` when missing or broken, never throws; unknown fields kept.
-- **Times:** `Get-KitStamp` / `kit_stamp` (stored UTC ISO ms, file `yyyyMMdd-HHmmss` UTC, shown `yyyy-MM-dd HH:mm`); readers accept older forms.
+- **Times:** `Get-KitStamp` / `kit_stamp` (stored UTC ISO ms, shown `yyyy-MM-dd HH:mm`), never in a name; readers accept older forms.
 - **Ids:** stable, file-safe; task = tracker id; a new id kind: `kitbag.py naming next id <kind>` (`<kind>-<nnnn>`, no date).
 - **Format:** JSON for scripts; markdown only for people.
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
@@ -68,7 +68,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `agents` | `crafty.ps1 checkpoint` | `dir=*/resume*.json v1: agent run steps` | 7 d |
 | `decisions` | `bossy.ps1 decide` | `dir v2: id status question + kind run agent item options blocking contracts at task mrs answer by answeredAt recommend commit parentId gate source usedAt usedBy supersedes scopeId rationale ask` | 14 d |
 | `qa-runs` | `testy.js`, `pokey.ps1 finalize` | `dir=*/index.json v1: run items` | 14 d |
-| `qa-runs:run` | `pokey.ps1 prepare`, `retest` | `dir=*/run.json v0: title runDir items + kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent` | 14 d |
+| `qa-runs:run` | `pokey.ps1 prepare`, `retest` | `dir=*/run.json v0: title runDir items + name label started kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent` | 14 d |
 | `qa-runs:results` | the tester (testy.js CHECKS_SCHEMA), `pokey.ps1 results patch` | `dir=*/*/results.json v0: code checks + findings setup_changes data_created skipped handoff` | 14 d |
 | `qa-runs:held` | `pokey.ps1 results hold` | `dir=*/*/held.json v0: code held at + envFix summary` | 14 d |
 | `qa-runs:bugs` | `pokey.ps1 finalize` | `dir=*/bugs.json v0: groups + groups` | 14 d |

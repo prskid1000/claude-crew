@@ -22,9 +22,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L40 paths · L137 state · L194 kitlog · L296 load · L789 lint · L1203 README graph · L1321 lint command · L1602 audit ·
-  L1750 registry · L1810 tools · L1898 parity · L2350 arch lint · L2623 prose · L2803 sections · L2933 budget · L2951 migrate ·
-  L3099 plugins · L3156 state lint · L3344 main
+Sections: L40 paths · L137 state · L226 kitlog · L328 load · L821 lint · L1235 README graph · L1353 lint command · L1635 audit ·
+  L1783 registry · L1843 tools · L1931 parity · L2383 arch lint · L2656 prose · L2836 sections · L2966 budget · L2984 migrate ·
+  L3132 plugins · L3189 state lint · L3377 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -154,6 +154,38 @@ def state_write(path, data, version=1):
         json.dump(data, fh, indent=1, ensure_ascii=False)
     os.replace(tmp, path)
     return data
+
+# one counter per kind for every id and name the kit makes (NO-DATE: never a date in a name; kitbag_naming.py, lib.ps1 New-KitId)
+def _counter(group):
+    """The next number of a counter group under its lock (.state naming.json: {group: last})."""
+    f = kit_path('naming', create=True)
+    with locked(f):
+        x = state_read(f) or {}
+        if group.startswith('id:') and group not in x:   # migrate: the old per-day counters of this kind fold into one, past every id they made
+            days = [k for k in x if k.startswith(group + ':')]
+            x[group] = sum(int(x.pop(k) or 0) for k in days)
+        x[group] = int(x.get(group) or 0) + 1
+        state_write(f, x)
+        return x[group]
+
+def next_id(kind):
+    if not re.match(r'^[a-z]+(?:-[a-z]+)*$', kind):
+        raise SystemExit(f'naming next id: kind {kind!r}: lowercase words joined by -')
+    live = board_live('run')
+    for _ in range(100):   # a reset counter never hands out a run id live on the board
+        rid = f'{kind}-{_counter(f"id:{kind}"):04d}'
+        if rid not in live:
+            return rid
+    raise SystemExit(f'naming next id: 100 {kind} ids live on the board')
+
+def board_live(field):
+    """{field value} of the board rows not left (board join, kitbag.py naming next id)."""
+    d, out = kit_path('board'), set()
+    for f in (osp.join(d, n) for n in os.listdir(d) if n.endswith('.json')) if os.path.isdir(d) else []:
+        row, err = load_json(f)
+        if not err and isinstance(row, dict) and row.get('status') != 'left' and row.get(field):
+            out.add(str(row[field]))
+    return out
 
 def task_file(task):
     return osp.join(kit_path('tasks'), re.sub(r'[^\w.-]', '_', str(task)) + '.json')
@@ -1540,8 +1572,9 @@ console.log(JSON.stringify(res))'''
 def lane_ids_shown(page, kit=None):
     """K55: bare lane ids in a page's shown text (<product><k> as a word, k >= 2; a base <product> before " · " or after "env " /
     "lane "), lanes from kit.local.json localEnv.envs (lanes.max); each hit with its context. No lanes configured: none."""
-    envs = (local_config(kit or KIT_DIR, 'kit.local.json').get('localEnv') or {}).get('envs') or {}
-    alts = []
+    le = local_config(kit or KIT_DIR, 'kit.local.json').get('localEnv') or {}
+    envs = le.get('envs') or {}
+    alts = [r'(?<![\w·./\\-])lane-\d{2,}(?= · )|(?<=env )lane-\d{2,}(?![\w·./\\-])'] if envs and le.get('laneIds') == 'nn' else []   # N3 ids, a lane context only (phone lanes may share them)
     for e, v in envs.items():
         q = re.escape(e)
         alts.append(rf'(?<![\w·./\\-]){q}(?= · )|(?<=env ){q}(?![\w·./\\-])|(?<=lane ){q}(?![\w·./\\-])')

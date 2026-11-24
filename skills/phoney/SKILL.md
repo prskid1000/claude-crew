@@ -68,14 +68,14 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
 ```json
 {
  "swarm.config.json": {
-   "_readme": "Lanes = AVD names (phoney.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag} over kit.local.json devices.avd (default android-35, pixel_7, google_apis). app.kind: native (default) | react-native | kmp; flutter, maui, capacitor (adapters/app-kinds.ps1). localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
+   "_readme": "Lanes = AVD names lane-<nn> (phoney.ps1 avd create; iOS: a udid; -Lane lane-<nn> or an old bird name also picks the nn-th lane), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag} over kit.local.json devices.avd (default android-35, pixel_7, google_apis). app.kind: native (default) | react-native | kmp; flutter, maui, capacitor (adapters/app-kinds.ps1). localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
    "avdDir": "",
    "outDir": "",
    "headless": false,
    "events": false,
    "lanes": [
-    { "name": "Falcon", "port": 5556, "user": "qa-user-1", "notes": "data prefix QA-L1-" },
-    { "name": "Kestrel", "port": 5558, "user": "qa-user-2", "notes": "data prefix QA-L2-" }
+    { "name": "lane-01", "port": 5556, "user": "qa-user-1", "notes": "data prefix QA-L1-" },
+    { "name": "lane-02", "port": 5558, "user": "qa-user-2", "notes": "data prefix QA-L2-" }
    ],
    "app": {
     "kind": "react-native", "package": "com.example.app", "appDir": "/path/to/example-app/app", "branch": "main",

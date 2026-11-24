@@ -13,9 +13,9 @@ config keys) are only proposed: --apply writes one batch and prints its decide a
 indexes and produced texts are only proposed. Each cut goes to <state>/forgotten/<kind>/<date>.md (`--restore <id>` puts it
 back); a kind's archive lives 7 days, doubled per restore up to 90, halved after a window with none; --purge deletes the rest.
 Exit codes: 0 fits / done · 1 still over cap, or a confirm refused · 2 usage error.
-Sections: L29 model · L74 items · L213 plan · L265 archive · L476 hooks
+Sections: L29 model · L74 items · L213 plan · L265 archive · L475 hooks
 """
-import ast, contextlib, datetime, hashlib, json, os, re, sys, time
+import ast, contextlib, datetime, json, os, re, sys, time
 import os.path as osp
 
 MIN_DAYS, MAX_DAYS, UNUSED_DAYS, LESSON_CAP, MEMORY_CAP = 7, 90, 60, 40, 200   # memory: Claude Code loads 200 index lines
@@ -277,8 +277,7 @@ def _cut(p, xs, now):
         for x in sorted(xs, key=lambda x: -x['start']):   # anchor: the nearest line above that stays (a restore of one cut alone finds it)
             j = next((j for j in range(x['start'] - 1, -1, -1) if L[j].strip() and j not in gone), -1)
             at = j - len([g for g in gone if g < j]) if j >= 0 else -1   # the anchor's line once every cut is out
-            seed = f"{p['rel'] or p['path']}{x['start']}{now}{x['text']}"
-            xid = f"{p['kind']}-{day.replace('-', '')}-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:6]}"
+            xid = next_id(p['kind'])   # NO-DATE: <kind>-<nnnn>; the day file holds the time
             fh.write(f"## {xid}\n- file: {p['rel'] or p['path']}\n- at: {at}\n- after: {L[j] if j >= 0 else ''}\n- why: {x['why']}\n{FENCE}\n{x['text']}\n{FENCE}\n\n")
             del L[x['start']:x['end']]
             ids.append(xid)
@@ -365,7 +364,7 @@ def _show(p, out):
 
 def _batch(p, xs, now):
     path = osp.abspath(p['path'])
-    b = f"fb-{datetime.datetime.fromtimestamp(now).strftime('%Y%m%d%H%M%S')}-{hashlib.sha1(path.encode()).hexdigest()[:4]}"
+    b = next_id('fb')   # NO-DATE: fb-<nnnn>; the batch file keeps path and items
     state_write(osp.join(_adir('pending'), b + '.json'), {'batch': b, 'path': path, 'kind': p['kind'],
                 'items': [{'text': x['text'], 'why': x['why'], 'label': x['label']} for x in xs]})
     names = ', '.join(x['label'] for x in xs)[:200]

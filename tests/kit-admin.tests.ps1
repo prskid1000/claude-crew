@@ -147,7 +147,7 @@ $fgL = Join-Path $fgD 'LESSONS-fg.md'
 [IO.File]::WriteAllText($fgL, "## alpha`n- a hot case -> keep it (seen) (3×)`n- a cold case -> drop it (once)`n- (fixed in kit) an old case -> gone (fixed)`n- an owner case -> keep (owner, 2026-01-01)`n## Decisions`n- an ADR line`n")
 $fo = & $fgRun --target $fgL --section alpha --to 2 --apply; $fgT = [IO.File]::ReadAllText($fgL)
 Expect "forget: lessons over cap lose the fixed-in-kit line, then the lowest hits; owner lines and Decisions stay ($($fo.Trim()))" ($fgT -notmatch 'an old case|a cold case' -and $fgT -match 'a hot case' -and $fgT -match 'an owner case' -and $fgT -match 'an ADR line' -and $fo -match 'FORGOT .*2 item')
-$fgId = [regex]::Match($fo, 'lessons-\d{8}-[0-9a-f]{6}').Value; $ro = & $fgRun --restore $fgId
+$fgId = [regex]::Match($fo, 'lessons-\d{4}\b').Value; $ro = & $fgRun --restore $fgId
 $fgRet = Get-Content (Join-Path (TkPath $kc forgotten) 'retention.json') -Raw | ConvertFrom-Json
 Expect "forget --restore puts the line back after its anchor and doubles the kind's retention 7 -> 14 d ($($ro.Trim()))" ($ro -match "restored $fgId" -and [IO.File]::ReadAllText($fgL) -match '(cold|old) case' -and $fgRet.kinds.lessons.days -eq 14)
 [IO.File]::WriteAllText((Join-Path $fgD 'doc.md'), "# Doc`n## Used part`nkept: named elsewhere`n## Old notes`nnobody names this`n## Hard rules`nnever cut`n")

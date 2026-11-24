@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app-kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L115 phone · L315 build · L461 install · L488 launch · L500 avd · L588 up · L687 down · L717 events ·
-  L774 slim
+Sections: L24 config · L122 phone · L322 build · L468 install · L495 launch · L507 avd · L595 up · L694 down · L724 events ·
+  L781 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -56,6 +56,13 @@ function Get-SwarmConfig {
   if ($c.avd) { foreach ($p in (Get-KitProps $c.avd)) { if ("$($p.Value)" -ne '') { $av[$p.Name] = $p.Value } } }; $c | Add-Member -Force avd ([pscustomobject]$av)
   $c | Add-Member -Force state (Join-Path $out 'swarm.json')
   $script:SwarmCfg = $c; $c
+}
+# a -Lane name -> the configured lane (N3 alias map, renamed lanes keep working): its own name; lane-<nn> = the nn-th lane; the n-th bird
+# (pool.names: the old default names) = the n-th lane when no lane carries that name; else as given (the caller says unknown)
+function Resolve-PhoneLane([string]$Name) {
+  $pl = @((Get-SwarmConfig).lanes); if (-not $Name -or $Name -in $pl.name) { return $Name }
+  $pn = if ($Name -match '^lane-(\d{2,})$') { [int]$Matches[1] } else { @(1..$pl.Count | Where-Object { (Get-KitBirdName $_) -ieq $Name })[0] }
+  if ($pn -ge 1 -and $pn -le $pl.Count) { "$($pl[$pn - 1].name)" } else { $Name }
 }
 # a Quick Boot save rewrites GBs on every close: keep the golden snapshot (devices.snapshotSave false) unless a cold boot or it is
 # older than the emulator or the AVD config (rejected: it would cold-boot for good)
@@ -178,7 +185,7 @@ switch ($Action) {
 
   'acquire' {
     if (-not $Agent) { throw 'acquire needs -Agent' }
-    $lanes = @($c.lanes | Where-Object { -not $Lane -or $_.name -eq $Lane })
+    $Lane = Resolve-PhoneLane $Lane; $lanes = @($c.lanes | Where-Object { -not $Lane -or $_.name -eq $Lane })
     if (-not $lanes) { throw "unknown lane $Lane (lanes: $($c.lanes.name -join ', '))" }
     $wf = Join-Path $waitDir "$(ConvertTo-KitSlug $Agent).json"   # test:CL1 is no Windows file name
     $since = (Get-Date).ToString('s')
@@ -507,7 +514,7 @@ param(
   [switch]$Force # even if leased
 )
 $ErrorActionPreference = 'Stop'
-$Lanes = @(Split-KitList $Lanes)
+$Lanes = @(Split-KitList $Lanes | ForEach-Object { Resolve-PhoneLane $_ })
 $c = Get-SwarmConfig
 $sdk = Split-Path (Split-Path $c.adb); $avdHome = $c.avdDir   # Get-SwarmConfig defaults it
 $leases = Get-KitPath phones
@@ -600,7 +607,7 @@ $c = Get-SwarmConfig
 $adb = $c.adb
 $onGpu = "$($c.avd.gpu)" -match '^(host|auto|)$'   # software rendering (avd.gpu swiftshader, ...) uses no GPU memory: no GPU lease
 $all = @($c.lanes)
-$Lanes = @(Split-KitList $Lanes)
+$Lanes = @(Split-KitList $Lanes | ForEach-Object { Resolve-PhoneLane $_ })
 if (-not $Lanes) { $Lanes = @($all | Select-Object -First $(if ($Count -gt 0) { $Count } else { $all.Count }) | ForEach-Object name) }
 $gate = ({ & $KitCmd.dev gate @args })
 $ledger = Get-KitGateLedger; New-Item -ItemType Directory -Force $ledger | Out-Null
@@ -687,7 +694,7 @@ if ($Mode -ne 'None' -and $out) { & $KitCmd.swarm install -Serials $out.serial }
 # ---- down: stop lanes (snapshot saved only without -no-snapshot-save, reverses removed, browser.mjs browsers killed)
 function Invoke-Down {
 param([Alias('Lane')][string[]]$Lanes, [switch]$KeepBrowsers)
-$Lanes = @(Split-KitList $Lanes)
+$Lanes = @(Split-KitList $Lanes | ForEach-Object { Resolve-PhoneLane $_ })
 $c = Get-SwarmConfig
 $adb = $c.adb
 foreach ($l in @($c.lanes) | Where-Object { -not $Lanes -or $Lanes -contains $_.name }) {

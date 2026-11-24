@@ -102,6 +102,13 @@ function Get-KitSweepProcs { foreach ($pt in 5560, 5558, 5556, 5562) { [pscustom
 $now = Get-Date; (@(Get-KitSuperviseGuardResources) | Where-Object { "$($_.name)" -like 'phone *' } | ForEach-Object { "$($_.name)=$($_.pid)" }) -join ','
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/bossy/adapters'))
 Expect "K92: RAM rows name each emulator by its own port's lane, else its AVD, never the serial ($(@($ram) -join ' '))" ((@($ram) -join ' ') -match 'phone Osprey=5560,phone Kestrel=5558,phone Falcon=5556,phone Heron=5562')
+# N3 phone lane alias map: lane-<nn> and an old bird name = the nn-th lane; a lane's own name as is; unknown as given
+$pla = Invoke-PsTest swarm-alias @'
+. $args[0]; $fa = [System.Management.Automation.Language.Parser]::ParseFile($args[1], [ref]$null, [ref]$null).Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Resolve-PhoneLane' }, $true)
+. ([scriptblock]::Create($fa.Extent.Text)); function Get-SwarmConfig { [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'lane-01' }, [pscustomobject]@{ name = 'Pixel B' }) } }
+(@('lane-02', 'Kestrel', 'lane-01', 'Falcon', 'lane-07', 'x') | ForEach-Object { Resolve-PhoneLane $_ }) -join ','
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $src 'skills/phoney/phoney.ps1'))
+Expect "phoney -Lane alias: lane-02 / Kestrel -> the 2nd lane, Falcon -> lane-01, unknown kept ($pla)" ("$pla".Trim() -eq 'Pixel B,Pixel B,lane-01,lane-01,lane-07,x')
 # pokey.ps1 ui (adapters/ui-android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
 $k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; & $J @{ devices = @{ type = 'android' } } (Join-Path $k 'skills/crafty/kit.local.json')   # devices.type default: none
 foreach ($f in 'skills/pokey/adapters/ui-android.ps1', 'skills/crafty/adapters/android-sdk.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $k (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }   # Get-AndroidSdk lives in android-sdk.ps1

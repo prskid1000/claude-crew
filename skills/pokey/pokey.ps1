@@ -1221,7 +1221,7 @@ New-Item -ItemType Directory -Force "$RunDir/tasks" | Out-Null
 $gf = "$RunDir/tasks/$Task.md"; Set-Content $gf $md -Encoding utf8
 $old = @('finalize.json', 'held.json', 'results.json' | ForEach-Object { Join-Path "$RunDir/$Code" $_ } | Where-Object { Test-Path $_ })
 if ($old.Count) {   # reused code: archive the earlier round
-  $arc = Join-Path "$RunDir/$Code" "archive-$(Get-KitStamp file)"; New-Item -ItemType Directory -Force $arc | Out-Null
+  $arc = Join-Path "$RunDir/$Code" (New-KitId archive "$RunDir/$Code"); New-Item -ItemType Directory -Force $arc | Out-Null
   foreach ($f in $old) { Move-Item -LiteralPath $f -Destination $arc }
   "archived the earlier round of $Code ($(($old | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')) to $arc"
 }

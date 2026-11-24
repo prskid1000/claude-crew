@@ -17,7 +17,7 @@ Files: `<kit>/LESSONS.md` (step 0); `<kit>/skills/bossy/kit-admin.md` (step 0: h
 steps 1-6 detail, script pitfalls); `<kit>/skills/bossy/kitbag.py` (steps 1-3 `audit setup|config|recover` on the live
 clone, 4 `audit scan`, `cost`, `release`, `port`; 4 and 8 `lint`; 9 `audit
 stamp`); `<kit>/skills/crafty/templates.md` (step 6 "Writing
-standards"); `kit-admin.md` "Audit report" (step 9, into `<runtime>/logs/kitty-audits/audit-<date>.md`); kind env:
+standards"); `kit-admin.md` "Audit report" (step 9, into `<runtime>/logs/kitty-audits/<run>.md`); kind env:
 `<kit>/skills/envy/SKILL.md` Rules (owner steps `up -Services`, `unhold`, `restart`, `down`, `refresh`, `drop`),
 `<kit>/skills/envy/reference.md` (Config, Lanes); phone lanes `<kit>/skills/phoney/SKILL.md` L2-L4.
 

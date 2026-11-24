@@ -5,11 +5,11 @@ deleted, so its build caches stay warm, and one naming scheme for every pooled r
   & <kit>/skills/crafty/crafty.ps1 wt release -Agent <id> [-Repo] | -Dir <slot> [-Reason]   uncommitted work: a WIP commit, else parked
   & <kit>/skills/crafty/crafty.ps1 wt pool [-Repo] [-Json] [-Sync] | -Migrate [-DryRun]   slots + a repo sync preview (-Sync: run it); per-task worktrees go when nothing is lost
   & <kit>/skills/envy/envy.ps1 lanes -Migrate [-LanesOnly] [-DryRun]   old lane names -> new when idle, orphan / merged branches (Invoke-LaneMigrate)
-Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/<bird>-<repo>.json (+ wait/).
+Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/slot-<nn>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L134 names · L187 slots · L213 lease · L324 release · L355 lanes · L460 sync · L560 pool · L603 sweep
+Sections: L15 worktrees · L134 names · L205 slots · L231 lease · L342 release · L373 lanes · L478 sync · L579 pool · L622 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -131,49 +131,67 @@ function Get-WtDirty($d) {
   $uAll = @(if ($outU.Count) { '--untracked-files=all' })
   @(git -C $d status --porcelain @uAll 2>$null | Where-Object { $_ -and ($_.Substring(3).Trim('"').TrimEnd('/') -notin $mine) -and -not ($_.StartsWith('??') -and $_.Substring(3).Trim('"') -in $outU) })
 }
-# ---- names: member n of every pool is the n-th bird
-# one naming scheme for every pooled resource: member n of a pool (worktree slot, env lane, phone lane) = the n-th bird
+# ---- names: slots slot-<nn>-<repo>, lanes per localEnv.laneIds; a bird is a lane's shown name only
+# pool slot n of a repo: folder slot-<nn>-<repo>, shown <repo>·slot-<nn> (N3: birds name lanes only; older <bird>-<repo> folders keep serving)
+function Get-KitSlotLeaf([int]$N, [string]$Rl) { 'slot-{0:d2}-{1}' -f $N, $Rl }
+function Get-KitSlotName([int]$N, [string]$Rl) { '{1}·slot-{0:d2}' -f $N, $Rl }
 $script:KitBirds = @('Falcon', 'Kestrel', 'Osprey', 'Heron', 'Merlin', 'Harrier', 'Kite', 'Swift', 'Raven', 'Wren', 'Egret', 'Ibis', 'Lark', 'Owl', 'Petrel', 'Robin', 'Shrike', 'Tern', 'Finch', 'Plover')
 function Get-KitBirdName([int]$N) { $b = @(Get-KitSetting 'pool.names' $script:KitBirds); if ($N -ge 1 -and $N -le $b.Count) { "$($b[$N - 1])" } else { "Bird$N" } }
+# localEnv.laneIds "nn" (N3): lane k of the i-th base env (config order) = lane-<nn>, nn = 10 x i + k (k <= 9 with 2+ envs: adding lanes
+# never moves another env's ids; one env: nn = k) -> @{ id; env; k; old (<env>, <env><k>); bird (<env>-<bird>) }; other schemes: none
+function Get-KitLaneMap {
+  if ("$(Get-KitSetting 'localEnv.laneIds' '')" -ne 'nn' -or -not ($envs = Get-KitSetting 'localEnv.envs' $null)) { return @() }
+  if ($script:KitLaneMapC -and [object]::ReferenceEquals($script:KitLaneMapC.cfg, $__cfg)) { return $script:KitLaneMapC.rows }
+  $all = @((Get-KitProps $envs).Name); $bn = @(1..40 | ForEach-Object { "$(Get-KitBirdName $_)".ToLower() })
+  $base = @($all | Where-Object { -not (($_ -match '^(?<b>.+?)\d+$' -and $Matches.b -in $all) -or ($_ -match '^(?<b>.+)-(?<d>[a-z]+)$' -and $Matches.d -in $bn -and $Matches.b -in $all) -or $_ -match '^lane-\d{2,}$') })
+  $rows = @(for ($i = 0; $i -lt $base.Count; $i++) { $e = $base[$i]; for ($k = 1; $k -le [math]::Max(1, [int]"$((Get-KitMember $envs $e).lanes.max)"); $k++) {
+        [pscustomobject]@{ id = 'lane-{0:d2}' -f ($(if ($base.Count -gt 1) { 10 * $i } else { 0 }) + $k); env = $e; k = $k; old = $(if ($k -gt 1) { "$e$k" } else { $e }); bird = "$e-$($bn[$k - 1])" } } })
+  $script:KitLaneMapC = @{ cfg = $__cfg; rows = $rows }; $rows
+}
+function Get-KitLaneRow([string]$Lane) { @(Get-KitLaneMap | Where-Object id -eq $Lane)[0] }
 # "<pool>·<Bird>": env lane shop2 -> shop·Kestrel (lane 1 = <env>, lane k = <env><k>; envs.<env><k> overrides: the shortest base wins); else the name
 function Get-KitPoolLabel([string]$Kind, [string]$Name) {
+  if ($Kind -eq 'env' -and ($lr = Get-KitLaneRow $Name)) { return "$($lr.env)·$(Get-KitBirdName $lr.k)" }   # laneIds "nn": lane-02 -> shop·Kestrel
   if ($Kind -eq 'env' -and "$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird' -and $Name -match '^(?<p>.+)-(?<b>[a-z]+)$') { foreach ($i in 1..40) { if ((Get-KitBirdName $i) -ieq $Matches.b) { return "$($Matches.p)·$(Get-KitBirdName $i)" } } }   # laneIds "bird": the id is <product>-<bird>
   if ($Kind -eq 'env' -and ($envs = Get-KitSetting 'localEnv.envs' $null)) {
     foreach ($e in @((Get-KitProps $envs).Name | Sort-Object Length)) { if ($Name -match "^$([regex]::Escape($e))(?<k>\d*)$") { return "$e·$(Get-KitBirdName $(if ($Matches.k) { [int]$Matches.k } else { 1 }))" } }
   }
   $Name
 }
-# a lane's names (README "Worktrees and lanes"): env rm2 -> lane/rm-kestrel, worktree lane-rm-kestrel-<repo>; an old-scheme
-# localenv-<env>-<repo> serves until envy Ensure-Worktree moves it (-Old: that path, -New: the new one)
-function Get-KitLaneSlug([string]$Lane) { ((Get-KitPoolLabel 'env' $Lane) -replace '[·\s]+', '-').ToLower() }
+# a lane's names (README "Worktrees and lanes"): env rm2 -> lane/rm-kestrel, worktree lane-rm-kestrel-<repo>; laneIds "nn": lane-02 ->
+# lane/02, lane-02-<repo>; an older scheme's worktree (localenv-<env>-<repo>; nn: lane-<env>-<bird>-<repo>) serves until envy
+# Ensure-Worktree moves it (-Old: that path, -New: the new one)
+function Get-KitLaneSlug([string]$Lane) { if (Get-KitLaneRow $Lane) { return $Lane.Substring(5) }; ((Get-KitPoolLabel 'env' $Lane) -replace '[·\s]+', '-').ToLower() }
 # one display name per lane (owner 2026-11-17, K55; state and logs keep the id): in shown text, <env><k> as a word and a base <env>
 # before " · " (a service row) or after "env " / "lane " become the pool label (rm2 · api -> rm·Kestrel · api); kitbag.py ui-check LANE-ID
 function ConvertTo-KitLaneText([string]$Text) {
   if (-not $Text) { return $Text }
   $dot = '(?:·|&#0*183;|&middot;|(?i:&#x0*b7;))'   # a middle dot, plain or HTML-encoded: a lane already labelled
   if (-not $script:KitLaneRx -or -not [object]::ReferenceEquals($script:KitLaneRx.cfg, $__cfg)) { $al = Get-KitLaneAlias; $script:KitLaneRx = @{ cfg = $__cfg; map =@(foreach ($l in @(@(Get-KitLaneNames) + @($al.Keys) | Sort-Object Length -Descending)) { $lb = Get-KitPoolLabel env $(if ($al.ContainsKey($l)) { $al[$l] } else { $l }); if ($lb -ne $l) { $q = [regex]::Escape($l)
-          , @($(if ($l -match '\d$') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= $dot )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|$dot)" }), $lb) } }) } }
+          , @($(if ($l -match '\d$' -and $l -notmatch '^lane-\d') { "(?<![\w·./\-])$q(?![\w·./\-])" } else { "(?<![\w·./\-])$q(?= $dot )|(?<=\b(?:env|lane) )$q(?![\w·./\-]|$dot)" }), $lb) } }) } }   # lane-<nn> only in a lane context: a phone lane may share the name
   foreach ($m in $script:KitLaneRx.map) { $Text = [regex]::Replace($Text, $m[0], $m[1]) }; $Text }
-# laneIds "bird": each old lane id (<env>, <env><k>) -> its <env>-<bird> id; records from before the rename are read through it
+# an older scheme's lane ids -> today's (records from before a rename are read through it): laneIds "bird": <env>, <env><k> -> <env>-<bird>;
+# "nn": <env>, <env><k> and <env>-<bird> -> lane-<nn>
 function Get-KitLaneAlias {
-  $al = @{}; if ("$(Get-KitSetting 'localEnv.laneIds' '')" -ne 'bird') { return $al }
+  $al = @{}; foreach ($r in @(Get-KitLaneMap)) { $al[$r.old] = $r.id; $al[$r.bird] = $r.id }; if ("$(Get-KitSetting 'localEnv.laneIds' '')" -ne 'bird') { return $al }
   foreach ($l in @(Get-KitLaneNames)) { if ($l -match '^(?<p>.+)-(?<b>[a-z]+)$') { for ($i = 1; $i -le 40; $i++) { if ((Get-KitBirdName $i) -ieq $Matches.b) { $al[$(if ($i -gt 1) { "$($Matches.p)$i" } else { $Matches.p })] = $l; break } } } }
   $al
 }
-# a record's resource name (<lane> · <service>, lane <lane>, <lane>) with an old lane id -> the same name with the bird id (one row per lane)
+# a record's resource name (<lane> · <service>, lane <lane>, <lane>) with an old lane id -> the same name with today's id (one row per lane)
 function ConvertTo-KitLaneId([string]$Name) {
   if (-not $script:KitLaneAl -or -not [object]::ReferenceEquals($script:KitLaneAl.cfg, $__cfg)) { $script:KitLaneAl = @{ cfg = $__cfg; map = (Get-KitLaneAlias) } }
   if ($script:KitLaneAl.map.Count -and $Name -match '^(?<pre>lane )?(?<id>[^\s·]+)(?<rest> · .*)?$' -and $script:KitLaneAl.map.ContainsKey($Matches.id)) { "$($Matches.pre)$($script:KitLaneAl.map[$Matches.id])$($Matches.rest)" } else { $Name }
 }
-# a shown lane name (rm·Kestrel, rm-kestrel, case-insensitive) -> its id; anything else as given
-function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneNames)) { if ($Name -ieq (Get-KitPoolLabel env $l) -or $Name -ieq (Get-KitLaneSlug $l)) { return $l } }; $Name }
+# a shown lane name (rm·Kestrel, rm-kestrel, case-insensitive) or an older id (nn: rm2, rm-kestrel) -> its id; anything else as given
+function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneNames)) { if ($Name -ieq (Get-KitPoolLabel env $l) -or $Name -ieq (Get-KitLaneSlug $l)) { return $l } }; foreach ($r in @(Get-KitLaneMap)) { if ($Name -ieq $r.old -or $Name -ieq $r.bird) { return $r.id } }; $Name }
 # a verb's text output with shown lane names; -Json output (read by scripts) keeps the ids
 function ConvertTo-KitLaneOut([bool]$Json) { process { if ($Json -or $_ -isnot [string]) { $_ } else { ConvertTo-KitLaneText $_ } } }
 function Get-KitLaneBranch([string]$Lane) { "lane/$(Get-KitLaneSlug $Lane)" }
-# configured lanes: each localEnv.envs key, lanes 2..lanes.max as <env><k> (envy.ps1 Get-LaneCfg)
-function Get-KitLaneNames { $envs = Get-KitSetting 'localEnv.envs' $null; if (-not $envs) { return @() }; if ("$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird') { $bn = @(1..40 | ForEach-Object { "$(Get-KitBirdName $_)".ToLower() }); return @(foreach ($p in @(Get-KitProps $envs | Where-Object { -not ($_.Name -match '^(?<b>.+?)\d+$' -and (Get-KitMember $envs $Matches.b)) })) { if ($p.Name -match '^.+-(?<b>[a-z]+)$' -and $Matches.b -in $bn) { $p.Name } else { for ($i = 1; $i -le [math]::Max(1, [int]"$($p.Value.lanes.max)"); $i++) { "$($p.Name)-$($bn[$i - 1])" } } }) | Select-Object -Unique }; @(foreach ($p in @(Get-KitProps $envs)) { $p.Name; for ($i = 2; $i -le [int]"$($p.Value.lanes.max)"; $i++) { "$($p.Name)$i" } }) | Select-Object -Unique }
+# configured lanes: each localEnv.envs key, lanes 2..lanes.max as <env><k> (envy.ps1 Get-LaneCfg); laneIds "bird" / "nn": their ids
+function Get-KitLaneNames { $envs = Get-KitSetting 'localEnv.envs' $null; if (-not $envs) { return @() }; if (($lm = @(Get-KitLaneMap)).Count) { return @($lm.id) }; if ("$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird') { $bn = @(1..40 | ForEach-Object { "$(Get-KitBirdName $_)".ToLower() }); return @(foreach ($p in @(Get-KitProps $envs | Where-Object { -not ($_.Name -match '^(?<b>.+?)\d+$' -and (Get-KitMember $envs $Matches.b)) })) { if ($p.Name -match '^.+-(?<b>[a-z]+)$' -and $Matches.b -in $bn) { $p.Name } else { for ($i = 1; $i -le [math]::Max(1, [int]"$($p.Value.lanes.max)"); $i++) { "$($p.Name)-$($bn[$i - 1])" } } }) | Select-Object -Unique }; @(foreach ($p in @(Get-KitProps $envs)) { $p.Name; for ($i = 2; $i -le [int]"$($p.Value.lanes.max)"; $i++) { "$($p.Name)$i" } }) | Select-Object -Unique }
 function Get-KitLaneWorktree([string]$Lane, [string]$Checkout, [switch]$Old, [switch]$New) {
-  $rt = @($KitConf.WorktreeRoots)[0]; $lf = Split-Path $Checkout -Leaf; $ow = Join-Path $rt "localenv-$Lane-$lf"; $nw = Join-Path $rt "lane-$(Get-KitLaneSlug $Lane)-$lf"
+  $rt = @($KitConf.WorktreeRoots)[0]; $lf = Split-Path $Checkout -Leaf; $nw = Join-Path $rt "lane-$(Get-KitLaneSlug $Lane)-$lf"
+  $ow = Join-Path $rt $(if (($lr = Get-KitLaneRow $Lane)) { "lane-$($lr.bird)-$lf" } else { "localenv-$Lane-$lf" })
   if ($New) { $nw } elseif ($Old -or (-not (Test-Path $nw) -and (Test-Path "$ow/.git"))) { $ow } else { $nw }
 }
 # the gate's build owner with no CLAUDE_AGENT (crafty.ps1 gate): a pool slot's build is its lease holder's, a lane worktree's "lane <env>·<Bird>" ("builds per agent" read falcon, kestrel:
@@ -205,7 +223,7 @@ function Get-KitSlots([string]$Repo) {
       $gd = ("$(Get-Content -LiteralPath $gf -TotalCount 1)" -replace '^gitdir:\s*').Trim(); if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $w.path $gd }
       $sf = Join-Path $gd 'claude-slot'; if (-not (Test-Path -LiteralPath $sf)) { continue }
       $n = [int]"$(Get-Content -LiteralPath $sf -TotalCount 1)".Trim(); $leaf = Split-Path $w.path -Leaf
-      [pscustomobject]@{ n = $n; name = "$rl·$(Get-KitBirdName $n)"; path = $w.path; branch = $w.branch; head = $w.head; gitDir = $gd; file = (Get-KitSlotFile $leaf) }
+      [pscustomobject]@{ n = $n; name = (Get-KitSlotName $n $rl); path = $w.path; branch = $w.branch; head = $w.head; gitDir = $gd; file = (Get-KitSlotFile $leaf) }
     }) | Sort-Object n
 }
 function Read-KitSlotLease([string]$File) { if (Test-Path -LiteralPath $File) { try { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json } catch { $null } } }
@@ -250,7 +268,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
         if (Test-Path -LiteralPath $wf) { (Get-Item -LiteralPath $wf).LastWriteTime = Get-Date }   # heartbeat: 3 min untouched = a dead waiter
         $slots = @(Get-KitSlots $Repo); $byN = @{}; $ls = @{}
         foreach ($s in $slots) { $byN[$s.n] = $s; $ls[$s.n] = Read-KitSlotLease $s.file }
-        $reserved = @(foreach ($n in 1..$size) { if (-not $byN[$n]) { $rf = Get-KitSlotFile "$((Get-KitBirdName $n).ToLower())-$rl"; $ro = Read-KitSlotLease $rf
+        $reserved = @(foreach ($n in 1..$size) { if (-not $byN[$n]) { $rf = Get-KitSlotFile (Get-KitSlotLeaf $n $rl); $ro = Read-KitSlotLease $rf
               if ($ro.creating -and (Test-KitLive $ro)) { $n } elseif ($ro) { Remove-Item -LiteralPath $rf -Force -ErrorAction SilentlyContinue } } })   # a slot being created
         $mine = @($slots | Where-Object { $o = $ls[$_.n]; $o -and -not $o.parked -and $o.agent -eq $Agent -and $o.branch -eq $Branch })[0]
         if ($mine) { return $mine }   # already ours
@@ -270,8 +288,8 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
           foreach ($s in @(@($free | Where-Object { "$(Meta $_.path 'lastbranch')".Trim() -eq $Branch }) + $free)) { if (-not @(Get-WtDirty $s.path).Count) { $pick = $s; break } }   # warm for this branch first, then the lowest
           if (-not $pick) {
             if (-not $room) { return $null }
-            $n = @(1..$size | Where-Object { -not $byN[$_] -and $_ -notin $reserved })[0]; $sleaf = "$((Get-KitBirdName $n).ToLower())-$rl"
-            $pick = [pscustomobject]@{ n = $n; name = "$rl·$(Get-KitBirdName $n)"; path = (Join-Path $slotRoot $sleaf); branch = ''; head = ''; new = $true; file = (Get-KitSlotFile $sleaf) }
+            $n = @(1..$size | Where-Object { -not $byN[$_] -and $_ -notin $reserved })[0]; $sleaf = Get-KitSlotLeaf $n $rl
+            $pick = [pscustomobject]@{ n = $n; name = (Get-KitSlotName $n $rl); path = (Join-Path $slotRoot $sleaf); branch = ''; head = ''; new = $true; file = (Get-KitSlotFile $sleaf) }
           }
         }
         $lease = [ordered]@{ slot = $pick.name; n = $pick.n; repo = $Repo; path = $pick.path; branch = $Branch; since = (Get-KitStamp) } + (New-KitLease $Agent $Session)
@@ -356,7 +374,7 @@ function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo)
 # a lane's old names (worktree localenv-<lane>-<repo>, branch localenv/<lane>) -> lane-<slug>-<repo>, lane/<slug>; $Busy (why the lane
 # is in use) keeps them; -> "moved / renamed ..." | "kept ...: <why>" | $null (nothing to move); the state keeps no worktree path
 function Move-LaneWorktree([string]$e, [string]$co, [string]$Busy = '') {
-  $ow = Get-KitLaneWorktree $e $co -Old; $nw = Get-KitLaneWorktree $e $co -New; $rl = Split-Path $co -Leaf; $ob = "localenv/$e"; $nb = Get-KitLaneBranch $e
+  $ow = Get-KitLaneWorktree $e $co -Old; $nw = Get-KitLaneWorktree $e $co -New; $rl = Split-Path $co -Leaf; $ob = if (($lr = Get-KitLaneRow $e)) { "lane/$($lr.bird)" } else { "localenv/$e" }; $nb = Get-KitLaneBranch $e
   $onOld = { param($d) "$(git -C $d branch --show-current 2>$null)".Trim() -eq $ob }
   if (Test-Path "$ow/.git") {
     if (Test-Path -LiteralPath $nw) { return "kept [$e] ${rl}: $ow and $nw both exist" }
@@ -460,11 +478,12 @@ function Get-KitLaneSyncFile { Join-Path (New-Item -ItemType Directory -Force (J
 # ---- sync: every pooled repo (wt pool; supervise every sync.everyMinutes): one fetch, fast-forward each local branch strictly
 # behind its upstream (checked out: ff-only when clean), prune lane branches no worktree holds and gone-upstream branches merged
 # into the target; diverged or dirty: listed only. Free clean slots sit detached at origin/<target>; pool.warm free slots exist.
-# a branch about to be deleted: its commits on no remote kept as tag backup/<branch>-<yyyyMMdd>-<sha> (one per tip) -> @{ n; tag; err }
+# a branch about to be deleted: its commits on no remote kept as tag backup/<branch>-<sha> (one per tip; NO-DATE: the sha is the id; old
+# backup/<branch>-<yyyyMMdd>-<sha> tags stay) -> @{ n; tag; err }
 function Save-KitBranchBackup([string]$Repo, [string]$Branch, [switch]$DryRun) {
   $c = @(git -C $Repo rev-list --count "refs/heads/$Branch" --not --remotes 2>$null); if ($LASTEXITCODE -or -not "$($c[0])".Trim()) { return [pscustomobject]@{ n = 0; tag = ''; err = 'rev-list failed: commits unknown' } }
   $n = [int]"$($c[0])".Trim(); if (-not $n) { return [pscustomobject]@{ n = 0; tag = ''; err = '' } }
-  $sha = "$(git -C $Repo rev-parse --short=8 "refs/heads/$Branch" 2>$null)".Trim(); $tag = "backup/$($Branch -replace '/', '-')-$((Get-Date).ToString('yyyyMMdd'))-$sha"
+  $sha = "$(git -C $Repo rev-parse --short=8 "refs/heads/$Branch" 2>$null)".Trim(); $tag = "backup/$($Branch -replace '/', '-')-$sha"
   $err = ''; if (-not $DryRun) { git -C $Repo rev-parse -q --verify "refs/tags/$tag" 2>$null | Out-Null; if ($LASTEXITCODE) { $o = @(git -C $Repo tag $tag "refs/heads/$Branch" 2>&1); if ($LASTEXITCODE) { $err = "tag $tag failed: $(@($o)[-1])" } } }
   [pscustomobject]@{ n = $n; tag = $tag; err = $err }
 }
@@ -540,13 +559,13 @@ function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
     for ($wi = 0; $wi -lt $size; $wi++) {   # one warm slot at a time: reserved under the lock (a creating lease), made outside it
       $mk = Invoke-KitLocked $pl { $slots = @(Get-KitSlots $Repo); $byN = @{}; foreach ($s in $slots) { $byN[$s.n] = $s }
         if (@($slots | Where-Object { -not (Read-KitSlotLease $_.file) }).Count -ge $warm) { return $null }
-        $n = @(1..$size | Where-Object { -not $byN[$_] -and -not (Test-Path -LiteralPath (Get-KitSlotFile "$((Get-KitBirdName $_).ToLower())-$rl")) })[0]; if (-not $n) { return $null }
-        $lf = Get-KitSlotFile "$((Get-KitBirdName $n).ToLower())-$rl"; Write-KitAtomic $lf (([ordered]@{ slot = "$rl·$(Get-KitBirdName $n)"; n = $n; repo = $Repo; creating = $true } + (New-KitLease 'wt-sync')) | ConvertTo-Json -Depth 5)
-        [pscustomobject]@{ n = $n; lf = $lf; p = (Join-Path @($KitConf.WorktreeRoots)[0] "$((Get-KitBirdName $n).ToLower())-$rl") } } | Select-Object -Last 1
+        $n = @(1..$size | Where-Object { -not $byN[$_] -and -not (Test-Path -LiteralPath (Get-KitSlotFile (Get-KitSlotLeaf $_ $rl))) })[0]; if (-not $n) { return $null }
+        $lf = Get-KitSlotFile (Get-KitSlotLeaf $n $rl); Write-KitAtomic $lf (([ordered]@{ slot = (Get-KitSlotName $n $rl); n = $n; repo = $Repo; creating = $true } + (New-KitLease 'wt-sync')) | ConvertTo-Json -Depth 5)
+        [pscustomobject]@{ n = $n; lf = $lf; p = (Join-Path @($KitConf.WorktreeRoots)[0] (Get-KitSlotLeaf $n $rl)) } } | Select-Object -Last 1
       if (-not $mk) { break }
       try { if (Test-Path -LiteralPath $mk.p) { $r.err = "$($mk.p) exists but is no slot"; break }
         Add-WtRoot (Split-Path $mk.p); git -C $Repo worktree add -q --detach $mk.p "origin/$tgt" 2>$null | Out-Null; if ($LASTEXITCODE) { $r.err = "warm slot $($mk.n) failed"; break }
-        Meta $mk.p 'slot' $mk.n; $r.warmed += "$rl·$(Get-KitBirdName $mk.n)" } finally { Remove-Item -LiteralPath $mk.lf -Force -ErrorAction SilentlyContinue }
+        Meta $mk.p 'slot' $mk.n; $r.warmed += Get-KitSlotName $mk.n $rl } finally { Remove-Item -LiteralPath $mk.lf -Force -ErrorAction SilentlyContinue }
     }
   }
   # the gc kit git skips (lib.ps1 maintenance.auto): at most once a sync, only with no slot of this repo leased; git's own thresholds
@@ -574,7 +593,7 @@ function Invoke-WtPool {   # slots per pooled repo; -Migrate [-DryRun]: per-task
         if ($dt.Count) {   # a merged branch whose only leftovers are edits of tracked files (regenerated fixtures): saved as a patch, then discarded (K38)
           if (-not $bv.delete -or @($dt | Where-Object { $_ -notmatch '^( M|M |MM) ' }).Count) { "keep  ${label}: uncommitted files"; continue }
           if ($DryRun) { "would go  ${label}: $($bv.why); $($dt.Count) edited file(s) saved as a patch first"; continue }
-          $pf = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'patches')).FullName "$(Split-Path $d -Leaf)-$((Get-Date).ToString('yyyyMMdd-HHmmss')).patch"
+          $pf = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'patches')).FullName "$(Split-Path $d -Leaf)-$(New-KitId patch).patch"
           git -C $d diff HEAD --binary --output="$pf" 2>$null; if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $pf) -or -not (Get-Item -LiteralPath $pf).Length) { "keep  ${label}: uncommitted files (patch failed)"; continue }   # git writes the bytes (CRLF, binary kept)
           git -C $d checkout -q HEAD -- . 2>$null; if ($LASTEXITCODE) { "keep  ${label}: uncommitted files (reset failed; patch $pf)"; continue }; "patched  ${label}: $($dt.Count) edited file(s) saved to $pf" }
         if ($w.branch) { if (-not $bv.delete) { "keep  ${label}: $($bv.why)"; continue }; $gw = $bv.why }
