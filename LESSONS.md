@@ -19,6 +19,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Splitting work into agents -> group by AREA (screens / packages), not item count; overlaps and contracts in the brief; ~15 parallel devy; each area its own file prefix and number range; overlap checks list every path any commit touched (net diffs hid overlaps; the memory gate fits ~15). (2×)
 
 ## crafty
+- a backfill or bulk change in review (tx master read, approve warnings, row caps) -> test with real repositories and cap values differing from defaults; read handler warnings; cap in SQL not Java (mocked tests hid 4 blocking defects across area-DOM, ACC-2, CAT)
+- planning an area scope list for the merge gate -> include test files and shared nav files the change touches in the area paths up front (scope gate refused 3 merges (area-ACC, area-ACC-2) and cost resumes)
 - a resumed agent reports done -> confirm the tester guide link exists before finish (area-ASK-2 and -5 reported done with the guide MISSING)
 - wt sync leaves a detached HEAD while the branch ref lags -> before push run git checkout -B <branch> <HEAD sha> (push of the stale branch ref lost the synced commits)
 - wt commit -ScopeOk after an owner answer saying scope ok -> record scope with decide record -Gate scope -Item <branch>; the check reads a record keyed by branch (NO-WORD 2x) (3×)
@@ -31,9 +33,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - [ship] deploy plan shows a MERGED MR as NOT-DEPLOYED, or mr.get prints null -> Re-query MR state with the host verb before reporting; run deploy plan with a long timeout (Wrong not-merged summary and skipped MR body, docs and tracker updates)
 - a scratch file (probe, diff, config copy) -> only under crafty.ps1 dir -Agent <id> (a stray in <runtime>/work cannot be removed later: the guard blocks deletes there, 7x on 2026-11-19)
 - [code] a change touches files outside the area paths of the brief -> raise the scope decide ask at plan time, not at wt commit (wt commit refused files and the agent waited with no answer) (2×)
-- editing regex text or writing mr/spec text -> use the Edit tool, not heredoc python; run kitbag.py prose on the text first (heredoc corrupted files; 46 prose refusals in one window)
 - [local|ship] A testing-doc row is NOT_TESTED_LOCAL -> Add its human check (or needsLiveCheck) at write time, before devtools.py finish (finish refused 3x, blocking sibling items' publish)
-- Agent reports code plus unit tests pass but local-env loop and testing docs not done -> Treat as not finished: run the local loop and docs before returning, or hand off with the open steps (Cause seen 5x in 30 days; items came back for rework)
 - [ship] devtools.py finish runs on a task created without a spec (no Problem, Goal, Items, Acceptance, Links) -> write the tracker spec sections before finish, or create tasks through tracker create with a spec (tracker describe refused finish 3 times, task stuck before promoted)
 - [code] A spec-only (test-only) area finds a product bug -> pin today's behaviour in the spec, report BACKEND FIX + `decide ask`, never edit product source (a spec-only area's MR changed 4 service / repository files, passed review and CI, and reached a test env). (1x)
 - [ship] devtools.py finish on a parent task whose description is rendered from a spec -> update the description with crafty.ps1 tracker update -Spec before finish; finish must skip describe on spec-rendered tasks (finish failed 3x at tracker describe after docs and MRs were already posted)
@@ -61,6 +61,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5├ù)
 
 ## pokey
+- a results patch with inline JSON is rejected by the Bash tool quoting -> save the patch JSON to a file under the agent work dir and pass the file (inline quoting rejected, one retry per run)
 - a browser.mjs script is killed by timeout or Stop-Process -> release its tab lease (browser release) before the next session() (tab stays leased; later session() blocks 300 s with all 8 tabs busy)
 - run dir is under <kit>/.claude/.runtime and browser.mjs shot()/saveNet refuse it -> set CLAUDE_RUNTIME to that dir before running browser.mjs; use crafty.ps1 dir for run files (seen 3x: shot refused, Write guard-denied)
 - finalize -Check fails a prose limit (observed text over 40 words) -> count words in each observed text before finalize; keep <= 40 (seen 2x: found only at check, needed a results patch)
@@ -78,7 +79,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - publishing QA evidence -> run finalize -Check, then publish -FixNames so evidence names are standard on the first try (T3 and T4 closed clean first try; T1 and T2 needed renames) (3×)
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
 - A node QA script -> wrap it in try/finally s.done(); after a hard kill run `bossy.ps1 release -Agent <id>` (leased tabs, 8 max, made session() hang silently). (2x)
-- A setting-dependent check -> change the setting, wait for the cache, check, restore and verify the restore by GET; log each step in lead-notes.md (an unrestored setting broke other checks). (1×)
 - Writing QA observed and verify text -> sentences of <= 25 words, <= 40 words per observed text, before evidence -Check (so the first -Check passes). (3×) (2×)
 - An API check -> replay the body the real client sends (from the web UI network log or the client source), never a hand-built body (a richer hand body passed while the UI request wrote wrong data: defect missed). (1x)
 - A PowerShell helper param -> never reuse a script variable name in any case (`$o` is `$O`); use distinct names (the helper ran with the wrong value: hard failure). (1x)
