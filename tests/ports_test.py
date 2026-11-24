@@ -284,10 +284,10 @@ print(f'parity-harness:{len(p4) == 2 and all("not in the" in x for x in p4) and 
 # `no such feature: <link>` gaps left out; a no-such-feature gap without its link fails lint
 kn = kt.load(kt.KIT_DIR); nx = kt.parity_next(kn, man, {'tracker': {'type': 'linear'}})
 cells = [(f, n, v) for _, f, n, v, s, _ in nx]
-fn = json.loads(json.dumps(man)); fn['adapters']['tracker']['gaps'] = {'youtrack/statuses': 'no such feature: https://example.org/doc no status list API'}
-fn['adapters']['tracker']['fallback'].pop('statuses'); nf = [(f, n, v) for _, f, n, v, s, _ in kt.parity_next(kn, fn, {})]
-fn['adapters']['tracker']['gaps'] = {'youtrack/statuses': 'no such feature (no link)'}; p8 = par(kn, fn)
+fn = json.loads(json.dumps(man)); fn['adapters']['tracker']['gaps'] = {'azure/checklist': 'no such feature: https://example.org/doc no checklist API'}
+fn['adapters']['tracker']['fallback'].pop('checklist'); nf = [(f, n, v) for _, f, n, v, s, _ in kt.parity_next(kn, fn, {})]
+fn['adapters']['tracker']['gaps'] = {'azure/checklist': 'no such feature (no link)'}; p8 = par(kn, fn)
 print(f'parity-next:{cells[0][:2] == ("tracker", "linear") and all(n == "linear" for f, n, v in cells[:3] if f == "tracker")}'
       f'|{not [c for c in cells if c[1] == "none"]}|{all(s in ("fallback", "gap") for *_, s, _ in nx)}'
-      f'|{("tracker", "youtrack", "statuses") in cells and ("tracker", "youtrack", "statuses") not in nf}'
+      f'|{("tracker", "azure", "checklist") in cells and ("tracker", "azure", "checklist") not in nf}'
       f'|{any("says no such feature without its doc link" in x for x in p8)}')

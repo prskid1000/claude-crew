@@ -29,7 +29,7 @@ Expect-Each $capR 'caps: #' @('declOff', 'verb', 'noVerb', 'unsupported', 'cfgOf
 Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue' } } }
 $tagR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   foreach ($af in 'tracker-clickup', 'tracker-jira', 'tracker-azure', 'tracker-linear', 'tracker-youtrack', 'github', 'gitlab', 'gitea', 'bitbucket', 'azure-devops') { . (Join-Path $k "skills/crafty/adapters/$af.ps1") }
-  $o = [ordered]@{}; $natT = 'azure clickup github gitlab jira jira-server none'; $natH = 'azure gitea github gitlab'   # README "Adapters": native; the rest fall back
+  $o = [ordered]@{}; $natT = 'azure clickup github gitlab jira jira-server linear none youtrack'; $natH = 'azure gitea github gitlab'   # README "Adapters": native; the rest fall back
   $tn = @($KitAdapters.tracker.Keys | Where-Object { $_ -ne 'fk' } | Sort-Object); $o.trackers = $tn.Count -ge 10
   $o.trackerNative = (@($tn | Where-Object { Test-KitCap tracker $_ labels }) -join ' ') -eq $natT
   $o.trackerRemove = -not @($natT -split ' ' | Where-Object { $_ -ne 'jira-server' -and "$($KitAdapters.tracker[$_].labels)" -notmatch 'remove' }).Count
