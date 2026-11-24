@@ -36,6 +36,8 @@ Expect 'check: an unregistered AREA is named in the refusal' ($ua.code -eq 1 -an
 # ---- make: names from parts fit their own check
 $mt = Kb naming make title key=SHOP-CAT-004 type=Feature product=SHOP area=CAT 'outcome=Shop catalogue public page (api, web)'; $mb = Kb naming make branch type=feat key=SHOP-CAT-004 'slug=Public catalogue page'
 $md = Kb naming make doc key=SHOP-CAT-004 kind=Spec ver=2 'title=Public catalogue'; $mc = Kb naming make case key=SHOP-CAT-004 n=3
+$mm = Kb naming make mr type=feat scope=site key=SHOP-CAT-004 'summary=catalogue and cart blocks'; $ml = Kb naming make mr type=feat key=SHOP-CAT-004 'summary=Catalogue: cart blocks'
+Expect "make mr: a leading area word in a sentence stays, as a label it goes (retro 1124: an MR title lost 'catalogue') ($($mm.out) | $($ml.out))" ($mm.out -eq 'feat(site): catalogue and cart blocks [SHOP-CAT-004]' -and (Kb naming check mr $mm.out).code -eq 0 -and $ml.out -eq 'feat: cart blocks [SHOP-CAT-004]')
 Expect "make: title, branch, doc, case ($($mt.out) | $($mb.out))" ($mt.out -eq 'SHOP-CAT-004 Catalogue public page' -and $mb.out -eq 'feat/SHOP-CAT-004-public-catalogue-page' -and
   $md.out -eq 'SHOP-CAT-004 Spec v2 — Public catalogue' -and $mc.out -eq 'SHOP-CAT-004-TC03' -and (Kb naming check title $mt.out).code -eq 0 -and (Kb naming check branch $mb.out).code -eq 0)
 

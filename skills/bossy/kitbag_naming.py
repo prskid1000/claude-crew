@@ -130,7 +130,7 @@ def clean(text, key, cfg, ty='', labels=False):
             colon = colon or (labels and ws != [str(ty).lower()])   # a title: an area word goes only as a label ('Catalogue: x'), 'Payment methods' stays
             sp = lambda w: re.escape(w[:-1] if w.endswith('s') and len(w) > 3 else w) + 's?'   # Accounts / Account
             m = re.match(r'(?i)' + r'[\s:—–-]+'.join(map(sp, ws)) + (r'\s*:[\s—–-]*' if colon else r'(?![a-z0-9])[\s:;,—–-]*'), t)
-            if m and t[m.end():].strip():
+            if m and t[m.end():].strip() and not re.match(r'(?i)(?:and|or|plus|&|\+)(?![a-z0-9])', t[m.end():]):   # 'catalogue and cart blocks' keeps its subject
                 t, changed = re.sub(r'(?i)^(?:for|of|on|about|by)\s+(?=\S)', '', t[m.end():]), True   # "Spec of the page" -> "the page"
     return t.strip()
 
