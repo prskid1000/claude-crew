@@ -2241,7 +2241,7 @@ switch ($Action) {
     $envRepos = EnvRepos $e
     if ($Dir) {   # one worktree per repo (-Dir a,b), all on one branch
       $dirBranches = @{}; $Repo = @()
-      foreach ($dd in @(Split-KitList $Dir)) {
+      foreach ($dd in @(Split-KitList $Dir -Sep ',')) {   # commas only: a path may hold a space
         $dd = (Resolve-Path $dd).Path
         $ddCommon = "$(git -C $dd rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim(); if (-not $ddCommon) { throw "[$e] $dd is not a git worktree" }
         $dirBranches[$dd] = "$(git -C $dd rev-parse --abbrev-ref HEAD)".Trim()
@@ -2396,7 +2396,7 @@ switch ($Action) {
   }
   'migrations' {   # the migration layers live, or the tables -Branch's migrations touch (what its release mark slices)
     $envRepos = EnvRepos $e; $st = Read-State $e
-    if ($Dir -and -not $Branch) { $Branch = "$(git -C (Resolve-Path @(Split-KitList $Dir)[0]).Path rev-parse --abbrev-ref HEAD)".Trim() }
+    if ($Dir -and -not $Branch) { $Branch = "$(git -C (Resolve-Path @(Split-KitList $Dir -Sep ',')[0]).Path rev-parse --abbrev-ref HEAD)".Trim() }
     if (-not $Branch) { foreach ($rn in $st.release.repos.Keys) { foreach ($l in @(Layers $st $rn | Where-Object { $_.migrations })) { "[$e] $rn $($l.branch) ($($l.agent)) since release $($l.since): MIGRATIONS" } }; return }
     foreach ($r in $envRepos.Values) {
       $sha = Resolve-Ref $r.cfg.checkout $Branch; if (-not $sha -or -not (HasMigrations $r.cfg.checkout $r.target $sha)) { continue }

@@ -170,7 +170,7 @@ Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Pat
 & $J @{ localEnv = @{ envs = @{ shop = @{ services = @() }; mig = @{ services = @() } } } } (Join-Path $kd2 'skills/crafty/kit.local.json') 6
 # down with no -Env: usage + env list, exit 2; -All stops every env; deploy -Dir takes a list (a 2-dir call failed binding [string])
 $dn = Px $L2 down 2>&1 | Out-String; $dnc = $LASTEXITCODE; $da = Px $L2 down -All 2>&1 | Out-String; $dac = $LASTEXITCODE
-$dd1 = New-Item -ItemType Directory -Force (Join-Path $k2 'wt-a'); $dd2 = New-Item -ItemType Directory -Force (Join-Path $k2 'wt-b')
+$dd1 = New-Item -ItemType Directory -Force (Join-Path $k2 'wt a'); $dd2 = New-Item -ItemType Directory -Force (Join-Path $k2 'wt-b')
 $dx = (Px $L2 deploy -Env shop -Dir "$dd1,$dd2" 2>&1 | Out-String) -replace '\s*\|?\s+', ' '
-Expect "localenv: down without -Env prints usage + envs, exit 2 ($dnc); down -All runs on each env, exit 0 ($dac); deploy -Dir a,b binds and checks each dir" ($dnc -eq 2 -and $dn -match 'usage: envy\.ps1 down -Env' -and $dn -match 'shop' -and $dn -match 'mig' -and $dn -notmatch 'At .*char:' -and $dac -eq 0 -and $da -notmatch 'usage:|-Env needed' -and $dx -notmatch 'argument transformation' -and $dx -match 'wt-a is not a git worktree')
+Expect "localenv: down without -Env prints usage + envs, exit 2 ($dnc); down -All runs on each env, exit 0 ($dac); deploy -Dir a,b binds and checks each dir (a path with a space stays whole)" ($dnc -eq 2 -and $dn -match 'usage: envy\.ps1 down -Env' -and $dn -match 'shop' -and $dn -match 'mig' -and $dn -notmatch 'At .*char:' -and $dac -eq 0 -and $da -notmatch 'usage:|-Env needed' -and $dx -notmatch 'argument transformation' -and $dx -match 'wt a is not a git worktree')
 Complete-Tests
