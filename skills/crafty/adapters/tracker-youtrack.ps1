@@ -42,13 +42,16 @@ Register-KitAdapter 'tracker' 'youtrack' @{
     $vs = @(@(__TrYt 'GET' "admin/projects/$($p.id)/customFields?fields=field(name),bundle(values(name,isResolved,ordinal))&`$top=100" $null | Where-Object { $_.field.name -eq 'State' })[0].bundle.values | Where-Object { $_.name } | Sort-Object { [int]$_.ordinal })
     $first = @($vs | Where-Object { -not $_.isResolved })[0].name
     @($vs | ForEach-Object { [pscustomobject]@{ name = "$($_.name)"; type = $(if ($_.isResolved) { 'closed' } elseif ($_.name -eq $first) { 'open' } else { 'custom' }) } }) }
-  # waits on = the Depend link ("depends on" X: OUTWARD side); on = ids to add (missing only); returns what it waits on now
+  # waits on = the Depend link's "depends on" side (by its verb: OUTWARD shows sourceToTarget, INWARD targetToSource); on = ids to add
+  # (missing only); returns what it waits on now
   'dependencies' = { param($a)
-    $have = @(@((__TrYt 'GET' "issues/$($a.id)?fields=links(direction,linkType(name),issues(idReadable))" $null).links) | Where-Object { "$($_.linkType.name)" -eq 'Depend' -and "$($_.direction)" -eq 'OUTWARD' } | ForEach-Object { @($_.issues.idReadable) } | Where-Object { $_ } | ForEach-Object { "$_" })
+    $have = @(@((__TrYt 'GET' "issues/$($a.id)?fields=links(direction,linkType(name,sourceToTarget,targetToSource),issues(idReadable))" $null).links) | Where-Object { "$($_.linkType.name)" -eq 'Depend' -and "$(if ("$($_.direction)" -eq 'INWARD') { $_.linkType.targetToSource } else { $_.linkType.sourceToTarget })" -eq 'depends on' } | ForEach-Object { @($_.issues.idReadable) } | Where-Object { $_ } | ForEach-Object { "$_" })
     foreach ($on in @($a.on | Where-Object { $_ -and $_ -notin $have })) { __TrYtCmd $a.id "depends on $on"; $have += $on }
     $have }
-  # tags by command (tag / untag {name}); view: .tags
-  'labels' = { param($a) foreach ($op in @(@('tag', @($a.add)), @('untag', @($a.remove)))) { foreach ($l in @($op[1] | Where-Object { $_ })) { __TrYtCmd $a.id "$($op[0]) {$l}" } } }
+  # tags by command (tag / untag {name}), only the ones that change (untag of a missing tag errors); view: .tags
+  'labels' = { param($a) $tg = @((__TrYt 'GET' "issues/$($a.id)?fields=tags(name)" $null).tags.name)
+    foreach ($l in @($a.add | Where-Object { $_ -and $_ -notin $tg })) { __TrYtCmd $a.id "tag {$l}" }
+    foreach ($l in @($a.remove | Where-Object { $_ -and $_ -in $tg })) { __TrYtCmd $a.id "untag {$l}" } }
   'comment' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)/comments?fields=id" @{ text = $a.text }; "commented on $($a.id)" }
   'comments' = { param($a) @(__TrYt 'GET' "issues/$($a.id)/comments?fields=id,text,created,author(login)&`$top=200" $null) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.created $_.text $_.id } }
   'comment-edit' = { param($a) $null = __TrYt 'POST' "issues/$($a.id)/comments/$($a.comment)?fields=id" @{ text = $a.text }; "edited comment $($a.comment)" }   # lib.ps1 Set-TrackerKitComment

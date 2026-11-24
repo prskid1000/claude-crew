@@ -24,8 +24,8 @@ function __TrLin([string]$Q, [hashtable]$v = @{}) {
 }
 function __TrLinSet([string]$Id, [hashtable]$In) { $null = __TrLin 'mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }' @{ id = $Id; in = $In } }
 function __TrLinId([string]$Id) { $u = (__TrLin 'query($id: String!) { issue(id: $id) { id } }' @{ id = $Id }).issue.id; if ($u) { $u } elseif ($__trDry) { "<uuid of $Id>" } else { throw "tracker (linear): no issue $Id" } }
-function __TrLinLabel([string]$N, [switch]$Make) {
-  $l = @((__TrLin 'query($n: String!) { issueLabels(filter: { name: { eqIgnoreCase: $n } }) { nodes { id } } }' @{ n = $N }).issueLabels.nodes.id)[0]
+function __TrLinLabel([string]$N, [string]$Team, [switch]$Make) {   # a workspace label or one of $Team (another team's label is refused on the issue)
+  $l = @(@((__TrLin 'query($n: String!) { issueLabels(filter: { name: { eqIgnoreCase: $n } }) { nodes { id team { key } } } }' @{ n = $N }).issueLabels.nodes) | Where-Object { $_.id -and (-not $_.team -or "$($_.team.key)" -eq $Team) } | Sort-Object { [bool]$_.team } -Descending | ForEach-Object id)[0]
   if ($l -or -not $Make) { return $l }; $l = (__TrLin 'mutation($n: String!) { issueLabelCreate(input: { name: $n }) { issueLabel { id } } }' @{ n = $N }).issueLabelCreate.issueLabel.id
   if ($l) { $l } elseif ($__trDry) { "<label $N>" } else { throw "tracker (linear): label '$N' not created" }
 }
@@ -44,10 +44,11 @@ Register-KitAdapter 'tracker' 'linear' @{
     $have = @(@((__TrLin 'query($id: String!) { issue(id: $id) { inverseRelations(first: 100) { nodes { type issue { identifier } } } } }' @{ id = $a.id }).issue.inverseRelations.nodes) | Where-Object { "$($_.type)" -eq 'blocks' -and $_.issue.identifier } | ForEach-Object { "$($_.issue.identifier)" })
     foreach ($on in @($a.on | Where-Object { $_ -and $_ -notin $have })) { $null = __TrLin 'mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }' @{ in = @{ issueId = (__TrLinId $on); relatedIssueId = (__TrLinId $a.id); type = 'blocks' } }; $have += $on }
     $have }
-  # labels by name (workspace label made when missing); add / remove one at a time
-  'labels' = { param($a) $iid = __TrLinId $a.id
-    foreach ($l in @($a.add | Where-Object { $_ })) { $null = __TrLin 'mutation($id: String!, $l: String!) { issueAddLabel(id: $id, labelId: $l) { success } }' @{ id = $iid; l = (__TrLinLabel $l -Make) } }
-    foreach ($l in @($a.remove | Where-Object { $_ })) { $lid = __TrLinLabel $l; if ($lid) { $null = __TrLin 'mutation($id: String!, $l: String!) { issueRemoveLabel(id: $id, labelId: $l) { success } }' @{ id = $iid; l = $lid } } } }
+  # labels by name, only the ones that change: add = a workspace or the issue's team label (workspace one made when missing); remove = the issue's own
+  'labels' = { param($a) $i = (__TrLin 'query($id: String!) { issue(id: $id) { id team { key } labels { nodes { id name } } } }' @{ id = $a.id }).issue; $iid = if ($i.id) { $i.id } else { "<uuid of $($a.id)>" }
+    $on = @($i.labels.nodes | Where-Object { $_ }); $hasL = { param($n) @($on | Where-Object { "$($_.name)" -ieq $n }) }
+    foreach ($l in @($a.add | Where-Object { $_ -and -not (& $hasL $_).Count })) { $null = __TrLin 'mutation($id: String!, $l: String!) { issueAddLabel(id: $id, labelId: $l) { success } }' @{ id = $iid; l = (__TrLinLabel $l "$($i.team.key)" -Make) } }
+    foreach ($l in @($a.remove | Where-Object { $_ })) { foreach ($x in @(& $hasL $l)) { $null = __TrLin 'mutation($id: String!, $l: String!) { issueRemoveLabel(id: $id, labelId: $l) { success } }' @{ id = $iid; l = $x.id } } } }
   'status' = { param($a)
     $s = @((__TrLin 'query($id: String!) { issue(id: $id) { team { states { nodes { id name } } } } }' @{ id = $a.id }).issue.team.states.nodes | Where-Object { $_.name -ieq $a.status })[0]
     if (-not $s -and -not $__trDry) { throw "tracker (linear): no workflow state '$($a.status)' in the team of $($a.id)" }
