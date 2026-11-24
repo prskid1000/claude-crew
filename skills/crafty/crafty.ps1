@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L321 stack · L420 gate · L751 check · L1074 pipes · L1136 guard · L2064 dir · L2074 checkpoint ·
-  L2114 prior · L2153 tracker · L2175 task spec · L2381 scope · L2429 host
+Sections: L25 init · L34 wt · L315 stack · L414 gate · L745 check · L1068 pipes · L1130 guard · L2058 dir · L2068 checkpoint ·
+  L2108 prior · L2147 tracker · L2169 task spec · L2375 scope · L2423 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -32,22 +32,16 @@ $script:TscNoOutput = [string]$script:KitVocab.tscNoOutput   # unset: no typeche
 # e2e test runners: kit.local.json tests.runners, else vocab.json testRunners [{ name, deps, files, cmd, wholeSuiteRx, specGlobs, ignore }]
 function Get-KitTestRunners { $r = Get-KitSetting 'tests.runners' $null; @($(if ($r) { $r } else { $script:KitVocab.testRunners }) | Where-Object { $_ }) }
 # ---- wt: a worktree per agent; deps linked, never installed
-# a lock file newer than the install: packages added since are missing (fails at runtime, not at link time)
-function Get-StaleDepsNote([string]$nmDir) {
-  $at = @(@('.yarn-integrity', '.package-lock.json', '.modules.yaml') | ForEach-Object { Get-Item -LiteralPath (Join-Path $nmDir $_) -Force -ErrorAction SilentlyContinue } | Sort-Object LastWriteTime)[-1]
-  if (-not $at) { $at = Get-Item -LiteralPath $nmDir -Force -ErrorAction SilentlyContinue }; if (-not $at) { return }
-  $new = @(@('yarn.lock', 'package-lock.json', 'pnpm-lock.yaml', 'package.json') | ForEach-Object { Get-Item -LiteralPath (Join-Path (Split-Path $nmDir) $_) -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt $at.LastWriteTime.AddMinutes(1) })
-  if ($new.Count) { "$nmDir was installed $($at.LastWriteTime.ToString('yyyy-MM-dd HH:mm')), before $($new[0].Name) changed ($($new[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm'))): packages added since are missing; reinstall that source (frozen lockfile), then link" }
-}
 function Invoke-Wt {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep', 'lease', 'release', 'pool')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('new', 'sync', 'commit', 'status', 'remove', 'list', 'sweep', 'lease', 'release', 'pool', 'help')][string]$Action,
   [string]$Repo, [string]$Branch, [string]$Target, [string]$Name, [string]$LinkFrom, [string]$Root,
   [string]$Dir, [Alias('Text')][string]$Message, [string]$MessageFile, [string]$Spec, [switch]$Force, [switch]$NoStage, [string[]]$Paths, [switch]$AllowEmpty, [string]$ProseOk, [Alias('Mr')][string]$Mrs, [Alias('Item')][string]$Task, [string]$Override,
   [string]$Scope, [string]$ScopeOk, [double]$IdleHours = 2, [switch]$DryRun, [switch]$Json,
   [string]$Agent, [string]$Session, [int]$WaitMinutes = 60, [string]$Reason, [switch]$Migrate, [switch]$Sync
 )
 $ErrorActionPreference = 'Stop'
+if ($Action -eq 'help') { $global:LASTEXITCODE = 0; return (Get-Content $PSCommandPath -TotalCount 5 | Select-Object -Skip 2) }   # the header's wt lines; a kit git probe's 128 is not ours
 function G { $o = & git @args 2>&1; if ($LASTEXITCODE) { throw "git $($args -join ' '): $o" }; $o }
 # else git -C hits an outer repo
 function Resolve-Wt($d) {

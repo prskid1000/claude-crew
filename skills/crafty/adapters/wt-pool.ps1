@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L144 names · L237 slots · L263 lease · L374 release · L405 lanes · L510 sync · L611 pool · L654 sweep
+Sections: L15 worktrees · L144 names · L237 slots · L270 lease · L381 release · L412 lanes · L517 sync · L619 pool · L662 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -246,6 +246,13 @@ function Get-KitPoolSize([string]$Repo) {
   if ((Resolve-Path -LiteralPath $Repo -ErrorAction SilentlyContinue).Path -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path) { return 0 }
   $n = Get-RepoConf (Get-KitCheckoutName $Repo) 'poolSize' $null; if ($null -ne $n) { [int]$n } else { [int](Get-KitParam 'pool.size') }
 }
+# a lock file newer than the install: packages added since are missing (fails at runtime, not at link time)
+function Get-StaleDepsNote([string]$nmDir) {
+  $at = @(@('.yarn-integrity', '.package-lock.json', '.modules.yaml') | ForEach-Object { Get-Item -LiteralPath (Join-Path $nmDir $_) -Force -ErrorAction SilentlyContinue } | Sort-Object LastWriteTime)[-1]
+  if (-not $at) { $at = Get-Item -LiteralPath $nmDir -Force -ErrorAction SilentlyContinue }; if (-not $at) { return }
+  $new = @(@('yarn.lock', 'package-lock.json', 'pnpm-lock.yaml', 'package.json') | ForEach-Object { Get-Item -LiteralPath (Join-Path (Split-Path $nmDir) $_) -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt $at.LastWriteTime.AddMinutes(1) })
+  if ($new.Count) { "$nmDir was installed $($at.LastWriteTime.ToString('yyyy-MM-dd HH:mm')), before $($new[0].Name) changed ($($new[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm'))): packages added since are missing; reinstall that source (frozen lockfile), then link" }
+}
 function Get-KitSlotFile([string]$Leaf) { Join-Path (Get-KitPath wt-slots -Create) "$Leaf.json" }
 # a repo's slots: worktrees marked <git dir>/claude-slot (= n, the bird index), by n
 function Get-KitSlots([string]$Repo) {
@@ -315,7 +322,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
             Remove-Item -LiteralPath $s.file -Force; $ls[$s.n] = $null; Write-KitLeaseLog reclaim slot $s.name $o "reclaim: no live holder for $($o.graceMin) min"
           }
           $free = @($slots | Where-Object { -not $ls[$_.n] }); $room = [math]::Max(0, $size - $slots.Count - $reserved.Count)
-          $ahead = @(Get-ChildItem -LiteralPath $wdir -Filter "*-$rl.json" -File | Where-Object { $_.FullName -ne $wf -and ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 3 } | ForEach-Object { Read-KitSlotLease $_.FullName } | Where-Object { $_.repo -eq $rl -and [datetimeoffset]$_.since -lt [datetimeoffset]$since })
+          $ahead = @(Get-ChildItem -LiteralPath $wdir -Filter "*-$rl.json" -File | Where-Object { $_.FullName -ne $wf -and ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'pool.waitFreshMinutes') } | ForEach-Object { Read-KitSlotLease $_.FullName } | Where-Object { $_.repo -eq $rl -and [datetimeoffset]$_.since -lt [datetimeoffset]$since })
           if ($ahead.Count -ge $free.Count + $room) { return $null }   # fair: older waiters first
           foreach ($s in @(@($free | Where-Object { "$(Meta $_.path 'lastbranch')".Trim() -eq $Branch }) + $free)) { if (-not @(Get-WtDirty $s.path).Count) { $pick = $s; break } }   # warm for this branch first, then the lowest
           if (-not $pick) {
@@ -529,19 +536,20 @@ function Update-KitPoolUsage([string]$Repo, [int]$Size, [int]$Default, $Slots, [
   Invoke-KitLocked $f { $st = Read-KitState $f; if (-not $st) { $st = [ordered]@{ repos = [ordered]@{} } }; if (-not $st.repos[$rk]) { $st.repos[$rk] = [ordered]@{ samples = @(); used = [ordered]@{}; shrunk = '' } }
     $u = $st.repos[$rk]; $held = @($Slots | Where-Object { Read-KitSlotLease $_.file }); foreach ($s in $held) { $u.used["$($s.n)"] = (Get-KitStamp stored $Now) }
     foreach ($s in @($Slots | Where-Object { -not $u.used["$($_.n)"] })) { $u.used["$($s.n)"] = (Get-KitStamp stored $Now) }   # first seen: counts as used now
-    $u.samples = @(@($u.samples | Where-Object { $_ -and [datetime]$_[0] -gt $Now.AddDays(-7) }) + , @((Get-KitStamp stored $Now), $held.Count))
+    $sampleCut = $Now.AddDays(-(Get-KitParam 'pool.sampleDays')); $idleCut = $Now.AddDays(-(Get-KitParam 'pool.idleDropDays'))
+    $u.samples = @(@($u.samples | Where-Object { $_ -and [datetime]$_[0] -gt $sampleCut }) + , @((Get-KitStamp stored $Now), $held.Count))
     $vals = @($u.samples | ForEach-Object { [int]$_[1] } | Sort-Object)
     if ($vals.Count -and (@($u.samples | ForEach-Object { [datetime]$_[0] }) | Measure-Object -Minimum).Minimum -le $Now.AddDays(-1)) { $res.target = [math]::Min($Size, $vals[[math]::Min($vals.Count - 1, [int][math]::Ceiling(0.9 * $vals.Count) - 1)] + 1); $res.warm = $res.target }
-    $recent = @($u.samples | Where-Object { [datetime]$_[0] -gt $Now.AddDays(-3) } | ForEach-Object { [int]$_[1] }); $span = @($u.samples | Where-Object { [datetime]$_[0] -le $Now.AddDays(-3) }).Count
+    $recentAt = $Now.AddDays(-(Get-KitParam 'pool.shrinkCalmDays')); $recent = @($u.samples | Where-Object { [datetime]$_[0] -gt $recentAt } | ForEach-Object { [int]$_[1] }); $span = @($u.samples | Where-Object { [datetime]$_[0] -le $recentAt }).Count
     if ($span -and @($Slots).Count -gt $res.target -and -not @($recent | Where-Object { $_ + 1 -gt $res.target }).Count -and -not ($u.shrunk -and [datetime]$u.shrunk -gt $Now.AddDays(-1))) {
-      $res.drop = @($Slots | Where-Object { -not (Read-KitSlotLease $_.file) -and [datetime]$u.used["$($_.n)"] -lt $Now.AddDays(-7) } | Sort-Object n -Descending | ForEach-Object n) }
+      $res.drop = @($Slots | Where-Object { -not (Read-KitSlotLease $_.file) -and [datetime]$u.used["$($_.n)"] -lt $idleCut } | Sort-Object n -Descending | ForEach-Object n) }
     $u.target = $res.target; Write-KitState $f $st }
   $res
 }
 function Sync-KitRepo([string]$Repo, [switch]$DryRun) {
   $rl = Split-Path $Repo -Leaf; $r = [ordered]@{ repo = $rl; at = (Get-KitStamp); ff = @(); diverged = @(); dirty = @(); pruned = @(); warmed = @(); maint = $false; err = '' }
   # a preview (wt pool) reuses a fetch under 10 min old: no 6-repo fetch per look
-  $fh = "$(git -C $Repo rev-parse --path-format=absolute --git-path FETCH_HEAD 2>$null)".Trim(); $fresh = $DryRun -and $fh -and (Test-Path -LiteralPath $fh) -and ((Get-Date) - (Get-Item -LiteralPath $fh).LastWriteTime).TotalMinutes -lt 10
+  $fh = "$(git -C $Repo rev-parse --path-format=absolute --git-path FETCH_HEAD 2>$null)".Trim(); $fresh = $DryRun -and $fh -and (Test-Path -LiteralPath $fh) -and ((Get-Date) - (Get-Item -LiteralPath $fh).LastWriteTime).TotalMinutes -lt (Get-KitParam 'pool.fetchFreshMinutes')
   $fo = @(if (-not $fresh) { git -C $Repo fetch -q --prune origin 2>&1 }); if (-not $fresh -and $LASTEXITCODE) { $r.err = "fetch failed: $(@($fo)[-1])"; return [pscustomobject]$r }
   $tgt = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'target' '')"; if (-not $tgt) { $tgt = "$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/' }
   $keepRx = Get-KitKeepBranchRx $Repo; $at = @{}; $busy = @{}   # busy: a leased slot or a rebase in progress (its branch is not in worktree list then)
@@ -645,7 +653,7 @@ function Invoke-WtPool {   # slots per pooled repo; -Migrate [-DryRun]: per-task
   $rows = @(foreach ($rp in $repos) { $size = Get-KitPoolSize $rp; foreach ($s in @(Get-KitSlots $rp)) { $o = Read-KitSlotLease $s.file
         [pscustomobject]@{ slot = $s.name; repo = (Split-Path $rp -Leaf); size = $size; path = $s.path; branch = $(if ($s.branch) { $s.branch } else { "detached $("$($s.head)".Substring(0, [math]::Min(8, "$($s.head)".Length)))" })
           state = $(if (-not $o) { 'free' } elseif ($o.parked) { 'parked' } elseif ($o.creating) { 'creating' } else { 'leased' }); agent = "$($o.agent)"; since = "$($o.since)"; why = "$($o.parkedWhy)" } } })
-  $waiting = @(Get-ChildItem -LiteralPath (Join-Path (Get-KitPath wt-slots -Create) 'wait') -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt 3 } | ForEach-Object { Read-KitSlotLease $_.FullName })
+  $waiting = @(Get-ChildItem -LiteralPath (Join-Path (Get-KitPath wt-slots -Create) 'wait') -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { ((Get-Date) - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'pool.waitFreshMinutes') } | ForEach-Object { Read-KitSlotLease $_.FullName })
   if ($Json) { return ([ordered]@{ slots = $rows; waiting = $waiting } | ConvertTo-Json -Depth 4 -Compress) }
   foreach ($rp in $repos) { $mine = @($rows | Where-Object repo -eq (Split-Path $rp -Leaf)); "pool $(Split-Path $rp -Leaf): $($mine.Count)/$(Get-KitPoolSize $rp) slots, $(@($mine | Where-Object state -eq 'free').Count) free" }
   foreach ($r in $rows) { '  {0,-22} {1,-8} {2,-40} {3}' -f $r.slot, $r.state, $r.branch, $(if ($r.agent) { "$($r.agent) since $($r.since)$(if ($r.why) { ": $($r.why)" })" }) }

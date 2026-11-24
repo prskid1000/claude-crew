@@ -16,6 +16,8 @@ foreach ($c in 'git push origin HEAD:stage/app', 'git -C x push -u origin HEAD:r
 '@ @($D, $onDeploy)
 Remove-Item $dkl
 Expect "guard: a push to a deploy branch (refspec, HEAD or no refspec on it) denied; deploy/*, the trunk, a push path part and quoted text pass ($($dg -join ' '))" (($dg -join ' ') -eq 'True True True True False False False False')
+$wh = pwsh @np $D wt help 2>&1 | Out-String
+Expect "wt help: exit 0 with the wt usage lines ($LASTEXITCODE)" ($LASTEXITCODE -eq 0 -and $wh -match 'wt lease\|release' -and $wh -match '-ScopeOk')
 $r = Join-Path (Kd) 'git'; New-Item -ItemType Directory -Force "$r/outer/inner" | Out-Null
 $env:CLAUDE_WT_ROOT = "$r/wt"
 try {

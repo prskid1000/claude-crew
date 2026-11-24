@@ -59,8 +59,8 @@ function Get-KitSuperviseGuardLocalAi([switch]$AutoFix) {
   if (-not ($st.leases.Count + $st.waiting.Count)) { return }
   $now = Get-Date
   "${n}: $(if ($st.leases.Count) { ($st.leases | ForEach-Object { "$($_.agent) $([int]($now - [datetime]$_.at).TotalMinutes) min" }) -join ', ' } else { 'free' })$(if ($st.waiting.Count) { "; $($st.waiting.Count) waiting for local AI" })"
-  $long = @($st.waiting | Where-Object { ($now - [datetime]$_.at).TotalMinutes -ge 30 })
-  if ($long.Count) { [pscustomobject]@{ level = 'WATCH'; what = "waiting for local AI: $n ($(@($long.agent) -join ', ') 30+ min)"; action = 'Normal while the server or RAM is busy; the job degrades (index without transcript) at its wait limit.' } }
+  $longMin = Get-KitParam 'media.stt.longWaitMinutes'; $long = @($st.waiting | Where-Object { ($now - [datetime]$_.at).TotalMinutes -ge $longMin })
+  if ($long.Count) { [pscustomobject]@{ level = 'WATCH'; what = "waiting for local AI: $n ($(@($long.agent) -join ', ') $longMin+ min)"; action = 'Normal while the server or RAM is busy; the job degrades (index without transcript) at its wait limit.' } }
 }
 
 # ---- stt: the transcribe stage under the lease and the memory gate; a wait past the limit degrades (JSON on the last line)
@@ -71,7 +71,7 @@ function Invoke-KitVideoStt([string]$Key, [double]$WaitMinutes, [string]$Agent, 
   if (-not (Use-KitLocalAi 'local-stt' -Agent $Agent -WaitMinutes $WaitMinutes)) { return @{ degraded = $true; reason = "waiting for local AI: local-stt still busy after $WaitMinutes min" } }
   try {
     $cmd = "`"$((Get-Command (Get-Python)).Source)`" -X utf8 `"$vp`" transcribe $Key $($ref -join ' ')"
-    $g = @(& (Get-Process -Id $PID).Path -NoProfile -File $KitCmd.dev gate -Dir (Split-Path (Split-Path $ix)) -Cmd $cmd -NeedGB ([double](Get-KitSetting 'media.stt.ramGB' 2)) -WaitMinutes ([math]::Max(1, [int][math]::Ceiling($WaitMinutes))) 2>&1)
+    $g = @(& (Get-Process -Id $PID).Path -NoProfile -File $KitCmd.dev gate -Dir (Split-Path (Split-Path $ix)) -Cmd $cmd -NeedGB ([double](Get-KitParam 'media.stt.ramGB')) -WaitMinutes ([math]::Max(1, [int][math]::Ceiling($WaitMinutes))) 2>&1)
     $code = $LASTEXITCODE
     $g | Where-Object { "$_" -match '^\[gate\] MESSAGE' } | ForEach-Object { Write-Host "$_" }   # read once: the gate marked it read
     $g | Where-Object { "$_" -match '^\[gate\] (waiting|could not)' } | Select-Object -Last 1 | ForEach-Object { Write-Host "media transcribe: $_" }
