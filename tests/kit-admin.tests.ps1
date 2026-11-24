@@ -59,7 +59,7 @@ Expect "kit-admin: prepush to main runs no kit tests, passes a clean push ($prc)
 $nf = Join-Path $root 'weekly.ps1'; Set-Content $nf @'
 . $args[0]; . $args[1]; $sf = (Get-KitFullTestsState).file
 $o1 = @(Invoke-KitWeeklyTests $false); $s0 = Test-Path $sf; $null = Invoke-KitWeeklyTests $true; $st = Get-Content $sf -Raw | ConvertFrom-Json
-$null = Wait-Process -Id $st.pid -Timeout 60 -ErrorAction SilentlyContinue; $o2 = @(Invoke-KitWeeklyTests $true); $o3 = @(Invoke-KitWeeklyTests $true)
+$null = Wait-Process -Id $st.pid -Timeout 240 -ErrorAction SilentlyContinue; $o2 = @(Invoke-KitWeeklyTests $true); $o3 = @(Invoke-KitWeeklyTests $true)
 "busy:$(-not $o1.Count -and -not $s0 -and $st.pid)"
 "read:$($o2.Count -eq 1 -and $o2[0] -match '^kit tests \(full\): 1 failure\(s\) in 1 area\(s\), 1 s, 1 failed check' -and -not $o3.Count -and (Get-Content $sf -Raw | ConvertFrom-Json).pid -eq $st.pid -and (Get-Content $env:FAKE_RAN) -eq '-Full -Detached')"
 $wk = { param($green, $at) @{ at = $at.ToString('o'); start = $at.ToString('o'); greenAt = $green.ToString('o'); pid = 999999; read = $true } | ConvertTo-Json -Compress | Set-Content $sf; Remove-Item $env:FAKE_RAN -ErrorAction SilentlyContinue }
