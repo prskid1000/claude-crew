@@ -20,6 +20,7 @@ Expect "ports: crew tool allowlists: toolSets expand, grants only in the install
 Expect 'ports: owner decisions: blocking -> request_user_input (Codex Plan mode) / ask_question when listed, else text; FYI list' ($res -contains 'ports-ask:True')
 Expect 'ports: agy runner phase / effort opts; its journal: launched, started + result per agent, done on success, finished on a failure' ($res -contains 'ports-journal:True')
 Expect "ports: Codex docs carry the gates (anchors in the .js), approval never + network, workspace-write agents, test-login rules ($($res -match '^ports-codex:'))" ($res -contains 'ports-codex:True True True True')
+Expect "ports: Codex exec policy forbids --no-verify after value-free flags and every reader on each literal logins path; other commands pass ($($res -match '^ports-codex-policy:'))" ($res -contains 'ports-codex-policy:True []')
 # an Antigravity run's journal (<port-runs>/antigravity/...) is a workflow dir: Runs band, recover and resume see it
 $k = New-TestKit 'port-runs'; $prT = Join-Path (Kd) 'no-transcripts'; New-Item -ItemType Directory -Force $prT | Out-Null
 $prD = New-Item -ItemType Directory -Force (Join-Path (TkPath $k 'port-runs' -Create) 'antigravity/subagents/workflows/wf_agy-test')

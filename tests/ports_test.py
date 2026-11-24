@@ -129,6 +129,16 @@ ok_cx = cfg['approval_policy'] == 'never' and cfg['sandbox_mode'] == 'workspace-
     and cfg['features']['memories'] is False and 'prefix_rule(pattern=["git", ["commit", "push", "merge"], "--no-verify"], decision="forbidden"' in pt.CODEX_RULES_TEXT \
     and 'prefix_rule(pattern=["git", "commit", ["-n",' in pt.CODEX_RULES_TEXT and not re.search(r'"push"[^\n]*"-n"', pt.CODEX_RULES_TEXT) \
     and rv['sandbox_mode'] == kv['sandbox_mode'] == 'workspace-write' and 'edit no file outside' in rv['developer_instructions'] and 'edit no file' not in kv['developer_instructions']
+# Codex execpolicy: a literal argv prefix per rule; each command is forbidden or not (live check 26c9bd6d: flags later in argv got past)
+cx_rules = [(ast.literal_eval(m.group(1)), m.group(2)) for m in re.finditer(r'prefix_rule\(pattern=(\[.*?\]), decision="(\w+)"', pt.CODEX_RULES_TEXT)]
+cx_ds = lambda argv: {d for pat, d in cx_rules if len(argv) >= len(pat) and all(a == p or (isinstance(p, list) and a in p) for a, p in zip(argv, pat))}
+cx_hit = lambda argv: next((d for d in ('forbidden', 'allow') if d in cx_ds(argv)), 'none')   # the strictest match wins
+cx_cases = {'git commit --no-verify': 'forbidden', 'git commit -a --no-verify': 'forbidden', 'git commit --amend --no-edit --no-verify': 'forbidden',
+  'git push origin --no-verify': 'forbidden', 'git push -u origin --no-verify': 'forbidden', 'git commit -n': 'forbidden', 'git stash': 'forbidden',
+  'type skills\\pokey\\targets.local.json': 'forbidden', 'Get-Content -Raw ./skills/pokey/targets.local.json': 'forbidden', 'Select-String -Path .claude/skills/pokey/targets.local.json x': 'forbidden',
+  'cp skills/pokey/targets.local.json x': 'forbidden', 'git commit -a -m x': 'none', 'git status': 'allow', 'cat skills/pokey/targets.example.json': 'none', 'Get-Content -Raw README.md': 'none'}
+cx_bad = [c for c, want in cx_cases.items() if cx_hit(c.split()) != want]
+print(f'ports-codex-policy:{not cx_bad} {cx_bad}')
 lg = (ws2 / '.agents/rules/kit-test-logins.md').read_text(encoding='utf-8')
 ok_logins = lg.startswith('---\ntrigger: always_on\n---\n') and 'targets.local.json' in lg \
     and all(f'prefix_rule(pattern=["{c}", ["skills/pokey/targets.local.json"' in pt.CODEX_RULES_TEXT for c in ('cat', 'type', 'Get-Content')) and 'decision="forbidden"' in pt.CODEX_RULES_TEXT
