@@ -29,13 +29,15 @@ $md = Join-Path (Kd) 'notif-summary.md'
 Expect 'findings summary: <module>-summary.md with the Critical / High table' ($LASTEXITCODE -eq 0 -and (Test-Path $md) -and (Get-Content $md -Raw) -match '## Critical / High')
 # ---- report-gdocs
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters') | Out-Null
-Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/report_gdocs.py'), (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/report_confluence.py') (Join-Path $k 'skills/crafty/adapters')
+Copy-Item @(foreach ($rn in 'gdocs', 'confluence', 'notion', 'pdf') { Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/report_$rn.py" }) (Join-Path $k 'skills/crafty/adapters')
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/pokey/adapters') | Out-Null
 Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/adapters/report-html.ps1') (Join-Path $k 'skills/pokey/adapters') -Force
 $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest with the gdocs adapter: share modes, unshared refused, an earlier link updated in place (a timeout retried once), env runs filling the human doc rows (a later NOT TESTED keeps a PASS), Drive evidence' ($LASTEXITCODE -eq 0 -and @([regex]::Matches($out, '(?m)^PASS gdocs')).Count -eq 7)
 Expect 'devtools selftest, confluence and command evidence (recorded replies, no account): page + multipart attachments, reused page; command store via reports.evidenceCommand' (
   $out -match '(?m)^PASS confluence evidence: ' -and $out -match '(?m)^PASS report command: evidence ' -and $out -notmatch '(?m)^FAIL')
+Expect 'devtools selftest, native evidence and tags (parity): notion File Upload API (recorded replies, no account), kept evidence for markdown / html / pdf, command {tags}' (
+  $out -match '(?m)^PASS notion evidence: ' -and $out -match '(?m)^PASS kept evidence ' -and $out -match '(?m)^PASS pdf evidence: ' -and $out -match '(?m)^PASS command: \{title\} and \{tags\}')
 $env:KIT_TRACKER_TYPE = 'none'
 $d = Join-Path (Kd) 'runs/GD'
 & $J @{ title = 'Run GD'; target = 't'; tracker = @{ list = 'L1'; parent = 'P1' }; items = @(foreach ($c in 'G1', 'G2') { @{ code = $c; title = $c; subtasks = @(@{ id = 'TG'; name = 'Task TG' }) } }) } "$d/run.json"

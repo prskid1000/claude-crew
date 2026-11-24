@@ -51,6 +51,9 @@ def selftest(expect, tmp, md):
     try:
         p = publish({'title': 'T', 'path': md, 'parent': None, 'keep': tmp})
         expect('pdf: the headless browser prints the HTML, kept', p == os.path.join(tmp, 'r.pdf') and open(p, 'rb').read() == b'%PDF')
+        ev = dt.make_evidence('P1 ev', [p], parent=tmp)
+        expect('pdf evidence: kept beside the PDF (<keep>/<name>/), a file URI the printed HTML opens',
+               os.path.isfile(os.path.join(tmp, 'P1-ev', 'r.pdf')) and ev['files']['r.pdf']['src'] == Path(os.path.join(tmp, 'P1-ev', 'r.pdf')).as_uri())
     finally:
         _browser = saved
 
@@ -58,5 +61,5 @@ def selftest(expect, tmp, md):
 def register(module):
     global dt
     dt = module
-    dt.ADAPTERS['report']['pdf'] = {'publish': publish, 'selftest': selftest}
+    dt.ADAPTERS['report']['pdf'] = {'publish': publish, 'selftest': selftest, 'evidence': dt.kept_evidence}
     dt.find_browser = find_browser

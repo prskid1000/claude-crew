@@ -36,7 +36,6 @@
       "names": "markdown html command",
       "vendors": "gdocs pdf confluence notion",
       "fallback": {
-        "evidence": "reports.evidence local (the run folder) or command (a bucket / share CLI)",
         "tags": "the Tags: line under the doc title (devtools.py with_tags, every store); gdocs: Drive properties, confluence: page labels"
       },
       "gaps": {
