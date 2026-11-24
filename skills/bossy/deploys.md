@@ -11,9 +11,10 @@ question back:
    -Mrs <refs> -Decision <id>` pushes `<deploy.branchPrefix, deploy/><env>` (one per env, reused; no date or counter in a ref; tags `deploys[].tag` `{n}` = the head's sha7), opens the MR (`deploy.mergeMethod`, merge: squash off; body: MRs, tasks, decision id), merges on
    green; a call waits `-WaitMinutes` (8), a re-run resumes the open deploy MR. Never a push to the deploy branch (`-Push` there is refused, the guard denies it) or a release-job trigger. A
    service restart by hand only through `deploy restart -Env <target>` (busy check re-run on the host right before it;
-   REFUSED -> `decide ask`; ssh rows: `ssh.manager` systemd | docker | pm2 | custom restartCmd, `ssh.sudo`; `command` rows: `command.restart`), never a bare service restart.
+   REFUSED -> `decide ask`; ssh rows: `ssh.manager` systemd | docker | pm2 | custom restartCmd, `ssh.sudo`; any other row: its `command.restart`), never a bare service restart.
    Any kind: `deploy run -To <env> -Mrs <refs> -Decision <id>` runs each row's kind `deploy` verb (branch-mr / ci-job / tag: deploy
-   merge; command: `command.deploy`; ssh: `ssh.deployCmd`; manual: prints `manual`, a person deploys); UNSUPPORTED / FAILED rows: by hand, then record.
+   merge; command, or any row's `command.deploy`; ssh: `ssh.deployCmd`; awsStack: `template` (repo path) at the deploy head; laneApk: phoney.ps1 build;
+   manual: prints `manual`, a person deploys); while it runs the plan says DEPLOYING; UNSUPPORTED / FAILED rows: by hand, then record.
 3. `bossy.ps1 deploy record -Env <target>[,<target>..] -Mrs <refs> -By <who>`: each a `repos[].deploys` target name (one per host deployed), never a host group.
 4. `bossy.ps1 deploy intest -Apply` once live: every promoted task whose MRs are all live moves, whoever deployed them (supervise
    -AutoFix is the safety net while no opsy is live: FIXED lines; a deployed state it cannot read: a STATUS WATCH).

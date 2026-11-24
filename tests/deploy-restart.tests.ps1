@@ -25,7 +25,8 @@ $path0 = $env:PATH; $env:PATH = "$bin$([IO.Path]::PathSeparator)$env:PATH"; $env
 $kl = Join-Path $k 'skills/crafty/kit.local.json'
 & $J @{ repos = @(@{ name = 'svc'; deploys = @(@{ target = 'svc-stage'; ssh = @{ host = 'u@h1'; key = 'k.pem'; service = 'app,app-worker'; busy = 'pgrep -fa agent-turn' } }, @{ target = 'nobusy'; ssh = @{ host = 'u@h2'; service = 'app' } },
   @{ target = 'dock'; ssh = @{ host = 'u@h3'; service = 'web'; manager = 'docker'; sudo = $false } }, @{ target = 'bare'; ssh = @{ host = 'u@h4'; service = 'web'; manager = 'none' } },
-  @{ target = 'kube'; production = $false; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output rolled-{service}" } }) }); deploy = @{ ssh = @{ manager = 'systemd'; sudo = $true } } } $kl   # LEGACY deploy.ssh
+  @{ target = 'kube'; production = $false; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output rolled-{service}" } },
+  @{ target = 'probed'; probe = 'echo x'; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output bounced-{service}"; deploy = "`"$pwshExe`" -NoProfile -Command Write-Output shipped-{repo}" } }) }); deploy = @{ ssh = @{ manager = 'systemd'; sudo = $true } } } $kl   # LEGACY deploy.ssh
 $logs = { @(Get-ChildItem (Kd) -Filter 'ssh.log.*' | Sort-Object Name | ForEach-Object { Get-Content $_.FullName -Raw }) }
 $clear = { Get-ChildItem (Kd) -Filter 'ssh.log.*' | Remove-Item }
 
@@ -54,6 +55,27 @@ $rk = Px $O deploy restart -Env kube -Service web 2>&1 | Out-String; $rkc = $LAS
 Expect "deploy restart: kind command runs its restart line, no ssh ($($rk.Trim()) $rkc)" ($rkc -eq 0 -and $rk -match 'RESTARTED kube \(deploy kind command\): rolled-web' -and @(& $logs).Count -eq 1)
 $rx = Px $O deploy restart -Env nope 2>&1 | Out-String; $rxc = $LASTEXITCODE
 Expect "deploy restart: an unknown target or one without ssh = usage, exit 2 ($($rx.Trim()))" ($rxc -eq 2 -and $rx -match 'nope has no repos\[\]\.deploys\[\]\.ssh')
+# parity deploy-kind: a kind with no restart / deploy of its own runs the row's command.restart / command.deploy (fallback)
+$rp = Px $O deploy restart -Env probed -Service api 2>&1 | Out-String; $rpc = $LASTEXITCODE
+$pW = if ((Px $O decide record -Gate deploy -Item probed -Question 'deploy probed?' -Answer 'yes, deploy probed' -Source chat 2>&1 | Out-String) -match 'RECORDED (\S+)') { $Matches[1] }
+$pd = Px $O deploy run -To probed -Decision $pW 2>&1 | Out-String
+Expect "deploy kinds: probe restarts and deploys through its command.restart / command.deploy lines, no ssh ($($rp.Trim()) $rpc | $($pd.Trim()))" ($rpc -eq 0 -and $rp -match 'RESTARTED probed \(deploy kind probe, command\.restart\): bounced-api' -and $pd -match 'DEPLOY svc -> probed \(probe\): shipped-svc' -and @(& $logs).Count -eq 1 -and -not (Test-Path (Join-Path (TkPath $k 'deploys') 'running-probed.json')))
+# isRunning: branch-mr = an open MR into its branch, tag = the newest matching tag's CI run, else a live deploy run marker; deploy: awsStack
+# from its template at the deploy head, laneApk refused without a checkout (fixtures: no host, AWS or phone here)
+$dkI = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1'); . (Join-Path $k 'skills/bossy/adapters/deploys.ps1')
+  function Invoke-HostVerb { param($Verb, $A) if ($Verb -eq 'mr.list') { if ($A.target_branch -eq 'rel') { [pscustomobject]@{ iid = 3; target_branch = 'rel' } } } elseif ($Verb -eq 'ci.runs') { [pscustomobject]@{ ref = 'v1.4.0'; status = 'running' }, [pscustomobject]@{ ref = 'v1.3.0'; status = 'success' } } }
+  $script:awsArgs = ''; function aws { $script:awsArgs = "$args"; $global:LASTEXITCODE = 0; 'Successfully created/updated stack' }
+  $g = Join-Path (Kd) 'stackrepo'; $null = New-Item -ItemType Directory -Force $g; git -C $g init -q 2>$null; Set-Content (Join-Path $g 'infra.yml') 'Resources: {}'; git -C $g add . 2>$null; git -C $g -c user.email=t@t -c user.name=t commit -qm i 2>$null
+  $dkO = [ordered]@{}
+  $dkO.mr = (Invoke-KitDeployKind @{ kind = 'branch-mr'; branch = 'rel'; target = 't' } 'isRunning' @{ repo = 'g/a' }) -eq $true -and (Invoke-KitDeployKind @{ kind = 'branch-mr'; branch = 'main'; target = 't' } 'isRunning' @{ repo = 'g/a' }) -eq $false
+  $dkO.tag = (Invoke-KitDeployKind @{ tag = '^v\d'; target = 't' } 'isRunning' @{ repo = 'g/a' }) -eq $true
+  $rf = Join-Path (Get-KitPath deploys -Create) 'running-tx.json'; @{ pid = $PID } | ConvertTo-Json | Set-Content $rf; $live = Test-KitDeployRunning 'tx'
+  @{ pid = 999999 } | ConvertTo-Json | Set-Content $rf; $dkO.marker = $live -and -not (Test-KitDeployRunning 'tx') -and -not (Test-KitDeployRunning 'nothing'); Remove-Item $rf
+  $sd = Invoke-KitDeployKind @{ awsStack = 'shop'; template = 'infra.yml'; region = 'eu-west-1'; target = 't' } 'deploy' @{ repo = @{ name = 'a'; checkout = $g } }
+  $dkO.stack = $sd.id -like 'stack shop at *' -and $script:awsArgs -match '^cloudformation deploy --region eu-west-1 --stack-name shop --template-file \S+ --no-fail-on-empty-changeset' -and (Invoke-KitDeployKind @{ awsStack = 'shop'; target = 't' } 'deploy' @{ repo = @{ name = 'a' } }).note -match 'no deploys\[\]\.template'
+  $dkO.apk = (Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'deploy' @{ repo = @{ name = 'app' } }).note -match 'repos\[\]\.checkout of app unset'
+  $dkO.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
+Expect-Each $dkI 'deploy kind isRunning / deploy: #' @('mr', 'tag', 'marker', 'stack', 'apk') -Show 6
 
 $env:PATH = $path0; Remove-Item Env:FAKE_SSH_LOG, Env:FAKE_SSH_MODE
 # supervise deploy holds (moved from deploys.tests.ps1: its token cap)
