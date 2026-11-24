@@ -63,6 +63,7 @@
   "track.lagRecheckMinutes": "config default=30 unit=min",
   "deploy.mergePollSec": "config default=30 unit=s",
   "deploy.mergeSettleSec": "config default=3 unit=s",
+  "deploy.pipelineWaitMinutes": "config default=40 unit=min",
   "poll.maxSec": "config default=300 unit=s",
   "cleanup.agentDirMaxMB": "config default=1024 unit=MB",
   "localEnv.startMinutes": "config default=10 unit=min",

@@ -18,8 +18,9 @@ question back:
    merge; command, or any row's `command.deploy`; ssh: `ssh.deployCmd`; awsStack: `template` (repo path) at the deploy head; laneApk: phoney.ps1 build;
    manual: prints `manual`, a person deploys); while it runs the plan says DEPLOYING; UNSUPPORTED / FAILED rows: by hand, then record.
 3. `bossy.ps1 deploy record -Env <target>[,<target>..] -Mrs <refs> -By <who>`: each a `repos[].deploys` target name (one per host deployed), never a host group.
-4. `bossy.ps1 deploy intest -Apply` once live: every promoted task whose MRs are all live moves, whoever deployed them (supervise
-   -AutoFix is the safety net while no opsy is live: FIXED lines; a deployed state it cannot read: a STATUS WATCH).
+4. `bossy.ps1 deploy intest -Apply -Env <target> -Mrs <refs>` once live: those MRs' tasks move when all their MRs are live; no
+   -Mrs / -Env: every promoted task, whoever deployed it (supervise -AutoFix runs that sweep while no opsy is live: FIXED lines; a
+   deployed state it cannot read: a STATUS WATCH). `PAGE` -> the same command again: a cursor per env goes on where it stopped.
 Deploy kinds (`repos[].deploys[].kind`, else from the row keys): ci-job (branch + job), branch-mr, ssh, awsStack, probe, tag, manual, laneApk,
 command (`{ isDeployed, lastDeploy, isRunning, restart, deploy }` command lines: `{sha} {target} {branch} {repo} {mr} {service}`). Verbs: pokey adapters/deployed-checks.ps1;
 a verb a kind lacks = UNKNOWN. Production = `deploys[].production`, else `deploy.productionPattern` (no default).

@@ -10,7 +10,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text backed up), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), order <parent> [-Apply <brief>.order.json] (waves, waits-on links, wave tags), tags <id> <group>=<value>, retag <parents> [-DryRun], list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
- pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch> [-Sha <commit>]  wait for MR pipelines, or a branch's newest one (of that commit) (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
+ pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch> [-Sha <commit>]  wait for MR pipelines, or a branch's newest one (of that commit; -MaxMinutes deploy.pipelineWaitMinutes) (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
  guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L315 stack · L414 gate · L746 check · L1069 pipes · L1131 guard · L2059 dir · L2069 checkpoint ·
-  L2109 prior · L2148 tracker · L2170 task spec · L2376 scope · L2424 host
+Sections: L25 init · L34 wt · L315 stack · L414 gate · L746 check · L1069 pipes · L1134 guard · L2062 dir · L2072 checkpoint ·
+  L2112 prior · L2151 tracker · L2173 task spec · L2379 scope · L2427 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1070,6 +1070,7 @@ exit 0
 function Invoke-Pipes {
 param([Alias('Mr')][string[]]$Mrs, [int]$MaxMinutes = 8, [switch]$UntilMerged, [string]$Run, [string]$Repo, [string]$Branch, [string]$Sha)   # -UntilMerged: a consumer waits for producers; -Sha: the branch run of that commit
 if ($Branch) { if (-not $Repo) { Stop-KitVerb 'pipes: -Branch needs -Repo <repo> (a deploy branch: its newest pipeline)' }; $Mrs = @("branch:$Repo@$Branch") }   # retro 1508: opsy waits on a deploy branch
+if ($Branch -and -not $PSBoundParameters.ContainsKey('MaxMinutes')) { $MaxMinutes = [int](Get-KitParam 'deploy.pipelineWaitMinutes') }
 if (-not $Mrs) {   # a wt worktree: its branch's open MRs; else the tracked tasks' (-Run: its)
   $wtTop = "$(git rev-parse --show-toplevel 2>$null)".Trim(); $wtGit = if ($wtTop) { "$(git -C $wtTop rev-parse --absolute-git-dir 2>$null)".Trim() }
   $wtTarget = if ($wtGit -and (Test-Path -LiteralPath (Join-Path $wtGit 'claude-target'))) { (Get-Content -LiteralPath (Join-Path $wtGit 'claude-target') -TotalCount 1).Trim() }
@@ -1117,14 +1118,16 @@ function Get-PipeFailure($o, [hashtable]$Rq, $Id) {
   }
   $o
 }
-$end = (Get-Date).AddMinutes($MaxMinutes); $bk = @{}; $states = $list.ForEach({ State $_ })
+$end = (Get-Date).AddMinutes($MaxMinutes); $bk = @{}; $states = $list.ForEach({ State $_ }); $pz = ''
 do {
   # a pipeline may still start
   $busy = @($states | Where-Object { $_.status -in 'created', 'pending', 'running', 'waiting_for_resource', 'preparing', 'scheduled', 'no-pipeline', 'unknown' -or ($UntilMerged -and $_.status -notin 'merged', 'failed', 'canceled', 'closed', 'bad-url') })
+  $pq = "$($states.ForEach({ "$($_.mr -replace '^branch:') $($_.status)" }))"; if ($pq -ne $pz) { [Console]::Error.WriteLine("pipes $(Get-Date -f HH:mm:ss) $pq"); $pz = $pq }
   if (-not $busy -or (Get-Date) -gt $end -or ($UntilMerged -and @($states | Where-Object { $_.status -in 'failed', 'canceled', 'closed', 'bad-url' }).Count)) { break }   # one will never merge: stop now
   Wait-KitBackoff $bk "$($states.status)" 30 $end
   $states = $states.ForEach({ if ($_.status -notin 'merged', 'closed', 'bad-url') { State $_.mr } else { $_ } })
 } while ($true)
+if ($busy) { [Console]::Error.WriteLine("pipes: still $($busy.status) after $MaxMinutes min: run it again") }
 [ordered]@{ done = (-not $busy); mrs = $states } | ConvertTo-Json -Depth 4 -Compress
 }
 

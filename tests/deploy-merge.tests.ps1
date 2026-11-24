@@ -106,6 +106,19 @@ $po = Invoke-Pipes -Mrs 'r!7,https://git.example.com/g/r/-/merge_requests/8' -Ma
 "ref:$((@($po.mrs.mr) -join ',') -eq 'https://git.example.com/g/r/-/merge_requests/7,https://git.example.com/g/r/-/merge_requests/8' -and ($global:urls -join ',') -eq '7')"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
 Expect-Each $pr 'pipes: #' 'ref' -Show 4
+# 2026-11-24 (a monitor missed a finished deploy pipeline for 1 h): pipes -Branch -Sha polls the host until the run of that commit ends
+$pbr = Invoke-PsTest 'pipes-branch' @'
+$null = . $args[0] 6>$null; $global:runs = @(@(), @([pscustomobject]@{ id = 5; sha = 'aaa111'; state = 'success' }), @([pscustomobject]@{ id = 6; sha = 'abc12345ff'; state = 'running' }), @([pscustomobject]@{ id = 6; sha = 'abc12345ff'; state = 'success' })); $global:ci = 0
+function Invoke-HostVerb([string]$Verb, $A, [switch]$NoMemo) { if ($Verb -ne 'ci.runs') { return @() }; $r = $global:runs[[math]::Min($global:ci, $global:runs.Count - 1)]; $global:ci++; $r }
+function Start-Sleep([int]$Seconds) { }; $kp = ${function:Get-KitParam}; function Get-KitParam([string]$N) { if ($N -eq 'deploy.pipelineWaitMinutes') { $global:pw = 1 }; & $kp $N }
+$po = Invoke-Pipes -Repo shop -Branch staging -Sha abc12345 2>&1; $js = @($po | Where-Object { "$_" -match '^\{' })[0] | ConvertFrom-Json
+"branch:$($js.done -and $js.mrs[0].status -eq 'success' -and $global:ci -eq 4 -and $global:pw)"
+$global:runs = @(, @()); $global:ci = 0; $po2 = Invoke-Pipes -Repo shop -Branch staging -Sha abc12345 -MaxMinutes 0 2>&1; $js2 = @($po2 | Where-Object { "$_" -match '^\{' })[0] | ConvertFrom-Json
+"timeout:$(-not $js2.done -and $js2.mrs[0].status -eq 'no-pipeline')"
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
+$rxChg = 'pipes \d\d:\d\d:\d\d shop@staging (no-pipeline|running|success)\b'; $pbrAll = ($pbr | ForEach-Object { "$_" }) -join "`n"
+Expect "pipes -Branch: one stderr line per status change; past the wait a re-run hint ($([regex]::Matches($pbrAll, $rxChg).Count))" ([regex]::Matches($pbrAll, $rxChg).Count -eq 4 -and $pbrAll -match 'pipes: still no-pipeline after 0 min: run it again')
+Expect-Each $pbr 'pipes -Branch -Sha: the host''s status is the truth: no run yet waits, another commit''s run ignored, ends on the run''s end state; default wait deploy.pipelineWaitMinutes; a line per change; past the wait done false + a re-run hint (#)' @('branch', 'timeout') -Show 6
 # deploy intest candidates (from deploys.tests.ps1: its token cap)
 $it = @'
 $env:KIT_TRACKER_TYPE = 'none'
@@ -121,20 +134,36 @@ $script:viewed = @(); $tq = Invoke-MarkInTest -Task old3 | Out-String; "task:$((
 Update-KitTracking { param($t) $t.tasks['api!4'] = @{ task = 'api!4'; mrs = @('api!4') } }   # an MR ref registered as a task
 function Get-TrackerTask($id) { $script:viewed += $id; if ($id -ne 'nil1') { [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } } }; $nq = Invoke-MarkInTest -Task nil1 | Out-String
 $script:viewed = @(); $mq = Invoke-MarkInTest -FromMrs 'api!4,api!3,api!9' | Out-String
-"mrs:$((@($script:viewed | Sort-Object) -join ',') -eq 'ok2,old3,open4,qa5' -and $mq -match 'MAP   api!4 -> open4\r?\n' -and $mq -match 'api!9 -> no task' -and $nq -match 'SKIP  nil1  the tracker returned nothing')"
-# K3: -Mrs is bounded (-BudgetSec): its own tasks first, the rest past 60% of it = 'not checked (time budget)'; progress on stderr
+"mrs:$((@($script:viewed | Sort-Object) -join ',') -eq 'old3,open4' -and $mq -match 'MAP   api!4 -> open4\r?\n' -and $mq -match 'api!9 -> no task' -and $nq -match 'SKIP  nil1  the tracker returned nothing')"
+# K3: the full sweep is bounded (-BudgetSec): past 60% of it = 'not checked (time budget)'; progress on stderr
 function Get-TrackerTask($id) { $script:viewed += $id; Start-Sleep -Milliseconds 700; [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } }
-$script:viewed = @(); $bq = Invoke-MarkInTest -FromMrs 'api!4' -BudgetSec 1 | Out-String
-$rxBud = 'not checked \(time budget\) \('; "budget:$($script:viewed[0] -eq 'open4' -and $script:viewed.Count -lt 4 -and $bq -match $rxBud)"
-# no -Mrs: bounded too, pages: a re-run starts with the task the last run left (oldest check first), the summary says so
-$script:viewed = @(); $pq1 = Invoke-MarkInTest -BudgetSec 1 | Out-String; $pv1 = @($script:viewed); $script:viewed = @(); $pq2 = Invoke-MarkInTest -BudgetSec 1 | Out-String
-"page:$($pv1.Count -eq 1 -and $script:viewed[0] -and $script:viewed[0] -ne $pv1[0] -and $pq1 -match 'run deploy intest again: the next page starts with them' -and $pq1 -match 'mark-in-test: 1 of \d+ task\(s\) checked' -and $pq1 -match '(?m)^PAGE  \d+ task\(s\) left by the time budget: run deploy intest again')"
-$null = Invoke-MarkInTest -Task old3 | Out-String; $ckj = Get-Content (Join-Path (Get-KitPath deploys) 'intest-checked.json') -Raw | ConvertFrom-Json -AsHashtable; "keep:$($ckj.ContainsKey('ok2') -and $ckj.ContainsKey('qa5') -and $ckj.ContainsKey('old3'))"   # a -Task run keeps the pages
+$script:viewed = @(); $pq1 = Invoke-MarkInTest -BudgetSec 1 | Out-String; $pv1 = @($script:viewed)
+$rxBud = 'not checked \(time budget\) \('; $rxOf = 'mark-in-test: 1 of \d+ task\(s\) checked'; "budget:$($pv1.Count -eq 1 -and $pq1 -match $rxBud -and $pq1 -match $rxOf)"
+# pages: a re-run goes on where the cursor stopped, never re-checks a done task; the summary says so
+$script:viewed = @(); $pq2 = Invoke-MarkInTest -BudgetSec 1 | Out-String
+$rxPg = '(?m)^PAGE  \d+ task\(s\) left in this sweep \(page 1, 1 done; cursor intest-cursor-all-dry\.json\): run deploy intest again'; "page:$($script:viewed[0] -and $script:viewed[0] -notin $pv1 -and $pq1 -match $rxPg)"
+$cfa = Join-Path (Get-KitPath deploys) 'intest-cursor-all-dry.json'; $cf0 = Get-Content $cfa -Raw; $null = Invoke-MarkInTest -Task old3 | Out-String; "keep:$((Get-Content $cfa -Raw) -eq $cf0)"   # a -Task run keeps the pages
 # a tracker with no promoted / review role (tracker.statuses.<role> null): merged work waits in inProgress, the source role
 function Test-TrackerStatusOff($s) { $s -in 'promoted', 'review' }; $tq2 = Invoke-MarkInTest -Task old3 | Out-String; "minimal:$($tq2 -notmatch 'SKIP  old3  status')"
 '@
-$itR = Invoke-PsTest 'intest-gone' $it @($O); Expect 'deploy intest: one progress line per task on stderr' (@($itR -match '^intest \d+s task 1/').Count -gt 0)
-Expect-Each $itR 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (SKIP line), -Mrs their tracked tasks on top of every candidate; no promoted / review role: inProgress is the source (#)' @('gone', 'scope', 'task', 'mrs', 'budget', 'page', 'keep', 'minimal')
+$itR = Invoke-PsTest 'intest-gone' $it @($O);Expect 'deploy intest: one progress line per task on stderr' (@($itR -match '^intest \d+s task 1/').Count -gt 0)
+Expect-Each $itR 'deploy intest -Apply: a task deleted in the tracker is skipped, reported and dropped; the rest go on; candidates = tracked tasks promoted in -Days, -Task any (SKIP line), -Mrs only their tasks; pages by cursor; no promoted / review role: inProgress is the source (#)' @('gone', 'scope', 'task', 'mrs', 'budget', 'page', 'keep', 'minimal')
+# 2026-11-25: ~188 tasks paged 13 a call, never converging: -Env / -Mrs check only the deployed tasks; the full sweep ends in few pages
+$sw = @'
+$env:KIT_TRACKER_TYPE = 'none'
+. $args[0]
+$cfApply = Join-Path (Get-KitPath deploys) 'intest-cursor-all.json'; $cfA0 = "$(Get-Content -LiteralPath $cfApply -Raw -ErrorAction SilentlyContinue)"
+$d0 = (Get-Date).ToString('o'); Update-KitTracking { param($t) foreach ($n in 1..200) { $t.tasks["s$n"] = @{ task = "s$n"; mrs = @("api!$n"); done = $true; doneAt = $d0 } } }
+$script:viewed = [Collections.Generic.List[string]]::new(); function Get-TrackerTask($id) { $script:viewed.Add($id); Start-Sleep -Milliseconds 25; [pscustomobject]@{ id = $id; name = 'n'; status = 'inProgress' } }
+Write-KitLog deploy-log record ([ordered]@{ target = 'stage'; mrs = @('api!150', 'api!7'); by = 'opsy' })
+$eo = Invoke-MarkInTest -Env stage | Out-String; "env:$(($script:viewed -join ',') -eq 's150,s7' -and $eo -match 'MAP   api!150 -> s150')"
+$no = Invoke-MarkInTest -Env other | Out-String; "norec:$($no -match 'no deploy record for other: nothing to check')"
+$script:viewed.Clear(); $pg = 0; $outs = @(); do { $pg++; $po = Invoke-MarkInTest -BudgetSec 6 | Out-String; $outs += $po } while ($po -match '(?m)^PAGE ' -and $pg -lt 30)
+$cfs = Get-Content (Join-Path (Get-KitPath deploys) 'intest-cursor-all-dry.json') -Raw | ConvertFrom-Json; "dry:$("$(Get-Content -LiteralPath $cfApply -Raw -ErrorAction SilentlyContinue)" -eq $cfA0)"   # a dry run never moves the -Apply cursor
+"sweep:$($pg -gt 1 -and $pg -le 10 -and $script:viewed.Count -ge 200 -and @($script:viewed | Select-Object -Unique).Count -eq $script:viewed.Count -and $po -match "SWEEP done in $pg page" -and -not @($cfs.left).Count)"
+'@
+$swR = Invoke-PsTest 'intest-sweep200' $sw @($O)
+Expect-Each $swR 'deploy intest: -Env = its deploy records'' MRs, only their tasks, deployed first; no record = a clear stop; 200 tasks: every one checked once, in 10 pages or fewer (cursor) (#)' @('env', 'norec', 'sweep', 'dry')
 # deploy plan target-branch memo (from deploys.tests.ps1: its token cap)
 $tbm = Join-Path (TkPath $k cache -Create) 'deployed-rows.json'; & $J @{ 'mr|jc!9' = @{ at = (Get-Date).ToString('s'); mr = @{ target_branch = 'st/a' } } } $tbm
 Expect-Each (Invoke-PsTest 'tb-memo' '. $args[0]; function Invoke-HostVerb { throw }; "memo:$((Get-MrTargetBranch ''jc!9'' $null) -eq ''st/a'')"' @($O)) 'deploy plan: target branch from pokey''s cache, no host call (#)' @('memo') 3; Remove-Item $tbm
