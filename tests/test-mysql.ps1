@@ -118,6 +118,9 @@ function Start-TestMySql([switch]$Binlog) {   # -Binlog: kept for callers; the o
     $tmReseed = $St.baseline -ne $tmBase
     $tmDbs = @(& $tmQ "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ($tmSysDbs)" | Where-Object { $_ -and ($tmReseed -or $_ -notin $script:TestMySqlBaseline.schemas) })
     $tmSql = @($tmDbs | ForEach-Object { "DROP DATABASE ``$_``;" }) + @(if ($tmReseed -and $script:TestMySqlBaseline.sql) { $script:TestMySqlBaseline.sql }) + 'RESET MASTER;', 'SET GLOBAL max_execution_time = DEFAULT, slow_query_log = DEFAULT;'
+    # an empty schema folder no schema owns (a killed CREATE DATABASE): ERROR 3678 on its next create (full run 2026-11-24, '.\adm')
+    $tmKnown = @(& $tmQ 'SELECT schema_name FROM information_schema.schemata')
+    Get-ChildItem -LiteralPath $St.data -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '^#' -and $_.Name -notin $tmKnown -and -not @(Get-ChildItem -LiteralPath $_.FullName -Force).Count } | Remove-Item -Force
     $tmOut = ($tmSql -join "`n") | & mysql -h 127.0.0.1 -P $St.port -u root 2>&1
     if ($LASTEXITCODE) { throw "Start-TestMySql: reset failed: $tmOut" }
     if ($tmReseed) { $St.baseline = $tmBase; Save-TestMySqlState $tmHome $St }

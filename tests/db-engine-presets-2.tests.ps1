@@ -17,10 +17,13 @@ function New-PresetKit([string]$n) {
 $mysqld = Get-Command mysqld -ErrorAction SilentlyContinue
 if (-not $mysqld -or -not (Get-Command mysqlbinlog -ErrorAction SilentlyContinue)) { 'SKIP flashback round trip (no mysqld / mysqlbinlog on PATH)'; Complete-Tests }
 $k3 = New-PresetKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1'
+$tmOrph = Join-Path (Get-TestMySqlHome) 'mysql/kto_orphan'; if (Test-Path (Join-Path (Split-Path $tmOrph) 'mysql.ibd')) { New-Item -ItemType Directory -Force $tmOrph | Out-Null }   # a killed CREATE DATABASE's folder
 $tmSrv = Start-TestMySql -Binlog; $port = $tmSrv.port
 try {
   $env:MYSQL_PWD = ''
   function Q([string]$sql) { Invoke-TestMySql $sql $port }
+  $tmOk = try { Q 'CREATE DATABASE kto_orphan; DROP DATABASE kto_orphan'; 'created' } catch { "$_" }
+  Expect "test-mysql.ps1: a take removes an empty schema folder no schema owns: its CREATE DATABASE works ($tmOk)" ($tmOk -eq 'created')
   # a killed run's empty schema folder (error 3678)
   foreach ($fs in 'fa', 'fb') { $fd = Join-Path (Get-TestMySqlHome) "mysql/$fs"; if ((Test-Path $fd) -and -not (Get-ChildItem $fd -Force)) { Remove-Item $fd } }
   Q @"
