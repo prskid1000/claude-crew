@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/mysql-base-move.tests.ps1: skills/envy/mysql-base-move.ps1: the lane ini keeps its low-write settings with a new port and datadir;
-the config edit gives each base env its own managed mysql (no port clash, lanes keep theirs, hm's db.port follows); a dry run
+the config edit gives each base env its own managed mysql (no port clash, lanes keep theirs, docs's db.port follows); a dry run
 changes nothing and refuses an existing target dir; -Apply without a donor is refused. tests/test-mysql.ps1 K79: lock takeover from an
 orphan holder, WATCH on a long hold, the starting run stops the server.
 Usage: pwsh -NoProfile -File tests/mysql-base-move.tests.ps1 [-Kit <kit>].
@@ -11,55 +11,55 @@ param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 $mv = Join-Path (Split-Path $PSScriptRoot) 'skills/envy/mysql-base-move.ps1'
 . $mv
-$tpl = @('[client]', 'port=3317', '[mysqld]', 'sync_binlog=0', 'innodb_doublewrite=OFF', 'port=3317', 'datadir=D:/x/mysql-hm2', 'innodb_buffer_pool_size=1G', 'log-bin=binlog', 'slow-query-log=1', 'innodb_flush_log_at_trx_commit=1', 'innodb_file_per_table=1', 'innodb_io_capacity=2000', 'innodb-io-capacity-max=4000', 'innodb_io_capacity_max=4000', 'innodb-adaptive-flushing=1')
-$ini = New-BaseIni $tpl 3316 'D:/x/mysql-hm'
-Expect "ini: ports and datadir changed, low-write settings forced under [mysqld] (no general / slow log, doublewrite; flush 2; redo 64M; tables in ibdata1; lazy page flushing), the binlog kept for envy marks, the rest kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] innodb_doublewrite=OFF innodb_flush_log_at_trx_commit=2 general_log=0 slow_query_log=0 innodb_redo_log_capacity=64M binlog_row_metadata=FULL innodb_file_per_table=OFF innodb_adaptive_flushing=OFF innodb_io_capacity=100 innodb_io_capacity_max=200 sync_binlog=0 port=3316 datadir=D:/x/mysql-hm innodb_buffer_pool_size=1G log-bin=binlog')
+$tpl = @('[client]', 'port=3317', '[mysqld]', 'sync_binlog=0', 'innodb_doublewrite=OFF', 'port=3317', 'datadir=D:/x/mysql-docs2', 'innodb_buffer_pool_size=1G', 'log-bin=binlog', 'slow-query-log=1', 'innodb_flush_log_at_trx_commit=1', 'innodb_file_per_table=1', 'innodb_io_capacity=2000', 'innodb-io-capacity-max=4000', 'innodb_io_capacity_max=4000', 'innodb-adaptive-flushing=1')
+$ini = New-BaseIni $tpl 3316 'D:/x/mysql-docs'
+Expect "ini: ports and datadir changed, low-write settings forced under [mysqld] (no general / slow log, doublewrite; flush 2; redo 64M; tables in ibdata1; lazy page flushing), the binlog kept for envy marks, the rest kept ($($ini -join ' '))" ($ini -join ' ' -eq '[client] port=3316 [mysqld] innodb_doublewrite=OFF innodb_flush_log_at_trx_commit=2 general_log=0 slow_query_log=0 innodb_redo_log_capacity=64M binlog_row_metadata=FULL innodb_file_per_table=OFF innodb_adaptive_flushing=OFF innodb_io_capacity=100 innodb_io_capacity_max=200 sync_binlog=0 port=3316 datadir=D:/x/mysql-docs innodb_buffer_pool_size=1G log-bin=binlog')
 # the copy writes only what is kept: never a server clone or a schema drop (12.9 GB of mysql.ibd churn per product, 2026-11-18)
 $mvText = Get-Content $mv -Raw
 Expect 'apply: empty datadir + mysqldump | mysql per kept schema, no CLONE and no DROP DATABASE' ($mvText -match '--initialize-insecure' -and $mvText -match '--single-transaction --no-tablespaces --routines --triggers --events' -and $mvText -notmatch 'CLONE LOCAL|DROP DATABASE|INSTALL PLUGIN')
 Expect 'apply: the load keeps the copied tables in own files (the ini puts only later tables in ibdata1)' ($mvText -match "'--skip-log-bin', '--innodb-file-per-table=ON'")
 
 # the config edit on a base + lane layout like the org's, resolved by envy
-$lane = { param($n) @{ name = 'mysql'; external = $false; port = $n; start = '"mysqld" --defaults-file="D:/s/lanes/mysql-rm{lane}.ini"'; init = @{ cmd = 'pwsh -File lane.ps1 -Port {port} -Dir "D:/s/lanes/mysql-rm{lane}"'; creates = 'D:/s/lanes/mysql-rm{lane}/lane-ready.txt' } } }
+$lane = { param($n) @{ name = 'mysql'; external = $false; port = $n; start = '"mysqld" --defaults-file="D:/s/lanes/mysql-shop{lane}.ini"'; init = @{ cmd = 'pwsh -File lane.ps1 -Port {port} -Dir "D:/s/lanes/mysql-shop{lane}"'; creates = 'D:/s/lanes/mysql-shop{lane}/lane-ready.txt' } } }
 $cfg = @{ localEnv = @{ lanes = @{}; defaults = @{ services = @(@{ name = 'mysql'; external = $true; port = 3306 }); db = @{ engine = 'mysql'; port = 3306; user = 'root'; expect = @{ innodb_buffer_pool_size = '2G' } } }
-  envs = @{ rm = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api'; port = 8443 }, @{ name = 'search'; port = 9200; start = 'os.bat -Epath.data=C:/os/rdata{suffix}{lane} -Epath.logs=C:/os/logs-rm{suffix}{lane}' }); env = @{ RM_DbPort = '{port:mysql}' } }; rm2 = @{ services = @(& $lane 3307) }
-    hm = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api'; port = 5000 }, @{ name = 'search'; port = 9201; start = 'os.bat -Epath.data=C:/os/rdata{suffix}{lane} -Epath.logs=C:/os/logs-hm{suffix}{lane}' }) }; hm2 = @{ services = @(& $lane 3317) } } } }
+  envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api'; port = 8443 }, @{ name = 'search'; port = 9200; start = 'os.bat -Epath.data=C:/os/rdata{suffix}{lane} -Epath.logs=C:/os/logs-shop{suffix}{lane}' }); env = @{ SHOP_DbPort = '{port:mysql}' } }; shop2 = @{ services = @(& $lane 3307) }
+    docs = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api'; port = 5000 }, @{ name = 'search'; port = 9201; start = 'os.bat -Epath.data=C:/os/rdata{suffix}{lane} -Epath.logs=C:/os/logs-docs{suffix}{lane}' }) }; docs2 = @{ services = @(& $lane 3317) } } } }
 $kd = New-TestKit mbm; $dst = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy/adapters')
 Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $dst); Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/envy/adapters/*') $dst -Force
 $cf = Join-Path $kd 'skills/crafty/kit.local.json'; & $J $cfg $cf 12
-$before = & { $sdKeep = $env:SystemDrive; $env:SystemDrive = 'C:'; try { . (Join-Path $kd 'skills/envy/envy.ps1'); @('rm', 'hm') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what } } finally { $env:SystemDrive = $sdKeep } }
+$before = & { $sdKeep = $env:SystemDrive; $env:SystemDrive = 'C:'; try { . (Join-Path $kd 'skills/envy/envy.ps1'); @('shop', 'docs') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what } } finally { $env:SystemDrive = $sdKeep } }
 # the drive rule follows the OS system drive (none on POSIX): another system drive flags no C:/ path
-$otherSys = & { $sdKeep = $env:SystemDrive; $env:SystemDrive = 'Q:'; try { . (Join-Path $kd 'skills/envy/envy.ps1'); @(Get-LaneStandardRows 'hm' | Where-Object { $_.what -match 'system drive' }).Count } finally { $env:SystemDrive = $sdKeep } }
-Expect "lane standard: an external mysql, search data / logs on C:, a data path shared by two products and an unknown {suffix} are each reported ($($before.Count))" ($before.Count -eq 10 -and @($before | Where-Object { $_ -match '^service search of (rm|hm): \{suffix\} is no envy placeholder' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'external' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'on the system drive C:' }).Count -eq 4 -and $otherSys -eq 0 -and @($before | Where-Object { $_ -match 'shares path.data' }).Count -eq 2)
+$otherSys = & { $sdKeep = $env:SystemDrive; $env:SystemDrive = 'Q:'; try { . (Join-Path $kd 'skills/envy/envy.ps1'); @(Get-LaneStandardRows 'docs' | Where-Object { $_.what -match 'system drive' }).Count } finally { $env:SystemDrive = $sdKeep } }
+Expect "lane standard: an external mysql, search data / logs on C:, a data path shared by two products and an unknown {suffix} are each reported ($($before.Count))" ($before.Count -eq 10 -and @($before | Where-Object { $_ -match '^service search of (shop|docs): \{suffix\} is no envy placeholder' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'external' }).Count -eq 2 -and @($before | Where-Object { $_ -match 'on the system drive C:' }).Count -eq 4 -and $otherSys -eq 0 -and @($before | Where-Object { $_ -match 'shares path.data' }).Count -eq 2)
 $obj = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable -Depth 50
-$edit = Update-BaseMoveConfig $obj @('rm:3305', 'hm:3316') 3306 'D:/s/lanes'
-$obj.localEnv.baseMove = @{ targets = @('rm:3305', 'hm:3316'); service = 'MySQL80'; adminSchema = '{env}_admin'; registryTable = 'reg'; poolTable = 'db_pool' }   # the org values live in config
+$edit = Update-BaseMoveConfig $obj @('shop:3305', 'docs:3316') 3306 'D:/s/lanes'
+$obj.localEnv.baseMove = @{ targets = @('shop:3305', 'docs:3316'); donorPort = 3306; verifyPort = 3399; service = 'MySQL80'; adminSchema = '{env}_admin'; registryTable = 'reg'; poolTable = 'db_pool' }   # the org values live in config
 Set-Content $cf ($obj | ConvertTo-Json -Depth 50) -Encoding utf8
 $res = & { . (Join-Path $kd 'skills/envy/envy.ps1'); $E = $script:LE.envs
   $m = { param($n) @($E.$n.services | Where-Object name -eq 'mysql')[0] }
-  $init = (& $m 'hm-falcon').init.cmd; $script:hm2init = (& $m 'hm-kestrel').init.cmd
-  "rm=$((& $m 'rm-falcon').port)/$($E.'rm-falcon'.db.port)/$((& $m 'rm-falcon').external)|hm=$((& $m 'hm-falcon').port)/$($E.'hm-falcon'.db.port)|rm2=$((& $m 'rm-kestrel').port)/$($E.'rm-kestrel'.db.port)|hm2=$((& $m 'hm-kestrel').port)/$($E.'hm-kestrel'.db.port)|clash=$(@(Test-PortClash).Count)|init=$init|exp=$($E.'hm-falcon'.db.expect.innodb_buffer_pool_size)|dir=$((& $m 'hm-falcon').start)" }
-Expect "config edit: rm 3305 managed, hm 3316 (db.port follows), lanes keep 3307 / 3317, no port clash ($res)" ($res -match '^rm=3305/3305/False\|hm=3316/3316\|rm2=3307/3307\|hm2=3317/3317\|clash=0\|')
-Expect "config edit: hm init clones from the donor :3306 into its own dir, hm2 clones from :3316, pool expectation 1G ($res)" ($hm2init -match '-DonorPort 3316' -and $res -match '-Port \{port\} -DonorPort 3306 -Dir "D:/s/lanes/mysql-hm-falcon"\|exp=1G\|dir=.*mysql-hm-falcon\.ini')
+  $init = (& $m 'docs-falcon').init.cmd; $script:docs2init = (& $m 'docs-kestrel').init.cmd
+  "shop=$((& $m 'shop-falcon').port)/$($E.'shop-falcon'.db.port)/$((& $m 'shop-falcon').external)|docs=$((& $m 'docs-falcon').port)/$($E.'docs-falcon'.db.port)|shop2=$((& $m 'shop-kestrel').port)/$($E.'shop-kestrel'.db.port)|docs2=$((& $m 'docs-kestrel').port)/$($E.'docs-kestrel'.db.port)|clash=$(@(Test-PortClash).Count)|init=$init|exp=$($E.'docs-falcon'.db.expect.innodb_buffer_pool_size)|dir=$((& $m 'docs-falcon').start)" }
+Expect "config edit: shop 3305 managed, docs 3316 (db.port follows), lanes keep 3307 / 3317, no port clash ($res)" ($res -match '^shop=3305/3305/False\|docs=3316/3316\|shop2=3307/3307\|docs2=3317/3317\|clash=0\|')
+Expect "config edit: docs init clones from the donor :3306 into its own dir, docs2 clones from :3316, pool expectation 1G ($res)" ($docs2init -match '-DonorPort 3316' -and $res -match '-Port \{port\} -DonorPort 3306 -Dir "D:/s/lanes/mysql-docs-falcon"\|exp=1G\|dir=.*mysql-docs-falcon\.ini')
 Expect "config edit: two mysql, two search, two lane-name and one storage.watch line reported; the lane datadirs watched ($($edit.Count))" ($edit.Count -eq 9 -and @($obj.storage.watch) -contains 'D:/s/lanes')
-$after = & { . (Join-Path $kd 'skills/envy/envy.ps1'); @('rm-falcon', 'hm-falcon', 'rm-kestrel', 'hm-kestrel') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what }; "S=$((@($script:LE.envs.'rm-falcon'.services | Where-Object name -eq 'search')[0]).start)" }
-Expect "lane standard: after the edit no breach, search data under the lane folder ($($after -join ' | '))" (@($after).Count -eq 1 -and $after -match 'S=os.bat -Epath.data=D:/s/lanes/search-rm-falcon/data -Epath.logs=D:/s/lanes/search-rm-falcon/logs')
+$after = & { . (Join-Path $kd 'skills/envy/envy.ps1'); @('shop-falcon', 'docs-falcon', 'shop-kestrel', 'docs-kestrel') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what }; "S=$((@($script:LE.envs.'shop-falcon'.services | Where-Object name -eq 'search')[0]).start)" }
+Expect "lane standard: after the edit no breach, search data under the lane folder ($($after -join ' | '))" (@($after).Count -eq 1 -and $after -match 'S=os.bat -Epath.data=D:/s/lanes/search-shop-falcon/data -Epath.logs=D:/s/lanes/search-shop-falcon/logs')
 $cfC = Join-Path $kd 'cfg-copy.json'; Copy-Item $cf $cfC; $cfo = @(pwsh -NoProfile -File $mv -Config -Apply -ConfigFile $cfC 2>&1) -join ' '
 Expect "-Config -Apply: the backup is <file>.bak-<nnnn> (NO-DATE) ($cfo)" ($cfo -match 'written:' -and @(Get-ChildItem $kd -Filter 'cfg-copy.json.bak-*' | Where-Object Name -match '\.bak-\d{4}$').Count -eq 1)
 
 # dry run: plan printed, nothing created; an existing target dir is refused; -Apply without the donor is refused
-$ld = Join-Path $kd 'lanes'; New-Item -ItemType Directory -Force "$ld/mysql-rm-falcon" | Out-Null; Set-Content "$ld/mysql-hm2.ini" ($tpl -join "`n")
+$ld = Join-Path $kd 'lanes'; New-Item -ItemType Directory -Force "$ld/mysql-shop-falcon" | Out-Null; Set-Content "$ld/mysql-docs2.ini" ($tpl -join "`n")
 $out = @(pwsh -NoProfile -File $mv -Lanes $ld -Bin $ld -ConfigFile $cf 2>&1) -join "`n"
-Expect "dry run: plan, switch-over steps, existing dir and missing binaries refused ($($out.Length) chars)" ($out -match 'rm: copy its schemas :3306 ->' -and $out -match '\w+_admin\.db_pool -> :3316' -and $out -match 'mysql-rm-falcon exists' -and $out -match 'missing .*mysqld\.exe' -and $out -match 'net stop MySQL80')
-Expect 'dry run: nothing created' (-not (Test-Path "$ld/mysql-hm") -and -not (Test-Path "$ld/mysql-hm.ini"))
+Expect "dry run: plan, switch-over steps, existing dir and missing binaries refused ($($out.Length) chars)" ($out -match 'shop: copy its schemas :3306 ->' -and $out -match '\w+_admin\.db_pool -> :3316' -and $out -match 'mysql-shop-falcon exists' -and $out -match 'missing .*mysqld\.exe' -and $out -match 'net stop MySQL80')
+Expect 'dry run: nothing created' (-not (Test-Path "$ld/mysql-docs") -and -not (Test-Path "$ld/mysql-docs.ini"))
 $null = pwsh -NoProfile -File $mv -Lanes $ld -Bin $ld -ConfigFile $cf -Apply 2>&1
 Expect "-Apply refused with exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1)
-$trial = @(pwsh -NoProfile -File $mv -Bin $ld -ConfigFile $cf -IniFrom "$ld/mysql-hm2.ini" -Only testtenant 2>&1) -join "`n"
+$trial = @(pwsh -NoProfile -File $mv -Bin $ld -ConfigFile $cf -IniFrom "$ld/mysql-docs2.ini" -Only testtenant 2>&1) -join "`n"
 Expect '-Only without a scratch -Lanes is refused (a partial copy never lands in the real lanes dir)' ($trial -match '-Only is a trial: pass a scratch -Lanes')
 # no localEnv.baseMove and no args: no built-in targets, service or schema source; refused with the key to set
 $cf0 = Join-Path $kd 'bare.local.json'; '{}' | Set-Content $cf0
 $bare = @(pwsh -NoProfile -File $mv -Lanes $ld -Bin $ld -ConfigFile $cf0 2>&1) -join "`n"; $bareCfg = @(pwsh -NoProfile -File $mv -Config -ConfigFile $cf0 2>&1) -join "`n"
-Expect "no baseMove config: targets, schema source and service are not guessed; -Config refused ($LASTEXITCODE)" ($bare -match 'no targets: pass -Targets' -and $bare -match 'no kept-schema source' -and $bare -match 'service: none named' -and $bare -notmatch 'MySQL80|rm:|hm:' -and $bareCfg -match 'REFUSED: no targets' -and $LASTEXITCODE -eq 1)
+Expect "no baseMove config: targets, schema source and service are not guessed; -Config refused ($LASTEXITCODE)" ($bare -match 'no targets: pass -Targets' -and $bare -match 'no donor / verify port' -and $bare -match 'no kept-schema source' -and $bare -match 'service: none named' -and $bare -notmatch 'MySQL80|shop:|docs:' -and $bareCfg -match 'REFUSED: no targets' -and $LASTEXITCODE -eq 1)
 
 # laneIds "bird": the lane id is <product>-<bird>; old ids are accepted aliases (warning); old override keys still read; labels follow
 $kb = New-TestKit mbm2; $db = New-Item -ItemType Directory -Force (Join-Path $kb 'skills/envy/adapters')
@@ -82,7 +82,7 @@ Remove-Item (Split-Path $kn) -Recurse -Force -ErrorAction SilentlyContinue
 
 # no hard-coded old lane id (<product><k>) in a path or label of the envy / supervise code
 $old = foreach ($f in @(Get-ChildItem (Join-Path (Split-Path $PSScriptRoot) 'skills/envy') -Recurse -Filter '*.ps1' | Where-Object Name -ne 'mysql-base-move.ps1') + @(Get-ChildItem (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters') -Filter 'localenv*.ps1')) {
-  Select-String -LiteralPath $f.FullName -Pattern '["''/\-](rm|hm)[2-9]\b|\b(rm|hm)[2-9][-/.\\"'']' | Where-Object { $_.Line -notmatch '^\s*#' } | ForEach-Object { "$($f.Name):$($_.LineNumber)" } }
+  Select-String -LiteralPath $f.FullName -Pattern '["''/\-](shop|docs)[2-9]\b|\b(shop|docs)[2-9][-/.\\"'']' | Where-Object { $_.Line -notmatch '^\s*#' } | ForEach-Object { "$($f.Name):$($_.LineNumber)" } }
 Expect "lint: no hard-coded old lane id in envy / supervise code ($(@($old) -join ' '))" (-not @($old).Count)
 
 # -Rename: the lane-scoped names (mysql dir + ini, state, logs, run dir, cmd, lane env file) -> <product>-<bird>; dry run changes nothing; rollback restores
@@ -103,7 +103,7 @@ $ini = Get-Content "$ln/mysql-shop-kestrel.ini" -Raw
 Expect "rename -Apply: dir, ini (datadir rewritten), lane-ready, state, run dir, cmd, log, env file moved; the base lane's shared shop.env stays ($LASTEXITCODE)" ((Test-Path "$ln/mysql-shop-kestrel/lane-ready.txt") -and $ini -match 'datadir=.*mysql-shop-kestrel' -and (Get-Content "$ln/mysql-shop-kestrel/lane-ready.txt" -Raw) -match 'mysql-shop-kestrel\.ini' -and (Test-Path "$wl/shop-kestrel.json") -and (Test-Path "$wl/run/shop-kestrel/api") -and (Test-Path "$wl/run/shop-kestrel-api.cmd") -and (Test-Path "$lg/shop-kestrel-api.log") -and (Test-Path "$kd/st/shop-kestrel.env") -and (Test-Path "$kd/st/shop.env") -and -not (Test-Path "$ln/mysql-shop2"))
 $null = pwsh -NoProfile -File $mv -Rename -Rollback -Lanes $ln -Runtime $rt -ConfigFile $rc -PokeyFile $pf 2>&1
 Expect 'rename -Rollback: pokey targets back' ((Get-Content $pf -Raw | ConvertFrom-Json).targets.PSObject.Properties.Name -join ',' -eq $pkBefore)
-# a re-run after -Config -Apply (bird keys, a lanes.max lane with no key): no crash, a bird id is never renamed again (hm-falcon-falcon)
+# a re-run after -Config -Apply (bird keys, a lanes.max lane with no key): no crash, a bird id is never renamed again (docs-falcon-falcon)
 $rb = Join-Path $kd 'rename-bird.json'; & $J @{ localEnv = @{ laneIds = 'bird'; envs = @{ shop = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api' }) }; 'shop-kestrel' = @{ services = @(@{ name = 'mysql'; port = $rnPort; start = 'x' }) } } } } $rb 8
 $rr = @(pwsh -NoProfile -File $mv -Rename -Lanes $ln -Runtime $rt -ConfigFile $rb -PokeyFile $pf 2>&1) -join "`n"
 Expect "rename re-run on a bird config: exit 0, no null-array error, no <bird>-<bird> name ($LASTEXITCODE)" ($LASTEXITCODE -eq 0 -and $rr -notmatch 'null array|kestrel-falcon|falcon-falcon')

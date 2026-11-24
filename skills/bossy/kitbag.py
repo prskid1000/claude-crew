@@ -2789,6 +2789,7 @@ def env_change_rx():
     """A deployed-env change in a testing doc: a command of crafty/vocab.json envChangeCommands (the guard's list), or words that tell
     a tester to set / toggle an env variable, option or app setting, or to set an UPPER_CASE switch."""
     cmds = (load_json(osp.join(KIT_DIR, 'skills', 'crafty', 'vocab.json'))[0] or {}).get('envChangeCommands') or []
+    cmds = cmds + [c for c in ((local_config(KIT_DIR, 'kit.local.json').get('guard') or {}).get('envChangeCommands') or []) if c]   # the guard's org additions
     words_rx = (r'(?i:\b(?:set|toggle|flip|enable|disable|turn\s+(?:on|off)|change|update|add|remove)\b[^.\n|]{0,60}?\b(?:env(?:ironment)?[ -]'
                 r'var(?:iable)?s?|option[ -]settings?|(?:environment|server|container|pod|lambda|beanstalk)[ -](?:config(?:uration)?|propert(?:y|ies)))\b)'
                 r'|(?i:\b(?:set|toggle|flip|enable|disable|turn\s+(?:on|off))\s+)`?[A-Z][A-Z0-9]*_[A-Z0-9_]+`?\s*(?:=|(?i:\bto\b|\bon\b))')

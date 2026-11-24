@@ -51,7 +51,7 @@ function Test-PortClash {
     if (@($u | Where-Object { -not $_.external }).Count -or @($u.start | Select-Object -Unique).Count -gt 1) { "port $port is claimed by $(($u.who) -join ', ')" }
   }
 }
-# an old lane id (rm, rm2; laneIds nn: rm-kestrel too) -> today's id (bird: <product>-<bird>, nn: lane-<nn>), with a warning
+# an old lane id (shop, shop2; laneIds nn: shop-kestrel too) -> today's id (bird: <product>-<bird>, nn: lane-<nn>), with a warning
 function Resolve-EnvAlias([string]$n) { if ($n -and $script:EnvAlias.ContainsKey($n) -and -not (Get-KitMember $script:LE.envs $n)) { Write-Warning "old lane id '$n': use $($script:EnvAlias[$n]) (accepted for now)"; $script:EnvAlias[$n] } else { $n } }
 # ---- lane worktrees: a lane repo's worktree and its dependency links (moved from envy.ps1 at its cap)
 function Ensure-Worktree([string]$e, $r) {

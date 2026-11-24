@@ -10,19 +10,21 @@ unique / FK checks off); never clone + drop (that churned 12.9 GB of mysql.ibd f
   pwsh -NoProfile -File mysql-base-move.ps1 -Config [-Apply]     the kit.local.json edit (dry run prints it; -Apply writes, .bak-<nnnn> kept)
   pwsh -NoProfile -File mysql-base-move.ps1 -Rename [-Apply|-Rollback]   every lane-scoped name (mysql dirs + inis, envy state, logs, run dirs, cmd files, lane env files) to <product>-<bird>, everything down; journal kept
   pwsh -NoProfile -File mysql-base-move.ps1 -Rename -Ids nn [-Apply|-Rollback]   the same to lane-<nn> (N3; mysql dirs keep their {bird} template names) + kit.local.json laneIds nn, lane keys renamed
-Targets `<env>:<port>` (next to the lane ports, never the service's). -Targets, -Bin, -Service, -AdminSchema, -RegistryTable, -PoolTable:
-unset = kit.local.json localEnv.baseMove {targets, bin, service, adminSchema, registryTable, poolTable}; -Bin else mysqld on PATH. Each keeps only its product's
-schemas (-AdminSchema + the names in its -RegistryTable) and kit_journal (the cascade guard's triggers write it in the same server). Names `<service>-<product>-<bird>` (mysql-rm-falcon, search-hm-kestrel), the bird = the lane number's pool name (`{bird}` in the lane
-templates); dir `<Lanes>/mysql-rm-falcon`, ini `<Lanes>/mysql-rm-falcon.ini` (copy of -IniFrom with its port and datadir changed).
+Targets `<env>:<port>` (next to the lane ports, never the service's). -Targets, -DonorPort, -VerifyPort (a free port the copy loads on), -Bin,
+-Service, -AdminSchema, -RegistryTable, -PoolTable:
+unset = kit.local.json localEnv.baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}; -Bin else mysqld on PATH. Each keeps only its product's
+schemas (-AdminSchema + the names in its -RegistryTable) and kit_journal (the cascade guard's triggers write it in the same server). Names `<service>-<product>-<bird>` (mysql-shop-falcon, search-docs-kestrel), the bird = the lane number's pool name (`{bird}` in the lane
+templates); dir `<Lanes>/mysql-shop-falcon`, ini `<Lanes>/mysql-shop-falcon.ini` (copy of -IniFrom with its port and datadir changed).
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L42 names · L49 ini and config edit · L145 rename · L248 checks · L297 apply · L360 search data
+Sections: L44 names · L51 ini and config edit · L148 rename · L251 checks · L301 apply · L364 search data
 #>
-param([string[]]$Targets, [int]$DonorPort = 3306, [string]$Lanes, [string]$IniFrom,
-  [string]$Bin, [string]$Service, [int]$VerifyPort = 3399,
+param([string[]]$Targets, [int]$DonorPort, [string]$Lanes, [string]$IniFrom,
+  [string]$Bin, [string]$Service, [int]$VerifyPort,
   [string]$ConfigFile, [string]$AdminSchema, [string]$RegistryTable, [string]$PoolTable, [string[]]$Only, [switch]$Config, [string]$Runtime, [string]$PokeyFile, [switch]$Rename, [switch]$Rollback, [string[]]$Birds, [ValidateSet('bird', 'nn')][string]$Ids = 'bird', [switch]$Apply, [switch]$Replace, [switch]$Force)
 $ErrorActionPreference = 'Stop'
+$SysDrive = if ($env:SystemDrive) { [regex]::Escape($env:SystemDrive) } else { '(?!)' }   # search data moves off it (none on POSIX)
 $KitDir = Split-Path (Split-Path $PSScriptRoot)
 if (-not $Lanes) { $Lanes = Join-Path $KitDir '.state/localenv/lanes' }
 $Lanes = $Lanes.Replace('\', '/').TrimEnd('/')
@@ -34,7 +36,7 @@ if (-not $ConfigFile) { $ConfigFile = Join-Path $KitDir 'skills/crafty/kit.local
 $bm = try { (Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50)['localEnv']['baseMove'] } catch { $null }
 if ($bm) {
   if (-not $Targets) { $Targets = @($bm['targets'] | Where-Object { $_ }) }
-  foreach ($bmKey in 'Bin', 'Service', 'AdminSchema', 'RegistryTable', 'PoolTable') { $bmVal = $bm[$bmKey.Substring(0, 1).ToLower() + $bmKey.Substring(1)]; if (-not (Get-Variable $bmKey -ValueOnly) -and $bmVal) { Set-Variable $bmKey ([string]$bmVal) } }
+  foreach ($bmKey in 'DonorPort', 'VerifyPort', 'Bin', 'Service', 'AdminSchema', 'RegistryTable', 'PoolTable') { $bmVal = $bm[$bmKey.Substring(0, 1).ToLower() + $bmKey.Substring(1)]; if (-not (Get-Variable $bmKey -ValueOnly) -and $bmVal) { Set-Variable $bmKey ([string]$bmVal) } }
 }
 $Targets = @($Targets | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if (-not $Bin -and ($mysqldCmd = Get-Command mysqld -ErrorAction SilentlyContinue)) { $Bin = Split-Path $mysqldCmd.Source }
@@ -63,7 +65,7 @@ function New-BaseIni([string[]]$Template, [int]$Port, [string]$Dir) {
   })
 }
 # the kit.local.json edit (hashtables, key order kept): each target env runs its own managed mysql (the lane templates with an empty
-# {lane}) and its search data and logs move off C:; its lanes clone from it
+# {lane}) and its search data and logs move off the system drive; its lanes clone from it
 function Copy-Deep($Obj) { $Obj | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable }
 function Update-BaseMoveConfig($Cfg, [string[]]$Spec, [int]$Donor, [string]$LanesDir = '') {
   $envs = $Cfg['localEnv']['envs']; $tpl = $null
@@ -85,9 +87,9 @@ function Update-BaseMoveConfig($Cfg, [string[]]$Spec, [int]$Donor, [string]$Lane
     $e['db']['expect']['innodb_buffer_pool_size'] = '1G'
     foreach ($ln in @($envs.Keys | Where-Object { $_ -match "^$en\d+$" })) { foreach ($ls in @($envs[$ln]['services'])) { if ($ls -and $ls['init'] -and $ls['init']['cmd'] -and $ls['init']['cmd'] -notmatch '-DonorPort') { $ls['init']['cmd'] = ([string]$ls['init']['cmd']).Replace('-Port {port}', "-Port {port} -DonorPort $pt") } } }   # a new lane of this env clones from its base server
     $sr = @($e['services'] | Where-Object { $_['name'] -eq 'search' -and $_['start'] })[0]
-    if ($LanesDir -and $sr -and [string]$sr['start'] -match '(?i)-Epath\.(data|logs)=C:') {
-      $sr['start'] = [regex]::Replace([string]$sr['start'], '(?i)-Epath\.data=C:[^ ]+', "-Epath.data=$LanesDir/search-$en-{bird}/data")
-      $sr['start'] = [regex]::Replace([string]$sr['start'], '(?i)-Epath\.logs=C:[^ ]+', "-Epath.logs=$LanesDir/search-$en-{bird}/logs")
+    if ($LanesDir -and $sr -and [string]$sr['start'] -match "(?i)-Epath\.(data|logs)=$SysDrive") {
+      $sr['start'] = [regex]::Replace([string]$sr['start'], "(?i)-Epath\.data=$SysDrive[^ ]+", "-Epath.data=$LanesDir/search-$en-{bird}/data")
+      $sr['start'] = [regex]::Replace([string]$sr['start'], "(?i)-Epath\.logs=$SysDrive[^ ]+", "-Epath.logs=$LanesDir/search-$en-{bird}/logs")
       $changed += "envs.$en.services[search] data + logs -> $LanesDir/search-$en-{bird}/"
     }
     $changed += "envs.$en.services[mysql] port $pt managed (init: clone from :$Donor; its lanes from :$pt), envs.$en.db.port $pt, db.expect pool 1G"
@@ -133,6 +135,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by a test: 
 if ($Config) {
   $cfg = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50
   if (-not $Targets) { 'REFUSED: no targets: pass -Targets <env>:<port>,... or set localEnv.baseMove.targets'; exit 1 }
+  if (-not $DonorPort) { 'REFUSED: no donor port: pass -DonorPort <port> or set localEnv.baseMove.donorPort'; exit 1 }
   $ch = Update-BaseMoveConfig $cfg $Targets $DonorPort $Lanes
   $ch | ForEach-Object { "config: $_" }
   if ($Apply) { $pyExe = if ($IsWindows) { 'python' } else { 'python3' }; $bakF = ''   # NO-DATE: <file>.bak-<nnnn> from the kit's one counter, a free one
@@ -207,7 +210,7 @@ if ($Rename -or $Rollback) {
       }
     }
   }
-  # pokey targets: an explicit lane key (local-hm2) -> <base>-<bird> (the derived <target><k> names need no key; pokey accepts the old ones)
+  # pokey targets: an explicit lane key (local-docs2) -> <base>-<bird> (the derived <target><k> names need no key; pokey accepts the old ones)
   $tgKeys = @(); $pk = $null
   if (Test-Path -LiteralPath $PokeyFile) {
     $pk = Get-Content -LiteralPath $PokeyFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50
@@ -248,6 +251,7 @@ if ($Rename -or $Rollback) {
 # ---- checks: binaries, targets, ports, donor, space, schemas per product
 if (-not $Bin) { $bad.Add('no MySQL bin folder: pass -Bin or set localEnv.baseMove.bin (mysqld is not on PATH)') } else { foreach ($f in $mysql, $mysqld, $mysqldump) { if (-not (Test-Path -LiteralPath $f)) { $bad.Add("missing $f") } } }
 if (-not $Targets) { $bad.Add('no targets: pass -Targets <env>:<port>,... or set localEnv.baseMove.targets') }
+if (-not $DonorPort -or -not $VerifyPort) { $bad.Add('no donor / verify port: pass -DonorPort and -VerifyPort or set localEnv.baseMove.donorPort / verifyPort') }
 if (-not $AdminSchema -or -not $RegistryTable) { $bad.Add('no kept-schema source: pass -AdminSchema <name, {env} = the env> and -RegistryTable <its table of schema names> or set localEnv.baseMove') }
 if (-not $IniFrom -or -not (Test-Path -LiteralPath $IniFrom)) { $bad.Add("no template ini: pass -IniFrom <a lane ini>") }
 $plan = @(foreach ($t in $Targets) {
@@ -259,11 +263,11 @@ $plan = @(foreach ($t in $Targets) {
 })
 if ($Only -and -not $PSBoundParameters.ContainsKey('Lanes')) { $bad.Add('-Only is a trial: pass a scratch -Lanes (a partial copy must never look like a base)') }
 if (@($plan.port | Select-Object -Unique).Count -ne @($plan).Count) { $bad.Add('two targets share a port') }
-if ($VerifyPort -eq $DonorPort -or $VerifyPort -in @($plan.port)) { $bad.Add("-VerifyPort $VerifyPort is the donor's or a target's port") }
-if (Test-Listen $VerifyPort) { $bad.Add("-VerifyPort $VerifyPort is in use: the copy loads on it") }
+if ($VerifyPort -and ($VerifyPort -eq $DonorPort -or $VerifyPort -in @($plan.port))) { $bad.Add("-VerifyPort $VerifyPort is the donor's or a target's port") }
+if ($VerifyPort -and (Test-Listen $VerifyPort)) { $bad.Add("-VerifyPort $VerifyPort is in use: the copy loads on it") }
 if ($Service) { $svc = Get-Service $Service -ErrorAction SilentlyContinue
   $info.Add("service $Service : $(if ($svc) { "$($svc.Status), start $($svc.StartType)" } else { 'not found' })") } else { $info.Add('service: none named (-Service or localEnv.baseMove.service)') }
-$donorUp = Test-Listen $DonorPort
+$donorUp = $DonorPort -and (Test-Listen $DonorPort)
 if ($env:MYSQL_PWD -and $donorUp -and $AdminSchema -and $RegistryTable) {
   try {
     $sizes = @{}; foreach ($r in @(Invoke-Sql $DonorPort "SELECT table_schema, ROUND(SUM(data_length + index_length) / 1048576) FROM information_schema.tables GROUP BY table_schema")) { $k, $v = $r -split "`t"; $sizes[$k] = [double]$v }
@@ -357,14 +361,15 @@ if ($Apply) {
   }
 }
 
-# ---- search data: off C: (the old folders stay as the rollback)
-if ($Apply -and -not $Only) {   # search data off C: (the old folders stay as the rollback): copied while that lane's search is down; not in a trial
+# ---- search data: off the system drive (the old folders stay as the rollback)
+if ($Apply -and -not $Only) {   # copied while that lane's search is down; not in a trial
   $cfgNow = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50
   foreach ($p in $plan) {
     $sr = @($cfgNow['localEnv']['envs'][$p.env]['services'] | Where-Object { $_['name'] -eq 'search' -and $_['start'] })[0]
-    if (-not $sr -or [string]$sr['start'] -notmatch '(?i)-Epath\.data=(C:[^ ]+)') { continue }
+    if (-not $sr -or [string]$sr['start'] -notmatch "(?i)-Epath\.data=($SysDrive[^ ]+)") { continue }
     $old = $Matches[1]; $sp = $sr['port']
-    foreach ($k in '', '2', '3') {
+    $lmx = try { [int]$cfgNow['localEnv']['envs'][$p.env]['lanes']['max'] } catch { 1 }   # lane 1 = '', lane k = k
+    foreach ($k in @('') + @(if ($lmx -ge 2) { 2..$lmx | ForEach-Object { "$_" } })) {
       $from = $old.Replace('{lane}', $k); $to = "$Lanes/search-$($p.env)-$(Get-Bird $(if ($k) { [int]$k } else { 1 }))/data"
       if (-not (Test-Path -LiteralPath $from)) { if ($k -eq '') { "search $($p.env): no data at $from, nothing to copy" }; continue }
       if (Test-Path -LiteralPath $to) { "search $($p.env): $to exists, kept"; continue }

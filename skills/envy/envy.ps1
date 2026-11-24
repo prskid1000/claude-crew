@@ -84,7 +84,7 @@ function Get-LaneCfg($base, [string]$g, [int]$k, $over) {
 }
 if ($script:LE.envs) {
   $__envs = [ordered]@{}; $__res = [ordered]@{}; foreach ($__n in @((Get-KitProps $script:LE.envs).Name)) { $__res[$__n] = Resolve-EnvCfg $__n }
-  $__bird = "$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird'; $script:EnvAlias = @{}; $script:EnvKeysRaw = @($__res.Keys)   # laneIds "bird": <product>-<bird> (rm-kestrel); "nn": lane-<nn> (wt-pool Get-KitLaneMap)
+  $__bird = "$(Get-KitSetting 'localEnv.laneIds' '')" -eq 'bird'; $script:EnvAlias = @{}; $script:EnvKeysRaw = @($__res.Keys)   # laneIds "bird": <product>-<bird> (shop-kestrel); "nn": lane-<nn> (wt-pool Get-KitLaneMap)
   $__lm = @{}; $__lanes = @{}; foreach ($__r in @(Get-KitLaneMap)) { $__lm["$($__r.env)|$($__r.k)"] = $__r.id; $__lanes[$__r.id] = $true }
   foreach ($__n in $__res.Keys) { for ($__k = 2; $__k -le [int]$__res[$__n].lanes.max; $__k++) { $__lanes["$__n$__k"] = $true; $__lanes["$__n-$("$(Get-KitBirdName $__k)".ToLower())"] = $true } }
   foreach ($__n in @($__res.Keys | Where-Object { -not $__lanes.ContainsKey($_) })) {   # envs.<lane id> / <env><k> / <env>-<bird> of a laned env: that lane's keys, no env of its own
@@ -2032,7 +2032,7 @@ if ($Action -eq 'marks') { if ($Name) { throw "marks lists the marks; to make on
 $Repo = @(Split-KitList $Repo); $Services = @(Split-KitList $Services); $Schemas = @(Split-KitList $Schemas)
 if ($Service -and -not $Services) { $Services = @($Service) }
 if (-not (EnvNames).Count -and $Action -ne 'envs') { throw 'No local environments configured: add "localEnv": { "envs": { "<env>": { "services": [...] } } } to kit.local.json (see README "Configuration", localEnv).' }
-if ($EnvName) { $EnvName = ConvertFrom-KitLaneLabel $EnvName }   # -Env takes the id or the shown name (rm·Kestrel, rm-kestrel)
+if ($EnvName) { $EnvName = ConvertFrom-KitLaneLabel $EnvName }   # -Env takes the id or the shown name (shop·Kestrel, shop-kestrel)
 $clash = @(Test-PortClash)
 if ($clash.Count) { $m = "localEnv port clash (envs run side by side; give each service its own port): $($clash -join '; ')"; if ($Action -in 'envs', 'status', 'doctor', 'logs', 'events', 'release', '_exec') { Write-Warning $m } else { throw $m } }
 if ($EnvName) { $EnvName = Resolve-EnvAlias $EnvName }
@@ -2274,7 +2274,7 @@ switch ($Action) {
   'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
   'wait' { if ($Until) { Wait-Until $e $Until $Services $Timeout; return }; if (-not $Id) { throw 'wait needs -Id <request> or -Until <state> [-Services a,b] [-Timeout 600]' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
   'use' {
-    # a lease starts only what it names (+ deps): a whole-env lease held a staging run's rm env 1 h+; owner 2026-11-20 "a lane might not need all resources"
+    # a lease starts only what it names (+ deps): a whole-env lease held a staging run's shop env 1 h+; owner 2026-11-20 "a lane might not need all resources"
     if (-not $Services -and "$Agent" -like 'test:*') { "[$e] use refused for ${Agent}: name the services its checks call (-Services api[,web]); a tester never leases the whole env"; exit 2 }
     # a QA tester (test:<CODE>@<run tag>) leases only for an item run.json gives a local env (localParts, localEnv): 2026-11-20 a staging
     # item's tester ran a suite's tenant restore 6x on two lanes (4.7 GB of lane MySQL writes in 40 min)

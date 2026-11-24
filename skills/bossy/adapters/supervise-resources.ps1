@@ -715,7 +715,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     $tl = & $taskA $tid
     "<li class='f hr'><b class=ht>$tl</b><span class=hn>$(if ($hk -like 'deferred*') { "$($its.Count) deferred" } elseif ($hk) { & $e $hk } else { 'held' })</span><span class=hw>$(& $e ($its -join ', '))</span></li>" }
   $holdCmd = @($holdI | ForEach-Object { if ("$($_.what)" -match ';\s*release:\s*(?<c>.+)$') { $Matches.c.Trim() -replace '-Task \S+', '-Task <task>' } } | Select-Object -Unique)
-  # notes of one kind about several subjects ("RAM FLOOR: rm ...", "... hm ..." same rest): one line listing them
+  # notes of one kind about several subjects ("RAM FLOOR: shop ...", "... docs ..." same rest): one line listing them
   $noteKey = { param([string]$w) if ($w -cmatch '^(?<k>[A-Z][A-Z0-9 -]+):\s*(?<s>\S+)\s+(?<r>.+)$') { $Matches } }
   $notes = @(@($restI | ForEach-Object { "$($_.what)" }) | Group-Object { $m = & $noteKey $_; if ($m) { "$($m.k)|$($m.r)" } else { $_ } } | ForEach-Object { if ($_.Count -gt 1) { $m0 = & $noteKey $_.Group[0]; "$($m0.k): $(@($_.Group | ForEach-Object { (& $noteKey $_).s }) -join ', ') $($m0.r)" } else { $_.Group[0] } })
   $flagBelow = $(if ($holdI.Count) { & $fold 'holds' 'Promotion holds' $holdI.Count "<ul class=hold>$(@($holdI | ForEach-Object { & $holdRow "$($_.what)" }) -join '')</ul>$(if ($holdCmd.Count) { "<p class=hc>release: $(@($holdCmd | ForEach-Object { "<code class=cp title='Click to copy'>$(& $e $_)</code>" }) -join ' ')</p>" })" -cls sub })

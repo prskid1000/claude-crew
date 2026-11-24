@@ -60,7 +60,7 @@ function Get-KitFlagCells($f, [switch]$Fill) {
 function Get-KitSortedLists([string]$T) { [regex]::Replace($T, '(?<![\w.-])[\w.-]*\w(?:\s*,\s*[\w.-]*\w)+', { param($m) (@($m.Value -split '\s*,\s*') | Sort-Object) -join ', ' }) }
 function Get-KitFlagKey([string]$What) { $k = ((Get-KitSortedLists $What.ToLower()) -replace '\b\d+\b', '#' -replace '\s+', ' ').Trim(); $k.Substring(0, [math]::Min(160, $k.Length)) }
 # -Ack text pasted from the -Brief table: cells add spaces after - / (word wrap), escape |, end in …, join with ·; counts vary
-# lane ids as shown names first (K55: an ack copied from the shown flag, rm·Kestrel, matches a flag stored with rm2)
+# lane ids as shown names first (K55: an ack copied from the shown flag, shop·Kestrel, matches a flag stored with shop2)
 function ConvertTo-KitAckText([string]$Text, [switch]$NoSort) { $t = (ConvertTo-KitLaneText $Text).ToLower(); if (-not $NoSort) { $t = Get-KitSortedLists $t }; ($t -replace '\b\d+\b', '#') -replace '[\s\\|…·''"`]', '' }
 # an ack matches the flag's whole line or any one cell; a short one only a whole flag or its kind + who start ("BUILDS · HQA")
 function Get-KitAckWholes($Flag, [switch]$NoSort) { $c = Get-KitFlagCells $Flag; @((ConvertTo-KitAckText "$($Flag.what)" -NoSort:$NoSort), (ConvertTo-KitAckText "$($c.kind) $($c.who) $($c.problem)" -NoSort:$NoSort), $(if ($c.kind -and $c.who) { ConvertTo-KitAckText "$($c.kind) $($c.who)" -NoSort:$NoSort })) | Where-Object { $_ } }

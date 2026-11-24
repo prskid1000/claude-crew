@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L134 names · L227 slots · L253 lease · L364 release · L395 lanes · L500 sync · L601 pool · L644 sweep
+Sections: L15 worktrees · L144 names · L237 slots · L263 lease · L374 release · L405 lanes · L510 sync · L611 pool · L654 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -93,6 +93,16 @@ function Get-WtRepoConf($rp) {
   $kc = $KitConf.ConfigFile; if (-not ($kc -and (Test-Path $kc))) { return }
   $rpn = $rp.TrimEnd('\', '/'); @((Get-Content $kc -Raw | ConvertFrom-Json).repos) | Where-Object { $_.checkout -and ((Resolve-Path $_.checkout -ErrorAction SilentlyContinue).Path -eq $rpn) } | Select-Object -First 1
 }
+# repos[].hooksPath: the repo's hook folder (default .husky: husky's generated <dir>/_ is copied into a fresh worktree)
+function Get-WtHooksDir($rc) { if ($rc.hooksPath) { "$($rc.hooksPath)" } else { '.husky' } }
+function Copy-HookDirs($path, $sources, [string]$hooksDir = '.husky') {
+  foreach ($hs in @($sources | Where-Object { $_ } | ForEach-Object { (Resolve-Path $_).Path } | Select-Object -Unique)) {
+    foreach ($h in (Get-ChildItem $hs -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq (Split-Path $hooksDir -Leaf) -and $_.FullName -notmatch 'node_modules' })) {
+      $to = Join-Path $path $h.FullName.Substring($hs.Length).TrimStart('\', '/')
+      if (-not (Test-Path $to)) { Copy-Item $h.FullName $to -Recurse }
+    }
+  }
+}
 # kit.local.json dep sources of a target (linkFromByTarget.<t>: a path or a list, first with the package's folder wins); a missing one: error
 function Get-WtDepSource($rp, $tg) {
   $rc = Get-WtRepoConf $rp; if (-not $rc) { return }
@@ -158,12 +168,12 @@ function Get-KitPoolLabel([string]$Kind, [string]$Name) {
   }
   $Name
 }
-# a lane's names (README "Worktrees and lanes"): env rm2 -> lane/rm-kestrel, worktree lane-rm-kestrel-<repo>; laneIds "nn": lane-02 ->
+# a lane's names (README "Worktrees and lanes"): env shop2 -> lane/shop-kestrel, worktree lane-shop-kestrel-<repo>; laneIds "nn": lane-02 ->
 # lane/02, lane-02-<repo>; an older scheme's worktree (localenv-<env>-<repo>; nn: lane-<env>-<bird>-<repo>) serves until envy
 # Ensure-Worktree moves it (-Old: that path, -New: the new one)
 function Get-KitLaneSlug([string]$Lane) { if (Get-KitLaneRow $Lane) { return $Lane.Substring(5) }; ((Get-KitPoolLabel 'env' $Lane) -replace '[·\s]+', '-').ToLower() }
 # one display name per lane (owner 2026-11-17, K55; state and logs keep the id): in shown text, <env><k> as a word and a base <env>
-# before " · " (a service row) or after "env " / "lane " become the pool label (rm2 · api -> rm·Kestrel · api); kitbag.py ui-check LANE-ID
+# before " · " (a service row) or after "env " / "lane " become the pool label (shop2 · api -> shop·Kestrel · api); kitbag.py ui-check LANE-ID
 function ConvertTo-KitLaneText([string]$Text) {
   if (-not $Text) { return $Text }
   $dot = '(?:·|&#0*183;|&middot;|(?i:&#x0*b7;))'   # a middle dot, plain or HTML-encoded: a lane already labelled
@@ -182,7 +192,7 @@ function ConvertTo-KitLaneId([string]$Name) {
   if (-not $script:KitLaneAl -or -not [object]::ReferenceEquals($script:KitLaneAl.cfg, $__cfg)) { $script:KitLaneAl = @{ cfg = $__cfg; map = (Get-KitLaneAlias) } }
   if ($script:KitLaneAl.map.Count -and $Name -match '^(?<pre>lane )?(?<id>[^\s·]+)(?<rest> · .*)?$' -and $script:KitLaneAl.map.ContainsKey($Matches.id)) { "$($Matches.pre)$($script:KitLaneAl.map[$Matches.id])$($Matches.rest)" } else { $Name }
 }
-# a shown lane name (rm·Kestrel, rm-kestrel, case-insensitive) or an older id (nn: rm2, rm-kestrel) -> its id; anything else as given
+# a shown lane name (shop·Kestrel, shop-kestrel, case-insensitive) or an older id (nn: shop2, shop-kestrel) -> its id; anything else as given
 function ConvertFrom-KitLaneLabel([string]$Name) { foreach ($l in @(Get-KitLaneNames)) { if ($Name -ieq (Get-KitPoolLabel env $l) -or $Name -ieq (Get-KitLaneSlug $l)) { return $l } }; foreach ($r in @(Get-KitLaneMap)) { if ($Name -ieq $r.old -or $Name -ieq $r.bird) { return $r.id } }; $Name }
 # a verb's text output with shown lane names; -Json output (read by scripts) keeps the ids
 function ConvertTo-KitLaneOut([bool]$Json) { process { if ($Json -or $_ -isnot [string]) { $_ } else { ConvertTo-KitLaneText $_ } } }

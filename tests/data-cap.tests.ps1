@@ -130,10 +130,10 @@ $late = & $tro @(); $late.oldest = $t1.AddMinutes(5); $rx = Update-KitWriteStats
 # the shared database (an external env service, no pid) is its env resource row by its port; a root under a kit folder (the kit-tests
 # mysqld's data dir) is kit-owned
 function Get-KitTcpRows { [pscustomobject]@{ LocalPort = 3306; RemoteAddress = '0.0.0.0'; RemotePort = 0; State = 'LISTENING'; OwningProcess = 50 } }
-$ow = @(Get-KitWriteOwners @([pscustomobject]@{ kind = 'env'; name = 'mysql (rm, hm)'; by = 'devy-a, W1 (grace 3 min)'; port = 3306; shared = $true }))
+$ow = @(Get-KitWriteOwners @([pscustomobject]@{ kind = 'env'; name = 'mysql (shop, docs)'; by = 'devy-a, W1 (grace 3 min)'; port = 3306; shared = $true }))
 $ok0 = @($b2 | ForEach-Object { if ($_.Id -eq 61) { & $mk 61 2 'mysqld.exe' 'mysqld --datadir=D:\kit\.state\kit-tests\db' 0.5GB $old } else { $_ } })
 $kt = Update-KitWriteStats ($s1 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 $ok0 (@($own) + $ow) 102GB $null @('D:/kit'); $kth = @{}; foreach ($h in $kt.hour) { $kth[$h.label] = $h }
-"owners:$($ow.Count -eq 1 -and $ow[0].pid -eq 50 -and $ow[0].tag -eq 'devy-a, W1' -and $kth['mysql (rm, hm)'].k -eq 1 -and $kth['mysql (rm, hm)'].tag -eq 'devy-a, W1' -and $kth['mysqld · kit-tests'].k -eq 1 -and -not $kth.ContainsKey('mysqld · x'))"
+"owners:$($ow.Count -eq 1 -and $ow[0].pid -eq 50 -and $ow[0].tag -eq 'devy-a, W1' -and $kth['mysql (shop, docs)'].k -eq 1 -and $kth['mysql (shop, docs)'].tag -eq 'devy-a, W1' -and $kth['mysqld · kit-tests'].k -eq 1 -and -not $kth.ContainsKey('mysqld · x'))"
 # two mysqld (kit-tests --datadir, a lane --defaults-file): each row = the tracer MB under its own data folder; the machine MySQL's
 # writes go to neither (2026-11-19: kit-tests showed 5.55 GB, 1.70 GB traced there)
 $m2 = { param($wb) @((& $mk 2 0 'services.exe' '' 0 $old), (& $mk 81 2 'mysqld.exe' 'mysqld --no-defaults --datadir=D:\kit\.state\kit-tests\mysql' $wb $old), (& $mk 82 2 'mysqld.exe' '"C:/P/mysqld.exe" --defaults-file=D:/kit/.state/localenv/lanes/mysql-a/my.ini' $wb $old)) }
@@ -141,7 +141,7 @@ $q0 = Update-KitWriteStats $null $t0 (& $m2 1GB) @() 0 $null @('D:/kit')
 $q1 = Update-KitWriteStats ($q0 | ConvertTo-Json -Depth 6 | ConvertFrom-Json) $t1 (& $m2 3GB) @() 4GB (& $tro @(@('mysqld', 'D:\kit\.state\kit-tests\mysql\db1', 102.4), @('mysqld', 'D:\kit\.state\localenv\lanes\mysql-a\data', 51.2), @('mysqld', 'C:\ProgramData\MySQL\Data', 1024))) @('D:/kit')
 $qh = @{}; foreach ($h in $q1.hour) { $qh[$h.label] = $h.gb }
 "twomysqld:$($qh['mysqld · kit-tests'] -eq 0.1 -and $qh['mysqld'] -eq 0.05 -and @($q1.hour).Count -eq 2 -and -not @(Get-KitWriteDirs 'mysqld --defaults-file=C:\my.ini').Count -and -not @(Get-KitWriteDirs 'mysqld --datadir=data').Count)"
-# lane inis side by side, each naming its datadir: a write under lane b goes to b only (2026-11-20: rm-kestrel showed rm-falcon's 2.27 GB)
+# lane inis side by side, each naming its datadir: a write under lane b goes to b only (2026-11-20: shop-kestrel showed shop-falcon's 2.27 GB)
 $liD = (Join-Path $args[1] 'lanes') -replace '/', '\'; $null = New-Item -ItemType Directory -Force $liD
 foreach ($liN in 'a', 'b') { Set-Content (Join-Path $liD "mysql-$liN.ini") @('[mysqld]', 'port=3305', "datadir=$(($liD -replace '\\', '/'))/mysql-$liN") }
 $liRows = @(foreach ($liN in 'a', 'b') { $liC = "mysqld --defaults-file=$liD\mysql-$liN.ini"; @{ n = $liN; g = 1.0; c = $liC; k = 1; f = @(Get-KitWriteDirs $liC) } })

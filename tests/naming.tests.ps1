@@ -27,7 +27,7 @@ $good = @{ key = 'SHOP-CAT-004'; item = 'SHOP-CAT-004.2 add-price-projection'; c
   doc = 'SHOP-CAT-004 Spec v3 — Public catalogue'; run = 'buildy-0042'; id = 'dec-0398'; agent = 'devy-01'; area = 'area-CAT'; lane = 'lane-02'
   branch = 'feat/SHOP-CAT-004-public-catalogue'; mr = 'feat(web): public catalogue page [SHOP-CAT-004]' }
 $bad = @{ key = 'WEB-12'; item = 'SHOP-CAT-004.2'; case = 'T1'; title = '[Feature] Shop — G3 catalogue'; tag = 'Wave: 2'; doc = 'T1 testing doc (AI)'; run = 'wave-brief-a051'; id = 'd-20261123-x'
-  agent = 'T1@150132'; area = 'X1'; lane = 'rm-kestrel'; branch = 'f/CU-14ab-sort'; mr = 'feat: sort (CU-14ab)' }
+  agent = 'T1@150132'; area = 'X1'; lane = 'shop-kestrel'; branch = 'f/CU-14ab-sort'; mr = 'feat: sort (CU-14ab)' }
 $gk = @($good.Keys | Where-Object { (Kb naming check $_ $good[$_]).code -ne 0 }); $bk = @($bad.Keys | Where-Object { (Kb naming check $_ $bad[$_]).code -eq 0 })
 Expect "check: 13 standard names pass, 13 ad hoc ones fail (good failing: $($gk -join ','); bad passing: $($bk -join ','))" ($gk.Count -eq 0 -and $bk.Count -eq 0)
 $ua = Kb naming check key SHOP-ORD-001; $ub = Kb naming check area area-ORD
@@ -126,7 +126,7 @@ Expect "keyed task: MR title, commit subject, doc title (v per changed round), b
 Expect "tracker: render previews <P>-<A>-000, create allocates; a bug under it takes the parent's key; update keeps it; tags kind product area ($($tDry.name) | $($tNew.name) | $($tBug.name) | $($tUpd.name) | $($tNewV.tags) | $($tBug.tags))" (
   $tDry.name -eq 'SHOP-CAT-000 Catalogue blocks' -and $tNew.name -eq 'SHOP-CAT-009 Catalogue blocks' -and $tBug.name -eq 'SHOP-CAT-010 Crash on save' -and $tUpd.name -eq 'SHOP-CAT-009 Catalogue blocks and nav' -and
   ($tNewV.tags -join ',') -eq 'feature,shop,catalogue' -and ($tBug.tags -join ',') -eq 'bug,shop,catalogue,qa-found')
-# owner 2026-11-24: a wave's area subtask is keyed from its parent; a rename never drops a key or type (RM-AGT-001 vanished by hand)
+# owner 2026-11-24: a wave's area subtask is keyed from its parent; a rename never drops a key or type (SHOP-AGT-001 vanished by hand)
 $env:KIT_TRACKER_TYPE = 'none'
 $tSub = pwsh -NoProfile -File $D tracker create -Spec (@{ kind = 'Feature'; title = '[Feature] Shop Catalogue fix wave — grid page (web)'; parent = $tNew.id; newTask = 'wave area'; list = 'L1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'grid' }); acceptance = @('a'); links = @('https://x.example/1') } | ConvertTo-Json -Compress -Depth 5) 2>$null | ConvertFrom-Json
 $null = pwsh -NoProfile -File $D tracker rename $tNew.id 'blocks and footer'; $null = pwsh -NoProfile -File $D tracker rename $tBug.id 'crash on load'

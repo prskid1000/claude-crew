@@ -571,7 +571,7 @@ function Format-KitResHeat($Cpu, $Resources, $Live, [double]$TotalGB, $MemNowGB 
   $ss = @($Cpu.samples | Where-Object { $_ -and (& $hrOf $_.at) -in 0..23 }); $last = if ($ss.Count) { $ss[-1] }; $synC = @{}; $synR = @{}
   $ls = @($Live | Where-Object { $_ -and $_.at -and (& $hrOf $_.at) -in 0..23 -and [datetime]$_.at -lt $at })
   $resRows = [ordered]@{}; $lst = { , @(0..23 | ForEach-Object { , [Collections.Generic.List[object]]::new() }) }
-  # an old lane id in older samples (rm · api) joins its bird id's row (rm-falcon · api)
+  # an old lane id in older samples (shop · api) joins its bird id's row (shop-falcon · api)
   $row = { param([string]$n) $n = ConvertTo-KitLaneId $n; if (-not $resRows.Contains($n)) { $resRows[$n] = [pscustomobject]@{ n = $n; c = (& $lst); r = (& $lst); t = (& $lst); by = (& $lst); cv = [Collections.Generic.List[double]]::new() } }; $resRows[$n] }
   $mach = & $row 'whole machine'
   foreach ($s in $ss) { $hi = & $hrOf $s.at; $mach.c[$hi].Add([double]$s.all); $mach.cv.Add([double]$s.all)

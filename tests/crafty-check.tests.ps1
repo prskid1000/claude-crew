@@ -57,6 +57,23 @@ Expect 'gate: jest / vitest get --maxWorkers=2 right after the runner word, not 
 Expect 'build-heap: gradle gets -Dorg.gradle.jvmargs' ($out[0] -match 'gradlew "?-Dorg\.gradle\.jvmargs=-Xmx\d+g')
 $gw = & { $go0 = $env:GRADLE_OPTS; try { foreach ($gwv in '', '2') { $env:GRADLE_OPTS = $null; $env:KIT_PARAM_GATE_GRADLEWORKERS = $(if ($gwv) { $gwv } else { $null }); . (Join-Path $k 'skills/crafty/lib.ps1'); $null = Get-GateHeap 'gradle' @() 0 0; $env:GRADLE_OPTS } } finally { $env:GRADLE_OPTS = $go0; Remove-Item Env:KIT_PARAM_GATE_GRADLEWORKERS -ErrorAction SilentlyContinue } }
 Expect "build-heap: gradle workers from gate.gradleWorkers (default 4) ($($gw -join ' | '))" (($gw -join '|') -eq '-Dorg.gradle.workers.max=4|-Dorg.gradle.workers.max=2')
+# GB defaults sized for 64 GB scale down with RAM (rounded up to 8 GB); a pin stays as set
+$rs = Invoke-PsTest 'ram-scale' @'
+. $args[0]; $ErrorActionPreference = 'Stop'
+foreach ($ramGB in 63.4, 16, 6) { $script:GateRamScale = $null; function Get-SysMem { [pscustomobject]@{ TotalGB = $ramGB } }
+  "${ramGB}:$(Get-GateKindGB 'android-build')/$((Get-GateHeap 'gradle' @() 0 0).heap)/$((Get-GateHeap 'maven' @() 0 0).heap)" }
+$env:KIT_PARAM_GATE_KINDGB_ANDROID_BUILD = '9'; "pin:$(Get-GateKindGB 'android-build')"
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'))
+# repos[].hooksPath: a fresh worktree gets <hooksPath>/_ (default .husky), never another tool's folder
+$hk = Invoke-PsTest 'hooks-dir' @'
+. $args[0] 6>$null; $ErrorActionPreference = 'Stop'; $hsrc = Join-Path $args[1] 'hsrc'
+foreach ($hdn in '.husky', '.githooks') { New-Item -ItemType Directory -Force (Join-Path $hsrc "$hdn/_") | Out-Null; Set-Content (Join-Path $hsrc "$hdn/_/h") 'x' }
+foreach ($hcase in @(@{ n = 'def'; rc = $null }, @{ n = 'own'; rc = [pscustomobject]@{ hooksPath = '.githooks' } })) {
+  $hdst = Join-Path $args[1] "hdst-$($hcase.n)"; New-Item -ItemType Directory -Force $hdst | Out-Null; $hdir = Get-WtHooksDir $hcase.rc; Copy-HookDirs $hdst @($hsrc) $hdir
+  "$($hcase.n):$hdir|$(Test-Path (Join-Path $hdst '.husky/_/h'))|$(Test-Path (Join-Path $hdst '.githooks/_/h'))" }
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Kd))
+Expect "wt hooks: default .husky/_ copied; repos[].hooksPath .githooks copies only its own ($($hk -join ' | '))" ((@($hk -match '^(def|own):') -join '|') -eq 'def:.husky|True|False|own:.githooks|False|True')
+Expect "build-heap: kindGB and heap defaults scale with RAM (64 GB as is; 16 GB a quarter; 8 GB floor), a pin unscaled ($($rs -join ' | '))" (($rs -join '|') -eq '63.4:7/12/8|16:1.75/3/2|6:0.875/1.5/1|pin:9')
 if ($IsWindows) {
   Expect 'build-heap: maven gets -Xmx in MAVEN_OPTS, its own -D kept, the old -Xmx gone' ($out[1] -match '-Dkeep=1 -Xmx\d+g' -and $out[1] -notmatch '-Xmx1g')
   Expect 'build-heap: node gets --max-old-space-size' ($out[2] -match '--max-old-space-size=\d+')

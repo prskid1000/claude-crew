@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L328 stack · L427 gate · L757 check · L1083 pipes · L1145 guard · L2070 dir · L2080 checkpoint ·
-  L2120 prior · L2159 tracker · L2181 task spec · L2387 scope · L2435 host
+Sections: L25 init · L34 wt · L321 stack · L420 gate · L750 check · L1076 pipes · L1138 guard · L2063 dir · L2073 checkpoint ·
+  L2113 prior · L2152 tracker · L2174 task spec · L2380 scope · L2428 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -106,14 +106,6 @@ function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
   (@('dependencies', 'devDependencies') | ForEach-Object { if ((Get-KitMember $p $_)) { (Get-KitProps (Get-KitMember $p $_)) | Sort-Object Name | ForEach-Object { "$($_.Name)@$($_.Value)" } } }) -join ';'
 }
-function Copy-HookDirs($path, $sources) {
-  foreach ($hs in @($sources | Where-Object { $_ } | ForEach-Object { (Resolve-Path $_).Path } | Select-Object -Unique)) {
-    foreach ($h in (Get-ChildItem $hs -Directory -Recurse -Depth 3 -Filter '_' -ErrorAction SilentlyContinue | Where-Object { $_.Parent.Name -eq '.husky' -and $_.FullName -notmatch 'node_modules' })) {
-      $to = Join-Path $path $h.FullName.Substring($hs.Length).TrimStart('\', '/')
-      if (-not (Test-Path $to)) { Copy-Item $h.FullName $to -Recurse }
-    }
-  }
-}
 # add -A would commit a symlink
 function Exclude-Links($path, $links) {
   if (-not $links -or $KitIsWindows) { return }
@@ -143,7 +135,7 @@ function Set-WtDeps($path, $rp, $tg, $from) {
     New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
     if ((Get-Item $lf).PSIsContainer) { New-DirLink $to $lf; $links += $to } else { Copy-Item $lf $to }
   }
-  Copy-HookDirs $path @(@($srcs) + $rp)   # a --ignore-scripts checkout has no .husky/_
+  Copy-HookDirs $path @(@($srcs) + $rp) (Get-WtHooksDir $rc)   # a --ignore-scripts checkout has no <hooksPath>/_
   Meta $path 'links' (@(@($kept) + $links | Select-Object -Unique) -join "`n"); Meta $path 'linksrc' $srcKey
   Exclude-Links $path $links
   if ($links) { 'linked:   ' + (($links | ForEach-Object { $_.Substring($path.Length + 1) }) -join ', ') + "  (from $($srcs -join ', '))" }
@@ -205,14 +197,15 @@ switch ($Action) {
       if ($code) { throw "commit spec: $why" }; $Message = ($out -join "`n").TrimEnd()
     }
     if (-not $Message -or -not $Message.Trim()) { throw "commit needs -Message '<subject>' or -MessageFile <file> (multi-line: write it to `$(crafty.ps1 dir -Agent <id> -Name commit-msg.txt) with the Write tool, then -MessageFile <that path>)" }
-    # a hand-made worktree lacks .husky/_ and hook deps
+    # a hand-made worktree lacks <hooksPath>/_ and hook deps
     $common = (git -C $Dir rev-parse --path-format=absolute --git-common-dir).Trim()
     $cw = git --git-dir="$common" config core.worktree
     $main = if ($cw) { if ([IO.Path]::IsPathRooted($cw)) { $cw } else { Join-Path $common $cw } } else { Split-Path $common }
+    $hd = Get-WtHooksDir $(if ($main -and (Test-Path $main)) { Get-WtRepoConf (Resolve-Path $main).Path })
     if ($main -and (Test-Path (Join-Path $main '.git')) -and (Resolve-Path $main).Path -ne (Resolve-Path $Dir).Path) {
       $main = (Resolve-Path $main).Path
       $added = @(Add-DepLinks $Dir $main $null)
-      Copy-HookDirs $Dir @($main)
+      Copy-HookDirs $Dir @($main) $hd
       Exclude-Links $Dir $added
       if ($added) { "linked from ${main}: $(($added | ForEach-Object { [IO.Path]::GetRelativePath($Dir, $_) }) -join ', ')" }
     }
@@ -220,7 +213,7 @@ switch ($Action) {
     $c = @()
     $hpFull = if ($hp -and [IO.Path]::IsPathRooted($hp)) { $hp } elseif ($hp) { Join-Path $Dir $hp }
     if ($hp -and -not (Test-Path (Join-Path $hpFull 'pre-commit')) -and -not (Test-Path (Join-Path $hpFull 'prepare-commit-msg'))) {
-      if (Test-Path (Join-Path $Dir '.husky')) { $c = @('-c', 'core.hooksPath=.husky') }
+      if (Test-Path (Join-Path $Dir $hd)) { $c = @('-c', "core.hooksPath=$hd") }
       else { Write-Warning "core.hooksPath=$hp missing here: hooks would be skipped" }
     }
     $stagePaths = @(Split-KitList $Paths)   # -Paths: a split commit stages only its group, the next group stays out
@@ -238,7 +231,7 @@ switch ($Action) {
     # merge subjects name branches
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
-    $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # subject style is commitlint's; WIP commits pass
+    $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # subject style is the repo's commit hook's; WIP commits pass
     if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { [Console]::Error.WriteLine("commit refused: $($pf.Count) prose finding(s): rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes: $($pf -join '; ')"); exit 1 }   # stderr: a chained call shows it
     if (-not $isMerge -and ($csw = Test-KitCommitStyle $(if ($main) { $main } else { $Dir }) $Message)) { [Console]::Error.WriteLine("commit refused: $csw"); exit 1 }
     git -C $Dir @c commit -m $Message @(if ($AllowEmpty) { '--allow-empty' })   # a deploy MR on a branch equal to its target
@@ -534,7 +527,7 @@ $histFile = Join-Path $ledger 'history.json'
 function Read-History { $h = try { Read-KitText $histFile | ConvertFrom-Json -AsHashtable } catch {}; if ($h) { $h } else { @{} } }
 
 $kind = Get-GateKind $Cmd $Dir
-$default = [double](Get-KitParam "gate.kindGB.$(if ($script:GateKinds.Contains($kind)) { $kind } else { 'other' })")
+$default = Get-GateKindGB $(if ($script:GateKinds.Contains($kind)) { $kind } else { 'other' })
 # containers: learned peaks (docker stats growth) hold RAM; until then +2 GB (a DB + a search engine)
 $ctr = $kind -eq 'docker' -or (($kind -match 'test|cypress|e2e|dotnet|^go$' -or ($kind -eq 'python' -and $Cmd -match 'pytest|unittest|\btest_')) -and (Test-GateContainers $Dir))
 if ($ctr -and $kind -ne 'docker') { $default += 2 }

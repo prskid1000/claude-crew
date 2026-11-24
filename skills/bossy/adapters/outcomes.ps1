@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L83 summary · L213 patterns · L249 rules · L327 retro due · L338 tidy
+Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -212,7 +212,8 @@ function Get-KitOutcomeLines([int]$Days = (Get-KitParam 'outcomes.days')) {
 
 # ---- patterns: one topic, the same owner choice 3+ times, no contrary answer -> a standing rule proposal
 $script:KitRuleNeverGates = @('deploy', 'rollback', 'secret', 'data', 'close', 'merge', 'premerge')
-$script:KitRuleNeverRx = '(?i)\b(prod\w*|deploy\w*|release|rollback|secret\w*|credential\w*|customer\w*|client[- ]facing|\w+[- ](visible|facing)|tenant\w*|migrat\w*|backfill\w*|delete\w*|drop|truncate|purge|data)\b'   # over-blocking costs one ask
+# words a question never gets a standing rule for (the kit's hard rule) + decide.neverAuto (an org's regex words); over-blocking costs one ask
+$script:KitRuleNeverRx = '(?i)\b(' + ((@('prod\w*', 'deploy\w*', 'release', 'rollback', 'secret\w*', 'credential\w*', 'customer\w*', 'client[- ]facing', '\w+[- ](visible|facing)', 'tenant\w*', 'migrat\w*', 'backfill\w*', 'delete\w*', 'drop', 'truncate', 'purge', 'data') + @(Get-KitSetting 'decide.neverAuto' @() | Where-Object { $_ })) -join '|') + ')\b'
 function Get-KitTopicWords([string]$Question) { Get-KitWordSet ("$Question" -replace '\([^)]*\)', ' ' -replace '\b[A-Za-z]+-\d+[a-z]?\b', ' ' -replace '\b[0-9a-z_]*\d[0-9a-z_]*\b', ' ') }
 # choice words keep short ones (no, keep, all): polarity matters
 function Get-KitChoiceWords([string]$Answer) {

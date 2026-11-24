@@ -146,5 +146,11 @@ $siC, $siN = foreach ($b in 'itm4321x', 'oth99') { pwsh @np $O decide check -Gat
 $sdA = pwsh @np $O decide ask -Run r -Agent devy -Item itm5 -Question 'Fix in Svc.java, outside the area.' -Context 'today: saves fail' -Options 'A: drop Svc.java, add a test — saves fail', 'B: no — x' -Recommend A | Out-String
 $sdR = pwsh @np $O decide answer -Id $(if ($sdA -match 'DECISION (\S+)') { $Matches[1] }) -Answer 'A' | Out-String
 Expect "decide answer: an item's scope word is found for a branch naming the item, not another; a 'drop ..., add' pick records none ($siR | $siC | $sdR)" ($siR -match 'SCOPE RECORDED' -and $siC -match '^WORD ' -and $siN -notmatch '^WORD ' -and $sdR -match 'no scope word')
+# decide.neverAuto adds an org's words to the kit's never-auto list (deploy, prod, data ... stay)
+$nvq = { (Invoke-PsTest never-auto @'
+$null = . $args[0] 6>$null; "$(Test-KitRuleSensitive 'scope' 'Send the invoice batch?')|$(Test-KitRuleSensitive 'scope' 'Deploy it now?')|$(Test-KitRuleSensitive 'scope' 'Sort by name?')"
+'@ @($O) | Select-Object -Last 1) }
+$nv0 = & $nvq; $kcf = Join-Path $k 'skills/crafty/kit.local.json'; $kco = if (Test-Path $kcf) { Get-Content $kcf -Raw | ConvertFrom-Json -AsHashtable } else { @{} }; $kco.decide = @{ neverAuto = @('invoice\w*') }; Set-JsonFile $kcf $kco; $nv1 = & $nvq
+Expect "decide.neverAuto: org words join the built-in list ($nv0 -> $nv1)" ("$nv0" -eq 'False|True|False' -and "$nv1" -eq 'True|True|False')
 Remove-TestKit $k
 Complete-Tests
