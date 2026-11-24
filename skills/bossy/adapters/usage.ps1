@@ -417,7 +417,7 @@ function Get-KitContextCmdCat([string]$C) {
   if ($c1 -match '^(cat|head|tail|sed\s+-n|grep|rg|wc|nl|less|Get-Content|Select-String|git\s+(grep|show|blame))\b' -and $c1 -notmatch '&&|;|\|\|') { return (Get-KitContextPathCat $c1 2) }
   if ($c1 -match '^(git|glab|gh)\s' -and $c1 -notmatch '&&|;|\|') { return 5 }   # git commit -m "fix tsc errors" is no build
   # build = a chain step that runs the tool, not a read or git step naming it (git diff -- tests/kit-tests.ps1, sed -n cypress/x.cy.ts)
-  $run = @($C -split '&&|\|\||;|\r?\n' | Where-Object { ($_ -replace '^\s*["''(]*\s*', '' -replace '^((\w+=\S*|export\s+\S+)\s+)+', '') -notmatch '^(cd|cat|head|tail|sed|awk|grep|rg|wc|nl|less|ls|echo|printf|find|git|glab|gh|Get-Content|Select-String)\b|^$' }) -join ' ; '
+  $run = @($C -split '&&|\|\||;|\r?\n' | Where-Object { ($_ -replace '^\s*["''(]*\s*', '' -replace '^(do|then|else)\s+', '' -replace '^((\w+=\S*|export\s+\S+)\s+)+', '') -notmatch '^(cd|cat|head|tail|sed|awk|grep|rg|wc|nl|less|ls|echo|printf|find|git|glab|gh|Get-Content|Select-String)\b|^$' }) -join ' ; '
   if ($run -match 'crafty\.ps1\S*\s+check\b|kit-tests\.ps1|\b(mvnw?|gradlew?|cypress|pytest|jest|vitest|tsc|py_compile)\b|\b(yarn|npm|pnpm)\s+(run\s+)?(test|build|lint|e2e)|\bdotnet\s+(test|build)|\bng\s+(build|test|lint)\b|node\s+--check|kitbag\.py\S*\s+(lint|ui-check|port)\b') { return 4 }
   if ($C -match 'learn\s+-Read|\b(SKILL|LESSONS|kit-admin|templates|AGENTS|CLAUDE)\.md') { return 0 }
   if ($C -match 'resume-[\w.-]+\.md|[\\/]briefs?[\\/]|contracts?[\w-]*\.(md|json)|lead-notes') { return 1 }
@@ -455,10 +455,10 @@ function Reset-KitContextLive($Cx) { if (-not [int]$Cx.n -or [int]$Cx.cut) { ret
 # a tool result: its tokens + the waste signals: w = [rereads, their tokens, results over usage.context.bigResultTokens, their tokens,
 # build / test results over usage.context.logTokens, their tokens]; rmax = the most re-read file; top = the 3 largest results "tok|cat|label"
 function Add-KitContextResult($Cx, [string]$Pend, [double]$Tok, [string]$Day) {
-  $p = "$Pend" -split '\|', 3; $cat = if ($p[0] -match '^\d$') { [int]$p[0] } else { 5 }; $tool = "$($p[1])"; $rk = "$($p[2])"; $key = $rk -replace '#L[^#]*$', ''
+  $p = "$Pend" -split '\|', 3; $cat = if ($p[0] -match '^\d$') { [int]$p[0] } else { 5 }; $tool = "$($p[1])"; $rk = "$($p[2])"; $isRead = $tool -match '^(Read|NotebookRead|view_file\w*|read_file)$'; $key = if ($isRead) { $rk -replace '#L[^#]*$', '' } else { $rk }
   Add-KitContextTok $Cx $cat $Tok $Day; $w = $Cx.w
-  if ($key -and $tool -match '^(Read|NotebookRead|view_file|read_file)$') { $k = $rk.ToLowerInvariant() -replace '\\', '/'
-    if ($Cx.rd.Contains($k) -or $Cx.rd.Count -lt 300) { $c = 1 + [int]$Cx.rd[$k]; $Cx.rd[$k] = $c; if ($c -ge 2) { $w[0] = [long]$w[0] + 1; $w[1] = [long]$w[1] + [long]$Tok }; if ($c -gt [int]@($Cx.rmax)[0]) { $Cx.rmax = @($c, ($key -replace '\\', '/')) } } }
+  if ($key -and $isRead) { $k = $rk.ToLowerInvariant() -replace '\\', '/'
+    if ($Cx.rd.Contains($k) -or $Cx.rd.Count -lt 1000) { $c = 1 + [int]$Cx.rd[$k]; $Cx.rd[$k] = $c; if ($c -ge 2) { $w[0] = [long]$w[0] + 1; $w[1] = [long]$w[1] + [long]$Tok }; if ($c -gt [int]@($Cx.rmax)[0]) { $Cx.rmax = @($c, ($key -replace '\\', '/')) } } }
   if ($Tok -gt (Get-KitContextParam bigResultTokens)) { $w[2] = [long]$w[2] + 1; $w[3] = [long]$w[3] + [long]$Tok }
   if ($cat -eq 4 -and $Tok -gt (Get-KitContextParam logTokens)) { $w[4] = [long]$w[4] + 1; $w[5] = [long]$w[5] + [long]$Tok }
   # a command is masked whole before the cut (a cut token escapes the mask): flag values of password / user / token flags too

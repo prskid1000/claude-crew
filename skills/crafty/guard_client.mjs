@@ -125,7 +125,7 @@ function readRule(ti) {
     else if (st.size <= 16 * 1024 * 1024) { let n = 1, by = 0, lb = 0; for (const b of readFileSync(f)) { if (n >= from) { lb++; if (b === 10) { lines++; by += Math.min(lb, 2000); lb = 0 } } if (b === 10 && ++n >= upto) break }
       kb = Math.round((by + Math.min(lb, 2000)) / 1024) }   // a range (offset 1, limit 700 passed the cap): its own lines and bytes (the tool cuts a line at 2000)
     else lines = upto - from } catch { return }
-  if ((maxL && lines > maxL) || (maxKB && kb > maxKB)) deny(`kit guard: ${f}${ranged ? ` lines ${from}-${from + lines}` : ''} is ${lines} lines / ${kb} KB (cap ${maxL} lines / ${maxKB} KB, AGENTS.md "File inspection"): read its section map (top 40 lines; a .md: Grep '^#' for its headings) then the range you need (offset / limit); note what you need from it once (your crafty.ps1 dir notes)`)
+  if ((maxL && lines > maxL) || (maxKB && kb > maxKB)) deny(`kit guard: ${f}${ranged ? ` lines ${from}-${from + lines - 1}` : ''} is ${lines} lines / ${kb} KB (cap ${maxL} lines / ${maxKB} KB, AGENTS.md "File inspection"): read its section map (top 40 lines; a .md: Grep '^#' for its headings) then the range you need (offset / limit); note what you need from it once (your crafty.ps1 dir notes)`)
 }
 function sqlRule(ti) {
   const q0 = `${ti.query || ti.sql || ti.statement || ''}`; if (!q0.trim()) return
