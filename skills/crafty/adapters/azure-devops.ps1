@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # azure-devops: Azure DevOps Repos git host + Azure Pipelines CI (gitHostType / ci azure).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ when config selects azure; helpers come from lib.ps1.
-# Sections: L6 helpers · L14 git-host · L67 ci
+# Sections: L6 helpers · L14 git-host · L68 ci
 # ---- helpers: only this adapter uses them (kept out of the core lib.ps1)
 function __DiffFile($New, $Old = $null) { [pscustomobject]@{ new_path = "$New"; old_path = "$(if ($Old) { $Old } else { $New })" } }
 function __ProtectFail([string]$Repo) { if ($global:KitHttpCode -eq 403) { "skip: no admin rights on $Repo" } else { "failed: http $(if ($global:KitHttpCode) { $global:KitHttpCode } else { 'no answer' })" } }   # branch.protect: the failed call's status (Invoke-KitHttp)
