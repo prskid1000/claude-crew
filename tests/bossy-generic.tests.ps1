@@ -59,7 +59,7 @@ $e3 = Read-Json $f3; $e3.beat = (Get-Date).AddMinutes(-45).ToString('o'); & $J $
 Expect "board: -Resume without claims takes a quiet row of a live session ($j7)" ($j7 -match "TAKEOVER: replaced session $s3 \(-Resume;")
 # two kittys, two runs: N3 ids, one inbox each; msg to the type refused; <type>-<run> aliased
 $kj1 = pwsh @np $O board join -Type kitty -Agent kitty -Run kit-fix-0101 | Out-String; $kj2 = pwsh @np $O board join -Type kitty -Run kit-env-0202 | Out-String
-$kid1, $kid2 = @($kj1, $kj2 | ForEach-Object { if ($_ -match 'RUN-ID: you are (kitty-\d{2,})') { $Matches[1] } })
+$kid1, $kid2 = @($kj1, $kj2 | ForEach-Object { if ($_ -match 'RUN-ID: you are (kitty-\d+)') { $Matches[1] } })
 $kmT = pwsh @np $O board msg -Agent BY -To kitty -Text 'hi'; $kmC = $LASTEXITCODE; $null = pwsh @np $O board msg -Agent BY -To kitty-kit-env-0202 -Text 'env only'
 $ki1 = pwsh @np $O board inbox -Agent $kid1 | Out-String; $ki2 = pwsh @np $O board inbox -Agent $kid2 | Out-String
 foreach ($kl in $kid1, $kid2) { $null = pwsh @np $O board leave -Agent $kl }
@@ -155,9 +155,9 @@ $sfi = @((TkPath $k disk-writes -Create), (TkPath $k mem-samples -Create), [IO.P
   (Join-Path (TkPath $k cache) 'runs-rows.json'), (TkPath $k param-state), (TkPath $k params-changes))
 foreach ($statF in $sfi) { '{}' | Set-Content $statF }
 $sl0 = pwsh @np $O stats | Out-String; $sr1 = pwsh @np $O stats -Reset | Out-String; '{}' | Set-Content $sfi[0]; $sr2 = pwsh @np $O stats -Reset | Out-String; $sr3 = pwsh @np $O stats -Reset | Out-String
-$sfd = ([regex]::Match($sr1, '(?m)^-> (.*stats-reset-\d{4})\s*$')).Groups[1].Value; $rtDir = Join-Path $sfd (Get-Content (Join-Path $k 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths.runtimeDir
+$sfd = ([regex]::Match($sr1, '(?m)^-> (.*stats-reset)\s*$')).Groups[1].Value; $rtDir = Join-Path $sfd (Get-Content (Join-Path $k 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths.runtimeDir
 $sfm = @('cache/mem-samples.txt', 'logs/supervise-report.json', 'cache/supervise-writes.json', 'cache/runs-rows.json' | Where-Object { Test-Path (Join-Path $rtDir $_) }).Count
-$sf2 = @(Get-ChildItem (Split-Path $sfd) -Directory -Filter 'stats-reset-*' | Where-Object { $_.FullName -ne $sfd -and (Test-Path (Join-Path $_.FullName '.state/disk-writes.jsonl')) }).Count
+$sf2 = @(Get-ChildItem (Split-Path $sfd) -Directory -Filter 'stats-reset*' | Where-Object { $_.FullName -ne $sfd -and (Test-Path (Join-Path $_.FullName '.state/disk-writes.jsonl')) }).Count
 Expect "stats lists; -Reset moves the 5 charts' files with their relative paths, keeps params.json and params-changes; a same-day rerun gets its own folder; nothing left: none moved ($sr1)" (
   $sl0 -match 'stats  \.state[\\/]disk-writes\.jsonl' -and (Test-Path (Join-Path $sfd '.state/disk-writes.jsonl')) -and $sfm -eq 4 -and -not (Test-Path $sfi[2]) -and (Test-Path $sfi[5]) -and (Test-Path $sfi[6]) -and
   @($sr1 -split "`n" | Where-Object { $_ -match '^moved  ' }).Count -eq 5 -and $sf2 -eq 1 -and $sr2 -match 'moved  \.state' -and $sr3 -notmatch 'moved')

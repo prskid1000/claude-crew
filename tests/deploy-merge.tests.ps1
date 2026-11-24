@@ -27,11 +27,12 @@ Expect 'deploy merge ran the pre-commit hook' ($gd -and (Test-Path (Join-Path $g
 $kl = "$k/skills/crafty/kit.local.json"; @{ repos = @(@{ checkout = "$r/repo"; target = 'main'; deploys = @(@{ target = 'live'; tag = 'rel-{date}' }) }) } | ConvertTo-Json -Depth 5 | Set-Content $kl
 $o1 = pwsh @np $O deploy merge -Repo "$r/repo" -To main 2>&1 | Out-String; $o2 = pwsh @np $O deploy merge -Repo "$r/repo" -To live -Push 2>&1 | Out-String
 $o2b = pwsh @np $O deploy merge -Repo "$r/repo" -To live -Push 2>&1 | Out-String; $relTags = @(git -C "$r/origin.git" tag --list 'rel-*'); $relMsg = "$(git -C "$r/repo" tag -l --format='%(contents:subject)' $relTags[-1])"
-Expect "deploy merge: trunk = no merge; tag deploy pushes rel-<nnnn> (NO-DATE: retired {date} warns and gives the counter; the time in the tag message) ($($relTags -join ','), $relMsg)" ($o1 -match 'trunk' -and $o2 -match 'pushed rel-\d{4}\b' -and $o2 -match '\{date\} is retired' -and $o2b -match 'pushed rel-\d{4}\b' -and $relTags.Count -eq 2 -and -not @($relTags | Where-Object { $_ -notmatch '^rel-\d{4}$' }).Count -and $relMsg -match '^deploy live \d{4}-\d\d-\d\dT')
+$headSha = "$(git -C "$r/repo" rev-parse --short=7 origin/main)".Trim()
+Expect "deploy merge: trunk = no merge; tag deploy pushes rel-<sha7> (retired {date} warns, gives the sha7; the same head again: the same tag; the time in the tag message) ($($relTags -join ','), $relMsg)" ($o1 -match 'trunk' -and $o2 -match "pushed rel-$headSha\b" -and $o2 -match '\{date\} is retired' -and $o2b -match "pushed rel-$headSha\b" -and ($relTags -join ',') -eq "rel-$headSha" -and $relMsg -match '^deploy live \d{4}-\d\d-\d\dT')
 @{ repos = @(@{ checkout = "$r/repo"; target = 'other'; deploys = @(@{ target = 'st'; branch = 'main'; from = @('main') }) }) } | ConvertTo-Json -Depth 5 | Set-Content $kl
 $o4 = pwsh @np $O deploy merge -Repo "$r/repo" -To st 2>&1 | Out-String
 Expect "deploy merge: no -From = deploys[].from before the repo target ($($o4.Trim()))" ($o4 -match 'source branch: main' -and $o4 -match 'trunk')
-# a deploy branch: -Push refused (nothing reaches it); -Mr pushes deploy/<env>-<nnnn>, opens the MR (method merge = squash off), merges on green
+# a deploy branch: -Push refused (nothing reaches it); -Mr pushes deploy/<env> (one per env), opens the MR (method merge = squash off), merges on green
 $stagingTip = "$(git -C "$r/origin.git" rev-parse staging)".Trim(); $hostLog = Join-Path (Kd) 'host.log'; $hostPs = Join-Path (Kd) 'host.ps1'
 Set-Content $hostPs @'
 $v, $rest = $args; $log = $env:DM_HOST_LOG; $flag = "$log.merged"
@@ -57,7 +58,7 @@ Expect "deploy merge texts follow deploy.mergeMethod: squash never says squash o
 $env:DM_HOST_LOG = $hostLog
 $o6 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Mrs 'shop!12' -Decision 'd-42' -WaitMinutes 1 2>&1 | Out-String
 $hl = if (Test-Path $hostLog) { Get-Content $hostLog -Raw } else { '' }; $depBr = @(git -C "$r/origin.git" for-each-ref --format='%(refname:short)' 'refs/heads/deploy/')
-Expect "deploy merge -Mr: deploy/st-<nnnn> pushed (NO-DATE), MR to staging with method merge and MRs + decision in the body, merged on green, staging never pushed ($($o6.Trim()) | $hl)" ($o6 -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/5' -and $depBr -match '^deploy/st-\d{4}$' -and $hl -match 'create deploy/st-\d{4} \| staging \| merge \| ' -and $hl -match 'shop!12' -and $hl -match 'Deploy decision: d-42' -and $hl -match 'merge 5 merge abc' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
+Expect "deploy merge -Mr: deploy/st pushed (no counter, no date), MR to staging with method merge and MRs + decision in the body, merged on green, staging never pushed ($($o6.Trim()) | $hl)" ($o6 -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/5' -and $depBr -contains 'deploy/st' -and $hl -match 'create deploy/st \| staging \| merge \| ' -and $hl -match 'shop!12' -and $hl -match 'Deploy decision: d-42' -and $hl -match 'merge 5 merge abc' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
 # a re-run after a cut wait (an agent shell's timeout): the open deploy MR of the env resumes: no new branch, no second MR
 Set-Content "$hostLog.open" '[{"iid":7,"source_branch":"deploy/st-20260101-101010","target_branch":"staging","state":"opened","web_url":"https://h.example/g/shop/-/merge_requests/7"}]'
 git -C "$r/repo" push -q origin main:refs/heads/deploy/st-20260101-101010 2>$null; Remove-Item "$hostLog.merged", $hostLog -ErrorAction SilentlyContinue; $brN = @(git -C "$r/origin.git" for-each-ref 'refs/heads/deploy/').Count

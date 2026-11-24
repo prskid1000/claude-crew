@@ -52,7 +52,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief
 Rendered (`devtools.py render wave-brief <spec.json> <brief.md>` + `.contracts.md` `.args.json` `.order.json`). Spec: `{ name, date?,
-items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id, items, area, paths (globs),
+items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id (ask-prompts), items, area, paths (globs),
 repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?, effort?, debate?, task? }], task?, overlaps, branch, tracker,
 contracts: [{ name, type, producer, consumers, order, compatible }], openQuestions: [{ question, blocks, answers }], mandate, mode,
 holdMerge?, wave? }`.

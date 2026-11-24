@@ -310,7 +310,7 @@ function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
 
 # ---- close: every subtask in the tracker's closed status -> ONE close-parent decision; the parent closes only on the owner's answer
 # (owner, 2026-11-11; a task without subtasks never gets here). Reopened subtask: an answered ask is spent, the next all-closed asks again
-function Get-KitCloseAsk([string]$Id) { $f = if ($Id) { Join-Path (Get-KitPath decisions) "$Id.json" }; if ($f -and (Test-Path -LiteralPath $f)) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } }
+function Get-KitCloseAsk([string]$Id) { $f = if ($Id) { Join-Path (Get-KitPath decisions) "$(Resolve-KitIdAlias $Id (Get-KitPath decisions)).json" }; if ($f -and (Test-Path -LiteralPath $f)) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } }
 function Update-KitParentClose([string]$Parent, $Pt, $Rows, $Ro) {
   $ask = "$($Ro.closeAsk)"; $d = Get-KitCloseAsk $ask
   if (Test-TrackerStatus "$($Pt.status)" 'closed') { return @{ ask = $ask; note = 'parent closed' } }

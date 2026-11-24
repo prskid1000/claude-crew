@@ -2209,7 +2209,7 @@ switch ($Action) {
     $st = Read-State $e; $m = Find-Mark $st $Mark $Release
     $sch = if ($Schemas.Count) { Test-RestoreScopes $e $Schemas } else { @(Get-MarkScopes $e $m) }
     if ($DryRun) {
-      $p = Get-RestorePlan $e $m $sch "dryrun-$(Get-Date -Format 'yyyyMMddHHmmss')"
+      $p = Get-RestorePlan $e $m $sch "dryrun-$($m.name)"
       "[$e] restore to $($m.name) ($($m.kind), $(([datetime]$m.at).ToString('yyyy-MM-dd HH:mm')), release $($m.release)) - dry run, nothing changes:"
       foreach ($w in @($script:ScopeWarn)) { "  WARN $w" }
       RestorePlanText $p | ForEach-Object { "  $_" }

@@ -96,7 +96,7 @@ if (R.select && !R.runDir && !Array.isArray(R.items)) {
  const { select: S, name: N, target: T, ...rest } = R   // T may be a group, never an env: run.json holds the real target(s)
  if (!T) throw new Error('args.select needs args.target (a targets.local.json name or a qa.targets group)')
  const statuses = [].concat(S.statuses && S.statuses.length ? S.statuses : [])   // none: pokey prepare picks inTest, else the next on-role
- // N3: the folder is the run id testy-<YYYYMMDD>-<nn> (pokey fills <testy-id>); the name rides in run.json
+ // the folder is the run name testy-<words> (pokey fills <testy-id>); the name rides in run.json
  const job = { runFolder: `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime['qa-runs']}<testy-id>`, name: String(N || `${T}-${statuses.join('-') || 'deployed'}`),
   statuses, lists: S.lists || [], tasks: S.tasks || [], exclude: S.exclude || [], mine: !!S.mine, target: T, kitDir: K0, runSettings: rest }
  const run = await prepStep(`& ${K0}/skills/pokey/pokey.ps1 prepare -Job '${q0(JSON.stringify(job))}'`, 'prepare')

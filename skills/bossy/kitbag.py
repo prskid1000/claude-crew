@@ -22,9 +22,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L40 paths · L137 state · L226 kitlog · L328 load · L821 lint · L1235 README graph · L1353 lint command · L1635 audit ·
-  L1783 registry · L1843 tools · L1931 parity · L2384 arch lint · L2657 prose · L2839 sections · L2969 budget · L2987 migrate ·
-  L3135 plugins · L3192 state lint · L3380 main
+Sections: L40 paths · L137 state · L264 kitlog · L366 load · L859 lint · L1273 README graph · L1391 lint command · L1673 audit ·
+  L1821 registry · L1881 tools · L1969 parity · L2422 arch lint · L2695 prose · L2877 sections · L3007 budget · L3025 migrate ·
+  L3173 plugins · L3230 state lint · L3418 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -155,7 +155,7 @@ def state_write(path, data, version=1):
     os.replace(tmp, path)
     return data
 
-# one counter per kind for every id and name the kit makes (NO-DATE: never a date in a name; kitbag_naming.py, lib.ps1 New-KitId)
+# names the kit makes (owner 2026-11-24): words first (next_name), a counter only where no word names it (next_id); never a date or padding
 def _counter(group):
     """The next number of a counter group under its lock (.state naming.json: {group: last})."""
     f = kit_path('naming', create=True)
@@ -169,14 +169,52 @@ def _counter(group):
         return x[group]
 
 def next_id(kind):
+    """<kind>-<n>, unpadded (owner 2026-11-24: a number only where no word names it; old <kind>-<nnnn> ids resolve, Resolve-KitIdAlias)."""
     if not re.match(r'^[a-z]+(?:-[a-z]+)*$', kind):
         raise SystemExit(f'naming next id: kind {kind!r}: lowercase words joined by -')
     live = board_live('run')
     for _ in range(100):   # a reset counter never hands out a run id live on the board
-        rid = f'{kind}-{_counter(f"id:{kind}"):04d}'
+        rid = f'{kind}-{_counter(f"id:{kind}")}'
         if rid not in live:
             return rid
     raise SystemExit(f'naming next id: 100 {kind} ids live on the board')
+
+NAME_STOP = {'a', 'an', 'the', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'after', 'before', 'from', 'via'}
+
+def name_slug(text, drop=(), words=2, room=12, tail=False):
+    """A topic as kebab words (no date, stop word or word <drop> says), <= <words> words and <room> characters: too long drops
+    the last word (tail: the first, a product word the run already says); one long word is cut."""
+    t = re.sub(r'(?<!\d)(?:19|20)\d\d-?(?:0[1-9]|1[0-2])-?(?:0[1-9]|[12]\d|3[01])(?:-\d{2,6})?(?!\d)', ' ', str(text or '').lower())
+    ws = list(dict.fromkeys(w for w in re.findall(r'[a-z0-9]+', t) if w not in NAME_STOP and w not in drop))
+    ws = ws[-words:] if tail else ws[:words]
+    while len(ws) > 1 and len('-'.join(ws)) > room:
+        ws.pop(0 if tail else -1)
+    return '-'.join(ws)[:max(room + (0 if tail or len(ws) > 1 else 4), 0)].strip('-')   # one word stays whole up to 4 more (no gibberish)
+
+def next_name(kind, topic='', folder='', cap=12):
+    """<kind>-<topic> (owner 2026-11-24: short words, <= 12 characters; 16 for a <role>-<area> agent id); a tie gets -2, -3: against
+    the names in <folder> (a record there), else every name issued before and the live board runs."""
+    if not re.match(r'^[a-z]+(?:-[a-z0-9]+)*$', kind):
+        raise SystemExit(f'naming next name: kind {kind!r}: lowercase words joined by -')
+    base = '-'.join(x for x in (kind, name_slug(topic, set(kind.split('-')), room=cap - len(kind) - 1, tail=cap > 12)) if x)
+    cands = (base if n == 1 else f'{base}-{n}' for n in range(1, 10000))
+    if folder:
+        have = {osp.splitext(n)[0] for n in os.listdir(folder)} if osp.isdir(folder) else set()
+        return next(c for c in cands if c not in have)
+    f, live = kit_path('naming', create=True), board_live('run')
+    with locked(f):
+        x = state_read(f) or {}
+        used = set(x.get('names') or [])
+        name = next(c for c in cands if c not in used and c not in live)
+        x['names'] = (list(x.get('names') or []) + [name])[-5000:]
+        state_write(f, x)
+    return name
+
+def bak_name(path):
+    """<path>.bak, the one before it moved to <path>.bak.prev (owner 2026-11-24: no counter, no date; lib Get-KitBakName)."""
+    if osp.isfile(path + '.bak'):
+        os.replace(path + '.bak', path + '.bak.prev')
+    return path + '.bak'
 
 def board_live(field):
     """{field value} of the board rows not left (board join, kitbag.py naming next id)."""

@@ -7,7 +7,7 @@ unique / FK checks off); never clone + drop (that churned 12.9 GB of mysql.ibd f
   pwsh -NoProfile -File mysql-base-move.ps1                      dry run: checks + the plan + the switch-over steps (changes nothing)
   pwsh -NoProfile -File mysql-base-move.ps1 -Apply [-Replace] [-Only <schemas>]   copy, point the db_pool at the new port, verify, MB written;
     MYSQL_PWD from the env file; -Only = a trial with those schemas (no orphan check; use a scratch -Lanes and target port)
-  pwsh -NoProfile -File mysql-base-move.ps1 -Config [-Apply]     the kit.local.json edit (dry run prints it; -Apply writes, .bak-<nnnn> kept)
+  pwsh -NoProfile -File mysql-base-move.ps1 -Config [-Apply]     the kit.local.json edit (dry run prints it; -Apply writes, <file>.bak kept, the one before .bak.prev)
   pwsh -NoProfile -File mysql-base-move.ps1 -Rename [-Apply|-Rollback]   every lane-scoped name (mysql dirs + inis, envy state, logs, run dirs, cmd files, lane env files) to <product>-<bird>, everything down; journal kept
   pwsh -NoProfile -File mysql-base-move.ps1 -Rename -Ids nn [-Apply|-Rollback]   the same to lane-<nn> (N3; mysql dirs keep their {bird} template names) + kit.local.json laneIds nn, lane keys renamed
 Targets `<env>:<port>` (next to the lane ports, never the service's). -Targets, -DonorPort, -VerifyPort (a free port the copy loads on), -Bin,
@@ -18,7 +18,7 @@ templates); dir `<Lanes>/mysql-shop-falcon`, ini `<Lanes>/mysql-shop-falcon.ini`
 Never stops, starts or reconfigures the service: the last steps print for the coordinator. -Apply refuses while a client runs a
 statement on the donor (-Force: ignore).
 Exit codes: 0 ok · 1 refused or failed.
-Sections: L44 names · L51 ini and config edit · L148 rename · L251 checks · L301 apply · L364 search data
+Sections: L44 names · L51 ini and config edit · L147 rename · L250 checks · L300 apply · L363 search data
 #>
 param([string[]]$Targets, [int]$DonorPort, [string]$Lanes, [string]$IniFrom,
   [string]$Bin, [string]$Service, [int]$VerifyPort,
@@ -138,9 +138,8 @@ if ($Config) {
   if (-not $DonorPort) { 'REFUSED: no donor port: pass -DonorPort <port> or set localEnv.baseMove.donorPort'; exit 1 }
   $ch = Update-BaseMoveConfig $cfg $Targets $DonorPort $Lanes
   $ch | ForEach-Object { "config: $_" }
-  if ($Apply) { $pyExe = if ($IsWindows) { 'python' } else { 'python3' }; $bakF = ''   # NO-DATE: <file>.bak-<nnnn> from the kit's one counter, a free one
-    for ($bi = 0; $bi -lt 20 -and (-not $bakF -or (Test-Path -LiteralPath $bakF)); $bi++) { $bakN = "$(& $pyExe -X utf8 (Join-Path $KitDir 'skills/bossy/kitbag.py') naming next id bak)".Trim() -replace '^bak-'
-      if ($bakN -notmatch '^\d{4,}$') { "REFUSED: no backup number from kitbag.py naming next id bak ('$bakN'): nothing written"; exit 1 }; $bakF = "$ConfigFile.bak-$bakN" }
+  if ($Apply) { $bakF = "$ConfigFile.bak"   # owner 2026-11-24: <file>.bak (latest) + .bak.prev, no counter or date
+    if (Test-Path -LiteralPath $bakF) { Move-Item -LiteralPath $bakF "$bakF.prev" -Force }
     Copy-Item -LiteralPath $ConfigFile $bakF; ($cfg | ConvertTo-Json -Depth 50) | Set-Content -LiteralPath $ConfigFile -Encoding utf8; "written: $ConfigFile" } else { 'dry run: -Config -Apply writes it' }
   exit 0
 }
@@ -177,7 +176,7 @@ if ($Rename -or $Rollback) {
       $rd = "$($m['oldDir'])/lane-ready.txt"; if (Test-Path -LiteralPath $rd) { (Get-Content -LiteralPath $rd -Raw).Replace($m['newDir'], $m['oldDir']).Replace($m['newIni'], $m['oldIni']) | Set-Content -LiteralPath $rd -NoNewline }
       "back: $($m['newDir']) -> $($m['oldDir'])"
     }
-    Remove-Item -LiteralPath $jf -Force; 'rollback done: restore kit.local.json from its newest .bak-<nnnn> too'; exit 0
+    Remove-Item -LiteralPath $jf -Force; 'rollback done: restore kit.local.json from its .bak too'; exit 0
   }
   $cfgR = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json -AsHashtable -Depth 50; $envsR = $cfgR['localEnv']['envs']; $mysqlMoves = @(); $moves = @(); $badR = @()
   $nnRows = @(if ($Ids -eq 'nn') { Get-NnPairs $envsR }); $fromBird = "$($cfgR['localEnv']['laneIds'])" -eq 'bird'   # nn: from today's ids (bird or old)

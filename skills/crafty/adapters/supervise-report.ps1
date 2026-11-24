@@ -78,7 +78,7 @@ function Test-KitAckWhole([string]$Ack) {
 # an ack of a flag with ackNeeds (no fix MR linked) names a decision id or an MR in its reason and hides it 2 h
 # (a recorded decision, or an MR some task tracks: a made-up ref hides nothing)
 function Test-KitAckRef([string]$Reason) {
-  foreach ($d in [regex]::Matches("$Reason", '\b(?:(?:dec|envfix)-\d{4,}|d-\d{8,}-[\w-]+)\b')) { if (Test-Path -LiteralPath (Join-Path (Get-KitPath decisions) "$($d.Value).json")) { return $true } }
+  foreach ($d in [regex]::Matches("$Reason", '\b(?:(?:dec|envfix)-\d+|d-\d{8,}-[\w-]+)\b')) { if (Test-Path -LiteralPath (Join-Path (Get-KitPath decisions) "$($d.Value).json")) { return $true } }
   $named = @([regex]::Matches("$Reason", '(?<r>[\w.-]+)(?:!|/-/merge_requests/|/pulls?/)(?<n>\d+)') | ForEach-Object { "$($_.Groups['r'].Value)!$($_.Groups['n'].Value)" })
   if (-not $named.Count) { return $false }
   [bool]@((Read-KitTracking).tasks.Values | ForEach-Object { @($_.mrs) } | Where-Object { $_ -and ("$_" -split '/')[-1] -in $named }).Count
@@ -342,7 +342,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
       if (-not $e.transcript -and $e.file) { try { Invoke-KitLocked $e.file { $x = Read-KitState $e.file; if ($x) { $x.transcript = $sa.tf; Write-KitState $e.file $x } } } catch { } } }   # lease grace and shell owners read it too
     # an older attempt whose name runs as a newer step (a retest): superseded
     $sup = if (-not $st -and $sa -and $e.status -ne 'left' -and $sa.type -and $sa.type -eq $e.type -and $sa.created -and [datetime]$e.joined -lt $sa.created.AddMinutes(-1) -and [datetime]$e.beat -le $sa.created.AddMinutes(1)) { $sa }
-    # N3: the run's running step (<phase>:<area>) is the area's progress, any <role>-<nn> id
+    # N3: the run's running step (<phase>:<area>) is the area's progress, any agent id
     $ar = "$(if ($e.area) { $e.area } elseif ("$($e.agent)" -match '^(?<b>.+)-\d+$') { $Matches.b } else { $e.agent })" -replace '^area-'; $sr = if (-not ($st -or $sup) -and $e.status -ne 'left' -and $ar) { @($steps["$($e.run)/$ar"], $steps["$($e.run)/area-$ar"] | Where-Object { $_ })[0] }
     if ($sr.tx -and $sr.created) { if ([datetime]$e.joined -lt $sr.created.AddMinutes(-1) -and [datetime]$e.beat -le $sr.created.AddMinutes(1)) { $sup = $sr } else { $st = $sr } }
     # a quiet "<agent>-<n>" row whose run's base agent beats: a stale pre-pause copy, never STUCK

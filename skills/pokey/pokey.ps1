@@ -1338,7 +1338,7 @@ New-Item -ItemType Directory -Force "$RunDir/tasks" | Out-Null
 $gf = "$RunDir/tasks/$Task.md"; Set-Content $gf $md -Encoding utf8
 $old = @('finalize.json', 'held.json', 'results.json' | ForEach-Object { Join-Path "$RunDir/$Code" $_ } | Where-Object { Test-Path $_ })
 if ($old.Count) {   # reused code: archive the earlier round
-  $arc = Join-Path "$RunDir/$Code" (New-KitId archive "$RunDir/$Code"); New-Item -ItemType Directory -Force $arc | Out-Null
+  $arc = Join-Path "$RunDir/$Code" (New-KitName round "" "$RunDir/$Code"); New-Item -ItemType Directory -Force $arc | Out-Null
   foreach ($f in $old) { Move-Item -LiteralPath $f -Destination $arc }
   "archived the earlier round of $Code ($(($old | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')) to $arc"
 }
@@ -1394,11 +1394,10 @@ if ($RunDir) { $rf = Join-Path $RunDir 'run.json'; if (-not (Test-Path -LiteralP
 if (-not $Job) { 'usage: pokey.ps1 prepare -Job <job JSON | file> | -RunDir <run>'; exit 2 }
 $jb = (& { if (Test-Path -LiteralPath $Job -PathType Leaf) { Get-Content -LiteralPath $Job -Raw -Encoding utf8 } else { $Job } }) | ConvertFrom-Json -AsHashtable
 if (-not ($jb.runFolder -and $jb.target)) { throw 'prepare: the job needs runFolder and target' }
-# N3: <testy-id> -> testy-<nnnn> (kitbag.py naming next id: one locked counter per kind, no date)
-$newRunId = { param($IdKind) $nid = "$(& (Get-Python) -X utf8 $KitCmd.kitbag naming next id $IdKind 2>$null | Select-Object -Last 1)".Trim()
-  if ($nid -notmatch '^[a-z]+-\d{4,}$') { throw "prepare: kitbag.py naming next id $IdKind gave '$nid'" }; $nid }
+# <testy-id> -> testy-<name words> (owner 2026-11-24: testy-retest; a tie -2; never a date or counter)
+$newRunId = { param($IdKind) New-KitName $IdKind "$($jb.name)" }
 if ("$($jb.runFolder)" -match '<(?<k>[a-z]+)-id>') { $jb.runFolder = "$($jb.runFolder)" -replace '<[a-z]+-id>', (& $newRunId $Matches.k) }
-# a date placeholder (<yyyy-MM-dd>, ...) or a leading '-' (a caller's stamp expanded to nothing): the testy counter id, never a date (N3)
+# a date placeholder (<yyyy-MM-dd>, ...) or a leading '-' (a caller's stamp expanded to nothing): the testy run name, never a date
 $dir = "$($jb.runFolder)"; if ($dir -match '<[yMdHms][^<>]*>') { $dir = $dir -replace '(?:<[yMdHms][^<>]*>[-_]?)+', "$(& $newRunId testy)-" -replace '-(?=$|[\\/])', '' }
 if (-not [IO.Path]::IsPathRooted($dir)) { $dir = Join-Path (Split-Path $KitConf.Kit) $dir }   # testy's relative runFolder is from the workspace root, never this cwd (the kit: <kit>/.claude/.runtime, retro 1549)
 if ((Split-Path $dir -Leaf) -like '-*') { $dir = Join-Path (Split-Path $dir -Parent) "$(& $newRunId testy)$(Split-Path $dir -Leaf)" }

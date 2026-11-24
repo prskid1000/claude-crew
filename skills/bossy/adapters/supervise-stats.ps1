@@ -955,8 +955,8 @@ function Format-KitFlagTable($Flags, $Fixed, $Notes) {
   "<div class=tw><table class=flt><colgroup><col class=c-lv><col class=c-k><col class=c-w><col><col class=c-n><col class=c-a></colgroup><thead><tr><th>Level</th><th>Kind</th><th>Who</th><th>Problem</th><th>Next step</th><th>Age</th></tr></thead>" +
   "<tbody>$(if ($rows.Count) { $rows -join '' } else { "<tr><td colspan=6 class=m>All clear: no ACT or WATCH flag.</td></tr>" })</tbody>$(if ($fx.Count) { "<tbody><tr><td colspan=6><button type=button class=fxb data-tg=fx-rows aria-expanded=false>$(& $e $sum)</button></td></tr></tbody><tbody id=fx-rows hidden>$($fx -join '')</tbody>" })</table></div>"
 }
-# an agent row's name (N3, owner 2026-11-23): '<role>-<nn> · <area>'; no area: its type unless the id says it ('briefy · briefy-x' was shown)
-function Get-KitAgentLabel($Sub) { $tag = if ("$($Sub.ar)".Trim()) { "$($Sub.ar)" } elseif ($Sub.sub -and "$($Sub.n)" -notlike "$($Sub.sub)*") { "$($Sub.sub)" }; (@("$($Sub.n)", $tag) | Where-Object { $_ }) -join ' · ' }
+# an agent row's name: '<id> · <area>' unless the id says the area (devy-ask-prompts); no area: its type unless the id says it ('briefy · briefy-x' was shown)
+function Get-KitAgentLabel($Sub) { $tag = if ("$($Sub.ar)".Trim()) { if ("$($Sub.n)" -notlike "*-$(("$($Sub.ar)" -replace '^(?i)area-').ToLower())") { "$($Sub.ar)" } } elseif ($Sub.sub -and "$($Sub.n)" -notlike "$($Sub.sub)*") { "$($Sub.sub)" }; (@("$($Sub.n)", $tag) | Where-Object { $_ }) -join ' · ' }
 # runs (D9): one runs x hour heatmap; a row per run (workflow runs from usage; board agents outside one by their run), a cell = its
 # minutes in that clock hour; agents (its steps by agent code, live board rows) under a run on expand; tokens, cost and time on the run row;
 # live runs on top over the last 24 h, ended ones by day (today open, older days folded); $Pages: run ids with a steps page
@@ -1176,7 +1176,7 @@ function Invoke-Shells {
 }
 
 # ---- reset: bossy.ps1 stats [-Reset] (owner 2026-11-20): the files only this page's charts read; -Reset moves them to
-# <state>/forgotten/stats-reset-<nnnn>/ (relative paths kept), the next sweep starts empty charts. Functional state stays: params,
+# <state>/forgotten/stats-reset[-<n>]/ (relative paths kept), the next sweep starts empty charts. Functional state stays: params,
 # params-changes (the settings audit log), outcomes, storage (disk verdicts), pool-usage, runtimes, localenv-history, leases, audit logs, run records, supervise-state.
 function Get-KitStatsFiles {
   $rt = Get-KitRuntime; $sd = Split-Path (Get-KitPath disk-writes); $cache = Get-KitPath cache
@@ -1186,7 +1186,7 @@ function Get-KitStatsFiles {
 }
 function Invoke-Stats {
   param([switch]$Reset)
-  $dst = if ($Reset) { Join-Path (Get-KitPath forgotten) (New-KitId stats-reset (Get-KitPath forgotten)) }   # NO-DATE: stats-reset-<nnnn>, the time is the folder's
+  $dst = if ($Reset) { Join-Path (Get-KitPath forgotten) (New-KitName stats-reset '' (Get-KitPath forgotten)) }   # stats-reset, a tie -2; the time is the folder's
   $moved = 0
   foreach ($f in @(Get-KitStatsFiles)) {
     if (-not [IO.File]::Exists($f.path)) { "absent  $($f.rel)"; continue }
@@ -1200,7 +1200,7 @@ function Invoke-Stats {
 # the newest reset's time (owner 2026-11-20; its folder's creation, not its day's midnight): charts still built from kept logs (runs,
 # gate, waits, QA, Trends) read nothing before it; the Tuning heatmap and Disk free do; no reset = MinValue
 function Get-KitStatsCutoff {
-  $rd = @(Get-ChildItem -LiteralPath (Get-KitPath forgotten) -Directory -Filter 'stats-reset-*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^stats-reset-\d{4,}' } | ForEach-Object { $_.CreationTime } | Sort-Object)
+  $rd = @(Get-ChildItem -LiteralPath (Get-KitPath forgotten) -Directory -Filter 'stats-reset*' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^stats-reset(?:-\d+)*$' } | ForEach-Object { $_.CreationTime } | Sort-Object)
   if ($rd.Count) { $rd[-1] } else { [datetime]::MinValue }
 }
 # a budget -Usage result without what came before $StatsFrom: ended runs started before it (the day they are listed under), its days' values, its MRs; step outcomes recounted

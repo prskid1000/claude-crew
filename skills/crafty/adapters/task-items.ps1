@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L88 move · L131 status roles · L290 task text · L307 naming · L419 track lines · L424 task ids ·
-#   L440 tags · L499 order
+# Sections: L8 items · L88 move · L131 status roles · L290 task text · L307 naming · L430 track lines · L435 task ids ·
+#   L451 tags · L510 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -313,17 +313,28 @@ function Invoke-KitNaming([string[]]$Argv) {
   $lec = $global:LASTEXITCODE; $o = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming @Argv 2>&1 | ForEach-Object { "$_" }); $rc = $global:LASTEXITCODE; $global:LASTEXITCODE = $lec
   if ($rc) { throw "kitbag.py naming $($Argv -join ' '): $($o -join ' ')" }; "$($o[-1])".Trim()
 }
-# an id from the one locked counter per kind: <kind>-<nnnn>, never a date (names of refs, reports, evidence, backups too); -Dir: skips
-# one whose <id>, <id>.json or <id>.md exists there (a reset counter); -Number: the <nnnn> only (<file>.bak-<nnnn>, deploy/<env>-<nnnn>)
+# owner 2026-11-24: a name says what it is, a number only breaks a tie; never a date or padding. -Dir: skips one whose <id>,
+# <id>.json or <id>.md exists there. New-KitName: <kind>-<topic> <= 12 chars (tie -2; -Dir: vs that folder); New-KitId: <kind>-<n> where no word names it
+function New-KitName([string]$Kind, [string]$Topic = '', [string]$Dir, [int]$Cap = 12) {
+  $nid = Invoke-KitNaming (@('next', 'name', $Kind, $Topic, '--cap', $Cap) + @(if ($Dir) { '--dir', $Dir }))
+  if ($nid -notmatch "^$([regex]::Escape($Kind))(?:-[a-z0-9]+)*$") { throw "kitbag.py naming next name $Kind gave '$nid'" }; $nid
+}
 function New-KitId([string]$Kind, [string]$Dir, [switch]$Number) {
-  for ($ni = 0; $ni -lt 100; $ni++) { $nid = Invoke-KitNaming @('next', 'id', $Kind); if ($nid -notmatch "^$([regex]::Escape($Kind))-\d{4,}$") { throw "kitbag.py naming next id $Kind gave '$nid'" }
+  for ($ni = 0; $ni -lt 100; $ni++) { $nid = Invoke-KitNaming @('next', 'id', $Kind); if ($nid -notmatch "^$([regex]::Escape($Kind))-[1-9]\d*$") { throw "kitbag.py naming next id $Kind gave '$nid'" }
     if (-not $Dir -or -not @("$nid", "$nid.json", "$nid.md" | Where-Object { Test-Path -LiteralPath (Join-Path $Dir $_) }).Count) { return $(if ($Number) { $nid.Substring($Kind.Length + 1) } else { $nid }) } }
   throw "New-KitId ${Kind}: 100 ids taken in $Dir"
 }
-# <file>.bak-<nnnn>, a free one (a reset counter never overwrites a backup); lint NAME-BACKUP
+# an old id still resolves: dec-12 <-> dec-0012 (padded), whichever <id>[.json|.md] exists in $Dir; none: $Id as given
+function Resolve-KitIdAlias([string]$Id, [string]$Dir) {
+  $has = { param($c) @("$c", "$c.json", "$c.md" | Where-Object { Test-Path -LiteralPath (Join-Path $Dir $_) }).Count }
+  if (-not $Id -or -not $Dir -or (& $has $Id) -or $Id -notmatch '^(?<k>[a-z]+(?:-[a-z]+)*)-0*(?<n>\d+)$') { return $Id }
+  $alias = @("$($Matches.k)-$([int64]$Matches.n)", ("$($Matches.k)-" + "$([int64]$Matches.n)".PadLeft(4, '0')) | Where-Object { $_ -ne $Id -and (& $has $_) })
+  if ($alias.Count) { $alias[0] } else { $Id }
+}
+# <file>.bak (latest), the one before moved to <file>.bak.prev (owner 2026-11-24: no counter, no date); lint NAME-BACKUP
 function Get-KitBakName([string]$File) {
-  for ($bi = 0; $bi -lt 20; $bi++) { $bn = "$File.bak-$(New-KitId bak -Number)"; if (-not (Test-Path -LiteralPath $bn)) { return $bn } }
-  throw "Get-KitBakName: 20 backup names of $File taken"
+  if (Test-Path -LiteralPath "$File.bak" -PathType Leaf) { Move-Item -LiteralPath "$File.bak" "$File.bak.prev" -Force }
+  "$File.bak"
 }
 # Set-TrackerName: an unkeyed new name of a keyed task keeps its key and [Type] (owner 2026-11-24: a hand rename dropped RM-AGT-001)
 function Resolve-KitRenameName([string]$Id, [string]$Name) {

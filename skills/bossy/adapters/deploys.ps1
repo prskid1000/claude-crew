@@ -16,9 +16,9 @@ Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused
 # not a test env: deploys[].production, else deploy.productionPattern on the name (no default: nothing is production by name); -Lanes: + laneApk
 function Get-NoTestRx([Alias('Lane')][switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }
 # <alias>!<iid> -> <repo name>!<iid>
-# a QA run's start: an N3 id (testy-<nnnn>) from its run.json started; legacy folder name yyyy-MM-dd[-HHmmss]-<label> (date only: midnight); $null when none
+# a QA run's start: its run.json started (testy-retest, old testy-<nnnn>); legacy folder name yyyy-MM-dd[-HHmmss]-<label> (date only: midnight); $null when none
 function Get-KitQaRunStart([string]$Run) {
-  if ($Run -match $script:KitRunIdRx) { $st = try { (Read-KitText (Join-Path (Get-KitPath qa-runs) "$Run/run.json") | ConvertFrom-Json).started } catch { $null }; if ($st) { return ([datetimeoffset]$st).LocalDateTime }; return }
+  if ($Run -notmatch '^\d{4}-') { $st = try { (Read-KitText (Join-Path (Get-KitPath qa-runs) "$Run/run.json") | ConvertFrom-Json).started } catch { $null }; if ($st) { return ([datetimeoffset]$st).LocalDateTime }; return }
   if ($Run -match '^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2})(\d{2}))?(?:-|$)') { [datetime]"$($Matches[1])T$(if ($Matches[2]) { "$($Matches[2]):$($Matches[3]):$($Matches[4])" } else { '00:00:00' })" } }
 function Get-CanonMr([string]$m) {
   if ($m -notmatch '^(?<r>[\w.-]+)!(?<i>\d+)$') { return $m }

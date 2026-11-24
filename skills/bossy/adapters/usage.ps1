@@ -126,7 +126,7 @@ function Get-KitRunLabel($A, [string]$Run = '', [string]$RunDir = '') {
   $out = (@($s, $sfx) | Where-Object { $_ }) -join ' · '; if ($out) { $out } else { Format-KitRunName $std }
 }
 # a run id shown (owner 2026-11-24): no date (the day group shows it), no role word (the kind chip / agent row shows it), no counter
-# (a collision adds it): kitty-fix-0007 + subject 'rest' -> 'fix: rest' · legacy kitty-20261124-rest -> 'rest' · buildy-0042 -> 'buildy'
+# (a collision adds it): kitty-fix-0007 + subject 'rest' -> 'fix: rest' · legacy kitty-20261124-rest -> 'rest' · buildy-0042 -> 'buildy' · a word name (testy-retest) is its own
 function Format-KitRunName([string]$Run, [string]$Subject = '') {
   if ("$Run" -notmatch '^[a-z]+(?:-[a-z]+)*-(?:\d{8}-[\w-]+|\d{4,})$') { return $(if ($Subject) { $Subject } else { "$Run" }) }   # a hand-made name is its own title
   $w = @("$Run" -split '-' | Where-Object { $_ -and $_ -notmatch '^\d{8}$' }); if ($w.Count -gt 1 -and $w[-1] -match '^\d+$') { $w = @($w | Select-Object -SkipLast 1) }

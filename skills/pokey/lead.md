@@ -10,7 +10,7 @@ Read by `checky` lead and the coordinator only; testers and verifiers never need
   guides exported to text. `lead-notes.md`: MANUAL deploy state; prerequisites per guide: flags, accounts, roles, data (by
   id; local env: `seed -Check`), reindex, server config; what the lead cannot unblock -> `skip` + reason.
   **Selection** (`pokey.ps1 prepare -Job <job JSON>` runs steps 1-5, the workflow's Prepare step; by hand the same):
-  1. Folder = `runFolder`, `<testy-id>` -> the run id `testy-<nnnn>` (a caller's old date placeholders still expand); one with files is refused, an empty one reused.
+  1. Folder = `runFolder`, `<testy-id>` -> the run name `testy-<name words>` (testy-retest) (a caller's old date placeholders still expand); one with files is refused, an empty one reused.
      Candidates: `crafty.ps1 tracker list <container> <status>` per `lists` (empty: `trackerLists`, else `tracker.list` /
      `tracker.repo`) x `statuses` (logical names via `tracker.statuses`; `in test` = `inTest`; other names pass through);
      `tasks` given: only those + their subtasks in `statuses`; minus `exclude`; `mine` = only the `tracker owner`'s.

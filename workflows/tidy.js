@@ -38,12 +38,12 @@ for (const [label, model] of [['prep', 'haiku'], ['prep-retry', 'sonnet']]) {
 <<<ARGS
 ${AJ}
 ARGS>>>
-2. run = the line python -X utf8 ${C}/skills/bossy/kitbag.py naming next id tidy prints (tidy-<nnnn>). Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:1,kitty/:1'
+2. run = the line python -X utf8 ${C}/skills/bossy/kitbag.py naming next name tidy prints (tidy; a tie tidy-2). Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:1,kitty/:1'
  (MISMATCH = the file differs: write it again once, re-run.) record = its full output.
 3. Run in PowerShell (takes up to 2 min): & ${C}/skills/bossy/bossy.ps1 tidy prep -Json
  prep = its last output line (one line of JSON), verbatim.
 Return ok=true when step 3 printed the JSON line.`, { label, phase: 'Prep', schema: STEP, agentType: 'kitty', model, effort: 'low' })
- try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy-\d{4,}$/.test(r.run) ? r.run : 'tidy'; break } catch (e) { P = null }
+ try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy(?:-[a-z0-9]+)*$/.test(r.run) ? r.run : 'tidy'; break } catch (e) { P = null }
 }
 if (!P) return { applied: [], proposedForApproval: [], rejected: [], report: 'tidy prep failed twice: run bossy.ps1 tidy prep by hand' }
 log(`tidy prep: ${P.work} item(s), ${P.groups} group(s) of 2+, ${P.sec} s: ${(P.steps || []).join(', ')}`)

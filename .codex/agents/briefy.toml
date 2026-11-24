@@ -48,7 +48,8 @@ Non-negotiables:
    feature switches that change the path, live data shapes (read-only SQL), open MRs on the same files; a bug gets a fresh
    repro plan. Each finding -> the item's row or Overlaps.
 3. **Areas:** group by disjoint screens / packages / files, not item count; one file in two areas -> one owner plus an Overlaps
-   line; producers get `dependsOn` consumers wait on; migration ranges never overlap. Each area's `paths`: repo-relative globs
+   line; producers get `dependsOn` consumers wait on; migration ranges never overlap. Each area's `id` says what it covers
+   (<= 12 chars: `ask-prompts`; render refuses `area-<AREA>-<n>`; none: from `area`). Each area's `paths`: repo-relative globs
    (`wt commit`, `devtools.py mr / merge` refuse other files): the full file set the fix touches, from the impact check
    (mappers, DTOs, serializers, unit tests, api-tests); a test- or spec-only area gets only its test / spec globs; an area
    with no human-facing change (its consumers show it) gets `kind: foundation` (no human testing doc of its own).

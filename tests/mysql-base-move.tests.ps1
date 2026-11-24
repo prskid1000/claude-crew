@@ -45,7 +45,7 @@ Expect "config edit: two mysql, two search, two lane-name and one storage.watch 
 $after = & { . (Join-Path $kd 'skills/envy/envy.ps1'); @('shop-falcon', 'docs-falcon', 'shop-kestrel', 'docs-kestrel') | ForEach-Object { Get-LaneStandardRows $_ | ForEach-Object what }; "S=$((@($script:LE.envs.'shop-falcon'.services | Where-Object name -eq 'search')[0]).start)" }
 Expect "lane standard: after the edit no breach, search data under the lane folder ($($after -join ' | '))" (@($after).Count -eq 1 -and $after -match 'S=os.bat -Epath.data=D:/s/lanes/search-shop-falcon/data -Epath.logs=D:/s/lanes/search-shop-falcon/logs')
 $cfC = Join-Path $kd 'cfg-copy.json'; Copy-Item $cf $cfC; $cfo = @(pwsh -NoProfile -File $mv -Config -Apply -ConfigFile $cfC 2>&1) -join ' '
-Expect "-Config -Apply: the backup is <file>.bak-<nnnn> (NO-DATE) ($cfo)" ($cfo -match 'written:' -and @(Get-ChildItem $kd -Filter 'cfg-copy.json.bak-*' | Where-Object Name -match '\.bak-\d{4}$').Count -eq 1)
+Expect "-Config -Apply: the backup is <file>.bak (no counter, no date) ($cfo)" ($cfo -match 'written:' -and (Test-Path (Join-Path $kd 'cfg-copy.json.bak')) -and -not @(Get-ChildItem $kd -Filter 'cfg-copy.json.bak-*').Count)
 
 # dry run: plan printed, nothing created; an existing target dir is refused; -Apply without the donor is refused
 $ld = Join-Path $kd 'lanes'; New-Item -ItemType Directory -Force "$ld/mysql-shop-falcon" | Out-Null; Set-Content "$ld/mysql-docs2.ini" ($tpl -join "`n")

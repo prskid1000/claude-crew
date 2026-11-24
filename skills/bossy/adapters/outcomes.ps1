@@ -217,7 +217,7 @@ $script:KitRuleNeverRx = '(?i)\b(' + ((@('prod\w*', 'deploy\w*', 'release', 'rol
 function Get-KitTopicWords([string]$Question) { Get-KitWordSet ("$Question" -replace '\([^)]*\)', ' ' -replace '\b[A-Za-z]+-\d+[a-z]?\b', ' ' -replace '\b[0-9a-z_]*\d[0-9a-z_]*\b', ' ') }
 # choice words keep short ones (no, keep, all): polarity matters
 function Get-KitChoiceWords([string]$Answer) {
-  $s = "$Answer".ToLower() -replace '\(recommended\)', ' ' -replace '\((owner|by|via|standing)[^)]*\)', ' ' -replace '^\s*[a-z0-9]{1,2}\s*[:.)]\s+', '' -replace '\b(?:[de]-\d{14}\S*|(?:dec|envfix|debate)-\d{4,})', ' ' -replace "\b(don|doesn|didn|won|can|shouldn|wouldn|isn|aren|couldn)['’]?t\b|\bcannot\b", ' not '
+  $s = "$Answer".ToLower() -replace '\(recommended\)', ' ' -replace '\((owner|by|via|standing)[^)]*\)', ' ' -replace '^\s*[a-z0-9]{1,2}\s*[:.)]\s+', '' -replace '\b(?:[de]-\d{14}\S*|(?:dec|envfix|debate)-\d+)', ' ' -replace "\b(don|doesn|didn|won|can|shouldn|wouldn|isn|aren|couldn)['’]?t\b|\bcannot\b", ' not '
   $h = [Collections.Generic.HashSet[string]]::new(); foreach ($m in [regex]::Matches($s, '[a-z][a-z0-9-]+')) { if ($m.Value -notin 'the', 'an', 'of', 'to', 'on', 'in', 'for', 'and', 'or', 'as', 'is', 'it', 'be', 'by', 'at', 'its') { [void]$h.Add($m.Value) } }; , $h
 }
 function ConvertTo-KitWordSet($Words) { $h = [Collections.Generic.HashSet[string]]::new(); foreach ($x in @($Words)) { if ($x) { [void]$h.Add("$x") } }; , $h }
@@ -399,7 +399,7 @@ $d.Add("# tidy digest $($t0.ToString('yyyy-MM-dd HH:mm'))"); $d.Add("Since the l
 & $part 'Local env failures' (& $top $envF { "$($_.event) $($_.env) $($_.service)".Trim() } 8)
 & $part 'Runs since' @(@($runs | Select-Object -Last 15 | ForEach-Object { "$($_.run) ($(Split-Path "$($_.script)" -Leaf)) spent $([int]$_.spent) of $([int]$_.cap)" }) + @($qa | Select-Object -Last 10 | ForEach-Object { "QA $($_.Name)$(Get-KitQaRunGap $_.FullName)" }))
 & $part 'Upkeep (no LLM)' @(@($steps | ForEach-Object { "$($_.step): $($_.state) ($($_.sec) s)$(if ($_.out) { ': ' + (& $cut ($_.out -join ' | ') 400) })" }) + @(Invoke-KitHooks Get-KitHealthLinesAudit))
-$file = Join-Path (Get-KitPath retros -Create) "$(New-KitId digest (Get-KitPath retros)).md"   # NO-DATE: digest-<nnnn>, its time is the at field
+$file = Join-Path (Get-KitPath retros -Create) "$(New-KitName digest '' (Get-KitPath retros)).md"   # digest, a tie digest-2; its time is the at field
 [IO.File]::WriteAllText($file, (($d -join "`n") + "`n"))
 $stamped = -not $work -and -not $DryRun -and -not @($steps | Where-Object state -eq 'failed').Count
 if ($stamped) { $null = Invoke-Tidy done -At (Get-KitStamp stored $t0) }   # nothing to judge

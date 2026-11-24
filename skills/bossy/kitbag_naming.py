@@ -2,7 +2,8 @@
 
   python -X utf8 skills/bossy/kitbag.py naming check <kind> <name> [<name> ...]   # exit 1 names each one off the standard + its pattern
   python -X utf8 skills/bossy/kitbag.py naming next key <PRODUCT> <AREA>           # the next <PRODUCT>-<AREA>-<nnn> (locked counter)
-  python -X utf8 skills/bossy/kitbag.py naming next id <kind>                      # <kind>-<nnnn>: run (buildy, testy, kitty-fix ..), dec; one locked counter per kind
+  python -X utf8 skills/bossy/kitbag.py naming next name <kind> [<topic>] [--dir d]  # <kind>-<topic> <= 12 chars (buildy-ask, tidy); a tie -2 (--dir: vs its files)
+  python -X utf8 skills/bossy/kitbag.py naming next id <kind>                      # <kind>-<n> unpadded (dec-12): only where no word names it
   python -X utf8 skills/bossy/kitbag.py naming make <kind> key=<KEY> type=<t> ...  # a name from its parts (title doc branch mr case item)
   python -X utf8 skills/bossy/kitbag.py naming scan [--json]                       # live names (tasks, docs, board, launches) vs the standard
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
@@ -10,17 +11,17 @@
   python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug wave=2 env=- ...   # JSON {tags, add, remove}
 Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, product, area: tags)
  · tag `wave-2` (lowercase kebab, from the TAG_GROUPS vocabulary)
- · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-0042` · agent `devy-01` · area `area-CAT` (`-2`: a second one
-   in a run) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
- · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-0398`.
-NO-DATE: no name holds a date (owner 2026-11-24): the date lives in the record's fields (at, started); an old dated
-run / id (`buildy-20261123-01`) is read as an alias until the next minor version, never made.
+ · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-ask` · agent `devy-ask-prompts` (no area: `devy-4`) · area `ask-prompts`
+   (what it covers; a tie `-2`) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
+ · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-12`.
+WORDS (owner 2026-11-24): a name says what it is; a number only breaks a tie. NO-DATE: the date lives in the record's fields
+(at, started). PADDED: no zero-padded counter. Old dated / padded ids (`buildy-20261123-01`, `dec-0012`) still resolve, never made.
 PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code: name}); an unknown code or a key without
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags).
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L28 model · L94 no repeats · L204 tags
+Sections: L29 model · L98 no repeats · L208 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -47,8 +48,8 @@ def patterns(cfg):
     return {'key': rf'^{key}$', 'item': rf'^{key}\.\d+ {slug}$', 'case': rf'^{key}-TC\d{{2,}}$',
             'title': rf'^{key}(?:\.\d+)? \S.*$', 'tag': r'^[a-z0-9]+(?:-[a-z0-9]+)*$',
             'doc': rf'^{key}(?:\.\d+)? (?:{"|".join(map(re.escape, DOC_KINDS))}) v\d+ — \S.*$',
-            'run': r'^[a-z]+(?:-[a-z]+)*-\d{4,}$', 'id': r'^[a-z]+-\d{4,}$', 'agent': r'^[a-z]+-\d{2,}$',
-            'area': rf'^area-(?:{alt(cfg["areas"])})(?:-\d+)?$', 'lane': r'^lane-\d{2,}$', 'label': r'^\S.*$',
+            'run': r'^[a-z]+(?:-[a-z0-9]+)*$', 'id': r'^[a-z]+(?:-[a-z]+)*-[1-9]\d*$', 'agent': r'^[a-z]+(?:-[a-z0-9]+)+$',
+            'area': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$', 'lane': r'^lane-\d{2,}$', 'label': r'^\S.*$',
             'branch': rf'^(?:{ty})/{key}-{slug}$', 'mr': rf'^(?:{ty})(?:\([\w./-]+\))?!?: \S.* \[{key}\]$'}
 
 
@@ -59,28 +60,31 @@ def name_problem(kind, name, cfg=None):
     if rx is None:
         return f'unknown kind {kind!r} ({", ".join(patterns(cfg))})'
     if (dm := DATE_RX.search(name)):
-        return f'NO-DATE: {dm[0]!r} is a date; the record\'s fields hold it, a counter makes it unique ({EXAMPLES[kind]})'
+        return f'NO-DATE: {dm[0]!r} is a date; the record\'s fields hold it, its words name it ({EXAMPLES[kind]})'
+    if kind in ('run', 'id', 'agent') and (pm := re.search(r'-(0\d+)(?=-|$)', name) or re.match(r'^[a-z]+(?:-[a-z]+)*-(\d{4,})$', name)):
+        return f'PADDED: {pm[1]!r} is a padded counter; name it by what it is, a number only to break a tie ({EXAMPLES[kind]}; an old id still resolves)'
+    if kind == 'area' and re.match(r'^area-[A-Z]', name):
+        return f'NUMBERED: {name!r} is a code + counter; name the area by what it covers ({EXAMPLES[kind]})'
+    if kind in ('run', 'agent', 'area') and len(re.sub(r'-\d+$', '', name)) > 16:   # owner: ~12, 16 at most, a tie suffix aside
+        return f'LONG: {name!r}: at most 16 characters (aim for 12), short words ({EXAMPLES[kind]})'
     codes = {c for reg in ('products', 'areas') for c, n in cfg[reg].items() if slugify(n, 6) != c.lower()}   # a name equal to its code is the name
     if kind == 'tag' and re.match(rx, name) and (len(name) > 30 or name.upper() in codes):
         return f'a tag is 1-30 characters and never a PRODUCT / AREA code (the key says it): {name!r}'
     if re.match(rx, name):
         return dup_words(kind, name, cfg)
     m = re.search(r'\b([A-Z]{2,6})-([A-Z]{2,6})-\d+', name)
-    need = cfg['areas'] if kind == 'area' else cfg['products'] and cfg['areas']   # an area name needs only the areas
-    if kind in ('key', 'item', 'case', 'title', 'doc', 'branch', 'mr', 'area') and not need:
+    if kind in ('key', 'item', 'case', 'title', 'doc', 'branch', 'mr') and not (cfg['products'] and cfg['areas']):
         return 'naming.products / naming.areas are empty: register the codes in kit.local.json first'
     if m and m[1] not in cfg['products']:
         return f'unknown PRODUCT {m[1]} (naming.products: {", ".join(cfg["products"]) or "none"})'
     if m and m[2] not in cfg['areas']:
         return f'unknown AREA {m[2]} (naming.areas: {", ".join(cfg["areas"]) or "none"})'
-    if kind == 'area' and (a := re.match(r'^area-([A-Z]+)', name)) and a[1] not in cfg['areas']:
-        return f'unknown AREA {a[1]}'
     return f'not {kind} form ({EXAMPLES[kind]})'
 
 
 EXAMPLES = {'key': 'SHOP-CAT-004', 'item': 'SHOP-CAT-004.2 add-price-projection', 'case': 'SHOP-CAT-004-TC03',
             'title': 'SHOP-CAT-004 <outcome>', 'tag': 'wave-2', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
-            'run': 'buildy-0042', 'id': 'dec-0398', 'agent': 'devy-01', 'area': 'area-CAT', 'lane': 'lane-01', 'label': 'fix: rest',
+            'run': 'buildy-ask', 'id': 'dec-12', 'agent': 'devy-ask-prompts', 'area': 'ask-prompts', 'lane': 'lane-01', 'label': 'fix: rest',
             'branch': 'feat/SHOP-CAT-004-public-catalogue', 'mr': 'feat(web): <summary> [SHOP-CAT-004]'}
 
 
@@ -310,6 +314,10 @@ def live_names(kit=None):
         r = state_read(osp.join(pub, fn)) or {}
         if r.get('title') and r.get('key'):
             out.append(('doc', str(r['title']), f'published {r["key"]}'))
+    out += [('run', n, 'board') for n in sorted(board_live('run'))] + [('agent', n, 'board') for n in sorted(board_live('agent')) if n != 'coordinator']
+    dd = kit_path('decisions')
+    out += [('id', fn[:-5], 'decisions') for fn in sorted(os.listdir(dd)) if fn.endswith('.json')
+            and (state_read(osp.join(dd, fn)) or {}).get('status') == 'pending'] if osp.isdir(dd) else []
     return out
 
 
@@ -358,8 +366,9 @@ def plan_rows(plan, cfg):
 
 
 def cmd_naming(rest):
-    a = [x for i, x in enumerate(rest) if not x.startswith('--') and not (i and rest[i - 1] in ('--have', '--plan'))]   # a flag's value is no part
+    a = [x for i, x in enumerate(rest) if not x.startswith('--') and not (i and rest[i - 1] in ('--have', '--plan', '--dir', '--cap'))]   # a flag's value is no part
     js = '--json' in rest
+    opt = lambda f: rest[rest.index(f) + 1] if f in rest and rest.index(f) + 1 < len(rest) else ''
     cfg = naming_cfg()
     if not a or a[0] in ('help', '-h') or '--help' in rest:
         print(__doc__)
@@ -369,8 +378,8 @@ def cmd_naming(rest):
         bad = [(n, w) for n in a[2:] if (w := name_problem(a[1], n, cfg))]
         print('\n'.join(f'NAME {a[1]} {n!r}: {w}' for n, w in bad) or f'naming: {len(a) - 2} {a[1]} name(s) fit the standard')
         return 1 if bad else 0
-    if verb == 'next' and len(a) >= 3 and a[1] in ('key', 'id'):
-        print(next_key(a[2], a[3] if len(a) > 3 else '', cfg) if a[1] == 'key' else next_id(a[2]))
+    if verb == 'next' and len(a) >= 3 and a[1] in ('key', 'id', 'name'):
+        print(next_key(a[2], a[3] if len(a) > 3 else '', cfg) if a[1] == 'key' else next_id(a[2]) if a[1] == 'id' else next_name(a[2], ' '.join(a[3:]), opt('--dir'), int(opt('--cap') or 12)))
         return 0
     if verb == 'make' and len(a) >= 2:
         try:
@@ -435,6 +444,7 @@ def cmd_naming(rest):
 FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.(?:tests|local))?\.ps1$',
            '.mjs': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.local)?\.mjs$', '.js': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.local)?\.js$'}   # adapters/*.local.ps1: org overlays
 BAK_RX = re.compile(r'\.(?:bak|bad|orig|old|stale)(?:[-.]|$)', re.I)
+PAD_RX = re.compile(r"""-(?:\{[^{}]*:0\d+d\}|\{\d+:(?:0{2,}|D\d)\}|\$\(Get-Date -Format '[yMdHms]{6,}'\))""")   # padded or dated after a dash
 HOOK_CFG = ('settings.json', '.agents/hooks.json', '.codex/config.toml')
 
 
@@ -458,7 +468,8 @@ def hook_entry_names(kd, files):
 
 def lint_hook(k, problems, flags):
     """NAME-CONFIG: a naming registry entry that is no 2-6 letter code (the live names: `naming scan`, WARN-level).
-    NAME-FILE: a script name off its language's rule (py snake_case; ps1 / mjs / js kebab-case), except hook entry points (hook_entry_names)."""
+    NAME-FILE: a script name off its language's rule (py snake_case; ps1 / mjs / js kebab-case), except hook entry points (hook_entry_names).
+    NAME-PADDED: kit code making a name with a padded counter or a date (PAD_RX)."""
     c = local_config(k.dir, 'kit.local.json').get('naming') or {}
     for reg in ('products', 'areas'):
         for code in (c.get(reg) or {}):
@@ -469,19 +480,26 @@ def lint_hook(k, problems, flags):
     problems += [('NAME-FILE', f, f'{osp.basename(f)}: {"snake_case" if f.endswith(".py") else "kebab-case"} for {osp.splitext(f)[1]} files')
                  for f in kf if re.match(r'(?:skills|workflows|tests)/', f) and osp.splitext(f)[1] in FILE_RX
                  and not re.match(FILE_RX[osp.splitext(f)[1]], osp.basename(f)) and osp.basename(f) not in ex]
+    for f in (f for f in kf if re.match(r'(?:skills|workflows)/(?!pokey/)', f) and osp.splitext(f)[1] in FILE_RX):   # pokey: evidence names keep <CODE>-<check>_<nn>
+        try:
+            lines = open(osp.join(k.dir, f), encoding='utf-8', errors='replace').read().splitlines()
+        except OSError:
+            continue
+        problems += [('NAME-PADDED', f'{f}:{i}', 'a padded counter or a date in a made name (owner 2026-11-24): <kind>-<words> (kitbag.py naming next name), '
+                      '<kind>-<n> only to break a tie (next id)') for i, s in enumerate(lines, 1) if PAD_RX.search(s)]
 
 
 def warn_hook(k):
-    """NAME-BACKUP: a backup beside the live config other than `<file>.bak-<nnnn>` (NO-DATE, New-KitId bak -Number; the old dated
-    `.bak-<yyyyMMdd-HHmmss>` passes one version)."""
+    """NAME-BACKUP: a backup beside the live config other than `<file>.bak` (latest) / `<file>.bak.prev` (Get-KitBakName, owner
+    2026-11-24: no counter, no date; the old `.bak-<nnnn>` / `.bak-<yyyyMMdd-HHmmss>` pass)."""
     out = []
     for base in {k.dir, main_clone(k.dir)}:
         for d in sorted(os.listdir(osp.join(base, 'skills'))) if osp.isdir(osp.join(base, 'skills')) else []:
             sd = osp.join(base, 'skills', d)
-            out += [('NAME-BACKUP', f'skills/{d}/{n}', 'one backup form, <file>.bak-<nnnn> (New-KitId bak -Number); or move it to .state/backups/')
-                    for n in sorted(os.listdir(sd)) if BAK_RX.search(n) and not re.search(r'\.bak-(?:\d{4}|\d{8}-\d{6})$', n) and osp.isfile(osp.join(sd, n))]
+            out += [('NAME-BACKUP', f'skills/{d}/{n}', 'one backup form, <file>.bak + <file>.bak.prev (Get-KitBakName); or move it to .state/backups/')
+                    for n in sorted(os.listdir(sd)) if BAK_RX.search(n) and not re.search(r'\.bak(?:\.prev|-\d{4,}|-\d{8}-\d{6})?$', n) and osp.isfile(osp.join(sd, n))]
     return out
 
 
 COMMANDS = {'naming': cmd_naming}
-ARGS = {'naming': ({'--json', '--help'}, {'--plan', '--have'}, False)}
+ARGS = {'naming': ({'--json', '--help'}, {'--plan', '--have', '--dir', '--cap'}, False)}

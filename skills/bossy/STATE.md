@@ -9,7 +9,7 @@ supervise: BAD = WATCH).
   `holder`; read-modify-write inside `Invoke-KitLocked` / `locked()` on that file. Log lines: kitlog only.
 - **Reads:** `Read-KitState` / `state_read`: `$null` / `None` when missing or broken, never throws; unknown fields kept.
 - **Times:** `Get-KitStamp` / `kit_stamp` (stored UTC ISO ms, shown `yyyy-MM-dd HH:mm`), never in a name; readers accept older forms.
-- **Ids:** stable, file-safe; task = tracker id; a new id kind: `kitbag.py naming next id <kind>` (`<kind>-<nnnn>`, no date).
+- **Ids:** stable, file-safe; task = tracker id; names: `kitbag.py naming next name <kind> <topic>` (<= 12 chars, tie -2).
 - **Format:** JSON for scripts; markdown only for people.
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
   Deleting state in use: the owner decides.

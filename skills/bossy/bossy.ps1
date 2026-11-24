@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L252 budget · L282 launch · L525 recover · L612 pause · L623 resume · L690 program · L718 param ·
-  L724 track · L1113 supervise · L1460 report · L1540 audit · L1600 storage · L1603 bugbrief · L1605 cleanup · L1692 learn ·
-  L1730 decide · L1900 debate · L1944 health · L2012 setup · L2107 guard-sendmessage
+Sections: L40 init · L51 board · L255 budget · L285 launch · L528 recover · L615 pause · L626 resume · L693 program · L721 param ·
+  L727 track · L1116 supervise · L1463 report · L1543 audit · L1603 storage · L1606 bugbrief · L1608 cleanup · L1695 learn ·
+  L1733 decide · L1903 debate · L1947 health · L2015 setup · L2110 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -62,11 +62,14 @@ function Set-KitBoardCrashed {
 function Get-KitCheckpoint([string]$Agent, [string]$Run = '') { $f = Get-KitCheckpointFile $Agent $Run; if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch {} } }
 function Get-KitResumeBriefFile([string]$Agent, [string]$Run = '') { (Get-KitCheckpointFile $Agent $Run) -replace '\.json$', '-brief.md' }   # resume.json -> resume-brief.md
 function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and (Test-KitPauseCovers $_ $Run) } | Sort-Object { [datetime]$_.at })[-1] }
-# N3 agent ids <role>-<nn>: one counter per role in .state naming.json (kitbag_naming.py's file, same lock), never reused (an old
-# holder's inbox); $Legacy (the old <role>-<run> form) -> aliases, read by msg -To for one version
-function New-KitAgentId([string]$Type, [string]$Legacy = '') { $f = Get-KitPath naming -Create
+# agent ids (owner 2026-11-24): <role>-<area or item> <= 16 chars (devy-ask-prompts; tie -2); else, or the area repeats the
+# role (kitty / kit): <role>-<n>, one counter per role (never reused: an old inbox); $Legacy -> aliases (msg -To)
+function New-KitAgentId([string]$Type, [string]$Legacy = '', [string]$Area = '', [string[]]$Items = @()) { $f = Get-KitPath naming -Create; $role = $Type.ToLower()
+  $ar = ("$Area" -replace '^(?i)area-', '').ToLower().Trim(); $topic = if ($ar -match '[a-z0-9]' -and $role -notlike "$ar*") { $ar } else { "$(@(Split-KitList $Items)[0])".ToLower().Trim() }
+  $named = if ($topic -match '[a-z0-9]') { New-KitName $role $topic -Cap 16 }
   $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' } | ForEach-Object { "$($_.agent)" })   # never a live id
-  Invoke-KitLocked $f { $x = Read-KitState $f; if ($x -isnot [Collections.IDictionary]) { $x = @{} }; $k = "agent:$($Type.ToLower())"; do { $x[$k] = 1 + [int]$x[$k]; $id = '{0}-{1:00}' -f $Type.ToLower(), $x[$k] } while ($id -in $live -and $x[$k] -lt 999)
+  Invoke-KitLocked $f { $x = Read-KitState $f; if ($x -isnot [Collections.IDictionary]) { $x = @{} }; $k = "agent:$role"; $id = $named
+    while (-not $id -or ($id -in $live -and -not $named -and $x[$k] -lt 999)) { $x[$k] = 1 + [int]$x[$k]; $id = "$role-$($x[$k])" }
     if ($Legacy) { if ($x.aliases -isnot [Collections.IDictionary]) { $x.aliases = @{} }; if (-not $x.aliases[$Legacy]) { $x.aliases[$Legacy] = $id } }; Write-KitState $f $x; $id } }   # the run's first of its role keeps the old name
 function Resolve-KitAgentAlias([string]$Id) { $a = (Read-KitState (Get-KitPath naming)).aliases; if ($a -is [Collections.IDictionary] -and $a[$Id]) { $a[$Id] } else { $Id } }
 function Invoke-Board {
@@ -109,7 +112,7 @@ function Warnings($me, $act) {
 function Print($act) {
   if (-not $act) { 'board: no other active agents'; return }
   'board (active agents):'
-  # N3 (owner 2026-11-23): a run line '<run id> · <KEY> <short title>', its agents '<role>-<nn> · <area>'
+  # N3 (owner 2026-11-23): a run line '<run id> · <KEY> <short title>', its agents '<agent id> · <area>' (Get-KitAgentLabel)
   foreach ($g in @($act | Group-Object { "$($_.run)" } | Sort-Object Name)) { if ($g.Name) { $rt = Get-KitRunTitle $g.Name (@($g.Group | ForEach-Object { "$($_.subject)" } | Where-Object { $_ }))[0]; "  run $rt$(if ($rt -ne $g.Name) { " ($($g.Name))" })" }
   $g.Group | Sort-Object agent | ForEach-Object { $task = "$($_.items)"; $cl = (@($_.worktrees | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf }) -join ',')
     '    {0,-24} {1,-8} {2,-30} {3,-22} {4} | beat {5}{6}' -f (Get-KitAgentLabel ([pscustomobject]@{ n = $_.agent; ar = $_.area; sub = $_.type })), "$(if ($_.holderPid) { "s$($_.holderPid)" })", $task.Substring(0, [math]::Min(30, $task.Length)), $cl.Substring(0, [math]::Min(22, $cl.Length)), $_.status, ([datetime]$_.beat).ToString('HH:mm'), $(if ($_.budget) { " | spend $([int]($_.spend / 1000))k/$([int]($_.budget / 1000))k" }) } }
@@ -119,11 +122,11 @@ switch ($Action) {
   'join' {
     if (-not ($Agent -or $Type)) { 'usage: bossy.ps1 board join -Type <role> [-Run] [-Subject <words>] [-Area] [-Items] [-Claims] (-Agent <id>: legacy)'; exit 2 }
     $notes = @()
-    # N3: <role>-<nn>, given here only; the same run + area keeps it
+    # given here only; the same run + area keeps it
     $auto = $Type -and $Type -ne 'coordinator' -and $Agent -in @($null, '', $Type)   # one coordinator per session: its role is its name
     # a legacy row (area id or <type>-<run>) keeps its id
-    if ($auto) { $Agent = @(All | Where-Object { $Run -and $Area -and $_.type -eq $Type -and $_.run -eq $Run -and $_.area -eq $Area -and ($_.agent -match '^[a-z]+-\d{2,}$' -or $_.agent -in @($Area, "$Type-$Run")) } | Sort-Object { [datetime]$_.joined })[-1].agent
-      if (-not $Agent) { $Agent = New-KitAgentId $Type $(if ($Run) { "$Type-$Run" }) }; $notes += "RUN-ID: you are $Agent (checkpoint, inbox: -Agent $Agent)" }
+    if ($auto) { $Agent = @(All | Where-Object { $Run -and $Area -and $_.type -eq $Type -and $_.run -eq $Run -and $_.area -eq $Area -and ($_.agent -like "$($Type.ToLower())-*" -or $_.agent -in @($Area, "$Type-$Run")) } | Sort-Object { [datetime]$_.joined })[-1].agent
+      if (-not $Agent) { $Agent = New-KitAgentId $Type $(if ($Run) { "$Type-$Run" }) $Area $Items }; $notes += "RUN-ID: you are $Agent (checkpoint, inbox: -Agent $Agent)" }
     if (-not $Agent) { $Agent = $Type }
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
@@ -1762,7 +1765,7 @@ function Invoke-Decide {
   }
   $note = { param($file, $text) if ($file -and (Test-Path (Split-Path $file))) { Add-Content -LiteralPath $file "`n$text" -Encoding utf8 } }
   $pub = { param($t, [bool]$Named) if ($t -and -not $NoPublish -and ($Named -or (Test-Path (Get-KitTaskFile $t)))) { try { Publish-KitDecisions $t $Link } catch { Write-Warning "Decisions checklist of $t not updated (decide publish -Task $t retries): $_" } } }
-  $supIds = @(Split-KitList $Supersedes)
+  $supIds = @(Split-KitList $Supersedes | ForEach-Object { Resolve-KitIdAlias $_ $dir }); $Id = Resolve-KitIdAlias $Id $dir   # old dec-0012 too
   switch ($Action) {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Context "today: <what happens now>" -Question "<q>" -Options "A: <label> — <its effect>","B: .." -Recommend A [-Fyi] [-Contracts <file>]'; exit 2 }

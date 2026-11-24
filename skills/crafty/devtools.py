@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1534 publish · L2035 render · L2614 spec · L3156 plugins · L3170 keepboth · L3189 selftest · L3910 CLI
+  L1534 publish · L2035 render · L2622 spec · L3167 plugins · L3181 keepboth · L3200 selftest · L3921 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -2504,19 +2504,27 @@ def _oq(q):
 
 
 def wave_ids(s):
-    """N3 (naming on): agent ids -> area-<AREA> (its task key's AREA; -2, -3 for a second one), dependsOn and contract producers /
-    consumers with them; never typed by briefy. A legacy id without a keyed task stays."""
+    """Area ids say what the area covers (owner 2026-11-24): <feature>-<topic> (ask-prompts: the key's AREA code + words of the
+    agents[].area text; a tie -2), dependsOn and contract producers / consumers with them. A word id briefy typed stays; a
+    numbered area-<AREA>[-n] is refused at render (render_cmd). Naming off, or no key and no area text: the id stays."""
     if not naming_on():
         return s
-    rx, used, new = naming().patterns(naming().naming_cfg())['area'], {a['id'] for a in s['agents']}, {}
+    n, used, new = naming(), {a['id'] for a in s['agents']}, {}
+    cfg = n.naming_cfg()
     for a in s['agents']:
-        key = '' if re.match(rx, a['id']) else task_key(a.get('task') or s.get('task') or '')
-        if key:
-            base, i = f'area-{key.split("-")[1]}', 1
-            while (cand := base if i == 1 else f'{base}-{i}') in used:
-                i += 1
-            used.add(cand)
-            new[a['id']] = cand
+        if re.match(r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$', a['id']):
+            continue
+        key = task_key(a.get('task') or s.get('task') or '')
+        code = key.split('-')[1].lower() if key else ''
+        drop = {code, *re.findall(r'[a-z0-9]+', cfg['areas'].get(code.upper(), '').lower())}
+        base = '-'.join(x for x in (code, n.name_slug(a.get('area') or a.get('items') or '', drop, 1 if code else 2)) if x)
+        if not base or (not key and '-' not in base):
+            continue
+        i = 1
+        while (cand := base if i == 1 else f'{base}-{i}') in used:
+            i += 1
+        used.add(cand)
+        new[a['id']] = cand
     sub = lambda v: [sub(x) for x in v] if isinstance(v, list) else re.sub(r'[^,;\s]+', lambda m: new.get(m[0], m[0]), str(v)) if v else v
     return {**s, 'contracts': [{**c, 'producer': sub(c.get('producer')), 'consumers': sub(c.get('consumers'))} for c in s.get('contracts') or []], 'agents': [{**a, 'id': new.get(a['id'], a['id']), **({'dependsOn': [new.get(p, p) for p in a['dependsOn']]} if a.get('dependsOn') else {})}
                             for a in s['agents']]}
@@ -2596,11 +2604,11 @@ def wave_files(s, brief_path):
                      [[str(c.get(k) or '') for k in ('name', 'type', 'producer', 'consumers', 'order')] + ['yes' if c.get('compatible') else 'no'] for c in s.get('contracts') or []])
                      if s.get('contracts') else 'n/a — nothing crosses areas', '## Rule changes during the wave (newest last)', 'n/a — none yet (appended during the wave)']) + '\n'
     keep = ('id', 'items', 'area', 'paths', 'note', 'kind', 'complex', 'model', 'effort', 'dependsOn', 'migrations', 'branch', 'branches', 'debate', 'task')   # buildy's agent keys
-    if not s.get('run') and naming_on() and (n := naming()):   # naming: buildy-<YYYYMMDD>-<nn>, once per brief (a re-render keeps its args' run)
+    if not s.get('run') and naming_on() and (n := naming()):   # buildy-<brief name words> (owner 2026-11-24), once per brief (a re-render keeps its args' run)
         old = ''
         with contextlib.suppress(OSError, ValueError, AttributeError), open(f'{stem}.args.json', encoding='utf-8') as fh:
             old = json.load(fh).get('run') or ''
-        s = {**s, 'run': old or n.next_id('buildy')}
+        s = {**s, 'run': old or n.next_name('buildy', s.get('name') or '')}
     args = {'brief': brief_path.replace('\\', '/'), 'agents': [{k: a[k] for k in keep if a.get(k) not in (None, '', [], False)} for a in s['agents']],
             'mode': s.get('mode') or 'feature', 'mandate': s['mandate'], **({'task': s['task']} if s.get('task') else {}),
             **({'run': s['run']} if s.get('run') else {}),   # buildy reads `run`, never `name` (its args check refuses unknown keys)
@@ -3140,6 +3148,9 @@ def render_cmd(a):
     if a[0] == 'wave-brief' and (draft := [t for t in load_spec(a[1]).get('specs') or [] if not spec_rec(t).get('ready')]):   # Spec before build
         why = lambda t: f'retired: {r["retired"].get("reason")}' if (r := spec_rec(t)).get('retired') else 'not ready (devtools.py spec questions <task>)'
         raise SystemExit(f'wave-brief refused: spec of {"; ".join(f"{t} {why(t)}" for t in draft)}. Nothing was written.')
+    if a[0] == 'wave-brief' and (num := [x['id'] for x in load_spec(a[1]).get('agents') or [] if re.match(r'^area-[A-Za-z]{2,6}(?:-\d+)?$', str(x.get('id') or ''))]):
+        raise SystemExit(f'wave-brief refused: numbered area ids {", ".join(num)}: name each by what it covers (<feature>-<topic>: ask-prompts, '
+                         'web-orders), or leave the id to the renderer (agents[].area words). Nothing was written.')
     txt = spec_text(a[1], a[0], add=con).rstrip('\n') + '\n'
     if len(a) > 2:   # an out file: written, its path printed
         extra = wave_files(load_spec(a[1]), a[2]) if a[0] == 'wave-brief' else {}

@@ -1314,7 +1314,7 @@ if (-not ($Run -or $All)) { 'usage: bossy.ps1 pause -Run <run> | -All [-Kind all
 $board0 = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and (Test-KitHolder $_) -ne $false })
 $foreign = if ($Everyone) { @{} } else { Get-KitForeignRuns @(@(Get-StoppedRuns -Hours 24 -All) + $board0) }   # another live coordinator's runs: its own pause
 if ($Run -and $foreign[$Run]) { "OWNED: run $Run belongs to $($foreign[$Run]): pause it in that session, or add -Everyone"; exit 1 }
-$pf = Join-Path (Get-KitPath pauses -Create) "$(New-KitId pause (Get-KitPath pauses)).json"   # NO-DATE: pause-<nnnn>; the time is its at
+$pf = Join-Path (Get-KitPath pauses -Create) "$(New-KitName pause $(if ($All) { if ($Kind) { $Kind } else { 'all' } } else { $Run }) (Get-KitPath pauses)).json"   # pause-all / pause-<run>
 $rec = [ordered]@{ at = (Get-KitStamp); reason = $Reason; run = $(if ($All) { '*' } else { $Run }); kind = $Kind; state = 'pausing'; wait = $Wait; finisher = $(if ($PSBoundParameters.ContainsKey('Wait')) { $PID }); agents = @(); runs = @(); released = @($foreign.Keys) } + (Get-KitMe)
 Write-KitState $pf $rec   # from now every board beat prints PAUSE
 $mine = { param($x) ($All -or $x.run -eq $Run) -and -not $foreign["$($x.run)"] -and (Test-KitPauseCovers $rec "$($x.run)") }

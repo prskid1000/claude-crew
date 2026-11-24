@@ -13,7 +13,7 @@ if (-not $env:GIT_CONFIG_COUNT) { $env:GIT_CONFIG_COUNT = 1; $env:GIT_CONFIG_KEY
 $script:KitRoot = Split-Path (Split-Path $PSScriptRoot)
 $script:KitExample = Get-Content (Join-Path $PSScriptRoot 'kit.example.json') -Raw | ConvertFrom-Json; $script:KitPathMap = $script:KitExample._paths
 $script:KitVocab = try { Get-Content (Join-Path $PSScriptRoot 'vocab.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }   # statuses, tracker vendors, docs (devtools.py reads it too)
-# a standard run id (kitbag.py naming next id: <kind>-<nnnn>); the dated form <kind>-<YYYYMMDD>-<nn> read as an alias until the next minor version
+# an old numbered run id (<kind>-<nnnn>, dated <kind>-<YYYYMMDD>-<nn>): its record gives the title; a word id (kitbag.py naming next name) is its own
 $script:KitRunIdRx = '^[a-z]+(?:-[a-z]+)*-(?:\d{8}-\d{2,}|\d{4,})$'
 # pwsh 7 logs the full text of a script it finds suspicious (event 4104) on every load: kit scripts stay free of
 # lint-vocab.json "sbLog" words and of $o.$name members (kitbag lint SBLOG), so property access goes through these two
@@ -124,7 +124,7 @@ function Read-KitTracking([switch]$Strict) {
   }
   foreach ($g in @(Get-ChildItem -LiteralPath (Get-KitPath tasks) -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
     $x = Read-KitState $g.FullName
-    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict -and -not (Test-Path "$($g.FullName).bak-*")) { Copy-Item $g.FullName (Get-KitBakName $g.FullName); Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
+    if ($x.track -is [Collections.IDictionary] -and $x.task) { $t.tasks[$x.task] = $x.track } elseif (-not $x -and $Strict -and -not (Test-Path "$($g.FullName).bak")) { Copy-Item $g.FullName (Get-KitBakName $g.FullName); Write-Warning "tracking: $($g.FullName) unreadable (copy kept)" }
   }
   $am = (Read-KitState (Get-KitPath automerge)).refs; if ($am -is [Collections.IDictionary]) { foreach ($k in @($am.Keys)) { $t.automerge[$k] = $am[$k] } }
   $t
@@ -1576,7 +1576,7 @@ function Get-KitUtcTicks($At) { try { ([datetimeoffset]"$At").UtcTicks } catch {
 function Format-KitDecisionItems($Rows, [string]$Link, [string]$Task) {
   $ans = @($Rows | Where-Object { $_.status -eq 'answered' -and $_.answer }); $sup = @{}; $tk = @{}; foreach ($r in $ans) { $tk["$($r.id)"] = Get-KitUtcTicks $r.at }
   foreach ($r in $ans) {
-    $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+((?:dec|envfix)-\d{4,}|d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
+    $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+((?:dec|envfix)-\d+|d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
     foreach ($o in $ans) { if ($tk["$($o.id)"] -lt $tk["$($r.id)"] -and ("$($o.id)" -in $ids -or (ConvertTo-KitLetters $o.question) -eq (ConvertTo-KitLetters $r.question))) { $sup["$($o.id)"] = $r.id } }
   }
   $dup = @($Rows | Group-Object { ("$($_.id)" -split '-')[-1] } | Where-Object Count -gt 1 | ForEach-Object Name)

@@ -23,7 +23,7 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 3. **Decide** -- items paused for an owner decision or ENV-FIX resume after the answer
 4. **Review** -- a revy per devy (+ datay on migrations) + CI pipelines
    - Not reviewed, not merged (the coordinator decides) when the local test is BLOCKED, FAIL beyond env gaps, or NONE in a code area (kind not doc / spike / repro) without an owner word.
-   - NONE needs `localTest.decisionId` = `dec-<nnnn>` (older: `d-<14 digits>-<suffix>`) and `& <kit>/skills/bossy/bossy.ps1 decide check -Id <id> -Gate 'merge,scope,other' -Item '<area>,<task>,<branch>,<items>,<repo>!<iid>' -MaxHours 720` printing `WORD ` (any other output: held).
+   - NONE needs `localTest.decisionId` = `dec-<n>` (older: `dec-<nnnn>`, `d-<14 digits>-<suffix>`) and `& <kit>/skills/bossy/bossy.ps1 decide check -Id <id> -Gate 'merge,scope,other' -Item '<area>,<task>,<branch>,<items>,<repo>!<iid>' -MaxHours 720` printing `WORD ` (any other output: held).
    - One revy per area, plus datay on an area with `migrations`; an empty review blocks the merge.
 5. **Fix** -- a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; rest -> MR Follow-ups); merge in order, tracker task
    - Blocking findings or a failed pipeline -> one fix round (local loop again), re-review; still blocking after round 2 -> `decide ask` (A merge + Follow-ups / B hold), not merged; non-blocking re-review findings -> MR Follow-ups (`devtools.py followups`).

@@ -7,7 +7,7 @@ Exit codes: 0 pass · 1 a check failed.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit supervise; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $jt = pwsh @np $O board join -Type rechy -Run w8 | Out-String; $ju = pwsh @np $O board join -Run w8 2>&1 | Out-String; $juc = $LASTEXITCODE
-Expect "board join: -Type only = <role>-<nn>; neither = usage, exit 2 ($juc)" ($jt -match 'RUN-ID: you are rechy-\d{2,}' -and $jt -match 'SESSION rechy-' -and $juc -eq 2 -and $ju -match 'usage: bossy\.ps1 board join -Type')
+Expect "board join: -Type only = <role>-<n>; neither = usage, exit 2 ($juc)" ($jt -match 'RUN-ID: you are rechy-\d+' -and $jt -match 'SESSION rechy-' -and $juc -eq 2 -and $ju -match 'usage: bossy\.ps1 board join -Type')
 $pzf = Join-Path (TkPath $k pauses -Create) 'pause-zz.json'; & $J @{ at = '2026-10-23T12:34:00'; reason = 'C: full'; run = '*'; state = 'paused' } $pzf
 $pzw = pwsh -NoProfile -Command ". '$O'; (Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) @([pscustomobject]@{ run = 'rx' }) 0).what"
 $af = Join-Path (Kd) 'rx.json'; [IO.File]::WriteAllText($af, '{"brief":"C:/b/rx.md"}')

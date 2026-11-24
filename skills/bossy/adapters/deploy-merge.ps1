@@ -1,10 +1,10 @@
 #Requires -Version 7
 # Usage: dot-sourced by bossy.ps1 from adapters/. Exit codes: none here (its verbs exit through bossy.ps1).
 # deploys: bossy.ps1 deploy merge, dot-sourced by bossy.ps1.
-# Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env>-<nnnn> pushed, MR per deploy.mergeMethod, merged on green),
-# or tags it (deploys[].tag, {n} = the deploy counter; -Push pushes the tag). A deploy branch itself is never pushed to. NO-DATE: the time is in
-# the tag message and the commit, never in a ref name; old dated deploy branches still resume.
-# Sections: L8 merge · L101 mr
+# Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env> pushed, reused per env; MR per deploy.mergeMethod, merged on
+# green), or tags it (deploys[].tag, {n} = the deployed head's sha7; -Push pushes the tag). A deploy branch itself is never pushed to. Owner
+# 2026-11-24: no date or counter in a ref (the time is in the tag message and the commit); old deploy/<env>-<n> branches still resume.
+# Sections: L8 merge · L105 mr
 # ---- merge: tag or trunk, the merge in a worktree
 function Invoke-DeployMerge {
 param(
@@ -32,11 +32,12 @@ if (-not $From) {
 if ($dep.tag) {
   git -C $Repo fetch -q origin $From
   if ($LASTEXITCODE) { "fetch origin $From FAILED (exit ${LASTEXITCODE}: offline or wrong -From): no tag"; exit 1 }   # a stale origin/<From> would ship old code
-  if ("$($dep.tag)".Contains('{date}')) { Write-Warning "deploys[].tag $($dep.tag): {date} is retired (no date in a ref name): use {n}; it gives the counter now" }
-  for ($tn = 0; $tn -lt 20; $tn++) { $dn = if ("$($dep.tag)" -match '\{(n|date)\}') { New-KitId deploy -Number }; $tag = ([string]$dep.tag).Replace('{n}', $dn).Replace('{date}', $dn)
-    if (-not $dn) { break }; git -C $Repo rev-parse -q --verify "refs/tags/$tag" 2>$null | Out-Null   # a reset counter skips a taken tag, here or on origin
-    if ($LASTEXITCODE -and -not "$(git -C $Repo ls-remote --tags origin "refs/tags/$tag" 2>$null)".Trim()) { break } }
-  git -C $Repo tag -a $tag "origin/$From" -m "deploy $To $(Get-KitStamp)"; if ($LASTEXITCODE) { "tag $tag FAILED"; exit 1 }
+  if ("$($dep.tag)".Contains('{date}')) { Write-Warning "deploys[].tag $($dep.tag): {date} is retired (no date in a ref name): use {n}; it gives the sha7 now" }
+  $sha7 = "$(git -C $Repo rev-parse --short=7 "origin/$From" 2>$null)".Trim(); $tag = ([string]$dep.tag).Replace('{n}', $sha7).Replace('{date}', $sha7)   # the same head twice: the same tag
+  $had = "$(git -C $Repo rev-parse -q --verify "refs/tags/$tag^{commit}" 2>$null)".Trim()
+  if (-not $had -and "$(git -C $Repo ls-remote --tags origin "refs/tags/$tag" 2>$null)".Trim()) { git -C $Repo fetch -q origin "refs/tags/${tag}:refs/tags/$tag" 2>$null; $had = "$(git -C $Repo rev-parse -q --verify "refs/tags/$tag^{commit}" 2>$null)".Trim() }
+  if ($had -and $had -ne "$(git -C $Repo rev-parse "origin/$From")".Trim()) { "tag $tag exists on another commit: nothing tagged"; exit 1 }
+  if (-not $had) { git -C $Repo tag -a $tag "origin/$From" -m "deploy $To $(Get-KitStamp)"; if ($LASTEXITCODE) { "tag $tag FAILED"; exit 1 } }
   if (-not $Push) { "tagged ${tag}: git -C $Repo push origin $tag"; exit 0 }
   git -C $Repo push origin $tag; if ($LASTEXITCODE) { "push of $tag FAILED"; exit 1 }; "pushed $tag"; exit 0
 }
@@ -47,7 +48,7 @@ if ($To -eq $From) { "trunk: $To deploys from itself, nothing to merge (deploy r
 $bp = [string]$(if ($dep.branchPrefix) { $dep.branchPrefix } else { Get-KitSetting 'deploy.branchPrefix' 'deploy/' })
 $dmm = [string]$(if ($dep.mergeMethod) { $dep.mergeMethod } else { Get-KitSetting 'deploy.mergeMethod' 'merge' })
 $dmmText = if ($dmm -eq 'merge') { 'a merge commit, squash off' } else { "merge method $dmm" }   # the MR texts follow deploy.mergeMethod
-if ($Push) { "REFUSED: deploy merge -Push would push straight to $To (a deploy branch). It changes only through a deploy MR: re-run with -Mr (pushes $bp$envName-<nnnn>, opens the MR ($dmmText), merges on a green pipeline)."; exit 2 }
+if ($Push) { "REFUSED: deploy merge -Push would push straight to $To (a deploy branch). It changes only through a deploy MR: re-run with -Mr (pushes $bp$envName, opens the MR ($dmmText), merges on a green pipeline)."; exit 2 }
 $envSlug = $envName -replace '[^\w]+', '-'
 if ($Mr) {   # host project + adapter from the origin URL (else repos[].name and gitHostType)
   $hostRepo = Get-HostProject "$($rc.name)" -Raw; $hostType = $script:HostType
@@ -58,7 +59,7 @@ if ($Mr) {   # host project + adapter from the origin URL (else repos[].name and
   $ha = @{ repo = $hostRepo; type = $hostType }
   # a re-run after a cut wait (opsy's shell timeout, 2026-11-23 !651): the open deploy MR of this env resumes, no second branch or MR
   $listed = try { @(Invoke-HostVerb 'mr.list' ($ha + @{ state = 'opened'; target_branch = $To; per_page = 50 }) -NoMemo) } catch { "deploy merge: open deploy MRs unreadable ($($_.Exception.Message)): nothing done, run it again"; exit 1 }
-  $open = @($listed | Where-Object { $_ -and "$($_.source_branch)" -match "^$([regex]::Escape("$bp$envSlug"))-(?:\d{8}-\d{6}|\d{4,})$" -and "$($_.target_branch)" -eq $To } | Sort-Object { [long]"$($_.iid)" } -Descending)[0]   # a dated branch (old) too
+  $open = @($listed | Where-Object { $_ -and "$($_.source_branch)" -match "^$([regex]::Escape("$bp$envSlug"))(?:-(?:\d{8}-\d{6}|\d{4,}))?$" -and "$($_.target_branch)" -eq $To } | Sort-Object { [long]"$($_.iid)" } -Descending)[0]   # a dated branch (old) too
 }
 if ($open) {
   $iid = "$($open.iid)"; $br = "$($open.source_branch)"; $made = $null
@@ -68,13 +69,16 @@ if ($open) {
   "deploy MR: $url ($br -> $To; resumed: open from an earlier run)"
 } else {
 $name = 'deploymerge-' + ($To -replace '[^\w]+', '-')
-for ($bn = 0; $bn -lt 20; $bn++) { $br = "$bp$envSlug-$(New-KitId deploy -Number)"; if (-not "$(git -C $Repo ls-remote --heads origin $br 2>$null)".Trim()) { break } }   # a reset counter skips a taken branch
+# one deploy branch per env, reused (an open deploy MR on it resumed above); its old head is replaced, whatever the merge method
+$br = "$bp$envSlug"; $oldHead = ("$(git -C $Repo ls-remote --heads origin "refs/heads/$br" 2>$null)".Trim() -split "\s+")[0]
+git -C $Repo branch -D $br 2>$null | Out-Null   # a stale local copy: wt new starts from origin
 $out = & $KitCmd.dev wt new -Repo $Repo -Branch $br -Target $To -Name $name -Override 'deploy merge: a dedicated worktree'
 $wt = ($out | Where-Object { $_ -match '^worktree:\s+(.+)$' } | ForEach-Object { $Matches[1].Trim() }) | Select-Object -First 1
 if (-not $wt) { throw "crafty.ps1 wt new failed: $out" }
 "worktree: $wt"
 git -C $wt fetch -q origin $From $To
 if ($LASTEXITCODE) { "fetch origin $From $To FAILED (exit ${LASTEXITCODE}: wrong -From/-To or offline); worktree kept: $wt"; exit 1 }
+git -C $wt reset -q --hard "origin/$To"   # a reused branch restarts at $To
 $ahead = "$(git -C $wt rev-list --count "origin/$To..origin/$From")".Trim()
 if ($LASTEXITCODE -or $ahead -notmatch '^\d+$') { "rev-list origin/$To..origin/$From FAILED: '$ahead'; worktree left at $wt"; exit 1 }  # [int]'' is 0
 if ([int]$ahead -eq 0) { & $KitCmd.dev wt remove -Dir $wt -Force | Out-Null; git -C $Repo branch -D $br 2>$null | Out-Null; "nothing to merge: origin/$To has all of origin/$From (worktree removed)"; exit 0 }
@@ -98,12 +102,12 @@ $msg = $ct.Replace('{from}', $From).Replace('{to}', $To).Replace('{env}', $envNa
 & $KitCmd.dev wt commit -Dir $wt -NoStage -Message $msg
 if ($LASTEXITCODE) { "commit FAILED (hooks?) in $wt"; exit 1 }
 if ($Check) { & $KitCmd.dev check -Dir (Join-Path $wt $Check); if ($LASTEXITCODE) { "compile FAILED - not pushing"; exit 1 } }
-# ---- mr: deploy/<env>-<nnnn> pushed, the deploy MR opened (deploy.mergeMethod), merged on green
+# ---- mr: deploy/<env> pushed, the deploy MR opened (deploy.mergeMethod), merged on green
 if (-not $Mr) { "ready (nothing pushed): review $wt; the deploy MR: crafty.ps1 wt remove -Dir $wt, then the same command with -Mr"; exit 0 }
 git -C $wt fetch -q origin $To
 git -C $wt merge-base --is-ancestor "origin/$To" HEAD
 if ($LASTEXITCODE) { "origin/$To moved while merging - re-run"; exit 1 }
-git -C $wt push -q origin "HEAD:refs/heads/$br"
+git -C $wt push -q --force-with-lease="refs/heads/${br}:$oldHead" origin "HEAD:refs/heads/$br"   # only the head seen above (none: must not exist)
 if ($LASTEXITCODE) { "push of $br FAILED (exit $LASTEXITCODE): no deploy MR; worktree kept: $wt"; exit 1 }
 $refs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
 $trk = Read-KitTracking; $taskIds = @($trk.tasks.Keys | Where-Object { @(@($trk.tasks[$_].mrs) | Where-Object { $_ -in $refs }).Count } | Sort-Object)

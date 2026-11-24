@@ -358,7 +358,7 @@ const unitRan = (u) => /crafty\.ps1\W+check\b/.test(String((u || {}).command)) &
 const fallbackOk = (lt, r) => (lt.fallback !== 'unit' || unitRan(lt.unitRun)) && (((r && r.mrs) || []).length ? r.mrs.every((m) => [lt.fallback || 'ci', 'ci'].includes(repoNames(m).map((n) => CFG.local[n]).find(Boolean))) : !!Object.keys(CFG.local)[0])
 // BLOCKED, a FAIL beyond env gaps; with a: a code area's NONE, no decide id or fallback
 const noneGated = (lt, a, r) => !!a && !!lt && lt.status === 'NONE' && !['doc', 'spike', 'repro'].includes(a.kind) && !fallbackOk(lt, r)
-const holdsMerge = (lt, a, r) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap) || (noneGated(lt, a, r) && !/^(?:dec-\d{4,}|d-\d{14}-[\w-]+)$/.test(lt.decisionId)))
+const holdsMerge = (lt, a, r) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap) || (noneGated(lt, a, r) && !/^(?:dec-\d+|d-\d{14}-[\w-]+)$/.test(lt.decisionId)))
 // NONE: a person's merge / scope / other word on this area
 async function noneWordOk(a, r, id) {
  const its = [a.id, a.task, AREA_TASK[a.id], a.branch, ...[].concat(a.branches || []), ...String(a.items).split(','), ...r.mrs.flatMap((x) => repoNames(x).map((n) => `${n}!${(/(\d+)\/?$/.exec(nu(x.url)) || [])[1]}`))]
