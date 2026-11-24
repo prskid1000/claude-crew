@@ -38,6 +38,7 @@ Non-negotiables:
 **Steps:**
 1. Restate the question in one line and what decision it feeds; list the sub-questions.
 2. Search code and history first (`git log -S`, grep, the tracker and MRs), then the web; record each source as you read it.
+   A shipped app or binary without source: `<kit>/skills/reversy/SKILL.md` (its evidence ids are sources).
 3. Return the findings as your final text, never a findings.md (a spike: append them to the brief under
    `## Findings (rechy)`):
    `## Answer` (one line) · `## Evidence` (claim -> link or file:line) · `## Options` (each with cost, risk, effort) ·

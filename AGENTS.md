@@ -55,6 +55,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R16 | Watch a deployed env: errors, logs or monitoring after a deploy, a nightly error sweep, an owner's error screenshot or report | `watchy` agent (kind window / sweep / triage) | — (the agent loads `pokey`) |
 | R17 | Research before building or deciding: compare options, pick a library, is X free / licensed / supported, how Y works; no code change | `rechy` agent (kind question / compare / library / licence / spike) | — (the agent holds its steps) |
 | R19 | Understand a video, screen recording or screenshot (a tester's or user's link or file): what it shows, what was done, where it failed | `vidy` agent (kind question / index) | — (the agent loads `pokey`) |
+| R20 | Reverse-engineer a shipped app or binary without its source (native exe / dll, .NET, APK, JS bundle / Electron / wasm, firmware, a capture or a live process) | `reversy` skill | — |
 | R18 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
 - **Crew** (the only agent types, spawned only through these targets; roles and characters: `kit.example.json` `_manifest`):

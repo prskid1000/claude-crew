@@ -73,7 +73,12 @@ Expect 'kit scratch (python): importing kitbag sends tempfile.* to <runtime>/tmp
 $osT = [IO.Path]::GetTempPath()   # the harness's own temp stands in for the OS temp
 foreach ($p in @("$(TkPath $k tmp -Create)/kit-1-old.tmp", "$osT/kit-legacy-z/a.txt", "$osT/kit-legacy-z", "$osT/claude-build-gate")) { if (-not (Test-Path $p)) { New-Item -Force -ItemType $(if ($p -match '\.\w+$') { 'File' } else { 'Directory' }) $p | Out-Null }; (Get-Item $p).LastWriteTime = (Get-Date).AddDays(-2) }
 New-Item -Force -ItemType Directory "$osT/kit-fresh-z" | Out-Null
+# <runtime>/tools (reversy engines, GBs): in the layout, no retention: never pruned however old; an unknown root entry is
+$tlOld = @("$(TkPath $k tools -Create)/ghidra_9_PUBLIC/support/x.bat", "$(TkPath $k runtime)/zz-unknown-dir")
+foreach ($p in $tlOld) { New-Item -Force -ItemType $(if ($p -match '\.\w+$') { 'File' } else { 'Directory' }) $p | Out-Null }
+foreach ($p in @($tlOld[0], (Split-Path $tlOld[0]), (Split-Path (Split-Path $tlOld[0])), (TkPath $k tools), $tlOld[1])) { (Get-Item $p).LastWriteTime = (Get-Date).AddDays(-60) }
 $cd = pwsh @np $O cleanup -DryRun -WorktreeRoot (Join-Path (Kd) 'no-wt') 2>&1 | Out-String
+Expect 'cleanup: <runtime>/tools is never pruned (60 days old); an unknown runtime-root entry is' ($cd -notmatch 'tools[\\/]|ghidra_9' -and $cd -match 'zz-unknown-dir')
 Expect 'cleanup: kit scratch (<runtime>/tmp) ages out at 24 h; the OS temp only loses kit leftovers idle 24 h (kit-*, the old gate ledger)' ($cd -match '1 x\s+tmp > 24 h .*kit-1-old\.tmp' -and
   $cd -match '2 x\s+kit leftover in the OS temp \(legacy\)')   # kit-legacy-z + claude-build-gate; kit-fresh-z and the fresh test kit stay
 # file locks (lib.ps1 Invoke-KitLocked, kitbag.py locked): old holders waited for, a free lock taken at once, python <-> PowerShell

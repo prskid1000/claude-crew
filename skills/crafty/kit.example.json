@@ -76,6 +76,7 @@
  "devices": { "type": "none" },
  "kitAudit": { "_readme": "everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off).", "everyDays": 7 },
  "build": { "_readme": "mavenOffline: Maven -o when ~/.m2/repository exists (default false).", "mavenOffline": false },
+ "reverse": { "_readme": "toolsDir: the reversy engines (Ghidra, JADX, apktool, ilspycmd, WABT, frida, ...); default <runtime>/tools, never pruned by cleanup; relative = from the kit.", "toolsDir": "" },
  "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}." },
  "supervise": { "ramActPct": 90, "minDiskFreeGB": 30,"briefSeconds": 40, "heartbeatMinutes": 15, "finishedMinutes": 30 },
  "storage": { "_readme": "storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (>= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop >= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: <id> <GB> <s> <query>; db.kill {id}; db.maxGB. TODO-PARAM.",
@@ -155,13 +156,13 @@
     "character": { "traits": "frame-by-frame witness", "bias": "the screen beats the narration", "catchphrase": "Which frame shows it?", "never": "paraphrases text or claims an unseen step" } }
   },
   "toolSets": { "crew": "Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch" },
-  "skills": ["crafty", "bossy", "pokey", "envy", "phoney"],
+  "skills": ["crafty", "bossy", "pokey", "envy", "phoney", "reversy"],
   "workflows": {
    "buildy": { "covers": "any multi-item build: features, fixes, refactors, migrations, bug waves, resume, disputes, debates", "crew": ["rechy", "devy", "revy", "datay", "kitty"], "router": "R5" },
    "testy": { "covers": "any test run: tracker selection, smoke after a deploy, regression sweep, retest, on local or a test env", "crew": ["checky", "kitty"], "router": "R8" },
    "tidy": { "covers": "kit upkeep in 2-5 min: `bossy.ps1 tidy prep` (digest of signals and task outcomes, standing-rule asks from repeated owner answers, upkeep; no LLM), then one kitty: lessons + rule updates", "crew": ["kitty"], "router": "R4" }
   },
-  "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R19", "R18"],
+  "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R19", "R20", "R18"],
   "events": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14", "E15"],
    "ram": { "_readme": "supervise RAM categories by process name (no .exe), after the kit process trees (kit), then windowsPath (exe path); the rest: unknown; RAM no process owns: windows. supervise.ramNames overrides per key", "kit": "^(claude|codex|antigravity)$",
    "windows": "^(System|Registry|Idle|Secure System|smss|csrss|wininit|winlogon|services|lsass|LsaIso|svchost|dwm|fontdrvhost|Memory Compression|MsMpEng|Search\\w+|spoolsv|WmiPrvSE|RuntimeBroker|sihost|taskhostw|ctfmon|explorer|\\w*Host|audiodg|conhost|dllhost|NVIDIA.*|nv\\w+|tailscaled?|Intel.*)$",
@@ -170,7 +171,7 @@
     "servers": "^(sqlservr|postgres|mysqld|mariadbd|redis-server|memurai|mongod|elasticsearch|rabbitmq.*|erl|nginx|httpd|w3wp)$",
     "vms": "^(vmmem.*|vmwp|vmcompute|wsl.*|wslservice|VirtualBox.*|VBox.*|vmware.*|com\\.docker.*|docker.*|qemu.*)$",
     "windowsPath": "(?i)^[a-z]:\\\\Windows\\\\|\\\\DriverStore\\\\|\\\\Program Files( \\(x86\\))?\\\\(Microsoft|Windows|Intel|Lenovo|Realtek|NVIDIA|Common Files)\\\\" },
-  "caps": { "content": 30, "plumbing": 9 },
+  "caps": { "content": 31, "plumbing": 9 },
   "flows": { "_readme": "README flow-<name> graphs (kitbag.py flow --readme): [from, edge label, to] per edge.",
    "context": [["transcripts", "usage pass", "usage.ps1"], ["usage.ps1", "live agent", "WATCH"], ["usage.ps1", "2+ agents", "ACT"],
     ["usage.ps1", "ended starts", "startNorm"], ["WATCH", "past peakWatch", "handoff at 80%"], ["ACT", "coordinator", "kitty fix at the source"]] },
@@ -224,7 +225,7 @@
    "retros": "logs/retros/", "kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
    "localenv-logs": "logs/localenv/",
    "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt", "tracker-statuses": "cache/tracker-statuses/",
-   "tmp": "tmp/", "build-gate": "work/build-gate/", "port-runs": "work/port-runs/"
+   "tmp": "tmp/", "build-gate": "work/build-gate/", "port-runs": "work/port-runs/", "tools": "tools/"
   },
   "durable": {
    "signals": "learning.jsonl", "last-retro": "learning.stamp", "last-kitty-audit": "kitty-audit.stamp",

@@ -321,6 +321,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `memory` | {"keepDefault": false} | false = auto memory off (settings.json); true = on (settings.local.json). |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
 | `build` | {"mavenOffline": false} | mavenOffline: Maven -o when ~/.m2/repository exists (default false). |
+| `reverse` | {"toolsDir": ""} | toolsDir: the reversy engines (Ghidra, JADX, apktool, ilspycmd, WABT, frida, ...); default &lt;runtime&gt;/tools, never pruned by cleanup; relative = from the kit. |
 | `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
 | `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (&gt;= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop &gt;= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: &lt;id&gt; &lt;GB&gt; &lt;s&gt; &lt;query&gt;; db.kill {id}; db.maxGB. TODO-PARAM. |
 | `watch` | {"windows": ["15m", "2h", "24h"], "rising": {"factor": 3, "hits": 10}} | watchy after a deploy: windows = one-shot timers (default 15m, 2h, 24h; bossy E15); rising = a signature at factor x its baseline and at least hits (default 3, 10) |
@@ -390,7 +391,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 9975 · tests 9000 · start per role 12000 · files:30 content + 9 plumbing
+always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 9975 · tests 9000 · start per role 12000 · files:31 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: in `tests/`, shared setup in `tests/harness.ps1`; a case name
@@ -421,6 +422,7 @@ flowchart LR
   skills_envy_SKILL_md["envy"]
   skills_phoney_SKILL_md["phoney"]
   skills_pokey_SKILL_md["pokey"]
+  skills_reversy_SKILL_md["reversy"]
   workflows_buildy_js[/"buildy"/]
   workflows_testy_js[/"testy"/]
   workflows_tidy_js[/"tidy"/]
@@ -439,6 +441,7 @@ flowchart LR
   AGENTS_md --> skills_envy_SKILL_md
   AGENTS_md --> skills_phoney_SKILL_md
   AGENTS_md --> skills_pokey_SKILL_md
+  AGENTS_md --> skills_reversy_SKILL_md
   AGENTS_md --> workflows_buildy_js
   AGENTS_md --> workflows_testy_js
   AGENTS_md --> workflows_tidy_js
@@ -609,5 +612,21 @@ flowchart LR
   skills_phoney_SKILL_md -->|"dot-sourced by phoney.ps1: app.kind presets,…"| skills_phoney_adapters_app_kinds_ps1["app-kinds.ps1"]
   skills_phoney_SKILL_md -->|"dot-sourced by phoney.ps1: app.kind presets,…"| skills_phoney_adapters_arrange_ps1["arrange.ps1"]
   skills_phoney_SKILL_md -->|"devices.type: ios: phoney.ps1 forwards its…"| skills_phoney_swarm_ios_ps1["swarm-ios.ps1"]
+```
+<!-- kit-graph:end -->
+
+<!-- kit-graph:start skill-reversy -->
+```mermaid
+flowchart LR
+  skills_reversy_SKILL_md["reversy"]
+  skills_reversy_SKILL_md -->|"step 0: bossy.ps1 learn -Read -Skill reversy"| LESSONS_md["LESSONS.md"]
+  skills_reversy_SKILL_md -->|"steps 1-3: the entry (--help per verb)"| skills_reversy_reversy_py["reversy.py"]
+  skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_lib_py["lib.py"]
+  skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_binary_py["binary.py"]
+  skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_managed_py["managed.py"]
+  skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_android_py["android.py"]
+  skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_web_py["web.py"]
+  skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_firmware_py["firmware.py"]
+  skills_reversy_SKILL_md -->|"imported by reversy.py (nothing to study)"| skills_reversy_runtime_py["runtime.py"]
 ```
 <!-- kit-graph:end -->
