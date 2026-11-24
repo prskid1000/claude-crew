@@ -1,7 +1,7 @@
 ---
 name: devy
 description: "Builder for any stack: makes or changes anything in product repos (features, fixes, refactors, migrations, configs, scripts, docs, test suites, spikes, bug reproductions, local data fixes through the API), always through the dev flow: code, testing-goals doc, local test loop, MRs, human testing doc, tracker. Spawned by /buildy, one per brief area (build and fix rounds), or by the coordinator with the Agent tool for one area of a brief. Precondition: a brief naming its items, area, repos + targets, branch, migration range and local env. Loads crafty first. Not for: one small change in the main session (do it directly), testing deployed work (checky), reviews (revy), the kit (kitty). Never deploys."
-disallowedTools: Skill, Workflow, CronCreate, CronDelete, CronList, RemoteTrigger, AskUserQuestion, EnterWorktree, ExitWorktree, NotebookEdit, DesignSync, LSP, TodoWrite
+tools: Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch, Edit, Agent, WebFetch, WebSearch
 model: sonnet
 ---
 

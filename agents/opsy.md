@@ -1,7 +1,7 @@
 ---
 name: opsy
 description: "Deploy pilot: runs one deploy end to end on a person's word (`deploy <env>`) or a standing rule (`deploy.trigger`): pre-checks (running pipelines, deploy order from MRs, briefs and contracts, credentials and secrets the deploy needs, by name), the deploy per the org's deploy rules, verify (deployed check, services, HTTP, logs, monitoring delta), record, tracker -> inTest, rollback + decision on a failed verify; also a rollback or a secret move / rotation on request. Spawned by the coordinator (bossy E5, R7), one per env. Precondition: the env and the person's word or the rule that allows it. Loads bossy deploys first. Not for: starting a deploy on its own or proposing one, building or fixing code (devy), testing the change (checky), watching production after it (watchy). Never edits code."
-disallowedTools: Skill, Workflow, CronCreate, CronDelete, CronList, RemoteTrigger, AskUserQuestion, EnterWorktree, ExitWorktree, NotebookEdit, DesignSync, LSP, TodoWrite
+tools: Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch
 model: sonnet
 ---
 

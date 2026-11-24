@@ -16,6 +16,7 @@ Expect 'ports: workspace skill links, org rules always-on (split under 24 KB) + 
 Expect "ports.targets: every transition (both/codex/antigravity/none) keeps the chosen copies, removes only kit-written ones ($($res -match '^ports-targets:'))" ($res -contains 'ports-targets:True []')
 Expect 'ports.targets: deselected folder gone when empty or clutter only, kept + listed with an authored file; clutter override; old copies by manifest' ($res -contains 'ports-folders:True True True True')
 Expect 'ports: run_workflow bridge runs the .js; agent() -> agentType, role, workspace inherit, haiku -> flash; a failed agent = null' ($res -contains 'ports-workflow:True')
+Expect "ports: crew tool allowlists: toolSets expand, grants only in the installed kit, filter clean strips / smudge adds them, step tool names, MCP servers no role grants ($($res -match '^ports-tools:'))" ($res -contains 'ports-tools:True True True True True')
 Expect 'ports: owner decisions: blocking -> request_user_input (Codex Plan mode) / ask_question when listed, else text; FYI list' ($res -contains 'ports-ask:True')
 Expect 'ports: agy runner phase / effort opts; its journal: launched, started + result per agent, done on success, finished on a failure' ($res -contains 'ports-journal:True')
 Expect "ports: Codex docs carry the gates (anchors in the .js), approval never + network, workspace-write agents, test-login rules ($($res -match '^ports-codex:'))" ($res -contains 'ports-codex:True True True True')
@@ -41,4 +42,18 @@ $pt = & $py -X utf8 $kbp port 2>&1 | Out-String; $pc = $LASTEXITCODE
 $ck = & $py -X utf8 $kbp port --check 2>&1 | Out-String; $cc = $LASTEXITCODE
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 Expect "ports: port, then port --check is clean (idempotent, byte-stable) on a kit copy; $main (exit $pc/$cc $($ck.Trim()) $(if ($pc) { $pt.Trim() }))" ($pc -eq 0 -and $cc -eq 0)
+# the kittools git filter in a real repo: port --deploy renders a grant, commits and checkouts keep the manifest line, status clean
+$k = New-TestKit 'tools-git'; $tg = Join-Path (Kd) 'tg/ws/.claude'
+foreach ($sub in 'skills/bossy', 'skills/crafty', 'agents') { New-Item -ItemType Directory -Force (Join-Path $tg $sub) | Out-Null }
+Copy-Item (Join-Path $src 'skills/bossy/*.py'), (Join-Path $src 'skills/bossy/*.json') (Join-Path $tg 'skills/bossy/'); Copy-Item (Join-Path $src 'skills/crafty/kit.example.json') (Join-Path $tg 'skills/crafty/')
+Copy-Item (Join-Path $src 'agents/devy.md') (Join-Path $tg 'agents/'); Copy-Item (Join-Path $src '.gitattributes') $tg
+Set-Content (Join-Path $tg 'AGENTS.md') 'x'; Set-Content (Join-Path $tg '.gitignore') "*.local.*`n.runtime/`n.state/`n__pycache__/"
+git -C $tg init -q -b main; git -C $tg add -A; git -C $tg -c user.email=t@t -c user.name=t commit -qm init
+Set-Content (Join-Path $tg 'skills/crafty/kit.local.json') '{"tools": {"roles": {"devy": ["mcp__db"]}}}'
+& $py -X utf8 (Join-Path $tg 'skills/bossy/kitbag.py') port --deploy *>&1 | Out-Null
+$tgLine = { @(Get-Content (Join-Path $tg 'agents/devy.md') | Where-Object { $_ -like 'tools:*' })[0] }
+$tgR = & $tgLine; $tgS = "$(git -C $tg status --porcelain)"; $tgC = @(git -C $tg show HEAD:agents/devy.md | Where-Object { $_ -like 'tools:*' })[0]
+Remove-Item (Join-Path $tg 'agents/devy.md'); git -C $tg checkout -- agents/devy.md; $tgO = & $tgLine; $tgS += "$(git -C $tg status --porcelain)"
+Expect "ports: kittools filter: grant rendered + checked out ($tgO), never committed ($tgC), status clean [$tgS]" ($tgR -like '*, mcp__db' -and $tgO -eq $tgR -and $tgC -notlike '*mcp__db*' -and -not $tgS)
+Remove-TestKit $k
 Complete-Tests

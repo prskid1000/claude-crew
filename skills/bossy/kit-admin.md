@@ -37,8 +37,8 @@ adapter (tracker, git host, ci, report, auth kind) sits in its skill's `adapters
   without `--open` / `-Open`.
 - **Skill** [SKILL-DESC, SKILL-BLOCK, FILES-*]: `description: "Load when: ... Not when: ... -> <sibling>."`; blocks Load when,
   Not when, Hands off to, Files (each file with its step), steps, Rules, Learn.
-- **Agent** [AGENT-SPAWN, AGENT-SKILL]: description with "Spawned by", "Precondition", "Not for"; `tools` only without MCP needs;
-  body: Character, Kind, Load first, non-negotiables (incl. Budget), the `STEP:` rule, report shape, self-improvement.
+- **Agent** [AGENT-SPAWN, AGENT-SKILL, TOOLS-SCOPE]: description with "Spawned by", "Precondition", "Not for"; `tools`: the
+  `_manifest` allowlist; body: Character, Kind, Load first, non-negotiables (+ Budget), `STEP:` rule, report, self-improvement.
 - **Workflow** [WF-WHEN, WF-CLOCK, WF-CRLF]: `whenToUse` = its router row; every arg in the header; no clock calls; LF; plan +
   budget gate (README "Configuration" `budget`); ends with Learn + cleanup; check with `node --check` and `cost --steps`.
 - **Rule**: always-loaded only for short hard rules; else `paths:` front matter (README "Rule examples"). **Text** [PROSE]: a row

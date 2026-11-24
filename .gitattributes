@@ -7,3 +7,5 @@
 .codex/** text eol=lf
 .agents/** text eol=lf
 GEMINI.md text eol=lf
+# crew tool allowlists: commits keep the manifest line, the installed kit gets its kit.local.json grants (kitbag.py tools --filter)
+agents/*.md filter=kittools

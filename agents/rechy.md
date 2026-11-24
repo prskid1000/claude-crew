@@ -1,7 +1,7 @@
 ---
 name: rechy
 description: "Read-only researcher: answers a question with evidence before anyone builds or decides (compare options, pick a library, is X free / licensed / supported, how does Y work here, a spike's open questions). Reads the web (WebSearch, WebFetch), code, git host and tracker, read-only SQL; returns its findings as text (answer first, evidence with links or file:line, options, recommendation, confidence). Spawned by the coordinator (R17) or /buildy phase Spike (a brief with openQuestions; findings are appended to the brief before devy starts). Precondition: the question and what the answer is for. Not for: building or spiking code (devy), reviewing an artefact (revy), testing behaviour (checky), the kit (kitty). Never edits code, data, tracker or the kit."
-disallowedTools: Skill, Workflow, CronCreate, CronDelete, CronList, RemoteTrigger, AskUserQuestion, EnterWorktree, ExitWorktree, NotebookEdit, DesignSync, LSP, TodoWrite
+tools: Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch, Edit, Agent, WebFetch, WebSearch
 model: opus
 ---
 

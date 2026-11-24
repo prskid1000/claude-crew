@@ -189,7 +189,7 @@ them (`none` removes the kit-written copies; unset keeps an earlier deploy). Sta
 (`run_workflow` on `.agents/kit-workflows/<name>.py`, journal in `<runtime>/work/port-runs/`); Codex follows
 `.codex/workflows/*.md` by hand (each phase with the engine's gates). Codex config: `approval_policy = "never"`, workspace-write
 with network (trusted project; Windows: `~/.codex/config.toml` `[windows] sandbox`). Not ported: the SendMessage guard, the guard on non-shell
-edits, per-agent tool lists (all tools load, Codex agents workspace-write; the guard covers both),
+edits, per-agent tool / MCP lists (all load, Codex agents workspace-write; the guard covers both),
 Artifacts, the CronList check (heartbeat: agy `schedule`, Codex `bossy.ps1 heartbeat`), Codex blocking questions outside Plan
 mode, Codex run journals (Runs band, stuck checks, `recover`: Claude Code + Antigravity), the Monitor / background-shell check
 (reads Claude transcripts). Test logins: Claude's Read deny, the guard (shell), an agy always-on rule, Codex `kit.rules`
@@ -327,6 +327,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `pool` | {"size": 10} | Worktree pool: size = slots per repo (default 10; repos[].poolSize per repo, 0 = no pool: wt new), created on lease, never deleted; warm = free slots kept made (default 2; repos[].poolWarm); sync.everyMinutes (60): supervise runs wt pool -Sync (fetch, fast-forward, prune, idle slots at origin/&lt;target&gt;); names: the n-th member of every pool (slot, env lane, phone lane); wipRestore: [globs] tracked files a test run rewrites, restored on release (no WIP commit) |
 | `params` | {"learning": "on", "shadowDays": 14} | Tunables (param show; keys: params.registry.json) learn both ways per machine (.state/params.json) within default/4..x4: a failure (timeout, OOM, short: holder back past grace, handoff, 2+ new ACTs a sweep) steps safe next use (x1.5 or the need); risky steps &lt;= 10%/day after 5 new samples, none 7 d after a failure; shadowDays: shown, then used; past 2x default: param approve (owner). kit.local.json value = pin; learning on / shadow / off. |
 | `budget` | {"window": 200000, "agentCap": {"_readme": "the kit's own handoff… | Budget = an agent tool's compaction point: handoff at handoffAt x it or a step &gt; stepHours (0: off); run cap = planned budgets: estimate &gt; runStopAt x cap refused (split), at it no new item; defaults.&lt;tool&gt;: its compaction point; models: claude id -&gt; row; estimate per agent, item |
+| `tools` | {"roles": {}, "mainOnly": []} | coordinator: every tool; crew: _manifest.agents.&lt;role&gt;.tools + roles.&lt;role&gt; grants (["mcp__&lt;server&gt;"], port renders them); a server no role grants: health line (mainOnly: quiet). A disabled server for one task: the owner enables it (/mcp), grants a role, then reverts both |
 <!-- kit-graph:end -->
 Env vars: `CLAUDE_RUNTIME`, `CLAUDE_WT_ROOT`, `CLAUDE_AGENT`, `CLAUDE_GATE_KEEP_FREE_GB`, `KIT_TRACKER_TYPE`, `KIT_TRACKER_DRYRUN`,
 `KIT_REPORT_TYPE`, `KIT_NET_TIMEOUT_SEC` / `KIT_NET_TRIES` / `KIT_NO_OUTBOX`, `CHROME_PATH`; adapters name theirs (file header).

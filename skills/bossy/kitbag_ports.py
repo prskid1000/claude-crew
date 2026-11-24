@@ -11,9 +11,10 @@ deployed targets; a deselected one's kit-written copies are removed (its folder 
 the files (bossy.ps1 health, prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py
 loads this file and shares its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L37 characters · L72 agents · L122 hooks · L183 workflows · L413 mechanics · L447 deploy · L497 targets · L710 command
+Sections: L38 characters · L73 tools · L194 agents · L248 hooks · L309 workflows · L539 mechanics · L573 deploy · L623 targets ·
+  L836 command
 """
-import base64, contextlib, fnmatch, hashlib, io, json, os, re, shutil, tempfile
+import base64, contextlib, fnmatch, hashlib, io, json, os, re, shutil, sys, tempfile
 from pathlib import Path
 
 # Ports are written under KIT (this file's kit, pushed); port_deploy writes them to WORKSPACE, where codex / agy look.
@@ -69,6 +70,127 @@ def write_characters(kit=None):
     if n:
         print(f'Character blocks written from the manifest: {n}')
 
+# ---- tools: crew allowlists into agents/*.md (role_tools in kitbag.py); the git filter keeps grants out of commits
+FILTER = 'kittools'   # .gitattributes agents/*.md filter=kittools: clean = the manifest line, smudge = + the grants (installed kit only)
+HARNESS_TOOLS = {'StructuredOutput', 'ReportFindings', 'ListAgents', 'DeferredToolPlaceholder'}   # injected by the harness, never listed
+
+def write_tools(kit=None):
+    """Every agent's tools line from the manifest (+ kit.local.json tools.roles grants in the installed kit); [changed paths]."""
+    kd = kit or KIT_DIR
+    done = []
+    for a in manifest(kd).get('agents') or {}:
+        p = osp.join(kd, 'agents', f'{a}.md')
+        line = role_tools(a, kd, tools_live(kd))
+        if not osp.isfile(p) or not line:
+            continue
+        with open(p, encoding='utf-8', newline='') as fh:
+            t = fh.read()
+        t2 = set_tools_line(t, line)
+        if t2 != t:
+            with open(p + '.tmp', 'w', encoding='utf-8', newline='') as fh:
+                fh.write(t2)
+            os.replace(p + '.tmp', p)   # a session never reads a half-written agent file
+            done.append(p)
+    return done
+
+def tools_filter(mode, path):
+    """git filter (stdin -> stdout): clean = the tracked manifest line, smudge = + grants; any failure passes the bytes through."""
+    data = sys.stdin.buffer.read()
+    try:
+        name = osp.splitext(osp.basename(path))[0]
+        t = data.decode('utf-8')
+        line = role_tools(name, KIT_DIR, mode == 'smudge' and tools_live(KIT_DIR))
+        sys.stdout.buffer.write(set_tools_line(t, line).encode('utf-8') if line else data)
+    except Exception:
+        if mode == 'clean':   # fail closed: no mcp__ entry (an org server name) ever reaches a commit
+            data = re.sub(rb'(?m)^(tools:[^\r\n]*?)(?:,\s*mcp__[\w*-]+)+(?=\r?$)', rb'\1', data)
+        sys.stdout.buffer.write(data)
+    return 0
+
+def git_quiet(*args):
+    import subprocess
+    return subprocess.run(['git', '-C', str(KIT), *args], capture_output=True, text=True, timeout=kit_param('flow.gitTimeoutSec'))
+
+def tools_deploy():
+    """Installed kit: the filter in .git/config, grants rendered (status stays clean), MCP coverage line."""
+    if not tools_live(str(KIT)) or not (KIT / '.git').exists():
+        return
+    py = Path(sys.executable).as_posix()
+    for verb in ('clean', 'smudge'):
+        want = f'"{py}" -X utf8 skills/bossy/kitbag.py tools --filter {verb} --file %f'
+        if git_quiet('config', '--local', f'filter.{FILTER}.{verb}').stdout.strip() != want:
+            git_quiet('config', '--local', f'filter.{FILTER}.{verb}', want)
+    for p in write_tools(str(KIT)):   # a re-add refreshes the stat cache (update-index --refresh keeps the file M); same blob only
+        if git_quiet('diff', '--quiet', '--', p).returncode == 0:
+            git_quiet('add', '--', p)
+    if (line := mcp_line()):
+        print(line)
+
+def mcp_servers(home=None, ws=None):
+    """MCP servers Claude Code starts in the workspace: ~/.claude.json user + project scope (minus its disabledMcpServers),
+    <workspace>/.mcp.json, enabled plugins' servers (plugin_<plugin>_<server>). Names only, never a value."""
+    home, ws = Path(home or Path.home()), Path(ws or Path(main_clone(str(KIT))).parent)
+    cfg = load_json(str(home / '.claude.json'))[0] or {}
+    key = lambda p: str(p).replace('\\', '/').rstrip('/').lower()
+    proj = next((v for k, v in (cfg.get('projects') or {}).items() if key(k) == key(ws)), {}) or {}
+    names = set(cfg.get('mcpServers') or {}) | set(proj.get('mcpServers') or {}) | set((load_json(str(ws / '.mcp.json'))[0] or {}).get('mcpServers') or {})
+    on = {k for k, v in ((load_json(str(home / '.claude' / 'settings.json'))[0] or {}).get('enabledPlugins') or {}).items() if v}
+    inst = (load_json(str(home / '.claude' / 'plugins' / 'installed_plugins.json'))[0] or {}).get('plugins') or {}
+    for pid in sorted(on):
+        for e in inst.get(pid) or []:
+            base = Path(e.get('installPath') or '') if isinstance(e, dict) else None
+            for f in ((base / '.claude-plugin' / 'plugin.json'), (base / '.mcp.json')) if base else ():
+                j = load_json(str(f))[0] or {}
+                srv = j.get('mcpServers') or (j if f.name == '.mcp.json' else {})   # a string (a path to a .mcp.json) names no server here
+                names |= {f'plugin_{pid.split("@")[0]}_{s}' for s in (srv if isinstance(srv, dict) else ())}
+    off = {re.sub(r'^plugin:([^:]+):', r'plugin_\1_', d) for d in proj.get('disabledMcpServers') or []}
+    return sorted(names - off)
+
+def mcp_line(home=None, ws=None):
+    """Owner 2026-11-24: a server no crew role grants reaches the coordinator only; one line until a role grants it or mainOnly lists it."""
+    roles = list(manifest(KIT_DIR).get('agents') or {})
+    allow = {t for a in roles for t in (role_tools(a, KIT_DIR, True) or '').split(', ')}
+    quiet = set((local_config(KIT_DIR, 'kit.local.json').get('tools') or {}).get('mainOnly') or [])
+    new = [s for s in mcp_servers(home, ws) if s not in quiet and not any(t == f'mcp__{s}' or t.startswith(f'mcp__{s}__') for t in allow)]
+    return (f"tools: MCP server(s) {', '.join(new)} reach no crew role (coordinator only): grant one in kit.local.json tools.roles.<role> "
+      f"[\"mcp__<server>\"] or list it in tools.mainOnly") if new else ''
+
+def tool_use(days=14, root=None):
+    """{role: Counter(tool: calls)} from the workspace's Claude Code subagent transcripts of the last days (crew roles only)."""
+    import collections, glob, time
+    root = Path(root or Path.home() / '.claude' / 'projects' / re.sub(r'[^A-Za-z0-9]', '-', str(Path(main_clone(str(KIT))).parent)))
+    cut, rx, out = time.time() - days * 86400, re.compile(r'"type":"tool_use","id":"[^"]+","name":"([^"]+)"'), collections.defaultdict(collections.Counter)
+    for m in glob.glob(str(root / '*' / 'subagents' / '**' / 'agent-*.meta.json'), recursive=True):
+        f = m[:-10] + '.jsonl'
+        if not osp.isfile(f) or osp.getmtime(f) < cut:
+            continue
+        role = (load_json(m)[0] or {}).get('agentType') or '?'
+        with open(f, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                if '"tool_use"' in line:
+                    out[role].update(rx.findall(line))
+    return out
+
+def cmd_tools(a):
+    if '--filter' in a:
+        return tools_filter(a[a.index('--filter') + 1], a[a.index('--file') + 1] if '--file' in a else '')
+    days = int(a[a.index('--days') + 1]) if '--days' in a else 14
+    use, rows = tool_use(days), []
+    for r in manifest(KIT_DIR).get('agents') or {}:
+        allow = (role_tools(r, KIT_DIR, True) or '').split(', ')
+        got = {t: n for t, n in use.get(r, {}).items() if t not in HARNESS_TOOLS and re.match(r'^(mcp__[\w-]+|[A-Z]\w*)$', t)}   # no invented names (bash, pwsh)
+        ok = lambda t: t in allow or any(t.startswith(g + '__') for g in allow if g.startswith('mcp__'))
+        rows.append({'role': r, 'allow': allow, 'calls': sum(got.values()), 'unused': [t for t in allow if not any(u == t or u.startswith(t + '__') for u in got)],
+          'denied': {t: n for t, n in got.items() if not ok(t)}})
+    if '--json' in a:
+        print(json.dumps({'days': days, 'roles': rows, 'mcp': mcp_servers()}, indent=1))
+    for x in rows if '--json' not in a else []:
+        print(f"{x['role']}: {len(x['allow'])} tools, {x['calls']} calls in {days} d · unused: {', '.join(x['unused']) or '-'}"
+          + (f" · USED, NOT ALLOWED: {', '.join(f'{t} {n}' for t, n in x['denied'].items())}" if x['denied'] else ''))
+    if '--json' not in a and (line := mcp_line()):
+        print(line)
+    return 1 if any(x['denied'] for x in rows) else 0
+
 # ---- agents: Codex / Antigravity agent files
 def write_port(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,9 +208,11 @@ def agent_parts(text):
 def write_codex(name, fields, body):
     # Codex has no tools list; every agent runs workspace-write: a read-only sandbox broke a reviewer's board join, checkpoint,
     # learn and git fetch (they write <kit>/.runtime, .state, .git). Its role rules + the guard hook keep it off product files.
-    note = (f"\n> Ported note: the Claude Code definition restricts tools to `{fields['tools']}`; here the sandbox is workspace-write "
-      "(the kit's board, checkpoint and learn write state): edit no file outside the kit's runtime and state.\n") \
-      if (tools := fields.get("tools", "")) and "Edit" not in tools and "Write" not in tools else ""
+    # no per-agent tool or MCP list in Codex (documented gap): the note carries the allowlist
+    note = (f"\n> Ported note: the Claude Code definition restricts tools to `{fields['tools']}` (MCP servers only when kit.local.json "
+      "tools.roles grants them); here every tool and MCP server loads: call no other. The sandbox is workspace-write (the kit's board, "
+      "checkpoint and learn write state)" + (": edit no file outside the kit's runtime and state" if "Edit" not in fields["tools"] and "Write" not in fields["tools"] else "")
+      + ".\n") if fields.get("tools") else ""
     body = (note + body).replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
     write_port(CODEX_AGENTS / f"{name}.toml", f'name = "{name}"\ndescription = {json.dumps(fields["description"], ensure_ascii=False)}\n'
       f'sandbox_mode = "workspace-write"\ndeveloper_instructions = """\n{body}\n"""\n')
@@ -97,8 +221,8 @@ def write_gravity(name, fields, body):
     # Antigravity names its tools differently (a mismapped one hangs): tools unset = all tools; the guard hook enforces
     head = [f"name: {name}", f'description: {json.dumps(fields["description"], ensure_ascii=False)}', "subagent: true",
       "mainAgent: false", "model: inherit", "commandExecutionPolicy: auto"]
-    note = (f"\n> Ported note: the Claude Code definition restricts tools to `{fields['tools']}`; here all tools load and the kit "
-      "guard hook blocks what it blocks for every agent.\n") if fields.get("tools") else ""
+    note = (f"\n> Ported note: the Claude Code definition restricts tools to `{fields['tools']}` (MCP servers only when kit.local.json "
+      "tools.roles grants them); here all tools and MCP servers load: call no other. The kit guard hook blocks what it blocks for every agent.\n") if fields.get("tools") else ""
     write_port(GRAVITY_AGENTS / f"{name}.md", "---\n" + "\n".join(head) + "\n---\n" + note + "\n" + body.strip() + "\n" + GRAVITY_TOOL)
 
 def prune(folder, suffix, keep):
@@ -112,6 +236,8 @@ def port_agents():
     for src in sorted((KIT / "agents").glob("*.md")):
         fields, body = agent_parts(src.read_text(encoding="utf-8").replace("\r\n", "\n"))
         name = fields.get("name", src.stem)
+        if (gen := role_tools(name, str(KIT))):   # the tracked allowlist: an installed kit's grants (org servers) never reach a port
+            fields["tools"] = gen
         write_codex(name, fields, body.rstrip("\n") + "\n" + AGENT_DECIDE)
         write_gravity(name, fields, body.rstrip("\n") + "\n" + AGENT_DECIDE)
         made.add(name)
@@ -714,10 +840,13 @@ def cmd_port(a):
         if stale:
             print(f"kitbag port: stale or missing ports: {stale}; run 'python -X utf8 skills/bossy/kitbag.py port'")
         return 1 if stale else 0
-    if '--deploy' in a:   # post-merge, health: the workspace copies only, never a tracked kit file
+    if '--deploy' in a:   # post-merge, health: the workspace copies + tools grants only (the filter keeps the tracked text)
+        tools_deploy()
         port_deploy(quiet=True)
         return 0
     write_characters(str(KIT))
+    write_tools(str(KIT))
+    tools_deploy()
     port_agents()
     port_hooks()
     port_workflows()
@@ -726,5 +855,5 @@ def cmd_port(a):
     port_deploy()
     return 0
 
-COMMANDS = {'port': cmd_port}
-ARGS = {'port': ({'--check', '--deploy'}, set(), False)}
+COMMANDS = {'port': cmd_port, 'tools': cmd_tools}
+ARGS = {'port': ({'--check', '--deploy'}, set(), False), 'tools': ({'--json'}, {'--filter', '--file', '--days'}, False)}

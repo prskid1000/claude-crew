@@ -6,7 +6,7 @@
 
 kitbag.py loads it and shares its own names (read, manifest, section, port).
 Exit codes: 0 ok · 1 references left after rename / remove · 2 usage error.
-Sections: L16 helpers · L72 new · L237 shared · L265 rename · L386 remove
+Sections: L16 helpers · L72 new · L242 shared · L270 rename · L391 remove
 """
 import contextlib, datetime, io, json, os, re, shutil, subprocess, sys
 import os.path as osp
@@ -119,7 +119,12 @@ Finish with the report your task asks for (crafty templates.md "Final reports").
 `& <kit>/skills/bossy/bossy.ps1 learn -Skill {name} -Kind <kind> -Text "<what happened + what fixed it>" [-Ref <id>]`
 ''')
         ch = {'traits': TODO, 'bias': TODO, 'catchphrase': TODO, 'never': TODO}
-        _edit_manifest(kit, lambda m: m.setdefault('agents', {}).__setitem__(name, {'job': TODO, 'kinds': [], 'roles': [], 'skill': skill, 'tools': 'all', 'usedIn': [], 'cant': TODO, 'character': ch}))
+        _edit_manifest(kit, lambda m: m.setdefault('agents', {}).__setitem__(name, {'job': TODO, 'kinds': [], 'roles': [], 'skill': skill, 'tools': 'crew', 'usedIn': [], 'cant': TODO, 'character': ch}))
+        ap = osp.join(kit, 'agents', f'{name}.md')   # the crew allowlist (owner 2026-11-24): a new role starts with toolSets.crew
+        with open(ap, encoding='utf-8', newline='') as fh:
+            at = fh.read()
+        with open(ap, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(set_tools_line(at, role_tools(name, kit)))
         rid = _router_stub(kit, f'`{name}` agent', f'{TODO}: the conditions that route to {name}')
         _test_stub(kit, f'agent {name}')
     elif kind == 'skill':

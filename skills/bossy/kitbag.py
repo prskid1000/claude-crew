@@ -4,6 +4,7 @@
   python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn (+ the uncounted warnings, exit 0)] [--no-flow] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
   python -X utf8 kitbag.py flow --readme [<kit>]       # README graph sections (the interactive page: kitbag_flow.py)
   python -X utf8 kitbag.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (kitbag_ports.py)
+  python -X utf8 kitbag.py tools [--days 14] [--json]  # crew allowlists vs real tool use; MCP servers no role grants (exit 1: a used tool not allowed)
   python -X utf8 kitbag.py audit stamp | scan [--kit <dir>] [--json <file>]   # stamp resets the audit nudge; scan: kitbag_admin.py
   python -X utf8 kitbag.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (kitbag_admin.py)
   python -X utf8 kitbag.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
@@ -20,9 +21,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L38 paths · L135 state · L192 kitlog · L294 load · L787 lint · L1201 README graph · L1308 lint command · L1589 audit ·
-  L1737 registry · L2076 arch lint · L2349 prose · L2529 sections · L2659 budget · L2677 migrate · L2825 plugins ·
-  L2882 state lint · L3070 main
+Sections: L39 paths · L136 state · L193 kitlog · L295 load · L788 lint · L1202 README graph · L1309 lint command · L1590 audit ·
+  L1738 registry · L1795 tools · L2128 arch lint · L2401 prose · L2581 sections · L2711 budget · L2729 migrate · L2877 plugins ·
+  L2934 state lint · L3122 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1791,6 +1792,51 @@ def manifest(kit=None):
     except ValueError:
         return {}
 
+# ---- tools: per-role allowlists (owner 2026-11-24: the coordinator keeps every tool, a crew role only what its list names)
+TOOLS_LINE_RX = re.compile(r'^(?:tools|disallowedTools):[^\r\n]*(\r?\n)', re.M)
+
+def tools_live(kit):
+    """Grants render only into the installed kit (<workspace>/.claude: the agents Claude Code loads), never a worktree's files."""
+    return osp.basename(osp.normpath(kit)) == '.claude'
+
+def role_tools(name, kit=None, local=False):
+    """A role's front matter tools: _manifest.agents.<name>.tools, toolSets expanded; local: + kit.local.json tools.roles.<name>
+    (the org's MCP servers: their names never enter a tracked file). None = no manifest entry."""
+    m = manifest(kit)
+    spec = ((m.get('agents') or {}).get(name) or {}).get('tools')
+    if not isinstance(spec, str):
+        return None
+    sets, out = m.get('toolSets') or {}, []
+    for t in [x.strip() for x in spec.split(',') if x.strip()]:
+        out += [u.strip() for u in (sets[t].split(',') if t in sets else [t]) if u.strip() and u.strip() not in out]
+    grants = ((local_config(kit or KIT_DIR, 'kit.local.json').get('tools') or {}).get('roles') or {}).get(name) if local else None
+    out += [g for g in (grants if isinstance(grants, list) else []) if isinstance(g, str) and re.fullmatch(r'mcp__[\w*-]+|[A-Z]\w*', g) and g not in out]   # one tool name each: no injected line
+    return ', '.join(out)
+
+def set_tools_line(text, tools):
+    """The front matter with one `tools:` line (a disallowedTools line goes), the file's line ending kept."""
+    head = re.match(r'^---\r?\n.*?\r?\n---', text, re.S)
+    if not head or not tools:
+        return text
+    fm = head.group(0)
+    eol = '\r\n' if '\r\n' in fm else '\n'
+    body = TOOLS_LINE_RX.sub('', fm)
+    at = re.search(r'^model:', body, re.M)
+    pos = at.start() if at else body.rfind(eol + '---') + len(eol)
+    return body[:pos] + f'tools: {tools}{eol}' + body[pos:] + text[len(fm):]
+
+TOOL_WORDS = ('WebFetch', 'WebSearch', 'Monitor', 'TaskStop', 'ToolSearch', 'NotebookEdit', 'SendMessage', 'AskUserQuestion', 'TodoWrite',
+  'CronCreate', 'CronDelete', 'CronList', 'Skill tool', 'Workflow(')
+
+def tools_named(line):
+    """The tools a step line calls (TOOLS-SCOPE): a spawn = Agent, `<Name> tool`, a distinctive tool name, an mcp__ name; front matter skipped."""
+    if re.match(r'^(name|description|tools|disallowedTools|model):', line):
+        return []
+    out = ['Agent'] if re.search(r'\bspawns?\b|\bAgent tool\b', line) and not re.search(r'cannot spawn|No Agent tool', line) else []
+    out += [m for m in re.findall(r'\b(Read|Write|Edit|Bash|PowerShell|Glob|Grep) tool\b', line)]
+    out += [w.split(' ')[0].rstrip('(') for w in TOOL_WORDS if re.search(r'\b' + re.escape(w) + (r'\b' if w[-1].isalnum() else ''), line)]
+    return out + re.findall(r'\bmcp__[\w-]+', line)
+
 CHAR_RX = re.compile(r'^\*\*Character:\*\*\s*(.*?)(?=\n\s*\n|\Z)', re.S | re.M)
 
 def character_of(text):
@@ -1912,9 +1958,15 @@ def registry_lint(k, bad):
             bad('SCHEMA', PATHS_JSON, e)
         if ch and m.get('character') and ch != m['character']:
             bad('MANIFEST', p, 'the Character block differs from _manifest (kitbag.py port writes it from the manifest)')
-        tools = fm.get('tools') or 'all'
-        if tools != m.get('tools'):
-            bad('MANIFEST', p, f'tools "{tools}" differ from _manifest.agents.{a}.tools "{m.get("tools")}"')
+        want = {role_tools(a, k.dir), role_tools(a, k.dir, tools_live(k.dir))}
+        if fm.get('tools') not in want:
+            bad('MANIFEST', p, f'tools "{fm.get("tools")}" differ from _manifest.agents.{a}.tools expanded "{role_tools(a, k.dir)}" '
+                '(a crew role carries an allowlist; kitbag.py port writes it)')
+        allow = set((role_tools(a, k.dir, True) or '').split(', '))
+        for n, line in enumerate(text.splitlines(), 1):
+            for t in tools_named(line):
+                if t not in allow and not any(t.startswith(g + '__') for g in allow):
+                    bad('TOOLS-SCOPE', f'{p}:{n}', f'its steps use {t}, its tools ({m.get("tools")}) omit it: add it to _manifest.agents.{a}.tools or reword the step')
         if m.get('skill') and f'skills/{m["skill"]}/SKILL.md' not in text:
             bad('MANIFEST', p, f'_manifest says it loads {m["skill"]}, its body never names skills/{m["skill"]}/SKILL.md')
     for s in k.skills:

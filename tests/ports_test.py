@@ -193,3 +193,51 @@ deploy('both'); (kit3 / '.agents/agents/a.md').write_text('ag v2', encoding='utf
 deploy('codex')
 ok_manifest = not (ws3 / '.agents/agents/a.md').exists() and (ws3 / '.agents/skills/s1').exists()
 print(f'ports-folders:{ok_folders and ok_clutter and ok_manifest} {ok_folders} {ok_clutter} {ok_manifest}')
+# crew tool allowlists (owner 2026-11-24): toolSets expand, grants only in an installed kit, the filter strips them, MCP coverage line
+tk = tmp / 'tw' / '.claude'; (tk / 'skills' / 'crafty').mkdir(parents=True); (tk / 'agents').mkdir()
+(tk / 'skills' / 'crafty' / 'kit.example.json').write_text(json.dumps({'_manifest': {'toolSets': {'crew': 'Read, Bash'}, 'agents': {
+    'da': {'tools': 'crew, Agent'}, 'rv': {'tools': 'Read, Grep'}}}}), encoding='utf-8')
+grants = {'tools': {'roles': {'da': ['mcp__db', 'Read']}, 'mainOnly': ['quiet']}}
+kt.local_config = lambda k, f: grants
+src_t = '---\r\nname: da\r\ndescription: "d"\r\ndisallowedTools: Skill, Workflow\r\nmodel: sonnet\r\n---\r\nspawn `vidy` with it\r\n'
+live = kt.set_tools_line(src_t, kt.role_tools('da', str(tk), True))
+ok_t = kt.role_tools('da', str(tk)) == 'Read, Bash, Agent' and live == src_t.replace('disallowedTools: Skill, Workflow', 'tools: Read, Bash, Agent, mcp__db') \
+    and kt.role_tools('nope', str(tk)) is None and kt.tools_live(str(tk)) and not kt.tools_live(str(tmp / 'tw' / 'x-.claude')) \
+    and kt.set_tools_line('---\nname: rv\n---\nb', 'Read') == '---\nname: rv\ntools: Read\n---\nb'
+class Pipe:
+    def __init__(self, b=b''):
+        self.buffer = io.BytesIO(b)
+def run_filter(mode, text):
+    old, pt.KIT_DIR = (sys.stdin, sys.stdout, pt.KIT_DIR), str(tk)
+    sys.stdin, sys.stdout = Pipe(text.encode('utf-8')), Pipe()
+    try:
+        pt.tools_filter(mode, 'agents/da.md')
+        return sys.stdout.buffer.getvalue().decode('utf-8')
+    finally:
+        sys.stdin, sys.stdout, pt.KIT_DIR = old
+ok_f = run_filter('clean', live) == src_t.replace('disallowedTools: Skill, Workflow', 'tools: Read, Bash, Agent') and run_filter('smudge', src_t) == live \
+    and run_filter('clean', 'no front matter\n') == 'no front matter\n'
+broken, pt.role_tools = pt.role_tools, lambda *x: 1 / 0   # a failing clean still drops the mcp__ grants (fail closed)
+ok_f = ok_f and run_filter('clean', live) == live.replace(', mcp__db', '') and run_filter('smudge', live) == live
+pt.role_tools = broken
+grants['tools']['roles']['da'].append('x\r\ntools: Bash')   # a grant with a line break: dropped
+ok_f = ok_f and kt.role_tools('da', str(tk), True) == 'Read, Bash, Agent, mcp__db'
+ok_n = kt.tools_named('spawn `vidy` (R19)') == ['Agent'] and kt.tools_named('a vidy that cannot spawn reads') == [] \
+    and kt.tools_named('WebSearch then the Edit tool, mcp__db__run_sql') == ['Edit', 'WebSearch', 'mcp__db__run_sql'] and kt.tools_named('Monitoring the env') == [] \
+    and kt.tools_named('tools: WebFetch') == []
+home = tmp / 'home'; (home / '.claude' / 'plugins' / 'cache' / 'p1' / '.claude-plugin').mkdir(parents=True)
+(home / '.claude.json').write_text(json.dumps({'mcpServers': {'db': {}, 'heavy': {}, 'quiet': {}}, 'projects': {str(tk.parent).replace('\\', '/'): {
+    'mcpServers': {'local1': {}}, 'disabledMcpServers': ['heavy', 'plugin:off:srv']}}}), encoding='utf-8')
+(home / '.claude' / 'settings.json').write_text(json.dumps({'enabledPlugins': {'browse@m': True, 'off@m': True, 'unused@m': False}}), encoding='utf-8')
+(home / '.claude' / 'plugins' / 'cache' / 'p1' / '.claude-plugin' / 'plugin.json').write_text(json.dumps({'mcpServers': {'devtools': {}}}), encoding='utf-8')
+(home / 'p2' / '.claude-plugin').mkdir(parents=True); (home / 'p2' / '.claude-plugin' / 'plugin.json').write_text(json.dumps({'mcpServers': './.mcp.json'}), encoding='utf-8')
+(home / '.claude' / 'settings.json').write_text(json.dumps({'enabledPlugins': {'browse@m': True, 'off@m': True, 'unused@m': False, 'str@m': True}}), encoding='utf-8')
+(home / '.claude' / 'plugins' / 'installed_plugins.json').write_text(json.dumps({'plugins': {'browse@m': [{'installPath': str(home / '.claude' / 'plugins' / 'cache' / 'p1')}],
+    'off@m': [{'installPath': str(home / 'none')}], 'str@m': [{'installPath': str(home / 'p2')}]}}), encoding='utf-8')
+(tk.parent / '.mcp.json').write_text(json.dumps({'mcpServers': {'shared': {}}}), encoding='utf-8')
+pt.KIT_DIR, pt.local_config = str(tk), kt.local_config
+srv =pt.mcp_servers(home, tk.parent)
+line = pt.mcp_line(home, tk.parent)
+ok_m = srv == ['db', 'local1', 'plugin_browse_devtools', 'quiet', 'shared'] \
+    and all(s in line for s in ('local1', 'plugin_browse_devtools', 'shared')) and 'quiet' not in line and ' db' not in line
+print(f'ports-tools:{ok_t and ok_f and ok_n and ok_m} {ok_t} {ok_f} {ok_n} {ok_m}')
