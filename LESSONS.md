@@ -61,6 +61,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5├ù)
 
 ## pokey
+- a browser.mjs script is killed by timeout or Stop-Process -> release its tab lease (browser release) before the next session() (tab stays leased; later session() blocks 300 s with all 8 tabs busy)
 - run dir is under <kit>/.claude/.runtime and browser.mjs shot()/saveNet refuse it -> set CLAUDE_RUNTIME to that dir before running browser.mjs; use crafty.ps1 dir for run files (seen 3x: shot refused, Write guard-denied)
 - finalize -Check fails a prose limit (observed text over 40 words) -> count words in each observed text before finalize; keep <= 40 (seen 2x: found only at check, needed a results patch)
 - before publishing results -> run finalize -Check -FixNames first; evidence entries must be files, prose fields within word caps (it caught evidence renames and prose overruns on 3 tests before publish; a T2 stop after Check left the run unpublished, so always send publish right after)
@@ -111,6 +112,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- editing a ps1 or test file with a scripted edit -> use Edit, or write the .py with the Write tool; never a Bash heredoc python; pwsh variables are case-insensitive (`$O` vs `$o`) (heredoc mangled regex backslashes; $o shadowed $O in a test)
+- renaming lanes, slots or other owner-visible names -> ask first (decide ask); keep the bird names (lane-<nn>/slot-<nn> switch without asking was rejected by the owner)
 - editing files from Git Bash via pwsh -Command with ${...} -> use the Edit tool (bash ate the variable and an empty string emptied testy.js)
 - piping a long kit-tests run through grep | head -> redirect kit-tests output to a file, read it after (no output until the end, run stopped and redone)
 - pushing a kit worktree to main from Git Bash -> run git -C D:/<wt> push origin HEAD:main; no cd /d/... prefix (it hides the kit dir from the guard) (push refused 2x)
