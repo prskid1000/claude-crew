@@ -1,8 +1,8 @@
-// browser.mjs: headless-browser library to test any web app (usage below). Exit codes: none.
-// targets.local.json: web, webLogin, users, browser: one shared headless Chrome per target+tenant+user, a tab each.
-// Logins shared via the session file (web storage + cookies), locked; never log out.
+// browser.mjs: headless browser library for any web app (usage below). Exit codes: none.
+// targets.local.json: web, webLogin, users, browser: one Chrome per target+tenant+user, a tab each.
+// Logins shared via the locked session file (storage + cookies); never log out.
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web); adapters/: sso-steps, script,
-// storageState, totp logins; browser.engine chromium | firefox | webkit.
+// storageState, totp; browser.engine chromium | firefox | webkit.
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
@@ -263,7 +263,7 @@ export function releaseOnExit(done) {
 export const relogin = (s) => ensureLogin(s.page, s.target, s.tenant, s.as, s.key)
 // ---- session: your logged-in tab
 export function defaultUser(t, name = '') {
-  const u = Object.keys(t.users || {}), d = t.defaultUser || readJson(KLF, {}).api?.defaultUser || (u.length == 1 && u[0])
+  const u = Object.keys(t.users || {}).filter((n) => !t.created?.[n]?.seat), d = t.defaultUser || readJson(KLF, {}).api?.defaultUser || (u.length == 1 && u[0])
   if (d || !u.length) return d || ''
   throw new Error(`target ${name}: several users: { as } or defaultUser`)
 }

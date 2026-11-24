@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L63 record-args · L84 prepare · L114 config · L146 prompts · L238 local · L266 app · L296 test-prompt ·
-//   L354 verify · L416 run-item · L600 pool · L622 budget · L654 run · L700 learn
+// Sections: L16 args · L63 record-args · L84 prepare · L114 config · L146 prompts · L239 local · L267 app · L297 test-prompt ·
+//   L355 verify · L417 run-item · L601 pool · L623 budget · L655 run · L709 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -27,7 +27,7 @@ export const meta = {
  localEnv: '<local env of the run>' (envy), envFixCycles: 2, envFixWaitMinutes: 300,
  items: [{ code: 'F2', title, guideFile, lane: '<qa.lanes name>' (default: the first; unknown: refused), target?, localEnv?, localParts? (MRs with no build on the target: their checks run on the local env), services? (leased, nothing else), subtasks: [{ id, name, mrs: '!12, !34' }],
   retest: false, only: ['L3'], skipClose: false (test + verify only; the lead publishes), alsoWeb: false, extra, taskFiles: [],
-  model?, effort? (TEST step) }],
+  model?, effort? (TEST step), role? (its seat login's role; default qa.userRecipes seats.roles.<lane>) }],
 } */
 // kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tasks": "tasks/"}}
@@ -148,13 +148,14 @@ const RUNNAME = String(R.runDir).split(/[\\/]/).filter(Boolean).pop() || 'qa-run
 // a run tag on every QA id (seat, lease, board): two runs testing T1 at once never share one
 const RUNTAG = () => { const lf = (R.runDir || '').split(/[\\/]/).pop(); return (lf.match(/^\d{4}-\d\d-\d\d-(\d{4,6})/) || [])[1] || lf }
 function seatBlock(it, label0) {
- const kind = kindOf(it), label = `${label0}@${RUNTAG()}`
+ const kind = kindOf(it), label = `${label0}@${RUNTAG()}`, sT = tgt(it) ? ` -Target "${tgt(it)}"${it.role ? ` -Role ${it.role}` : ''}` : ''
  return `
 AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${label}'; $env:KIT_QA_TARGETS='${[tgt(it), ...[].concat(R.alsoTargets || [])].filter(Boolean).join(',')}';  (Bash: export the same) - pokey.ps1 api refuses other targets; the build/memory
 gate queues your work under this owner name (shell state does not persist between commands).
 SEAT (memory + item claim) - your FIRST command, before anything else:
- & ${Q} seat acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}
+ & ${Q} seat acquire -Agent "${label}" -Kind ${kind} -RunDir "${R.runDir}" -Code ${it.code} -Owner ${OWNER}${sT}
  exit 0 = go. exit 4 = still waiting for memory: run the SAME command again until it returns 0 (other agents are finishing).
+ SEAT_USER <login>: your own login for this item (api -As, session({ as }), ui login -As) unless the guide names another; SEAT_USER shared: the target's default login.
  exit 3 / "ALREADY" = another worker owns or finished this item: stop immediately and return { code: "${it.code}", skipped: true, checks: [] }.
  Your LAST command before returning (also on errors): & ${Q} seat release -Agent "${label}"`
 }
@@ -271,7 +272,7 @@ const LANE_OFFSET = Math.max(0, (parseInt(String(OWNER).replace(/\D/g, ''), 10) 
 const laneFor = (w) => LANES[(w + LANE_OFFSET) % LANES.length]
 function appBlock(L) {
  return `
-PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user}` : ''}. ${L.notes || ''}
+PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.user} (a SEAT_USER login replaces it)` : ''}. ${L.notes || ''}
 - ${SWARM}/SKILL.md A1-A4 with lease id ${LEASE(L)}: acquire right before your first phone check (web / API checks and reading first),
   release right after your last one (the workflow's release after the lane's last item is only the backstop):
   & '${SWARM}/phoney.ps1' acquire -Agent ${LEASE(L)} -Lane ${L.name}   ...   & '${SWARM}/phoney.ps1' release -Agent ${LEASE(L)}
@@ -625,7 +626,7 @@ const BATCH = R.batch > 0 && R.items.length > R.batch ? R.batch : 0
 const LATER = BATCH ? R.items.slice(BATCH).map((it) => it.code) : [], STOPPED = []
 if (BATCH) R = { ...R, items: R.items.slice(0, BATCH) }
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
-const PLAN = [...R.items.map((it) => `checky/${it.model || PM('test')}:1,checky/${PM('verify')}:1,step/${PM('close')}:1,item:1`), `step/${PM('step')}:3,kitty/${PM('learn')}:1`].join(',')
+const PLAN = [...R.items.map((it) => `checky/${it.model || PM('test')}:1,checky/${PM('verify')}:1,step/${PM('close')}:1,item:1`), `step/${PM('step')}:6,kitty/${PM('learn')}:1`].join(',')
 const REC = await recordArgs(RUN0, R.runDir, 'Test', PLAN)
 takeConfig(REC)
 try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(REC) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
@@ -656,7 +657,13 @@ const LN = Object.keys(QL)
 const odd = R.items.filter((it) => !(laneOf(it) in QL))
 if (odd.length) throw new Error(`testy.js: unknown lane(s) ${[...new Set(odd.map(laneOf))].join(', ')} (items ${odd.map((it) => it.code).join(', ')}): qa.lanes has ${LN.join(', ')}`)
 const lanes = LN.map((n, i) => ({ n, i, c: QL[n], items: R.items.filter((it) => laneOf(it) === n) }))
-const par = (l) => R[`${l.n}Parallel`] || l.c.parallel || 5
+// a lane's cap: args <lane>Parallel, else qa.lanes.<lane>.parallel, else what free RAM allows now (seat capacity: gate floor / seat size), never login count
+const CAP = {}
+for (const l of lanes.filter((x) => x.items.length > 1 && !x.c.devices && !R[`${x.n}Parallel`] && !x.c.parallel)) {
+ const r = await runStep(`& ${Q} seat capacity -Kind ${l.n}`, `capacity-${l.n}`, 'Test').catch(() => null)
+ CAP[l.n] = +((/CAPACITY \S+ (\d+)/.exec((r && r.output) || '') || [])[1]) || 0
+}
+const par = (l) => R[`${l.n}Parallel`] || l.c.parallel || CAP[l.n] || 5
 const devLanes = lanes.filter((l) => l.c.devices && l.items.length)
 if (devLanes.length && !LANES.length && !NODEV) throw new Error(`${devLanes.map((l) => l.n).join(', ')} items need args.lanes (one per device + its login; agents lease and boot them) or devices: none`)
 log(`verify ${VERIFY ? 'on' : 'off'}, learn ${LEARN}`)
@@ -695,6 +702,8 @@ Then return ok=true and the list of item codes now in the file.`, { label: 'add-
 }
 await measure('Test')
 if (LANES.length) await runStep(`& ${ORCH} release -Agent '${LANES.map(LEASE).join(',')}' -Reason 'agent finished'`, 'release-lanes', 'Close').catch(() => null)   // backstop: idempotent
+// the run's seat logins are deactivated (a crashed run: bossy.ps1 cleanup deactivates idle ones)
+await runStep(`& ${Q} seat cleanup -RunDir '${R.runDir}'`, 'seat-logins', 'Close').catch(() => null)
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))
 
 // ---- learn: signals for /tidy

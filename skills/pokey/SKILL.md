@@ -87,8 +87,9 @@ request named: WATCH, no [Bug] · `knownBug` FAIL: not own, no task, "Seen again
 **Shared environment:** data prefixed `QA-<CODE>` (app lanes `QA-L<n>-<CODE>`), delete only what you created, an unexpected
 change may be another agent's; an app setting (never env config) only when a check needs it, restored at once, in
 `setup_changes`; test logins: `api -As` / `session()` / `ui login` only, never read (`targets.local.json`), deactivated,
-deleted or re-passworded; missing: `user create` (`SETUP_CHANGE` -> `setup_changes`); one Chrome per target + tenant +
-user (`session()`: own tab, `relogin(s)` on 401, never log out), <= 2 tabs; app lanes: your serial, no `adb kill-server`.
+deleted or re-passworded; missing: `user create` (`SETUP_CHANGE` -> `setup_changes`); `seat acquire` SEAT_USER: yours for
+the item; one Chrome per target + tenant + user (`session()`: own tab, `relogin(s)` on 401, never log out), <= 2 tabs; app
+lanes: your serial, no `adb kill-server`.
 
 ## Evidence
 - Where: `<run>/<CODE>/shots` (web `.jpeg`, app `.png`, `.mp4` <= 30 s), `/evidence` (`.json` request/response, `.jsonl`, `.log`

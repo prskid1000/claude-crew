@@ -3,7 +3,7 @@
 # process-gate: Test-KitProcessGate (devtools.py process_gate is the python twin). Kind process-gate: verbs = gate names
 # (promote merge finish bugFix mrBody); built-ins testingDocs (promote here; devtools.py: merge, finish, mrBody) and reproRow (bugFix, devtools.py).
 # process.gates.<gate>: unset = pass · builtin:<name> · a command line (payload JSON on stdin, exit 0 = pass, stdout = why).
-# Sections: L7 gate · L44 process docs · L110 waits · L129 api budget
+# Sections: L7 gate · L44 process docs · L110 waits · L134 api budget
 # ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
 function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [Alias('TimeoutSeconds')][int]$TimeoutSec = 120) {
@@ -107,7 +107,12 @@ function Get-KitQaBugSubtasks([string]$Parent, [double]$WaitSec = 20) {
   if ($v) { $r = Receive-KitExe $v $WaitSec; if ($r.timedOut) { return @() }; if (-not $r.code) { try { return @(($r.out | ConvertFrom-Json).subtasks) } catch { } } }
   try { @((Get-TrackerTask $Parent).subtasks) } catch { @() }
 }
-# ---- waits: poll backoff, file-change wake, kit log start
+# ---- waits: poll backoff, file-change wake, kit log start, the memory floor
+# the memory gate's floor (crafty gate, pokey seat capacity)
+function Get-KitKeepFreeGB {
+  if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
+  [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15))))
+}
 # a poll's wait: -Seen unchanged since the last round doubles it up to poll.maxSec, a change resets it to -Base; never past -End
 function Wait-KitBackoff([hashtable]$State, [string]$Seen, [double]$Base, [datetime]$End) {
   $State.wait = if ($Seen -cne $State.seen -or -not $State.wait) { $Base } else { [math]::Min([double](Get-KitParam 'poll.maxSec'), 2 * $State.wait) }; $State.seen = $Seen

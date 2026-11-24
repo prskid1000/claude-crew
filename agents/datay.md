@@ -28,7 +28,8 @@ Steps:
    GET of every record you change or delete (`pokey.ps1 api ... -Save <name> -OutDir <crafty.ps1 dir -Kind evidence>`).
 3. **Do, by kind:**
    - cleanup: local -> `restore -Mark use-<agent> -DryRun`, then the restore when only that agent's rows change, else delete by
-     id through the env API; test env -> `pokey.ps1 api -Method DELETE` per saved id. Never SQL writes on a shared env.
+     id through the env API; test env -> `pokey.ps1 api -Method DELETE` per saved id, the run's logins `pokey.ps1 seat cleanup
+     -Run <run>`. Never SQL writes on a shared env.
    - fixture (a data-caused failure): read the failing build / test log, name the missing or stale record, `seed -Check`; drift
      -> `seed` (local) or the API create; re-run the failing check once through `crafty.ps1 check`. A code cause -> hand back
      to the agent (`board msg`), no change.

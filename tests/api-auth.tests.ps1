@@ -56,6 +56,7 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
   if (u === '/emp' && q.method === 'POST') { const x = JSON.parse(b); emps[x.login] = { id: 7, user: { login: x.login }, active: true }; return j({ id: 7 }, 201) }
   if (u === '/emp/7') return j(Object.values(emps)[0])
   if (u === '/emp' && q.method === 'PUT') return j(JSON.parse(b))
+  if (u.startsWith('/assign/')) return j({ ok: 1 })
   j({}, u === '/me' ? 200 : 404) }) }).listen(+process.argv[2], '127.0.0.1')
 '@
 $uFp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $uFp.Start(); $uPort = $uFp.LocalEndpoint.Port; $uFp.Stop()
@@ -95,6 +96,49 @@ $pfTj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $pfTj.targets.tu.
 $pfMe = Px $Q api -Target tu -As ops -Path '/me' 2>&1 | Out-String
 $pfLog = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.u -eq '/login' } | ForEach-Object { $_.b | ConvertFrom-Json } | Where-Object { $_.u -eq 'p1' })
 Expect "api login profile: login + secret from the store + tenant field; no password printed ($($pfMe.Trim() -replace '\s+', ' '))" ($pfMe -match 'HTTP 200' -and $pfLog.Count -eq 1 -and $pfLog[0].p -eq 'PfPw3' -and $pfLog[0].t -eq 'zeta' -and $pfMe -notmatch 'PfPw3')
+# seat logins (owner 2026-11-24): parallel testers get own logins per kind through user create / deactivate (recipe seats), never on production
+$seTj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $seTj.targets.tuprod = @{ api = "http://127.0.0.1:$uPort"; production = $true; users = @{ admin = 'a', 'K9' } }; $seTj.targets.'tu-live' = @{ api = "http://127.0.0.1:$uPort"; users = @{ admin = 'a', 'K9' } }; & $J $seTj $tjf 6
+$seEmp = @{ method = 'POST'; path = '/emp'; body = @{ login = '{login}'; password = '{password}'; roles = '{roles}' }; save = @{ empId = 'id' } }
+& $J @{ qa = @{ lanes = @{ web = @{ kind = 'web' }; app = @{ kind = 'app' } }; userRecipes = @{ r1 = @{ targets = '^tu'; check = '/me'; seats = @{ max = 2; idleMinutes = 0; as = 'admin'; roles = @{ app = 'driver' } }
+  roles = @{ admin = @{ kinds = @('web', 'api'); roles = @('R_ADMIN') }; flaky = @{ roles = @('R_X'); create = @($seEmp, @{ method = 'POST'; path = '/nope' }) }; driver = @{ kinds = @('app'); roles = @('R_DRIVER'); create = @($seEmp, @{ method = 'POST'; path = '/assign/{empId}'; body = @{ vehicle = 'V1' } }) } }
+  find = @{ path = '/emp?login={login}'; match = 'user.login'; save = @{ empId = 'id' } }; create = @($seEmp)
+  deactivate = @(@{ path = '/emp/{empId}'; name = 'e' }, @{ method = 'PUT'; path = '/emp'; from = 'e'; set = @{ active = $false } }) } } } } (Join-Path $k 'skills/crafty/kit.local.json') 8
+$srd = Join-Path (Kd) 'runs/2026-01-02-0304-se'; New-Item -ItemType Directory -Force $srd | Out-Null; $seN0 = @(Get-Content $usLog | Where-Object { $_ -match '"POST","u":"/emp"' }).Count
+$seA = { param($c, $kd, $tg = 'tu', $rd = $srd) (Px $Q seat acquire -Agent "test:$c@se" -Kind $kd -RunDir $rd -Code $c -Target $tg -KeepFreeGB 0.1 -WaitMinutes 1 2>&1 | Out-String) + " rc=$LASTEXITCODE" }
+$seRel = { param($c) $null = Px $Q seat release -Agent "test:$c@se" }
+$seW1 = & $seA W1 web; $seP1 = & $seA P1 app; $seW2 = & $seA W2 web
+$seRow = (Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable).targets.tu; $seMade = @($seRow.created.Keys | Where-Object { $seRow.created[$_].seat })
+$sePosts = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.m -eq 'POST' -and $_.u -in '/emp' } | ForEach-Object { $_.b | ConvertFrom-Json } | Where-Object { $_.login -in $seMade })
+$seWu = if ($seW1 -match 'SEAT_USER (\S+) \(role admin, created\)') { $Matches[1] }; $sePu = if ($seP1 -match 'SEAT_USER (\S+) \(role driver, created\)') { $Matches[1] }
+Expect "seat acquire -Target: web gets a new admin login, app a driver (its own create + assign step), both via user create; max 2 -> the third shares; no password printed ($seWu $sePu $(if (-not $seWu) { $seW1 -replace '\s+', ' ' }))" ($seWu -and $sePu -and $seWu -ne $sePu -and $seW2 -match 'SEAT_USER shared \(seats.max 2' -and $seMade.Count -eq 2 -and
+  $seRow.created[$seWu].kind -eq 'web' -and $seRow.created[$sePu].kind -eq 'app' -and $seRow.created[$seWu].run -eq '2026-01-02-0304-se' -and @(Get-Content $usLog | Where-Object { $_ -match '/assign/7' }).Count -eq 1 -and
+  @($sePosts | Where-Object { $_.roles -contains 'R_ADMIN' }).Count -eq 1 -and "$seW1$seP1" -notmatch [regex]::Escape([string]$seRow.users[$seWu][1]))
+& $seRel W1; & $seRel W2; $seW3 = & $seA W3 web; $seKind = Px $Q user create -Target tu -Name qa-k -Role driver -Kind web -As admin 2>&1 | Out-String; $sekc = $LASTEXITCODE
+$seProd = & $seA X1 web 'tuprod'; $seProdU = Px $Q user create -Target tuprod -Name qa-p -Role admin -As admin 2>&1 | Out-String; $sepc = $LASTEXITCODE
+$seKl = Join-Path $k 'skills/crafty/kit.local.json'; $seKj = Get-Content $seKl -Raw | ConvertFrom-Json -AsHashtable; $seKj.deploy = @{ productionPattern = '(?i)-live$' }; & $J $seKj $seKl 12
+$seLive = Px $Q user create -Target tu-live -Name qa-p -Role admin -As admin 2>&1 | Out-String; $selc = $LASTEXITCODE
+Expect "seat release frees the login for the run (reused, no new POST); a role's kinds refuse another -Kind (exit 2); production: shared login, user create REFUSED exit 2 ($sekc $sepc)" ($seW3 -match "SEAT_USER $seWu \(role admin, reused\)" -and
+  @(Get-Content $usLog | Where-Object { $_ -match '"POST","u":"/emp"' }).Count -eq $seN0 + 2 -and $sekc -eq 2 -and $seKind -match 'logs in on app' -and $seProd -match 'SEAT_USER shared \(production target' -and $sepc -eq 2 -and $seProdU -match 'REFUSED: tuprod is a production' -and $selc -eq 2 -and $seLive -match 'REFUSED: tu-live')
+$seCap = Px $Q seat capacity -Kind web -KeepFreeGB 0.1 2>&1 | Out-String; $seHeld = Px $Q seat cleanup -RunDir $srd 2>&1 | Out-String
+Expect "seat capacity prints the RAM-based cap; seat cleanup -RunDir skips logins a live seat holds ($($seCap.Trim()))" ($seCap -match '^CAPACITY web \d+ \(free RAM' -and $seHeld -notmatch 'deactivated')
+& $seRel W3; & $seRel P1; $seEnd = Px $Q seat cleanup -RunDir $srd 2>&1 | Out-String; $seRow2 = (Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable).targets.tu
+Expect "seat cleanup -RunDir: the run's released seat logins deactivated through user deactivate (users entry gone, deactivated set)" ($seEnd -match "deactivated seat login $seWu" -and $seEnd -match "deactivated seat login $sePu" -and -not $seRow2.users[$seWu] -and $seRow2.created[$sePu].deactivated)
+# crash: a dead holder's seat file does not keep its login; the idle sweep (bossy cleanup hook) deactivates it, a live holder's stays
+$seC1 = & $seA C1 web 'tu' (Join-Path (Kd) 'runs/crash'); $seCu = if ($seC1 -match 'SEAT_USER (\S+) \(role admin') { $Matches[1] }; $seL1 = & $seA L1 web; $seLu = if ($seL1 -match 'SEAT_USER (\S+) \(role admin') { $Matches[1] }
+$seSf = Join-Path (TkPath $k qa-seats) 'seats/test_C1_se.json'; $seJ = Get-Content $seSf -Raw | ConvertFrom-Json -AsHashtable; $seJ.holderPid = 999999; $seJ.seen = '2000-01-01T00:00:00Z'; & $J $seJ $seSf 4
+$seSweep = Px $Q seat cleanup 2>&1 | Out-String
+Expect "seat cleanup (crash path): the dead holder's login deactivated, the live holder's kept ($seCu / $seLu)" ($seCu -and $seLu -and $seSweep -match "deactivated seat login $seCu" -and $seSweep -notmatch "seat login $seLu")
+# a create whose later step failed stays broken: never handed out as a seat (a half-made driver)
+$seBrk = Px $Q user create -Target tu -Name qa-brk -Role flaky -As admin -Seat -Run 2026-01-02-0304-se 2>&1 | Out-String; $sebc = $LASTEXITCODE; $seB1 = & $seA B1 web 'tu' $srd
+$seBrow = (Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable).targets.tu.created.'qa-brk'
+Expect "user create: a failed later step keeps the login marked broken with its ids; seat acquire never reuses it ($sebc)" ($sebc -eq 1 -and $seBrow.broken -and $seBrow.ids.empId -eq 7 -and $seB1 -notmatch 'SEAT_USER qa-brk')
+& $seRel L1; & $seRel B1
+# user list on an env / group / lane name (envy.ps1 envs): the target on that group's lane-1 ports; unknown names point at envs
+$evEnvy = Join-Path $k 'skills/envy/envy.ps1'; New-Item -ItemType Directory -Force (Split-Path $evEnvy) | Out-Null; Set-Content $evEnvy '# test stub'
+$evKey = "$((Get-Item $seKl).LastWriteTimeUtc.Ticks)|$((Get-Item $evEnvy).LastWriteTimeUtc.Ticks)"
+& $J @{ key = $evKey; lanes = @(@{ env = 'zz-falcon'; group = 'zz'; lane = 1; ports = @{ api = $uPort } }, @{ env = 'zz-osprey'; group = 'zz'; lane = 3; ports = @{ api = 1 } }) } (Join-Path (TkPath $k cache -Create) 'envy-envs.json') 6
+$evOut = foreach ($evN in 'zz-osprey', 'zz-local', 'lane-03') { "$evN=$((Px $Q user list -Target $evN 2>&1 | Out-String) -match "$seLu · created")" }; $evBad = Px $Q user list -Target nope-x 2>&1 | Out-String
+Expect "user list -Target <env | group-local | lane-<n>>: the target on that group's lane-1 ports; unknown names point at envy.ps1 envs ($($evOut -join ' '))" (@($evOut | Where-Object { $_ -like '*=True' }).Count -eq 3 -and ($evBad -replace '\s+', ' ') -match 'a lane/env name: use its target; envy\.ps1 envs')
 $uProc.Kill()
 Remove-TestKit $k
 Complete-Tests

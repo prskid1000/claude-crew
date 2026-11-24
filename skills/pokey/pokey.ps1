@@ -1,6 +1,7 @@
 <#
 pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <kit>/skills/pokey/pokey.ps1 <verb> [args]
-  seat acquire|release|status ...                  memory seat + item claim
+  seat acquire|release|status ...                  memory seat + item claim; acquire -Target <t> [-Role <r>]: + an own login (SEAT_USER)
+  seat capacity -Kind <lane> · seat cleanup [-Run <run> | -RunDir <run>] [-DryRun]   parallel seats free RAM allows · seat logins deactivated (a run's, else idle)
   deployed -Mrs <repo>!<iid>,... [-Target <t>,..] [-Detail] [-Json] [-TimeoutSec <deploy.deployedTimeoutSec>]  live on a test env?
   api -Target <t> -As <user> -Method <M> -Path '/...' (or api <M> '/...') [-Body <json>] [-ContentType <type>] [-Save <name | full path> -OutDir <abs dir>]
   finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; ends EXIT=<n> (a crash too)
@@ -12,14 +13,14 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
   ui dump|tap|tapid|tapxy|type|clear|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL)
   ui login -Target <t> -As <login> [-Serial <phone>] [-Tenant <t>]   types a stored login into the app (qa.userRecipes app.steps)
-  user create -Target <t> -Name <login> -Role <role> [-As <admin>] [-Tenant <t>] [-Run <run>] · user list -Target <t> · user deactivate -Target <t> -Name <login>
+  user create -Target <t> -Name <login> -Role <role> [-Kind web|api|app] [-As <admin>] [-Tenant <t>] [-Run <run>] [-Seat] · user list -Target <t> · user deactivate -Target <t> -Name <login>
 In: targets.local.json (logins; user create writes users.<login> + created.<login>, never prints a password), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage,
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L29 lanes · L43 report · L160 seat · L234 api · L487 users · L599 login surfaces (parity.json login) · L632 finalize ·
-  L1173 results · L1206 retest · L1263 prepare
+Sections: L30 lanes · L44 report · L161 seat · L310 api · L573 users · L705 login surfaces (parity.json login) · L738 finalize ·
+  L1279 results · L1312 retest · L1369 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -160,10 +161,12 @@ function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date
 # ---- seat: item claim (first claimer owns <run>/<code>) + a gate memory turn
 function Invoke-Seat {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'release', 'status', 'capacity', 'cleanup')][string]$Action,
   [string]$Agent, [string]$Kind = '',   # a qa.lanes lane name or kind; '' = the first lane
   [string]$RunDir, [Alias('Item')][string]$Code, [string]$Owner = 'w1',
-  [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0   # 0 = the gate's floor (gate.keepFreeGB)
+  [int]$WaitMinutes = 8, [double]$KeepFreeGB = 0,   # 0 = the gate's floor (gate.keepFreeGB)
+  [string]$Target, [string]$Role,       # acquire: an own login on that target (qa.userRecipes seats), role over seats.roles.<lane kind>
+  [string]$Run, [switch]$DryRun          # cleanup: that run's seat logins (else the idle ones)
 )
 $ErrorActionPreference = 'Stop'
 $dir = Get-KitPath qa-seats; $seats = Join-Path $dir 'seats'; $claims = Join-Path $dir 'claims'
@@ -187,19 +190,88 @@ function LeaseLive($o, [string]$file) {
 function Read-Seat($p) { try { Get-Content $p -Raw | ConvertFrom-Json } catch { $null } }   # half-written: skipped
 function Seats { @(Get-ChildItem $seats -Filter *.json | ForEach-Object { $o = Read-Seat $_.FullName; if (-not $o) { return }; if (LeaseLive $o $_.FullName) { $o } else { Remove-Item $_.FullName -Force } }) }
 $lease = (($Agent -split ':', 2)[-1] -split '@')[0]   # item code: Test-KitLive matches step labels, board
+# seat logins (qa.userRecipes.<r>.seats): an own login per parallel tester, made and removed only through user create / deactivate
+$runName = if ($Run) { $Run } elseif ($RunDir) { Split-Path $RunDir -Leaf } elseif ($env:KIT_RUN) { $env:KIT_RUN } else { 'adhoc' }
+$marks = Join-Path $dir 'logins'   # <target>__<login>: its last release (idle clock)
+function Get-SeatRecipe([string]$Tg) { $rc = try { Get-UserRecipe $Tg } catch { $null }; if ($rc -and $rc.seats -is [Collections.IDictionary]) { $rc } }
+function Invoke-SeatPokey { try { $global:LASTEXITCODE = 0; $o = @(& $KitCmd.qa @args *>&1 | ForEach-Object { "$_" }); [pscustomobject]@{ code = $LASTEXITCODE; out = $o } } catch { [pscustomobject]@{ code = 1; out = @("$($_.Exception.Message)") } } }
+# under Locked, no API call: this run's free login of the role, else a new name to create (held by the caller's seat file) up to seats.max, else @{ why }
+function Get-SeatLogin {
+  $rc = Get-SeatRecipe $Target; if (-not $rc) { return @{ why = 'no qa.userRecipes seats for this target' } }
+  $sc = $rc.seats; $tt = (Get-PokeyTargets).data.targets[$Target]
+  if (-not $tt) { return @{ why = "unknown target $Target" } }
+  if (Test-ProductionTarget $Target $tt) { return @{ why = 'production target: never seat logins' } }
+  if ($sc.targets -and $Target -notmatch [string]$sc.targets) { return @{ why = 'target not in seats.targets' } }
+  $ro = if ($Role) { $Role } elseif ($sc.roles -and $sc.roles[$ln.name]) { [string]$sc.roles[$ln.name] } elseif ($sc.roles -and $sc.roles[$ln.kind]) { [string]$sc.roles[$ln.kind] } else { 'admin' }
+  if (-not $rc.roles -or -not $rc.roles.Contains($ro)) { return @{ why = "role $ro is not in recipe $($rc.name) roles" } }
+  $made = if ($tt.created -is [Collections.IDictionary]) { $tt.created } else { @{} }
+  $held = @(Seats | Where-Object { $_.target -eq $Target -and $_.user } | ForEach-Object { "$($_.user)" })
+  $open = @($made.Keys | Where-Object { $made[$_].seat -and -not $made[$_].deactivated })
+  $free = @($open | Where-Object { $made[$_].run -eq $runName -and $made[$_].role -eq $ro -and -not $made[$_].broken -and $_ -notin $held -and $tt.users -is [Collections.IDictionary] -and $tt.users.Contains($_) })
+  if ($free) { return @{ user = $free[0]; role = $ro; state = 'reused' } }
+  $max = if ($null -ne $sc.max) { [int]$sc.max } else { 4 }
+  $pending = @($held | Where-Object { -not $made.Contains($_) })   # names another acquire is creating now
+  if ($open.Count + $pending.Count -ge $max) { return @{ why = "seats.max $max reached on $Target" } }
+  $tag = $runName.ToLower() -replace '[^a-z0-9]', ''; if ($tag.Length -gt 16) { $tag = $tag.Substring($tag.Length - 16) }
+  for ($n = 1; ; $n++) { $nm = Expand-UserTemplate $(if ($sc.name) { [string]$sc.name } else { 'qa-{run}-s{n}' }) @{ run = $tag; n = $n; role = $ro }; if (-not $made.Contains($nm) -and $nm -notin $pending -and -not ($tt.users -is [Collections.IDictionary] -and $tt.users.Contains($nm))) { break } }
+  @{ user = $nm; role = $ro; state = 'created'; create = $true; as = [string]$sc.as }
+}
+# outside the lock (API calls): user create; a failure -> @{ why } (a login that cannot sign in is deactivated)
+function New-SeatLogin($s) {
+  $adm = if ($s.as) { @('-As', $s.as) } else { @() }   # the admin login that makes and removes seats ('' = the target's default)
+  $r = Invoke-SeatPokey user create -Target $Target -Name $s.user -Role $s.role -Kind $ln.kind -Run $runName -Seat @adm
+  if (-not $r.code) { return $s }
+  if ("$($r.out)" -match 'LOGIN-FAIL') { $null = Invoke-SeatPokey user deactivate -Target $Target -Name $s.user @adm }
+  @{ why = "user create $($s.user) failed: $(@($r.out | Where-Object { $_ })[-1])" }
+}
+function Format-SeatLogin($s) { if ($s.user) { "SEAT_USER $($s.user) (role $($s.role), $($s.state)) on ${Target}: your own login: api -As $($s.user) · session({ as: '$($s.user)' }) · ui login -As $($s.user); never deactivate it" } else { "SEAT_USER shared ($($s.why)): use the target's default login" } }
 
 switch ($Action) {
   'status' {
     $s = Locked { Seats }
-    "free RAM $(Get-FreeGB) GB; $($s.Count) seat(s): $(($s | ForEach-Object { "$($_.agent) ($($_.kind))" }) -join ', ')"
+    "free RAM $(Get-FreeGB) GB; $($s.Count) seat(s): $(($s | ForEach-Object { "$($_.agent) ($($_.kind)$(if ($_.user) { ", login $($_.user)" }))" }) -join ', ')"
     Get-ChildItem $claims -Filter *.json | ForEach-Object { $c = Read-Seat $_.FullName; if ($c) { "claim: $($c.run)/$($c.code) by $($c.owner) since $($c.since)" } }
   }
   'release' {
     if (-not $Agent) { throw 'release needs -Agent' }
     $rf = Join-Path $seats "$(Safe $Agent).json"; $held = if (Test-Path -LiteralPath $rf) { Read-Seat $rf }
     if ($held.since -and $held.kind) { Add-KitParamObs 'qa.packageMinutes' ((Get-Date) - [datetime]$held.since).TotalMinutes "$($held.kind)" }   # a package's time per lane: supervise QA SLOW
+    if ($held.user) { New-Item -ItemType Directory -Force $marks | Out-Null; (Get-KitStamp) | Set-Content -LiteralPath (Join-Path $marks "$(Safe $held.target)__$(Safe $held.user)") }
     Remove-Item $rf -Force -ErrorAction SilentlyContinue
-    "seat released: $Agent"
+    "seat released: $Agent$(if ($held.user) { " (login $($held.user) free for this run; seat cleanup deactivates it)" })"
+  }
+  'capacity' {
+    $fg = Get-FreeGB; $kf = if ($KeepFreeGB) { $KeepFreeGB } else { Get-KitKeepFreeGB }
+    "CAPACITY $Kind $([math]::Max(1, [math]::Floor(($fg - $kf) / [math]::Max(0.1, $need)))) (free RAM $fg GB, keep $kf GB, ~$need GB a seat)"
+  }
+  'cleanup' {
+    $byRun = [bool]($Run -or $RunDir)
+    # pick under the lock and hold each pick with a seat file (no acquire reuses it), deactivate outside it (API calls)
+    $picks = Locked {
+      $tf = Get-PokeyTargets
+      foreach ($tn in @($tf.data.targets.Keys)) {
+        $tt = $tf.data.targets[$tn]; $rc = Get-SeatRecipe $tn; if (-not $rc -or $tt.created -isnot [Collections.IDictionary]) { continue }
+        $held = @(Seats | Where-Object { $_.target -eq $tn -and $_.user } | ForEach-Object { "$($_.user)" })
+        $idle = if ($null -ne $rc.seats.idleMinutes) { [double]$rc.seats.idleMinutes } else { 60 }
+        foreach ($nm in @($tt.created.Keys)) {
+          $m = $tt.created[$nm]; if (-not $m.seat -or $m.deactivated -or $nm -in $held) { continue }
+          $mk = Join-Path $marks "$(Safe $tn)__$(Safe $nm)"
+          if ($byRun) { if ($m.run -ne $runName) { continue } }
+          else { $last = if (Test-Path -LiteralPath $mk) { (Get-Item -LiteralPath $mk).LastWriteTime } else { [datetime]$m.at }; if (((Get-Date) - $last).TotalMinutes -lt $idle) { continue } }
+          $hf = Join-Path $seats "cleanup__$(Safe $tn)__$(Safe $nm).json"
+          if (-not $DryRun) { ([ordered]@{ agent = "cleanup:$nm"; lease = 'cleanup'; kind = 'cleanup'; need = 0; since = (Get-KitStamp); target = $tn; user = $nm } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $hf $_ } }
+          [pscustomobject]@{ target = $tn; user = $nm; run = $m.run; mark = $mk; hold = $hf; as = [string]$rc.seats.as }
+        }
+      }
+    }
+    $did = foreach ($p in @($picks)) {
+      if ($DryRun) { "would deactivate seat login $($p.user) on $($p.target) (run $($p.run))"; continue }
+      $adm = if ($p.as) { @('-As', $p.as) } else { @() }
+      $r = Invoke-SeatPokey user deactivate -Target $p.target -Name $p.user @adm
+      if ($r.code) { "FAILED to deactivate seat login $($p.user) on $($p.target): $(@($r.out | Where-Object { $_ })[-1]) (kept; the next cleanup retries)" } else { "deactivated seat login $($p.user) on $($p.target) (run $($p.run))"; Remove-Item -LiteralPath $p.mark -ErrorAction SilentlyContinue }
+      Remove-Item -LiteralPath $p.hold -ErrorAction SilentlyContinue
+    }
+    if ($did) { $did } else { "seat cleanup: no seat login to deactivate$(if ($byRun) { " for run $runName" })" }
   }
   'acquire' {
     if (-not $Agent) { throw 'acquire needs -Agent' }
@@ -217,7 +289,7 @@ switch ($Action) {
       if ($verdict) { $verdict; exit 3 }
     }
     $sf = Join-Path $seats "$(Safe $Agent).json"
-    if (Test-Path $sf) { "seat already held: $Agent"; exit 0 }
+    if (Test-Path $sf) { $old = Read-Seat $sf; "seat already held: $Agent"; if ($old.target) { $Target = $old.target; Format-SeatLogin @{ user = $old.user; role = $old.role; state = 'held'; why = $old.why } }; exit 0 }
     # seats < 3 min old (browser starting) count too
     $fresh = [double](@(Locked { Seats }) | Where-Object { ((Get-Date) - [datetime]$_.since).TotalMinutes -lt 3 } | Measure-Object need -Sum).Sum
     $ga = @('-Dir', $dir, '-Cmd', 'exit 0 #qa-seat', '-NeedGB', ($need + $fresh), '-WaitMinutes', $WaitMinutes); if ($KeepFreeGB) { $ga += '-KeepFreeGB', $KeepFreeGB }
@@ -226,8 +298,12 @@ switch ($Action) {
     $env:KIT_GATE_SINCE = "$(Get-Content -LiteralPath $wq -TotalCount 1)"; try { $said = @(& $KitCmd.dev gate @ga *>&1 | ForEach-Object { "$_" }) } finally { Remove-Item Env:KIT_GATE_SINCE -ErrorAction SilentlyContinue }
     if (-not $LASTEXITCODE) { Remove-Item -LiteralPath $wq -ErrorAction SilentlyContinue } else { (Get-Item -LiteralPath $wq).LastWriteTime = Get-Date }
     if ($LASTEXITCODE) { "STILL WAITING (no memory turn within $WaitMinutes min$(@($said | Where-Object { $_ -match 'waiting|queued' } | ForEach-Object { ": $_" })[-1])): run the same command again"; exit 4 }
-    ([ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-KitStamp) } + (Get-KitHolder)) | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }
+    $rec = [ordered]@{ agent = $Agent; lease = $lease; kind = $Kind; need = $need; since = (Get-KitStamp) } + (Get-KitHolder)
+    # the login is picked and the seat file written under one lock: two testers never get the same login
+    $su = Locked { $s = if ($Target) { Get-SeatLogin }; if ($s) { $rec.target = $Target; $rec.user = $s.user; $rec.role = $s.role; $rec.why = $s.why }; $rec | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ }; $s }
+    if ($su.create) { $su = New-SeatLogin $su; if (-not $su.user) { $rec.user = $null; $rec.why = $su.why; Locked { $rec | ConvertTo-Json | ForEach-Object { Write-KitAtomic $sf $_ } } } }
     "seat taken: $Agent ($Kind, ~$need GB); free RAM $(Get-FreeGB) GB"
+    if ($su) { Format-SeatLogin $su }
   }
 }
 }
@@ -254,6 +330,16 @@ function Get-LaneBase($targets, [string]$name) {
   if ($bk) { $tb = $Matches.b; $k = [int]$bk } elseif ($name -match '^(?<b>.+?)(?<k>\d+)$') { $tb = $Matches.b; $k = [int]$Matches.k } else { return $null }
   if (Get-KitMember $targets $tb) { @{ base = $tb; k = $k } }
 }
+# an env, group or lane name (envy.ps1 envs: rm-osprey, rm / rm-local, lane-<n> when one group has it) -> the target whose URLs hit that group's lane-1 ports, else $null
+function Get-EnvTarget($targets, [string]$Name) {
+  $lanes = @(Get-KitEnvyLanes); $n = $Name.ToLower()
+  $grp = @($lanes | Where-Object { "$($_.env)" -eq $n -or "$($_.group)" -eq $n -or "$($_.group)-local" -eq $n } | ForEach-Object { "$($_.group)" } | Select-Object -Unique)
+  if (-not $grp.Count -and $n -match '^lane-0*(\d+)$') { $ln0 = [int]$Matches[1]; $grp = @($lanes | Where-Object { $_.lane -eq $ln0 } | ForEach-Object { "$($_.group)" } | Select-Object -Unique) }
+  if ($grp.Count -ne 1) { return $null }
+  $one = @($lanes | Where-Object { "$($_.group)" -eq $grp[0] -and $_.lane -eq 1 })[0]; if (-not $one) { return $null }
+  foreach ($tn in @($targets.Keys)) { $urls = "$(Get-KitMember $targets[$tn] 'web') $(Get-KitMember $targets[$tn] 'api')"; if (@((Get-KitProps $one.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }).Count) { return $tn } }
+  $null
+}
 function Get-LaneTarget($cfg, [string]$name) {
   $envy = Join-Path $KitConf.Kit 'skills/envy/envy.ps1'
   $lb = Get-LaneBase $cfg.targets $name; if (-not $lb -or -not (Test-Path -LiteralPath $envy)) { return $null }; $tb = $lb.base; $k = $lb.k
@@ -270,7 +356,7 @@ function Get-LaneTarget($cfg, [string]$name) {
 }
 # the user when -As is not given: target defaultUser, kit api.defaultUser, the target's only user; several and none chosen = $null
 function Resolve-ApiUser($t) {
-  $names = @((Get-KitProps $t.users).Name)
+  $names = @((Get-KitProps $t.users).Name | Where-Object { $cm = Get-KitMember $t.created $_; -not ($cm -and $cm.seat) })   # a seat login never becomes the default
   foreach ($d in @([string]$t.defaultUser, [string](Get-KitSetting 'api.defaultUser' ''))) { if ($d) { return $d } }
   if ($names.Count -eq 1) { return $names[0] }
   if (-not $names.Count) { return '' }
@@ -501,6 +587,11 @@ function Get-UserRecipe([string]$Target) {
   foreach ($p in (Get-KitProps (Get-KitSetting 'qa.userRecipes' $null))) { if ($p.Value.targets -and $Target -match [string]$p.Value.targets) { $h = $p.Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable; $h.name = $p.Name; return $h } }
   throw "no kit.local.json qa.userRecipes entry matches target '$Target' (each: targets regex, find, create, deactivate, roles, app; README Configuration)"
 }
+# roles.<r>.find / create / deactivate replace the recipe's (a driver's vehicle step); the role's other keys are template values
+$script:UserStepKeys = 'find', 'create', 'deactivate', 'kinds'
+function Get-UserSteps($Rc, [string]$Role, [string]$Step) { $rr = if ($Role -and $Rc.roles) { $Rc.roles[$Role] }; if ($rr -is [Collections.IDictionary] -and $rr.Contains($Step)) { $rr[$Step] } else { $Rc[$Step] } }
+# never on production: targets.<t>.production, else deploy.productionPattern on the name
+function Test-ProductionTarget([string]$Target, $T) { if ($null -ne $T.production) { return [bool]$T.production }; $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); [bool]($rx -and $Target -match $rx) }
 # '{x}' alone -> the value of x (arrays and objects too); '{x}' inside text -> its text; unknown names stay
 function Expand-UserTemplate($Value, [hashtable]$Vars) {
   if ($Value -is [Collections.IDictionary]) { $o = [ordered]@{}; foreach ($key in $Value.Keys) { $o[$key] = Expand-UserTemplate $Value[$key] $Vars }; return $o }
@@ -541,13 +632,17 @@ param(
   [string]$Role,                     # a key of the recipe's roles
   [string]$As = '',                  # the admin user ('' = the target's default user)
   [string]$Tenant,                   # '' = targets.<t>.defaultTenant
-  [string]$Run = $env:KIT_RUN        # kept with the login: cleanup finds a run's logins
+  [string]$Run = $env:KIT_RUN,       # kept with the login: cleanup finds a run's logins
+  [string]$Kind,                     # web | api | app: refused when the role's kinds lack it
+  [switch]$Seat                      # a run's own parallel login (seat acquire): seat cleanup deactivates it
 )
 $ErrorActionPreference = 'Stop'
 $tf = Get-PokeyTargets; $t = $tf.data.targets[$Target]
 # list on a lane (<target>-<bird>): its logins are the base target's (create / deactivate keep the exact target)
 if (-not $t -and $Action -eq 'list' -and ($lb = Get-LaneBase $tf.data.targets $Target)) { $Target = $lb.base; $t = $tf.data.targets[$Target] }
-if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ')" }
+# list on an env or lane name (rm-osprey, rm-local, lane-03): the target on that group's lane-1 ports
+if (-not $t -and $Action -eq 'list' -and ($et = Get-EnvTarget $tf.data.targets $Target)) { $Target = $et; $t = $tf.data.targets[$Target] }
+if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ') (a lane/env name: use its target; envy.ps1 envs lists lanes)" }
 $made = if ($t.created -is [Collections.IDictionary]) { $t.created } else { [ordered]@{} }
 if ($Action -eq 'list') {
   foreach ($n in @($t.users.Keys)) { $c = $made[$n]; "$n$(if ($c) { " · created $($c.at) · tenant $($c.tenant) · role $($c.role)$(if ($c.run) { " · run $($c.run)" })$(if ($c.deactivated) { " · deactivated $($c.deactivated)" })" })" }
@@ -565,28 +660,39 @@ $save = {   # one writer, under the file lock; never prints a value
   param([scriptblock]$Change)
   Invoke-KitLocked $tf.file { $d = Get-Content -LiteralPath $tf.file -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates; $tt = $d.targets[$Target]; if ($tt.created -isnot [Collections.IDictionary]) { $tt.created = [ordered]@{} }; if ($tt.users -isnot [Collections.IDictionary]) { $tt.users = [ordered]@{} }; & $Change $tt; Write-KitAtomic $tf.file ($d | ConvertTo-Json -Depth 30) }
 }
+$ro = if ($Role) { $Role } else { [string]$made[$Name].role }   # deactivate: the role it was made with
+$steps = @{}; foreach ($sn in 'find', 'create', 'deactivate') { $steps[$sn] = Get-UserSteps $rc $ro $sn }
 # ids = what the recipe's steps save (find, create): deactivate reuses them
-$ids = { $o = [ordered]@{}; foreach ($st in @(@($rc.find) + @($rc.create) | Where-Object { $_.save })) { foreach ($key in $st.save.Keys) { if ($null -ne $vars[$key]) { $o[$key] = $vars[$key] } } }; $o }
+$ids = { $o = [ordered]@{}; foreach ($st in @(@($steps.find) + @($steps.create) | Where-Object { $_.save })) { foreach ($key in $st.save.Keys) { if ($null -ne $vars[$key]) { $o[$key] = $vars[$key] } } }; $o }
 if ($Action -eq 'deactivate') {
   if (-not $made[$Name] -or $made[$Name].deactivated) { "REFUSED: '$Name' on $Target was not made by user create or is deactivated already (shared logins are never deactivated)"; exit 2 }
-  if (-not $rc.deactivate) { throw "recipe $($rc.name) has no deactivate steps" }
-  foreach ($st in @($rc.deactivate)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant }
+  if (-not $steps.deactivate) { throw "recipe $($rc.name) has no deactivate steps" }
+  # a create killed before it saved ids: find it; not on the server -> nothing to deactivate
+  $gone = $made[$Name].broken -and -not @($made[$Name].ids.Keys | Where-Object { $_ }).Count -and $steps.find -and -not (Invoke-UserStep $steps.find $vars $Target $As $Tenant)
+  if (-not $gone) { foreach ($st in @($steps.deactivate)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant } }
   & $save { param($tt) $tt.users.Remove($Name); if (-not $tt.created[$Name]) { $tt.created[$Name] = [ordered]@{ tenant = $Tenant } }; $tt.created[$Name].deactivated = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
   "DEACTIVATED $Name on $Target tenant '$Tenant'"; return
 }
 if (-not $Role -or -not $rc.roles -or -not $rc.roles.Contains($Role)) { "usage: -Role <$(@($rc.roles.Keys) -join ' | ')> (recipe $($rc.name) roles)"; exit 2 }
-foreach ($key in $rc.roles[$Role].Keys) { $vars[$key] = $rc.roles[$Role][$key] }
-$found = if ($rc.find) { Invoke-UserStep $rc.find $vars $Target $As $Tenant }
+if ($Kind -and $rc.roles[$Role].kinds -and $Kind -notin @($rc.roles[$Role].kinds)) { "usage: role $Role logs in on $(@($rc.roles[$Role].kinds) -join ', '), not -Kind $Kind (recipe $($rc.name) roles.$Role.kinds)"; exit 2 }
+if (Test-ProductionTarget $Target $t) { "REFUSED: $Target is a production target (targets.$Target.production / deploy.productionPattern): test logins are never created there"; exit 2 }
+foreach ($key in $rc.roles[$Role].Keys | Where-Object { $_ -notin $script:UserStepKeys }) { $vars[$key] = $rc.roles[$Role][$key] }
+if (-not $steps.create) { throw "recipe $($rc.name) role $Role has no create steps" }
+$found = if ($steps.find) { Invoke-UserStep $steps.find $vars $Target $As $Tenant }
 if ($found -and -not $local) { throw "'$Name' exists on $Target tenant '$Tenant' with no password in targets.local.json: pick another -Name" }
 $state = if ($found) { 'EXISTS' } else { 'CREATED' }
 $rec = [ordered]@{ tenant = $Tenant; role = $Role; recipe = $rc.name; at = $(if ($made[$Name].at) { $made[$Name].at } else { (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }); run = $(if ($made[$Name].run) { $made[$Name].run } else { $Run }); ids = (& $ids) }
+if ($Kind) { $rec.kind = $Kind }; if ($Seat -or $made[$Name].seat) { $rec.seat = $true }
+if (-not $found) { $rec.broken = $true }   # until every create step passed (a killed create is never handed out as a seat)
 # the password is stored before the create call: a crash after it never leaves a server login nobody can use
 $pwRef = [string]$vars.password; if ((Get-KitSecretStore) -ne 'file') { $pwRef = "secret:targets/$Target/$Name/password"; $null = Set-KitSecret $pwRef.Substring(7) $vars.password }
 & $save { param($tt) $tt.users[$Name] = @($Name, $pwRef); $tt.created[$Name] = $rec }
 if (-not $found) {
-  try { foreach ($st in @($rc.create)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant } }
-  catch { $failed = $_; $there = try { if ($rc.find) { Invoke-UserStep $rc.find $vars $Target $As $Tenant } } catch { $null }; if (-not $there) { & $save { param($tt) $tt.users.Remove($Name); $tt.created.Remove($Name) }; if ($pwRef -like 'secret:*') { Remove-KitSecret $pwRef.Substring(7) } }; throw $failed }
-  $rec.ids = (& $ids); & $save { param($tt) $tt.created[$Name] = $rec }
+  try { foreach ($st in @($steps.create)) { $null = Invoke-UserStep $st $vars $Target $As $Tenant } }
+  catch { $failed = $_; $there = try { if ($steps.find) { Invoke-UserStep $steps.find $vars $Target $As $Tenant } } catch { $null }; if (-not $there) { & $save { param($tt) $tt.users.Remove($Name); $tt.created.Remove($Name) }; if ($pwRef -like 'secret:*') { Remove-KitSecret $pwRef.Substring(7) } }
+    else { $rec.ids = (& $ids); & $save { param($tt) $tt.created[$Name] = $rec } }   # a later step failed: stays broken, deactivate finds its ids
+    throw $failed }
+  $rec.ids = (& $ids); $rec.Remove('broken'); & $save { param($tt) $tt.created[$Name] = $rec }
 }
 $check = ''
 if ($rc.check) {

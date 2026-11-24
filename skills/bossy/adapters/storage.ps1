@@ -265,6 +265,12 @@ function Stop-KitScratchOrphans([switch]$DryRun) {
     "$(if ($DryRun) { 'would stop' } else { 'stopped' }) orphan scratch DB server pid $($o.ids -join '+') ($($o.dir))" }
 }
 function Invoke-KitCleanupScratch { foreach ($l in @(Stop-KitScratchOrphans -DryRun:$DryRun) + @(Stop-KitSuspendedOrphans -DryRun:$DryRun)) { [void]$actions.Add($l) } }
+# seat logins a crashed run left (qa.userRecipes seats): pokey.ps1 seat cleanup deactivates the ones idle past seats.idleMinutes
+function Invoke-KitCleanupSeatLogins {
+  if (-not @((Get-KitProps (Get-KitSetting 'qa.userRecipes' $null)) | Where-Object { $_.Value.seats }).Count) { return }
+  $sa = @('seat', 'cleanup'); if ($DryRun) { $sa += '-DryRun' }
+  foreach ($l in @(& $KitCmd.qa @sa 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match 'seat login .* on ' })) { [void]$actions.Add($l) }
+}
 # K86: git / glab / gh children left suspended (every thread) by a parent killed mid-spawn never run again: parent gone for idle.graceMinutes -> stopped
 function Get-KitSuspendedOrphans($Procs = $null, [datetime]$At = (Get-Date), [scriptblock]$IsSuspended = { param($id) $tp = Get-Process -Id $id -ErrorAction SilentlyContinue; $tp -and $tp.Threads.Count -and -not @($tp.Threads | Where-Object { "$($_.WaitReason)" -ne 'Suspended' }).Count }) {
   if ($null -eq $Procs) { $Procs = @(Get-SysProcs) }

@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L328 stack · L427 gate · L761 check · L1087 pipes · L1149 guard · L2074 dir · L2084 checkpoint ·
-  L2124 prior · L2163 tracker · L2185 task spec · L2391 scope · L2439 host
+Sections: L25 init · L34 wt · L328 stack · L427 gate · L757 check · L1083 pipes · L1145 guard · L2070 dir · L2080 checkpoint ·
+  L2120 prior · L2159 tracker · L2181 task spec · L2387 scope · L2435 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -481,10 +481,6 @@ function Get-GateContainerGB {
 function Get-GateHistCmd([string]$Cmd, [string]$Dir) {
   $c = $Cmd; foreach ($d in @([IO.Path]::GetFullPath($Dir).TrimEnd('\', '/')) | ForEach-Object { $_; $_.Replace('\', '/') } | Select-Object -Unique) { $c = [regex]::Replace($c, [regex]::Escape($d) + '(?=[\\/\s"'']|$)', '.', 'IgnoreCase') }
   if ($c.Length -gt 120) { $c.Substring(0, 120) } else { $c }
-}
-function Get-KitKeepFreeGB {
-  if ($env:CLAUDE_GATE_KEEP_FREE_GB) { return [double]$env:CLAUDE_GATE_KEEP_FREE_GB }
-  [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round((Get-SysMem).TotalGB * 0.15))))
 }
 function Add-KitMemSample([double]$Free) { try { $f = Get-KitPath mem-samples -Create; if (-not (Test-Path $f) -or ((Get-Date) - (Get-Item $f).LastWriteTime).TotalSeconds -ge 60) { Add-Content $f "$((Get-Date).ToString('s'))`t$([math]::Round($Free, 1))" } } catch {} }
 function Invoke-Gate {

@@ -180,9 +180,11 @@ run(args, agent, _n, _n, null).then(() => {
  console.log(`release-guard:${/bossy\.ps1 release -Agent 'qa-w1-Falcon' -Reason 'agent finished'/.test(rel)}`)
  console.log(`just-in-time:${/acquire right before your first phone check/.test(tp) && tp.includes("phoney.ps1' release -Agent qa-w1-Falcon") && /release right after the last one \(envy\.ps1 release -Env shop/.test(tp)}`)
  console.log(`progress:${/board beat -Session <token> -Status 'check <id>/.test(tp) && /never stop for time/.test(tp) && !/time-cap/.test(tp)}`)
+ const sl = (calls.find((c) => c.label === 'seat-logins') || {}).prompt || ''
+ console.log(`seat-login:${/seat acquire -Agent "test:P2@R2" .*-Target "stg"/.test(lp) && /SEAT_USER <login>: your own login/.test(lp) && !/-Target/.test(tp.split('SEAT (')[1].split('\n')[1]) && sl.includes("seat cleanup -RunDir 'C:/runs/R2'")}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts (owner 2026-11-19: leases just in time, progress on the board, no time cap): #' 'local-call', 'phone-call', 'local-parts', 'run-tag', 'release-guard', 'just-in-time', 'progress' -Show 8
+Expect-Each (Invoke-Js tc-extras $js3b (Join-Path $src 'workflows/testy.js')) 'testy prompts (owner 2026-11-19: leases just in time, progress on the board, no time cap; 2026-11-24: own seat logins): #' 'local-call', 'phone-call', 'local-parts', 'run-tag', 'release-guard', 'just-in-time', 'progress', 'seat-login' -Show 8
 # a first tester with no checks at all: the retest runs the whole guide (a scoped retest of nothing tested nothing)
 $jsE = @'
 const { calls, agent } = _mock((prompt, o) => { if (/^test:/.test(o.label)) return _res('E1', []); if (/^retest:/.test(o.label)) return _res('E1', [_ck('C1', 'PASS')]) }, 'published')
