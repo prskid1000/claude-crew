@@ -11,7 +11,7 @@ Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + s
 # the nightly run inherits supervise's beat env: its API ledger (live cache) failed every host verb of a test kit without process-gates.ps1
 Remove-Item Env:KIT_API_LEDGER, Env:KIT_NET_TIMEOUT_SEC, Env:KIT_NET_TRIES, Env:KIT_SUPERVISE_HTML, Env:KIT_SUPERVISE_RUNS -ErrorAction SilentlyContinue
 # and its beat name + param pins (2026-11-24: an inherited KIT_API_BEAT memoized change lists and merge bases across cases: 3 deployed-checks FAILs)
-Get-ChildItem Env: | Where-Object Name -match '^KIT_(API_BEAT|PARAM_\w+|GATE_SINCE|PRIORITY|LEASE_REASON)$' | ForEach-Object { Remove-Item "Env:$($_.Name)" }
+Get-ChildItem Env: | Where-Object Name -match '^KIT_(API_BEAT|PARAM_\w+|GATE_SINCE|LEASE_REASON)$' | ForEach-Object { Remove-Item "Env:$($_.Name)" }
 foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }   # test repos commit without a git config
 $np = '-NoProfile', '-File'   # pwsh @np <script>
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }

@@ -85,7 +85,9 @@ function Start-TestMySql([switch]$Binlog) {   # -Binlog: kept for callers; the o
     $St = Read-TestMySqlState $tmHome
     $tmOthers = @($St.holders | Where-Object { $_ -and $_ -ne $tmHolder -and (Test-TestProcStamp $_) })
     # a live server is reused; with other runs on it even when its build or options differ (restarted once nobody holds it)
-    $tmLive = (Test-TestProcStamp "$($St.server)") -and (Test-TestMySqlPort $St.port) -and ($St.key -eq $tmKey -or $tmOthers.Count)
+    # its process alive: 3 port probes before a restart (a busy machine missed one 1 s probe: TEST-MYSQLD 2 starts, full run 2026-11-24)
+    $tmUp = $false; if (Test-TestProcStamp "$($St.server)") { foreach ($tmTry in 1..3) { if (Test-TestMySqlPort $St.port) { $tmUp = $true; break }; Start-Sleep 2 } }
+    $tmLive = $tmUp -and ($St.key -eq $tmKey -or $tmOthers.Count)
     if (-not $tmLive) {
       Stop-TestMySqlServer $St; $null = Stop-TestMySqlLost $tmData
       if (-not (Test-Path (Join-Path $tmData 'mysql.ibd'))) {   # once; never deleted after (a new build or option starts on the same data)

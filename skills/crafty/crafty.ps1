@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2070 dir · L2080 checkpoint ·
-  L2120 prior · L2158 tracker · L2180 task spec · L2383 scope · L2431 host
+Sections: L25 init · L34 wt · L327 stack · L426 gate · L760 check · L1086 pipes · L1148 guard · L2073 dir · L2083 checkpoint ·
+  L2123 prior · L2161 tracker · L2183 task spec · L2386 scope · L2434 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1570,6 +1570,9 @@ foreach ($e in $edits) { if ($pwWhy = Test-KitLoginLiteral $e "$($in.tool_input.
 foreach ($pwSw in [regex]::Matches("$cmd", '(?i)(?:>>?|\btee(?:\s+-a)?|\b(?:Set-Content|Add-Content|Out-File)\b(?:\s+-(?:Path|FilePath|LiteralPath))?)\s*["'']?([^\s"''`;|&<>()]+)')) {
   $pwSwPath = $pwSw.Groups[1].Value; if ($here -and $pwSwPath -notmatch '^([\\/]|[A-Za-z]:)') { $pwSwPath = Join-Path $here $pwSwPath }
   if ($pwWhy = Test-KitLoginLiteral $pwSwPath "$cmd") { $raw = "$($in.tool_name) $pwSwPath"; Deny $pwWhy } }
+# any writing command naming a work/agents path (cd + relative, a variable, -Value before -Path, python / node writes)
+if ("$cmd" -match '(?i)>|\btee\b|Tee-Object|Set-Content|Add-Content|Out-File|WriteAll|\.write\(|writeFile|open\(') {
+  foreach ($pwP in [regex]::Matches("$cmd", '[^\s"''`;|&<>()=]*[\\/]work[\\/]agents[\\/][^\s"''`;|&<>()]*')) { if ($pwWhy = Test-KitLoginLiteral $pwP.Value "$cmd") { $raw = "$($in.tool_name) $($pwP.Value)"; Deny $pwWhy } } }
 $off = @(foreach ($e in $edits) { OffLayout $e $here })
 if (-not $cmd) {
   LayoutCheck

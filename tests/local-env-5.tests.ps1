@@ -118,10 +118,11 @@ $lf = & { . $lfL
   foreach ($n in 'shop', 'shop2', 'shop3') { Update-State $n { param($x) $x.leases = @{}; $x.holds = @{}; $x.requests = @(); $x.train = $null; if ($x.release) { $x.release.repos = @{} } } }
   Update-State shop2 { param($x) $x.services = @{ api = @{ status = 'up' } }; $x.leases.WA = @{ services = @('api'); agent = 'WA' } }
   $picked = Select-Lane shop J1 0 'deploy'; $named = Select-Lane shop2 J2 0 'deploy' '' 'shop2'; $nw = (Read-State shop).lanePick.why -match 'shop2 leased by WA: a free lane'; $logs = Select-Lane shop2 J3 0 'logs' '' 'shop2'
-  Update-State shop { param($x) $x.release.repos.r = @{ layers = @(@{ branch = 'b'; agent = 'J5' }) } }; $stick = Select-Lane shop2 J5 0 'use' '' 'shop2'
+  Update-State shop { param($x) $x.release.repos.r = @{ layers = @(@{ branch = 'b'; agent = 'J5' }) } }; $stick = "$(Select-Lane shop2 J5 0 'deploy' '' 'shop2')/$(Select-Lane shop2 J5 0 'use' '' 'shop2')"
   function Get-GateAvailGB { 10.5 }; $none = Select-Lane shop2 J4 0 'deploy' '' 'shop2'
-  "$picked|$named|$logs|$stick|$none|$nw" } 6>$null
-Expect "lanes: a deploy onto a lane another agent leases (picked or named) goes to a free lane; other verbs keep the named lane, the agent's own lane sticks; none free (no room): the leased lane, its wait bounded by leaseMinutes ($lf)" ($lf -eq 'shop|shop|shop2|shop|shop2|True')
+  Update-State shop3 { param($x) $x.services = @{ api = @{ status = 'up' } } }; $warmF = Select-Lane shop2 J6 0 'deploy' '' 'shop2'
+  "$picked|$named|$logs|$stick|$warmF|$none|$nw" } 6>$null
+Expect "lanes: a deploy onto a lane another agent leases (picked or named) goes to a free lane (its own first, then warm); other verbs keep the named lane; none free (no room): the leased lane, its wait bounded by leaseMinutes ($lf)" ($lf -eq 'shop|shop|shop2|shop/shop2|shop3|shop2|True')
 Remove-TestKit $lfKit
 Remove-TestKit $k
 # moved from local-env-4.tests.ps1 (its token cap)
