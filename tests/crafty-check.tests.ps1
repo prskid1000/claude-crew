@@ -185,7 +185,8 @@ $er2 = "$((& $e2 'src/app/orders/list.component.ts' '-Show').out)|$((& $e2 'READ
 Expect 'check -Step e2e: tests.e2e.run = cmd + env, one run per spec folder; -AllTests: a folder glob each' ($er2 -match 'env: CY_L=1' -and $er2 -match 'e2e : x -r0 --spec "cypress/e2e/02-orders/01\.create\.cy\.ts"' -and
   $er2 -match '"cypress/e2e/(misc|nav)\.cy\.ts,cypress/e2e/(misc|nav)\.cy\.ts"' -and $er2 -match '"cypress/e2e/invoices/\*\.cy\.\*"' -and @([regex]::Matches($er2, 'e2e : ')).Count -eq 5)
 Remove-Item $kl
-# a Maven test step installs the reactor modules it depends on (transitively) whose sources are newer than their local-repo artefact (retro: stale sibling jar)
+# a Maven test step builds the reactor modules it depends on (transitively) whose sources are newer than their local-repo artefact,
+# and those between, in one reactor with the tests (retro: stale sibling jar); never installs into the shared local repository
 $rx = Invoke-PsTest 'reactor-deps' @'
 $r = Join-Path $args[1] 'reactor'; $repo = Join-Path $args[1] 'm2'; $env:MAVEN_REPO_LOCAL = $repo
 $pom = { param($d, $a, $deps, $mods) New-Item -ItemType Directory -Force "$d/src/main" | Out-Null; 'x' | Set-Content "$d/src/main/X.java"
@@ -194,11 +195,22 @@ $pom = { param($d, $a, $deps, $mods) New-Item -ItemType Directory -Force "$d/src
 New-Item -ItemType Directory -Force "$repo/org/example/mid/1.0" | Out-Null; 'j' | Set-Content "$repo/org/example/mid/1.0/mid-1.0.jar"   # mid fresh, core missing
 $script:calls = @(); $KitCmd = @{ dev = 'fake' }; function fake { $script:calls += , @($args); $global:LASTEXITCODE = 0 }; function Get-CheckLog { 'log' }
 . $args[0]; $st = @{ dir = "$r/app"; commands = @{ test = 'mvn test' } }; $Show = $false
-$rc = Update-KitReactorDeps; "first:$rc|$(@($script:calls | ForEach-Object { $_ -join ' ' }) -join ';')"
-$script:calls = @(); New-Item -ItemType Directory -Force "$repo/org/example/core/1.0" | Out-Null; 'j' | Set-Content "$repo/org/example/core/1.0/core-1.0.jar"
-$rc2 = Update-KitReactorDeps; "fresh:$rc2|$($script:calls.Count)"
+$m2Before = @(Get-ChildItem -LiteralPath $repo -Recurse -File | ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" }) -join ';'
+$fl = Add-KitReactorTestFlags 'mvn -q test -Dtest=AppTest' 6>$null; $agg = Join-Path $r 'target/crafty-reactor-app.xml'
+$m2After = @(Get-ChildItem -LiteralPath $repo -Recurse -File | ForEach-Object { "$($_.FullName)|$($_.LastWriteTimeUtc.Ticks)" }) -join ';'
+"first:$fl|agg:$(if (Test-Path -LiteralPath $agg) { Get-Content -LiteralPath $agg -Raw })|m2:$($m2Before -eq $m2After)|gate:$($script:calls.Count)"
+"ownpl:[$(@(Add-KitReactorTestFlags 'mvn test -pl app' 6>&1) -join ' / ')]"
+"all:[$(@(Add-KitReactorTestFlags 'mvn test' 6>&1) -join ' / ')]"
+$Show = $true; "show:[$(Add-KitReactorTestFlags 'mvn test' 6>$null)]"; $Show = $false; "gradle:[$(Add-KitReactorTestFlags './gradlew test' 6>$null)]"
+New-Item -ItemType Directory -Force "$repo/org/example/core/1.0" | Out-Null; 'j' | Set-Content "$repo/org/example/core/1.0/core-1.0.jar"
+"fresh:[$(Add-KitReactorTestFlags 'mvn test' 6>$null)]"
 '@ @((Join-Path $k 'skills/crafty/adapters/container-tests.ps1'), (Kd))
-Expect "check -Step test (maven): stale or missing reactor deps (transitive, not unrelated modules) are installed first through the gate; none when fresh ($rx)" (
-  "$rx" -match 'first:0\|gate -Dir \S*reactor -Cmd mvn -q install -DskipTests -pl core -am' -and "$rx" -notmatch 'other' -and "$rx" -match 'fresh:0\|0')
+$rxAgg = '<modules><module>../app</module><module>../core</module><module>../mid</module></modules>'
+Expect "check -Step test (maven): a missing reactor dep (core) and the module between (mid), not an unrelated one, join the test run's reactor (-f <aggregator> -pl :app -am); the local repository and the gate untouched; no filter: their suites run, said; an own -pl: warned, unchanged; -Show, Gradle or fresh jars: unchanged ($rx)" (
+  "$rx" -match 'first:mvn -f "\S*crafty-reactor-app\.xml" -pl :app -am -Dsurefire\.failIfNoSpecifiedTests=false -Dit\.failIfNoSpecifiedTests=false -q test -Dtest=AppTest\|' -and "$rx".Contains($rxAgg) -and "$rx" -notmatch 'other' -and
+  "$rx" -match 'm2:True\|gate:0' -and "$rx" -match 'ownpl:\[\[check\] [^\]]*artefact: core; [^\]]*own -pl / -f, so the tests see the stale local-repo jars[^\]]* / mvn test -pl app\]' -and
+  "$rx" -match 'all:\[\[check\] [^\]]*no test filter: their own suites run too / mvn -f ' -and "$rx" -match 'show:\[mvn test\]' -and "$rx" -match 'gradle:\[\./gradlew test\]' -and "$rx" -match 'fresh:\[mvn test\]')
+$cfx = Get-Content (Join-Path $PSScriptRoot '../skills/crafty/crafty.ps1') -Raw
+Expect 'check -Step test: crafty.ps1 adds the reactor flags to the test command' ($cfx -match '\$cmd = Add-KitReactorTestFlags \$cmd')
 Remove-TestKit $k
 Complete-Tests

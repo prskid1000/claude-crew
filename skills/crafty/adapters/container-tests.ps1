@@ -1,14 +1,12 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
+# Sections: L9 poms · L43 reactor · L68 engine
 # runtimes: before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
 # -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests, $Show.
-# Maven first: reactor modules this module depends on (transitively) whose sources are newer than their local-repo jar are
-# installed (-pl <them> -am, through the gate): a stale sibling jar failed tests that pass on the branch (retro: 3 signals).
-function Invoke-KitJvmTestPrep {
-  $rc = Update-KitReactorDeps; if ($rc) { return $rc }
-  Test-DockerForContainerTests
-}
+# Maven: reactor modules this module depends on (transitively) whose sources are newer than their local-repo jar are built in
+# one reactor with the tests (Add-KitReactorTestFlags), never installed: the local repository is shared by every agent and lane.
+# ---- poms: reactor walk shared with envy lane builds (Get-KitReactorPoms, Get-KitReactorNeeds, Get-KitReactorBetween, Add-ToolFlags)
 function Get-KitPomInfo([string]$Pom) {
   $x = try { ([xml](Get-Content -LiteralPath $Pom -Raw)).project } catch { return $null }
   $g = if ($x.groupId) { "$($x.groupId)" } else { "$($x.parent.groupId)" }; $v = if ($x.version) { "$($x.version)" } else { "$($x.parent.version)" }
@@ -31,26 +29,44 @@ function Get-KitReactorNeeds($Mine, [hashtable]$All) {
   while ($todo.Count) { $dg, $k = $todo.Dequeue() -split '\|', 2; if ($need[$k] -or -not $All[$k] -or ($dg -and $dg -notmatch '^\$' -and $dg -ne $All[$k].g)) { continue }; $need[$k] = $All[$k]; foreach ($k2 in $All[$k].deps) { $todo.Enqueue($k2) } }
   $need
 }
-function Update-KitReactorDeps {
-  $me = Join-Path $st.dir 'pom.xml'; if ($Show -or -not (Test-Path -LiteralPath $me)) { return 0 }
-  $rp = Get-KitReactorPoms $st.dir; $root = $rp.root; if (-not $root) { return 0 }
-  $mine = Get-KitPomInfo $me; if (-not $mine) { return 0 }
+# the keys of $Need in $Mods (same folder) or depending, within $Need, on one: built together, none from the local repository
+function Get-KitReactorBetween([hashtable]$Need, [hashtable]$Mods) {
+  $keep = @{}; $visit = { param($k) if ($keep.ContainsKey($k)) { return $keep[$k] }; $keep[$k] = $false
+    $v = $Mods[$k] -and $Mods[$k].dir -eq $Need[$k].dir; foreach ($dk in @($Need[$k].deps | ForEach-Object { ($_ -split '\|', 2)[1] })) { if ($Need[$dk] -and (& $visit $dk)) { $v = $true } }; $keep[$k] = [bool]$v; [bool]$v }
+  @($Need.Keys | Where-Object { & $visit $_ })
+}
+# $flags after every mvn / mvnw / mvnd / gradle(w) that starts a command step (a folder named so, an echo argument: untouched)
+function Add-ToolFlags([string]$cmd, [string]$flags) {
+  $re = '(?<=(?:^|&&|\|\||;|\||\()\s*(?:call\s+)?(?:cmd(?:\.exe)?\s+/[cs]\s+)?(?:"[^"]*[\\/]|"|[^\s"&|;()]*[\\/])?)(mvnw|mvnd|mvn|gradlew|gradle)(\.cmd|\.bat)?"?(?=[\s)]|$)'
+  [regex]::new($re).Replace($cmd, { param($m) "$($m.Value) $flags" })
+}
+# ---- reactor: a Maven test step's $Cmd + '-f <aggregator in <root>/target> -pl :<module> -am' over the stale reactor deps and
+# those between; unchanged: none stale, -Show (it prints the command without them), or an own -pl / -f (warned: local-repo jars)
+function Add-KitReactorTestFlags([string]$Cmd) {
+  $me = Join-Path $st.dir 'pom.xml'
+  if ($Show -or $Cmd -notmatch '\b(mvn|mvnw|mvnd)\b' -or -not (Test-Path -LiteralPath $me)) { return $Cmd }
+  $rp = Get-KitReactorPoms $st.dir; $root = $rp.root; if (-not $root) { return $Cmd }
+  $mine = Get-KitPomInfo $me; if (-not $mine) { return $Cmd }
   $need = Get-KitReactorNeeds $mine $rp.all
   $repo = if ($env:MAVEN_REPO_LOCAL) { $env:MAVEN_REPO_LOCAL } else { Join-Path $HOME '.m2/repository' }
-  $stale = @(foreach ($p in $need.Values) {
+  $stale = @{}; foreach ($p in $need.Values) {
     if (-not $p.v -or $p.v -match '\$') { continue }   # a ${revision} version: its artefact path is unknown here
     $art = Join-Path $repo "$($p.g -replace '\.', '/')/$($p.a)/$($p.v)/$($p.a)-$($p.v).$(if ($p.pk -eq 'pom') { 'pom' } else { 'jar' })"
     $src = @(@(Get-Item -LiteralPath (Join-Path $p.dir 'pom.xml')) + @(Get-ChildItem -LiteralPath (Join-Path $p.dir 'src/main') -Recurse -File -ErrorAction SilentlyContinue) | Sort-Object LastWriteTimeUtc -Descending)[0]
     $jar = Get-Item -LiteralPath $art -ErrorAction SilentlyContinue
-    if (-not $jar -or ($src -and $src.LastWriteTimeUtc -gt $jar.LastWriteTimeUtc)) { [IO.Path]::GetRelativePath($root, $p.dir) -replace '\\', '/' } })
-  if (-not $stale.Count) { return 0 }
-  $mvn = if ("$($st.commands.test)" -match '^\s*"?(\S*mvnw(?:\.cmd)?)') { $Matches[1] } else { 'mvn' }
-  if ($mvn -ne 'mvn' -and -not [IO.Path]::IsPathRooted($mvn) -and -not (Test-Path -LiteralPath (Join-Path $root $mvn)) -and (Test-Path -LiteralPath (Join-Path $st.dir $mvn))) { $mvn = "`"$(Join-Path $st.dir $mvn)`"" }   # the module's own wrapper, run from the root
-  Write-Host "[check] reactor module(s) newer than their local-repo artefact: $($stale -join ', '): installing them first"
-  & $KitCmd.dev gate -Dir $root -Cmd "$mvn -q install -DskipTests -pl $($stale -join ',') -am" -Log (Get-CheckLog $root 'reactor-deps') | Out-Host
-  if ($LASTEXITCODE) { Write-Host "[check] reactor install failed (exit $LASTEXITCODE): fix it, or install by hand ($mvn install -pl <module> -am)"; return $LASTEXITCODE }
-  0
+    if (-not $jar -or ($src -and $src.LastWriteTimeUtc -gt $jar.LastWriteTimeUtc)) { $stale[$p.key] = $p } }
+  if (-not $stale.Count) { return $Cmd }
+  $staleRel = @($stale.Values | ForEach-Object { [IO.Path]::GetRelativePath($root, $_.dir).Replace('\', '/') } | Sort-Object) -join ', '
+  if ($Cmd -match '(^|\s)(-pl|--projects|-f|--file)(\s|=|$)') { Write-Host "[check] reactor module(s) newer than their local-repo artefact: $staleRel; the test command has its own -pl / -f, so the tests see the stale local-repo jars: add them to its -pl with -am"; return $Cmd }
+  $out =New-Item -ItemType Directory -Force (Join-Path $root 'target'); $f = Join-Path $out.FullName "crafty-reactor-$($mine.a).xml"
+  $use = @(@(Get-KitReactorBetween $need $stale | ForEach-Object { $need[$_].dir }) + $mine.dir | ForEach-Object { [IO.Path]::GetRelativePath($out.FullName, $_).Replace('\', '/') } | Sort-Object -Unique)
+  Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>crafty</groupId><artifactId>reactor-$($mine.a)</artifactId><version>0</version><packaging>pom</packaging><modules>$(($use | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
+  Write-Host "[check] reactor module(s) newer than their local-repo artefact: $staleRel`: built in one reactor with the tests, never installed$(if ($Cmd -notmatch '-D(it\.)?test=\S') { '; no test filter: their own suites run too' })"
+  # the deps' own suites: no test matches a -Dtest / -Dit.test filter there
+  Add-ToolFlags $Cmd "-f `"$f`" -pl :$($mine.a) -am -Dsurefire.failIfNoSpecifiedTests=false -Dit.failIfNoSpecifiedTests=false"
 }
+# ---- engine: a container engine answers before Testcontainers tests (a configured runtime is leased)
+function Invoke-KitJvmTestPrep { Test-DockerForContainerTests }
 function Test-DockerForContainerTests {
   $names = @($Tests -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { (($_ -split '#')[0] -split '\.')[-1] })
   $need = @($names | Where-Object { $_ -match '(Container|IT)(Test)?$' }).Count -gt 0

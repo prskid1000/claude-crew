@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L321 stack · L420 gate · L751 check · L1077 pipes · L1139 guard · L2067 dir · L2077 checkpoint ·
-  L2117 prior · L2156 tracker · L2178 task spec · L2384 scope · L2432 host
+Sections: L25 init · L34 wt · L321 stack · L420 gate · L751 check · L1074 pipes · L1136 guard · L2064 dir · L2074 checkpoint ·
+  L2114 prior · L2153 tracker · L2175 task spec · L2381 scope · L2429 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1008,10 +1008,7 @@ foreach ($s in $steps) {
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
   $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Invoke-KitJvmTestPrep -ErrorAction SilentlyContinue }   # adapters/container-tests.ps1
-  if ($ct) {
-    $rc = & $ct
-    if ($rc -and -not $Show) { exit $rc }
-  }
+  if ($ct) { $rc = & $ct; if ($rc -and -not $Show) { exit $rc }; $cmd = Add-KitReactorTestFlags $cmd }
   if ($cmd -match '\{files\}') {
     if (-not $Files -and $Step -eq 'quick' -and ($s -eq 'lint' -or ($s -eq 'compile' -and $st.stack -eq 'python'))) {
       $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }

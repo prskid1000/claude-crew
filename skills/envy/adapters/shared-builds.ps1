@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L110 lane pick · L160 thin artifacts
+# Sections: L4 shared builds · L104 lane pick · L154 thin artifacts
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -67,11 +67,7 @@ function Write-ReactorPom([string]$wt, [string]$name, [string]$me, [string[]]$mo
   Set-Content -LiteralPath $f "<project xmlns=`"http://maven.apache.org/POM/4.0.0`"><modelVersion>4.0.0</modelVersion><groupId>localenv</groupId><artifactId>reactor-$name</artifactId><version>0</version><packaging>pom</packaging><modules>$(($mods | ForEach-Object { "<module>$_</module>" }) -join '')</modules></project>" -Encoding utf8
   "-f `"$f`" -pl $me -am"
 }
-# $flags after every mvn / mvnw / mvnd / gradle(w) that starts a command step (a folder named so, an echo argument: untouched)
-function Add-ToolFlags([string]$cmd, [string]$flags) {
-  $re = '(?<=(?:^|&&|\|\||;|\||\()\s*(?:call\s+)?(?:cmd(?:\.exe)?\s+/[cs]\s+)?(?:"[^"]*[\\/]|"|[^\s"&|;()]*[\\/])?)(mvnw|mvnd|mvn|gradlew|gradle)(\.cmd|\.bat)?"?(?=[\s)]|$)'
-  [regex]::new($re).Replace($cmd, { param($m) "$($m.Value) $flags" })
-}
+# Add-ToolFlags, Get-KitReactorBetween: crafty adapters/container-tests.ps1
 # the folder holding one of $marks, from $from up to the worktree $wt; else $null
 function Find-MarkerDir([string]$wt, [string]$from, [string[]]$marks) {
   $top = $wt.TrimEnd('\', '/'); for ($d = $from.TrimEnd('\', '/'); $d -and $d.Length -ge $top.Length; $d = Split-Path $d) { if (@($marks | Where-Object { Test-Path -LiteralPath (Join-Path $d $_) -PathType Leaf }).Count) { return $d } }
@@ -92,9 +88,7 @@ function Get-LayerReactorFlags([string]$e, $s, [string]$cmd) {
     if (-not $mods.Count) { return '' }
     $all = (Get-KitReactorPoms $svc).all; foreach ($k in $mods.Keys) { if (-not $all[$k]) { $all[$k] = $mods[$k] } }   # a module no aggregator lists
     $need = Get-KitReactorNeeds (Get-KitPomInfo (Join-Path $svc 'pom.xml')) $all
-    $keep = @{}; $visit = { param($k) if ($keep.ContainsKey($k)) { return $keep[$k] }; $keep[$k] = $false
-      $v = $mods[$k] -and $mods[$k].dir -eq $need[$k].dir; foreach ($dk in @($need[$k].deps | ForEach-Object { ($_ -split '\|', 2)[1] })) { if ($need[$dk] -and (& $visit $dk)) { $v = $true } }; $keep[$k] = [bool]$v; [bool]$v }
-    $use = @($need.Keys | Where-Object { & $visit $_ } | ForEach-Object { [IO.Path]::GetRelativePath($wt, $need[$_].dir).Replace('\', '/') } | Sort-Object)
+    $use = @(Get-KitReactorBetween $need $mods | ForEach-Object { [IO.Path]::GetRelativePath($wt, $need[$_].dir).Replace('\', '/') } | Sort-Object)
     if (-not $use.Count) { return '' }
     $me = [IO.Path]::GetRelativePath($wt, $svc).Replace('\', '/')
     Write-Host "[$e] $($s.name): layers change $($use -join ', ') it depends on: built in one reactor with it, not taken from the local repository"
