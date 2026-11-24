@@ -31,13 +31,10 @@
     "report": {
       "config": "reports.type",
       "file": "skills/crafty/devtools.py",
-      "verbs": "publish",
+      "verbs": "publish selftest",
       "caps": "evidence tags",
       "names": "markdown html command",
-      "vendors": "gdocs pdf confluence notion",
-      "gaps": {
-        "markdown,html,command/selftest": "no self-check: the first publish reports the error"
-      }
+      "vendors": "gdocs pdf confluence notion"
     },
     "ci": {
       "config": "ci.type",

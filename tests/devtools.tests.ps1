@@ -37,7 +37,7 @@ Expect 'devtools selftest with the gdocs adapter: share modes, unshared refused,
 Expect 'devtools selftest, confluence and command evidence (recorded replies, no account): page + multipart attachments, reused page; command store via reports.evidenceCommand' (
   $out -match '(?m)^PASS confluence evidence: ' -and $out -match '(?m)^PASS report command: evidence ' -and $out -notmatch '(?m)^FAIL')
 Expect 'devtools selftest, native evidence and tags (parity): notion File Upload API (recorded replies, no account), kept evidence for markdown / html / pdf, command {tags}; native tags: markdown front matter, html meta, pdf /Keywords, notion database Tags; notion 429 retried once' (
-  $out -match '(?m)^PASS notion evidence: ' -and $out -match '(?m)^PASS kept evidence ' -and $out -match '(?m)^PASS pdf evidence: ' -and $out -match '(?m)^PASS command: \{title\} and \{tags\}' -and
+  $out -match '(?m)^PASS notion evidence: ' -and $out -match '(?m)^PASS kept evidence\b' -and $out -match '(?m)^PASS pdf evidence: ' -and $out -match '(?m)^PASS command: \{title\} and \{tags\}' -and
   @([regex]::Matches($out, '(?m)^PASS (pdf|notion) tags: ')).Count -eq 3 -and $out -match '(?m)^PASS notion: HTTP 429 retried once')
 $env:KIT_TRACKER_TYPE = 'none'
 $d = Join-Path (Kd) 'runs/GD'

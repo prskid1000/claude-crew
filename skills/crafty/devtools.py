@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L397 process · L608 git host · L681 scope · L773 MR · L988 merge · L1319 docs ·
-  L1556 publish · L2086 render · L2696 spec · L3241 plugins · L3255 keepboth · L3274 selftest · L4040 CLI
+  L1556 publish · L2107 render · L2717 spec · L3262 plugins · L3276 keepboth · L3295 selftest · L4044 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
@@ -1457,7 +1457,7 @@ def md_to_html(md, title=''):
             out.append(f'<p>{inline(l)}</p>')
         i += 1
     close()
-    # a phone (ui-check 390 px squeezed a 5-column table's cells to 62 px): each row stacks, a cell under its column name
+    # a phone (ui-check 390 px: 62 px cells): each row stacks, a cell under its column name
     narrow = ('<style>@media (max-width:640px){table,tbody,tr,td{display:block;width:auto!important}td{overflow-wrap:anywhere}tr:first-child{display:none}'
               'td::before{content:attr(data-l);display:block;font-weight:bold}}</style>')
     return f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>{narrow}</head><body>' + '\n'.join(out) + '</body></html>'
@@ -2040,12 +2040,33 @@ def tag_kept(p, tags):
 
 
 ADAPTERS.setdefault('report', {})   # gdocs (Google Doc + Drive evidence): adapters/report_gdocs.py
+def _markdown_selftest(expect, tmp, md):
+    expect('markdown: kept in place, else in docs', make_doc('T', md, tmp) == md and make_doc('My T', md) == os.path.join(tmp, 'My-T.md'))
+    png = os.path.join(tmp, 's.png')
+    e1, e2 = make_evidence('T9 ev', [png]), make_evidence('T9 ev', [png], folder=os.path.join(tmp, 'T9-ev'))
+    sp, cwd0 = os.path.join(tmp, 'T9-ev', 's.png'), os.getcwd()
+    os.chdir(tmp)
+    try:   # a relative parent: still a file URI
+        e3 = make_evidence('R ev', [png], parent='.')
+    finally:
+        os.chdir(cwd0)
+    expect('kept evidence: copied to <docs>/<name>/, file URIs, folder reused by key',
+           os.path.isfile(sp) and e1['files']['s.png']['src'].startswith('file:') and e1['files']['s.png']['src'].endswith('/T9-ev/s.png')
+           and e1['folderId'] == e2['folderId'] == os.path.join(tmp, 'T9-ev') and ADAPTERS['report']['html']['evidence'] is kept_evidence
+           and e3['files']['s.png']['src'].startswith('file:'))
+_html_selftest = lambda expect, tmp, md: expect('html: Markdown -> HTML, kept', '<h1>T</h1>' in open(make_doc('T', md, tmp), encoding='utf-8').read())
+
+def _command_selftest(expect, tmp, md):
+    globals()['RCFG'] = {'command': _q(sys.executable) + ' -c "import sys; print(\'https://w.ex/\' + sys.argv[1] + \'/\' + sys.argv[2])" {title} {tags}'}
+    expect('command: {title} and {tags} (comma-joined) filled, last output = URL', make_doc('T1', md, tags=['wave-2', 'bug']) == 'https://w.ex/T1/wave-2,bug')
+
+
 # adapter:report/markdown: the file, kept (an earlier publish: the same file); evidence beside it
 ADAPTERS['report']['markdown'] = {'publish': lambda a: tag_kept(keep_doc(a['title'], a['path'], a['keep'], a.get('url')), a.get('tags') or []),
-                                  'evidence': kept_evidence, 'tags': 'YAML front matter tags'}
+                                  'evidence': kept_evidence, 'tags': 'YAML front matter tags', 'selftest': _markdown_selftest}
 # adapter:report/html: Markdown -> HTML (md_to_html), kept; evidence beside it
 ADAPTERS['report']['html'] = {'publish': lambda a: tag_kept(keep_doc(a['title'], _html_of(a), a['keep'], a.get('url')), a.get('tags') or []),
-                              'evidence': kept_evidence, 'tags': 'meta keywords'}
+                              'evidence': kept_evidence, 'tags': 'meta keywords', 'selftest': _html_selftest}
 
 
 # adapter:report/command: reports.command {title} {path} {parent} {url} {tags} (earlier publish: update; tags comma-joined); last output word = URL
@@ -2066,7 +2087,7 @@ def _command_evidence(a):
         _command_evidence.said = print('reports.type command: no reports.evidenceCommand, evidence stays in the run folder', file=sys.stderr) or True
     return {}
 _command_evidence.said = False
-ADAPTERS['report']['command'] = {'publish': _command, 'evidence': _command_evidence, 'tags': 'the {tags} placeholder'}
+ADAPTERS['report']['command'] = {'publish': _command, 'evidence': _command_evidence, 'tags': 'the {tags} placeholder', 'selftest': _command_selftest}
 # adapter-end:report
 
 
@@ -3953,7 +3974,7 @@ def _publish_selftest(expect, refused):
         make_evidence('e', [], key='T9:evidence'); ev = make_evidence('e', [], key='T9:evidence')
         expect('evidence by key: the second run reuses the task folder', seen == [None, 'F1'] and ev['folderLink'] == 'https://f/F1')
         rk = {k: g[k] for k in ('REPORT_TYPE', 'RCFG', '_evidence_command')}
-        try:   # report command, reports.evidence report (default): its evidence = reports.evidenceCommand; unset: the run folder, said
+        try:   # report command: evidence = reports.evidenceCommand, else the run folder (said)
             g.update(REPORT_TYPE='command', RCFG={})
             with contextlib.redirect_stderr(io.StringIO()) as se:
                 _command_evidence.said = False; e0 = make_evidence('e', []); make_evidence('e', [])
@@ -3986,7 +4007,7 @@ def _publish_selftest(expect, refused):
 
 
 def _report_selftest(expect):
-    """Each core report adapter, then each installed plugin's selftest(expect, tmp, md) (no network)."""
+    """Shared checks, then each report adapter's selftest(expect, tmp, md) (no network)."""
     import contextlib as _c, io
     g, tmp = globals(), tempfile.mkdtemp()
     saved = {k: g[k] for k in ('REPORT_TYPE', 'kit_path', 'RCFG')}
@@ -3999,23 +4020,6 @@ def _report_selftest(expect):
         g.update(REPORT_TYPE=report_type, RCFG=rcfg)
     try:
         g['kit_path'] = lambda n, create=False: tmp
-        use('markdown', {})
-        expect('markdown: kept in place, else in docs', make_doc('T', md, tmp) == md and make_doc('My T', md) == os.path.join(tmp, 'My-T.md'))
-        e1, e2 = make_evidence('T9 ev', [png]), make_evidence('T9 ev', [png], folder=os.path.join(tmp, 'T9-ev'))
-        sp, cwd0 = os.path.join(tmp, 'T9-ev', 's.png'), os.getcwd()
-        os.chdir(tmp)
-        try:   # a relative parent: still a file URI
-            e3 = make_evidence('R ev', [png], parent='.')
-        finally:
-            os.chdir(cwd0)
-        expect('kept evidence (markdown, html, pdf): copied to <docs>/<name>/, file URI links, the folder reused by key',
-               os.path.isfile(sp) and e1['files']['s.png']['src'].startswith('file:') and e1['files']['s.png']['src'].endswith('/T9-ev/s.png')
-               and e1['folderId'] == e2['folderId'] == os.path.join(tmp, 'T9-ev') and ADAPTERS['report']['html']['evidence'] is kept_evidence
-               and e3['files']['s.png']['src'].startswith('file:'))
-        use('html', {})
-        expect('html: Markdown -> HTML, kept', '<h1>T</h1>' in open(make_doc('T', md, tmp), encoding='utf-8').read())
-        use('command', {'command': _q(sys.executable) + ' -c "import sys; print(\'https://w.ex/\' + sys.argv[1] + \'/\' + sys.argv[2])" {title} {tags}'})
-        expect('command: {title} and {tags} (comma-joined) filled, the last output = the URL', make_doc('T1', md, tags=['wave-2', 'bug']) == 'https://w.ex/T1/wave-2,bug')
         use('gdocs', {'evidence': 'command', 'evidenceCommand': _q(sys.executable) + ' -c "import sys,os; print(\'folder https://b.ex/\' + sys.argv[1]); [print(os.path.basename(f), \'https://b.ex/\' + os.path.basename(f)) for f in sys.argv[2:]]" {name} {files}'})
         ev = make_evidence('run1', [png])
         use('gdocs', {'evidence': 'local'})

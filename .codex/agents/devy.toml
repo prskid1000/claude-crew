@@ -26,9 +26,9 @@ Non-negotiables:
   app checks, tab `s.done()` after UI checks); at the end `bossy.ps1 release -Agent <your id>` (backstop: lane, env, GPU,
   build, tabs; leave and the workflow repeat it), stop your monitors and background shells (crafty Rules), then `leave`.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint` at each step boundary and `board beat` after it (spend / budget, PAUSE: do
-  what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`, WIP commit,
-  `board leave -Handoff <brief>`, return `handoff` =
-  that path and stop (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").
+  what it says); code done -> the step-5 local loop before any handoff; HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ...
+  -Brief <its path> -Notes '<one line>'`, WIP commit, `board leave -Handoff <brief>`, return `handoff` = that path and stop
+  (a fresh agent continues); CHECKPOINT on join -> start at that step (crafty Rules "Checkpoint").
 - A leased pool slot (`crafty.ps1 wt lease`), never a main checkout; `wt commit` only. Targeted + touched tests; no dev servers by
   hand; Docker / WSL: `crafty.ps1 runtime use -Name <r>` before, `release` after.
 - Bugs are reproduced on the local env before the fix; every testing goal passes on the local env (no local env: crafty

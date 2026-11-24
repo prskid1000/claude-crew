@@ -359,7 +359,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 |---|---|---|---|---|---|---|
 | tracker | `tracker.type` | view url status comment comments create describe rename list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | fallback: checklist (8), dependencies (1) | `skills/crafty/adapters/tracker-local.ps1` |
 | git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect; caps: mr.labels | command | github, gitlab, bitbucket, azure, gitea | gap: mr.labels (1) | `skills/crafty/lib.ps1` |
-| report | `reports.type` | publish; caps: evidence tags | markdown, html, command | gdocs, pdf, confluence, notion | gap: selftest (3) | `skills/crafty/devtools.py` |
+| report | `reports.type` | publish selftest; caps: evidence tags | markdown, html, command | gdocs, pdf, confluence, notion |  | `skills/crafty/devtools.py` |
 | ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | fallback: failure (1) | `skills/crafty/lib.ps1` |
 | transcript | `board tool` | root last; caps: agentMeta | claude, codex, antigravity, none |  | gap: agentMeta (1) | `skills/crafty/lib.ps1` |
 | deploy-kind | `repos[].deploys[] (kind)` | isDeployed plan; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | fallback: deploy (1), isRunning (4), lastDeploy (4), restart (7) | `skills/pokey/adapters/deployed-checks.ps1` |
