@@ -202,7 +202,7 @@ $rt = New-Run 'RT' @(@{ code = 'Z1'; task = 'TZ'; checks = , @('C1', 'FAIL') })
 New-Task TZ 'Task Z' $null open '### C1 — s'
 $null = Fin $rt 'Z1'
 $ro = pwsh @np $Q retest -RunDir $rt -Task TZ -Code Z1 -Mrs 'api!1' 2>&1 | Out-String
-$arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'archive-????')
+$arc = @(Get-ChildItem "$rt/Z1" -Directory -Filter 'round*')
 Expect 'retest: a reused code archives the earlier round' ($arc.Count -eq 1 -and (Test-Path "$($arc[0].FullName)/finalize.json") -and -not (Test-Path "$rt/Z1/finalize.json") -and $ro -match 'archived the earlier round')
 $klBase | Set-Content $kl
 # browser.mjs: mocks, then local fixture servers

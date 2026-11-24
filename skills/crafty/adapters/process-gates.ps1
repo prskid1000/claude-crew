@@ -81,7 +81,7 @@ function Add-KitQaParent([string]$Parent, [datetime]$At = [datetime]::Now) {
   if ($Parent) { $null = Update-KitQaParents { param($q) $o = $q[$Parent]; if (-not $o -or [datetime]$o.at -lt $At) { $q[$Parent] = @{ at = (Get-KitStamp stored $At); seen = $o.seen } } } }
 }
 # qa-runs/<run>/run.json or <run>/<code>/finalize.json at their fixed depth (a -Recurse walk listed every evidence file and
-# matched scripts/run.json and archive-*/finalize.json copies); -SinceDays: written within that many days
+# matched scripts/run.json and round*/finalize.json copies); -SinceDays: written within that many days
 function Get-KitQaRunFiles([ValidateSet('run.json', 'finalize.json')][string]$Name, [double]$SinceDays) {
   $root = Get-KitPath qa-runs; if (-not [IO.Directory]::Exists($root)) { return }
   $since = if ($SinceDays) { [datetime]::Now.AddDays(-$SinceDays) } else { [datetime]::MinValue }

@@ -108,7 +108,7 @@ $gcf = Join-Path (Kd) 'gate.contracts.md'; '# contracts' | Set-Content $gcf
 $nw = Px $O decide check -Gate deploy -Item hx | Out-String; $c1 = $LASTEXITCODE
 $null = Px $O decide record -Gate deploy -Item hx -Question q -Answer y -Source chat -By coordinator-2; $c2 = $LASTEXITCODE
 $rec = Px $O decide record -Gate deploy -Item hx -Mrs 'api!8' -Question q -Answer 'Go (Recommended)' -Source askuser -Contracts $gcf | Out-String
-$rid = if ($rec -match 'RECORDED (dec-\d{4})') { $Matches[1] }
+$rid = if ($rec -match 'RECORDED (dec-[1-9]\d*)') { $Matches[1] }
 $wm = Px $O decide check -Gate deploy -Mrs 'grp/api!8' | Out-String; $null = Px $O decide check -Gate merge -Item hx; $c3 = $LASTEXITCODE
 $wu = Px $O decide check -Gate deploy -Id $rid -Use -Agent op1 | Out-String; $wv = Px $O decide check -Gate deploy -Item hx | Out-String; $c4 = $LASTEXITCODE
 $aid = (Px $O decide ask -Run w1 -Agent X1 -Item A2 -Context 'T1 is tested' -Question 'Close T1?' -Options 'A: close — testers stop on it','B: keep — it stays in test' -Recommend A | Out-String) -replace '(?s).*DECISION (\S+) pending.*', '$1'
@@ -125,7 +125,7 @@ $dataId = (Px $O decide record -Gate data -Item stgdata -Question q -Answer y -S
 $null = Px $O decide record -Gate bogus -Item stgdata -Question q -Answer y -Source chat; $bogusCode = $LASTEXITCODE
 $dataAsk = Px $O decide check -Gate ask -Id $dataId 2>&1 | Out-String; $dataBare = Px $O decide check -Id $dataId | Out-String
 $null = Px $O decide check -Gate merge -Item stgdata; $dataMerge = $LASTEXITCODE; $null = Px $O decide check -Gate deploy -Id $dataId; $dataDeploy = $LASTEXITCODE
-Expect 'decide: gate data recorded, an unknown gate refused; check -Id ignores a non-gate -Gate (ask, none); a real gate still binds' ($dataId -match '^dec-\d{4}$' -and $bogusCode -eq 2 -and $dataAsk -match "WORD $dataId \(data stgdata\)" -and $dataBare -match "WORD $dataId" -and $dataMerge -eq 1 -and $dataDeploy -eq 1)
+Expect 'decide: gate data recorded, an unknown gate refused; check -Id ignores a non-gate -Gate (ask, none); a real gate still binds' ($dataId -match '^dec-[1-9]\d*$' -and $bogusCode -eq 2 -and $dataAsk -match "WORD $dataId \(data stgdata\)" -and $dataBare -match "WORD $dataId" -and $dataMerge -eq 1 -and $dataDeploy -eq 1)
 $D = Join-Path $k 'skills/crafty/crafty.ps1'
 # checkpoints: two agents sharing a name, different runs = one file each; -Read -Run picks its own; an old resume.json is still read
 $ckDirTwin = Join-Path (TkPath $k agents) 'twin'
@@ -167,7 +167,7 @@ $rc = (Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Caps?' -An
 $null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Limits?' -Answer '50 starts' -Source chat -Supersedes $rc.Trim()
 $null = Px $O decide record -Gate other -Item $dt -Task $dt -Question 'Ignored?' -Answer 'x' -Source chat -NoPublish
 $all = @(Px $crPath tracker comments $dt | ConvertFrom-Json); $cm = @($all | Where-Object { $_.text -match '^\*\*Decisions\*\*' }); $ct = "$((Px $crPath tracker view $dt | ConvertFrom-Json).description)"
-$sid = { param($i) ("$i".Trim() -split '-')[-1] }; $dv = @("- \[x\] $(& $sid $db) · Where\? → B: db · owner \d\d-\d\d", "- \[x\] $(& $sid $da) · Where\? → superseded by $(& $sid $db)", '- \[ \] \w{4} · Pending\? → open · asked \d\d-\d\d', "- \[x\] $(& $sid $rc) · Caps\? → superseded by \w{4}", '- \[x\] \w{4} · Limits\? → 50 starts · owner')
+$sid = { param($i) ("$i".Trim() -split '-')[-1] }; $dv = @("- \[x\] $(& $sid $db) · Where\? → B: db · owner \d\d-\d\d", "- \[x\] $(& $sid $da) · Where\? → superseded by $(& $sid $db)", '- \[ \] \w+ · Pending\? → open · asked \d\d-\d\d', "- \[x\] $(& $sid $rc) · Caps\? → superseded by \w+", '- \[x\] \w+ · Limits\? → 50 starts · owner')
 Expect "decide: an unknown task (never indexed, item A2) or -NoPublish posts nothing, publish indexes it; ask / answer / record update ONE Decisions checklist by short id (answered resolved, pending open, same question or -Supersedes -> 'superseded by <id>'); no decisions comment, a person's 'Decisions' comment untouched ($ct)" ($dn -notmatch 'PUBLISHED' -and $d1 -match 'PUBLISHED' -and $dx -notmatch 'PUBLISHED' -and -not $cm.Count -and @($all.text -match '^Decisions\r?\nship it$').Count -eq 1 -and $ct -match '<!-- kit:decisions -->\r?\n\*\*Decisions\*\*' -and -not @($dv | Where-Object { $ct -notmatch $_ }).Count -and $ct -notmatch 'Ignored|Item code'); $env:KIT_TRACKER_TYPE = 'clickup'
 # tracker create -Parent: the subtask template or refused, a [Bug] its own text; -NewTask under a parent logs matched [] (no WATCH)
 $env:KIT_TRACKER_TYPE = 'none'; $sbSpec = Join-Path (Kd) 'sb-spec.json'
