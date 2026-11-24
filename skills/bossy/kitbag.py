@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L264 kitlog · L366 load · L859 lint · L1273 README graph · L1391 lint command · L1673 audit ·
-  L1821 registry · L1881 tools · L1969 parity · L2526 arch lint · L2799 prose · L2981 sections · L3113 budget · L3131 migrate ·
-  L3279 plugins · L3336 state lint · L3524 main
+  L1821 registry · L1881 tools · L1969 parity · L2533 arch lint · L2806 prose · L2988 sections · L3120 budget · L3138 migrate ·
+  L3286 plugins · L3343 state lint · L3531 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2136,7 +2136,9 @@ def adapter_matrix(k, fam, a, bad=None):
         row = {}
         for v in allv:
             s = state(v)
-            if s and (n, v) in gaps:
+            if s and (n, v) in gaps and n in delegates:   # a delegate's row is its target's: its own gap entry says why for it
+                used.add(gaps[(n, v)][0])
+            elif s and (n, v) in gaps:
                 bad('PARITY', PARITY_JSON, f'{fam}/{n}/{v}: declared gap "{gaps[(n, v)][0]}", but the adapter has it now: drop it')
             if not s and (n, v) in gaps:
                 s = 'gap'; used.add(gaps[(n, v)][0])
@@ -2159,6 +2161,11 @@ def adapter_matrix(k, fam, a, bad=None):
     for key in sorted({x[0] for x in gaps.values()} - used):
         if not any(gaps[g][0] == key and g[0] in out and out[g[0]].get(g[1]) != 'gap' for g in gaps):
             bad('PARITY', PARITY_JSON, f'{fam}: gaps "{key}" names no adapter or verb of the family: fix or drop it')
+    for (n, v), (key, why) in _gap_keys(a.get('accepted')).items():   # a by-design fallback: its reason, and a cell still open
+        if out.get(n, {}).get(v) not in ('fallback', 'gap'):
+            bad('PARITY', PARITY_JSON, f'{fam}: accepted "{key}": {n}/{v} is {out.get(n, {}).get(v) or "no cell"}, no fallback: drop it')
+        elif not why.strip():
+            bad('PARITY', PARITY_JSON, f'{fam}: accepted "{key}" has no reason: say why the fallback is the design')
     return out
 
 def _port_hooks(k):
@@ -2255,7 +2262,7 @@ def _org_adapters(cfg, spec):
 def parity_next(k, man, cfg):
     """[(rank key, fam, name, verb, state, line)] of the cells to close next (owner 2026-11-24): adapters the org's config picks first,
     then the verbs kit code uses most (no use: last), then the cheapest (most sibling adapters native: a pattern to copy). Skipped: native / config
-    cells, `none` adapters (no tool to call) and gaps declared `no such feature: <link>`."""
+    cells, `none` adapters (no tool to call), gaps declared `no such feature: <link>` and `accepted` (by-design) fallbacks."""
     fams = {f: a for f, a in (man.get('adapters') or {}).items() if isinstance(a, dict)}
     org = {f: _org_adapters(cfg, a.get('config', '')) for f, a in fams.items()}
     if 'host' in org.get('ci', set()) or not org.get('ci'):   # ci.type host (the default) = the git host's vendor
@@ -2263,12 +2270,12 @@ def parity_next(k, man, cfg):
     code = {f: re.sub(AD_COMMENT, '', t) for f, t in k.texts.items() if re.match(r'(skills|workflows)/', f) and f.endswith(AD_EXT + ('.js',)) and '.local.' not in f and '/kitbag' not in f}
     out = []
     for fam, a in fams.items():
-        rows, gaps = adapter_matrix(k, fam, a), _gap_keys(a.get('gaps'))
+        rows, gaps, ok = adapter_matrix(k, fam, a), _gap_keys(a.get('gaps')), _gap_keys(a.get('accepted'))
         near = [t for t in code.values() if re.search(r"""['"]%s['"]""" % re.escape(fam), t)]
         for n, row in rows.items():
             for v, s in row.items():
                 why = gaps.get((n, v), ('', a.get('fallback', {}).get(v, '')))[1]
-                if s not in ('fallback', 'gap') or n == 'none' or NOFEATURE.match(why):
+                if s not in ('fallback', 'gap') or n == 'none' or NOFEATURE.match(why) or (n, v) in ok:
                     continue
                 if '.' in v:   # a dotted git-host verb is its own name: 'mr.parseRef'
                     uses = sum(len(re.findall(r"""['"]%s['"]""" % re.escape(v), t)) for t in code.values())
@@ -2293,7 +2300,7 @@ def cmd_parity(a):
         cells = parity_next(k, man, local_config(KIT_DIR, 'kit.local.json'))
         for c in cells[:int(flags.get('--n') or 3)]:
             print(c[5])
-        print(f'parity next: {len(cells)} open cell(s) (fallback or gap; `no such feature: <link>` gaps and none adapters excluded)')
+        print(f'parity next: {len(cells)} open cell(s) (fallback or gap; `no such feature: <link>` gaps, accepted fallbacks and none adapters excluded)')
         return 0
     fams = {f: adapter_matrix(k, f, a) for f, a in (man.get('adapters') or {}).items() if isinstance(a, dict)}
     hm = harness_matrix(k)

@@ -2,7 +2,7 @@
 # Usage: dot-sourced by pokey.ps1 from adapters/. Exit codes: none here (its verbs exit through pokey.ps1).
 # deploys: pokey.ps1 deployed and the deploy-kind registry (ci-job, branch-mr, ssh, awsStack, probe, tag, manual, command, laneApk).
 # Test-DeployedExtra runs inside Invoke-Deployed and uses its $sha, $s8, $mr, $p, $r, $memo, Row, Hv, OnRef, LocalAncestor.
-# Sections: L6 shell · L15 probe · L78 kinds · L258 deployed
+# Sections: L6 shell · L15 probe · L78 kinds · L279 deployed
 # ---- shell: one shell line per OS
 function Invoke-Sh([string]$c) { if ($KitIsWindows) { cmd.exe /d /c $c 2>$null } else { /bin/sh -c $c 2>$null } }
 # a deploy's paths (globs): deploys[].paths, else its ssh.subdir (a monorepo host installs only that folder); none = every MR
@@ -163,6 +163,7 @@ Register-KitAdapter 'deploy-kind' 'branch-mr' @{
 # deploy: deploys[].ssh.deployCmd ({sha} {branch}) runs on the host; none = UNSUPPORTED (a person deploys)
 Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; restart = { param($a) Invoke-DeployRestartSsh $a.d.target $a.d $a.service }
   deploy = { param($a) $s = $a.d.ssh; if (-not $s.deployCmd) { return @{ note = 'no deploys[].ssh.deployCmd: a person deploys' } }; $c = "$($s.deployCmd)".Replace('{sha}', (__DkHead $a.repo $a.d)).Replace('{branch}', "$($a.d.branch)"); $key = [string]$s.key -replace '^~', $HOME
+    $lk = Sq (__DkSshLock $a.d); $c = "echo `$`$ > $lk; trap `"rm -f $lk`" EXIT`n$c"   # the deploy lock isRunning reads: this host shell's pid while it runs
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($c)); $o = @(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, "echo $b64 | base64 -d | bash && echo KIT_DEPLOY_OK")) 900)
     # the marker proves the command ran and exited 0 (the bounded ssh drops exit codes, a timeout returns nothing)
     if ($o -notcontains 'KIT_DEPLOY_OK') { return @{ note = "ssh deploy failed or timed out: $(($o | Select-Object -Last 3) -join ' / ')" } }
@@ -172,7 +173,14 @@ Register-KitAdapter 'deploy-kind' 'ssh' @{ isDeployed = { param($a) Test-Deploye
     $c = "$(if ($s.shaFile) { "${su}stat -c %Y $(Sq $s.shaFile) 2>/dev/null || " })git -C $(Sq ([string]$s.repoDir).TrimEnd('/')) log -g -1 --date=unix --format=%gd HEAD 2>/dev/null"
     $o = "$(@(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, $c)) ([int](Get-KitParam 'deploy.sshTimeoutSeconds'))) -join ' ')"
     $n = [regex]::Match($o, '\b\d{9,11}\b').Value; if ($n) { @{ at = [DateTimeOffset]::FromUnixTimeSeconds([long]$n).LocalDateTime; source = "ssh $($s.host) $(if ($o -match 'HEAD@') { 'HEAD moved' } else { $s.shaFile })" } } }
+  # in flight = the host's deploy lock names a live pid (the kit's ssh deploy writes it; a CI deploy on the host may too); no answer = unknown
+  isRunning = { param($a) $s = $a.d.ssh; $key = [string]$s.key -replace '^~', $HOME; $lk = Sq (__DkSshLock $a.d)
+    $c = 'p=$(cat ' + $lk + ' 2>/dev/null); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then echo KIT_RUN=yes; else echo KIT_RUN=no; fi'
+    $o = "$(@(Invoke-BoundedSsh @(@(if ($key) { '-i', $key }) + @('-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', $s.host, $c)) ([int](Get-KitParam 'deploy.sshTimeoutSeconds'))) -join ' ')"
+    if ($o -match 'KIT_RUN=yes') { $true } elseif ($o -match 'KIT_RUN=no') { $false } }
   plan = { param($a) if ($a.d.ssh.deployCmd) { "deploys[].ssh.deployCmd on $($a.d.ssh.host) (bossy.ps1 deploy run -To $($a.d.target))" } else { "a person deploys on $($a.d.ssh.host), then bossy.ps1 deploy record" } } }
+# the host's deploy lock file: deploys[].ssh.lockFile, else /tmp/kit-deploy-<target>.lock (a pid while a deploy runs)
+function __DkSshLock($d) { if ($d.ssh.lockFile) { "$($d.ssh.lockFile)" } else { "/tmp/kit-deploy-$(ConvertTo-KitSlug "$($d.target)").lock" } }   # arch-ok: a path on the remote host
 # adapter:deploy-kind/tag
 Register-KitAdapter 'deploy-kind' 'tag' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) "tag $($a.d.tag) (bossy.ps1 deploy merge -To $($a.d.target) -Push)" }; deploy = { param($a) @{ id = "$(__DkMerge $a -Push)" } }
   # in flight = the newest matching tag's newest CI run still running / pending; last deploy = the first green run of the newest 3 tags
@@ -199,6 +207,13 @@ function __DkStack($d) { $ra = if ($d.region) { @('--region', $d.region) } else 
 Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-DeployedExtra $a.d }; plan = { param($a) if ($a.d.template) { "aws cloudformation deploy of $($a.d.template) to stack $($a.d.awsStack) (bossy.ps1 deploy run -To $($a.d.target))" } else { "a person updates stack $($a.d.awsStack), then bossy.ps1 deploy record" } }
   lastDeploy = { param($a) $s = __DkStack $a.d; if ($s.at) { @{ at = ([datetimeoffset]$s.at).LocalDateTime; source = "stack $($a.d.awsStack)" } } }
   isRunning = { param($a) $s = __DkStack $a.d; if ($s) { "$($s.status)" -match '_IN_PROGRESS$' } }
+  # restart: deploys[].ecsService (ecsCluster, region) = a new ECS deployment, same task definition; no ecsService = skip (command.restart, ssh block)
+  restart = { param($a) $d = $a.d; if (-not $d.ecsService) { return @{ skip = 'no deploys[].ecsService' } }
+    $ra = @(if ($d.region) { '--region', $d.region }) + @(if ($d.ecsCluster) { '--cluster', $d.ecsCluster })
+    if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { $global:KitHostFailed = $true; return 'aws CLI not found' }
+    $global:LASTEXITCODE = 0; $o = @(aws ecs update-service @ra --service $d.ecsService --force-new-deployment --query 'service.deployments[?status==`PRIMARY`].id | [0]' --output text 2>&1)
+    if ($LASTEXITCODE) { $global:KitHostFailed = $true; return "aws ecs update-service failed (exit $LASTEXITCODE): $(@($o)[-1])" }
+    "ecs service $($d.ecsService): new deployment $("$(@($o)[-1])".Trim())" }
   deploy = { param($a) $d = $a.d; if (-not $d.template) { return @{ note = 'no deploys[].template: a person updates the stack' } }
     $sha = __DkHead $a.repo $d; $tf = Join-Path (Get-KitTemp) "kit-stack-$PID-$([IO.Path]::GetFileName("$($d.template)"))"
     $body = git -C $a.repo.checkout show "${sha}:$("$($d.template)".TrimStart('/'))" 2>$null; if ($LASTEXITCODE -or -not $body) { return @{ note = "template $($d.template) not in $($a.repo.name) at $sha" } }
@@ -211,6 +226,12 @@ Register-KitAdapter 'deploy-kind' 'awsStack' @{ isDeployed = { param($a) Test-De
 # lastDeploy: the lane APK stamp's build time (phones get it on their next acquire); deploy: phoney.ps1 build in the repo checkout
 Register-KitAdapter 'deploy-kind' 'laneApk' @{ isDeployed = { param($a) Test-LaneApkDeployed $a.d }; plan = { param($a) 'phoney.ps1 build from a branch holding the merge; phones get it on their next phoney.ps1 acquire' }
   lastDeploy = { param($a) $ai = LaneApk $a.d; if ($ai.built) { @{ at = [datetime]$ai.built; source = "lane APK $($ai.commit)" } } }
+  # restart: the app force-stopped on each leased phone that is up (phoney.ps1 launch -Stop); its next launch starts it fresh
+  restart = { param($a) $sv = @(& pwsh -NoProfile -File $KitCmd.swarm status 2>$null | ForEach-Object { if ("$_" -match '^\S+\s+(\S+)\s+up\s+leased by') { $Matches[1] } })
+    if (-not $sv.Count) { return 'no leased phone is up: nothing to stop' }
+    $bad = @(foreach ($sn in $sv) { $null = & pwsh -NoProfile -File $KitCmd.swarm launch -Serial $sn -Stop 2>&1; if ($LASTEXITCODE) { $sn } })
+    if ($bad.Count) { $global:KitHostFailed = $true }
+    "app stopped on $($sv.Count - $bad.Count) of $($sv.Count) leased phone(s): $($sv -join ', ')$(if ($bad.Count) { "; failed: $($bad -join ', ')" })" }
   deploy = { param($a) if (-not $a.repo.checkout) { return @{ note = "repos[].checkout of $($a.repo.name) unset: phoney.ps1 build -AppDir <checkout> by hand" } }
     $o = & pwsh -NoProfile -File $KitCmd.swarm build -AppDir $a.repo.checkout 2>&1 | Out-String; if ($LASTEXITCODE) { return @{ note = "phoney.ps1 build failed (exit $LASTEXITCODE): $(@($o.Trim() -split "`r?`n")[-1])" } }
     $ai = LaneApk $a.d; @{ id = "lane APK $($ai.commit)"; note = 'phones get it on their next phoney.ps1 acquire' } } }

@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/tracker-adapters-2.tests.ps1: the linear, youtrack and azure tracker adapters' K54 moves and native caps (dependencies, labels,
-statuses) on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
+statuses, azure checklist) on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
 Usage: pwsh -NoProfile -File tests/tracker-adapters-2.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -61,5 +61,18 @@ Cap azure dependencies ([ordered]@{ 'GET .*workitems/42\?\$expand=relations' = '
 Cap azure dependencies $global:fx @{ id = '42'; on = @() } { param($r) ($r -join ',') -eq '40' -and -not ($global:log -match '^PATCH') } 'on = none: a read only (tracker order)'
 Cap azure statuses ([ordered]@{ 'GET .*_apis/wit/workitemtypes/Task/states\?api-version=7\.1' = '{"value":[{"name":"To Do","category":"Proposed"},{"name":"QA","category":"InProgress"},{"name":"Done","category":"Completed"},{"name":"Cut","category":"Removed"}]}' }) @{ scope = 'Shop\Team' } {
  param($r) ($r | ForEach-Object { "$($_.name)=$($_.type)" }) -join ',' -eq 'To Do=open,QA=custom,Done=closed,Cut=custom' } "the issue type's states; Proposed -> open, Completed -> closed"
+# checklist: child Tasks tagged kit-checklist-<name> (a real subtask untouched): tick, untick + rename, add (then tick), prune a stale kit line,
+# the old description section out; view and list skip checklist children
+$azT = '"System.Tags":"kit-checklist; kit-checklist-items"'
+$azCl = [ordered]@{ 'GET .*workitems/42\?\$expand=relations' = '{"id":42,"fields":{"System.Title":"P","System.State":"Doing","System.AreaPath":"Shop\\Team","System.Description":"<div>keep</div><div>&lt;!-- kit:items --&gt;</div><div>- [ ] old</div><div>&lt;!-- /kit:items --&gt;</div>"},"relations":[' + (@(50..53 | ForEach-Object { "{`"rel`":`"System.LinkTypes.Hierarchy-Forward`",`"url`":`"https://dev.azure.com/acme/_apis/wit/workItems/$_`"}" }) -join ',') + ']}'
+ 'GET .*workitems\?ids=50,51,52,53&' = '{"value":[{"id":50,"fields":{"System.Title":"A1 · first","System.State":"To Do",' + $azT + '}},{"id":51,"fields":{"System.Title":"A2 · second","System.State":"Done",' + $azT + '}},{"id":52,"fields":{"System.Title":"Real sub","System.State":"To Do"}},{"id":53,"fields":{"System.Title":"Z9 · stale","System.State":"To Do",' + $azT + '}}]}'
+ 'GET .*workitemtypes/Task/states' = '{"value":[{"name":"To Do","category":"Proposed"},{"name":"Done","category":"Completed"}]}'; 'POST .*workitems/\$Task' = '{"id":60}'; 'PATCH .*workitems/(42|50|51|60)\?' = '{"id":1}'; 'DELETE .*workitems/53\?' = '' }
+Cap azure checklist $azCl @{ id = '42'; name = 'Items'; prune = $true; items = @(@{ text = 'A1 · first'; done = $true }, @{ text = 'A2 · second v2'; done = $false }, @{ text = 'A3 · third'; done = $true }) } {
+ param($r, $l) $p = @($global:log -match '^PATCH'); "$r" -eq 'checklist Items on 42: 4 change(s), 1 removed' -and @($global:log -match '^DELETE').Count -eq 1 -and $l -match 'DELETE .*workitems/53\?' -and
+  @($p -match 'workitems/50\?.*"value":"Done"').Count -eq 1 -and @($p -match '(?=.*workitems/51\?)(?=.*second v2)(?=.*"value":"To Do")').Count -eq 1 -and @($p -match 'workitems/60\?.*"value":"Done"').Count -eq 1 -and
+  $l -match '(?=POST .*workitems/\$Task)(?=.*A3 · third)(?=.*kit-checklist-items)(?=.*Hierarchy-Reverse)(?=.*workItems/42")(?=.*Shop\\\\Team)' -and @($p -match '(?=.*workitems/42\?)(?=.*keep)').Count -eq 1 -and -not @($p -match 'workitems/42\?.*kit:items').Count -and $l -notmatch 'workitems/52\?' } 'child Tasks: tick, untick + rename, add, prune; a real subtask and others'' lines kept'
+$azV = try { Initialize-KitTracker -Type azure; $global:fx = $azCl; $global:log.Clear(); Clear-TrackerMemo 42; $vt = Get-TrackerTask 42; $global:fx = [ordered]@{ 'wiql' = '{"workItems":[]}' }; $null = __TrA 'list' @{ status = 'To Do' }
+  "$(@($vt.subtasks.id) -join ',')|$([bool]@(($global:log -match 'wiql') -match "NOT \[System.Tags\] CONTAINS 'kit-checklist'").Count)" } catch { "$_" }
+if ($azV -notmatch '^52\|True$') { $global:failed++ }; "$(if ($azV -match '^52\|True$') { 'PASS' } else { 'FAIL' }) tracker azure: view and list skip checklist children ($azV)"
 Remove-Item $trRt -Recurse -Force -ErrorAction SilentlyContinue
 exit [int]($global:failed -gt 0)

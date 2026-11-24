@@ -7,7 +7,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L15 helpers · L106 intest · L284 deploy · L489 restart · L565 supervise
+Sections: L15 helpers · L106 intest · L284 deploy · L489 restart · L569 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -488,7 +488,8 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
 
 # ---- restart: services of an ssh deploy, gated by its busy check in the same shell, right before each restart
 # deploys[].ssh.busy: a host shell command whose output = live work (e.g. a running agent turn); busy -> wait, re-check, bounded
-# the row's deploy kind restarts (ssh: below; command: deploys[].command.restart); a kind without restart is refused
+# a row's command.restart first, else its deploy kind's restart (ssh: below; awsStack: ecsService; laneApk: leased phones), else its
+# ssh block; none of them = refused
 # deploy run (README "Adapters" deploy-kind deploy): only on a person's word (deploy.trigger); a kind without a deploy verb prints
 # UNSUPPORTED + its plan line (a person deploys, then deploy record); DEPLOY / FAILED per row
 function Invoke-DeployRun([string]$To, [string]$Repo, [Alias('Mr')][string[]]$Mrs, [string]$Decision) {
@@ -516,17 +517,20 @@ function Invoke-DeployRestart([string[]]$Targets, [string]$Service, [int]$WaitMi
   foreach ($t in $Targets) {
     $d = @(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -eq $t } | Select-Object -First 1
     $kd = if ($d) { Get-KitDeployKind $d }
-    if ($d -and $kd -ne 'ssh' -and -not $KitAdapters['deploy-kind'][$kd].restart -and $d.command.restart) {   # fallback: the row's command.restart line
+    # the kind's own restart, unless the row names its command.restart (that wins); @{ skip } = not set up on this row: the fallbacks below
+    if ($d -and $kd -ne 'ssh' -and ($kd -eq 'command' -or -not $d.command.restart) -and $KitAdapters['deploy-kind'][$kd].restart) {
+      $global:KitHostFailed = $false; $o = Invoke-KitDeployKind $d 'restart' @{ service = $Service }
+      if (-not ($o -is [hashtable] -and $o.skip)) {
+        if ($null -eq $o -or $global:KitHostFailed) { "FAILED deploy restart ${t}: deploy kind $kd restart$(if ($o) { ": $o" } else { ' gave no answer' })"; exit 1 }
+        Write-KitLog deploy-log restart ([ordered]@{ target = $t; services = @(Split-KitList @($Service)); gated = $false; kind = $kd }); "RESTARTED ${t} (deploy kind $kd): $o"; continue
+      }
+    }
+    if ($d -and $kd -ne 'ssh' -and $d.command.restart) {   # fallback: the row's command.restart line
       $global:KitHostFailed = $false; $o = __DkCmd $d 'restart' @{ service = $Service }; if ($global:KitHostFailed) { "FAILED deploy restart ${t}: command.restart failed"; exit 1 }
       Write-KitLog deploy-log restart ([ordered]@{ target = $t; services = @(Split-KitList @($Service)); gated = $false; kind = "$kd command.restart" }); "RESTARTED ${t} (deploy kind $kd, command.restart): $o"; continue
     }
-    if ($kd -eq 'ssh' -or -not $d -or -not $KitAdapters['deploy-kind'][$kd].restart) {
-      if (-not $d.ssh.host) { "deploy restart: $t has no repos[].deploys[].ssh (host, key, service) and its kind ($(if ($kd) { $kd } else { 'none' })) has no restart: restart it by the org's deploy rules"; exit 2 }
-      Invoke-DeployRestartSsh $t $d $Service $WaitMinutes $RecheckSeconds -Ungated:$Ungated; continue
-    }
-    $global:KitHostFailed = $false; $o = Invoke-KitDeployKind $d 'restart' @{ service = $Service }
-    if ($null -eq $o -or $global:KitHostFailed) { "FAILED deploy restart ${t}: deploy kind $kd restart gave no answer"; exit 1 }
-    Write-KitLog deploy-log restart ([ordered]@{ target = $t; services = @(Split-KitList @($Service)); gated = $false; kind = $kd }); "RESTARTED ${t} (deploy kind $kd): $o"
+    if (-not $d.ssh.host) { "deploy restart: $t has no repos[].deploys[].ssh (host, key, service) and its kind ($(if ($kd) { $kd } else { 'none' })) has no restart: restart it by the org's deploy rules"; exit 2 }
+    Invoke-DeployRestartSsh $t $d $Service $WaitMinutes $RecheckSeconds -Ungated:$Ungated
   }
 }
 # ssh rows: ssh.manager's restart / status commands (systemd | docker | pm2 | custom), ssh.sudo true = sudo -n

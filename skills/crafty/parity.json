@@ -1,5 +1,5 @@
 {
-  "_readme": "Parity registry (AGENTS.md \"Parity\"; kitbag.py parity, lint PARITY). adapters.<family>: config key, code file, verbs, caps (Test-KitCap), built-in names, vendor names; fallback.<verb> = what the kit does instead, same outcome (an optional verb); gaps.\"<name>[,<name>]/<verb>[,<verb>]\" = what does not work there and why (kitbag.py parity next lists it to close; a gap the tool cannot close: \"no such feature: <its doc link> <why>\"); capKeys.<cap> = the keys that turn it on; parity = why a family is not walked. harness: hooks (settings.json hook -> the port's command, else \"gap: <why>\" | \"fallback: <how>\"), features (Claude Code-only features, the same values).",
+  "_readme": "Parity registry (AGENTS.md \"Parity\"; kitbag.py parity, lint PARITY). adapters.<family>: config key, code file, verbs, caps (Test-KitCap), built-in names, vendor names; fallback.<verb> = what the kit does instead, same outcome (an optional verb); gaps.\"<name>[,<name>]/<verb>[,<verb>]\" = what does not work there and why (kitbag.py parity next lists it to close; a gap the tool cannot close: \"no such feature: <its doc link> <why>\"); accepted.\"<name>/<verb>\" = a fallback that is the design, with its reason (out of parity next); capKeys.<cap> = the keys that turn it on; parity = why a family is not walked. harness: hooks (settings.json hook -> the port's command, else \"gap: <why>\" | \"fallback: <how>\"), features (Claude Code-only features, the same values).",
   "adapters": {
     "_readme": "README Adapters; code: Register-KitAdapter <kind> <name> @{ <verb> = {...} } (ps1) or ADAPTERS['<kind>']['<name>'] = {...} (py)",
     "tracker": {
@@ -10,8 +10,14 @@
       "names": "command none",
       "vendors": "clickup github gitlab jira jira-server linear youtrack azure",
       "fallback": {
-        "checklist": "an Items block in the description (<!-- kit:<name> -->): the markdown task list GitHub and GitLab use natively; the other issue APIs have no checklist field (Jira: Marketplace apps only)",
+        "checklist": "an Items block in the description (<!-- kit:<name> -->): a markdown task list, the tool's own checklist form where it has no checklist API (Linear, YouTrack: a checklist lives in the description)",
         "dependencies": "a **Waits on:** line in the description"
+      },
+      "gaps": {
+        "linear/checklist": "no such feature: https://linear.app/docs/parent-and-sub-issues an issue has sub-issues, no checklist entity; a checklist is description markdown, which the Items block is (fallback = Linear's own form)",
+        "youtrack/checklist": "no such feature: https://www.jetbrains.com/help/youtrack/devportal/resource-api-issues.html the issue API has no checklist field; checklists are description markdown (https://www.jetbrains.com/help/youtrack/cloud/youtrack-markdown-syntax-issues.html#checklists), which the Items block is (fallback = YouTrack's own form)",
+        "jira-server/checklist": "no such feature: https://docs.atlassian.com/software/jira/docs/api/REST/9.17.0/ Jira Data Center REST has no checklist resource, only sub-tasks (Marketplace apps add one); the Items block stands",
+        "jira/checklist": "no such feature: https://developer.atlassian.com/platform/framework/adf-builder/reference/nodes/taskList/ ADF taskList is not supported in Jira issue fields (Marketplace apps only); the Items block stands"
       }
     },
     "git-host": {
@@ -63,8 +69,15 @@
       "fallback": {
         "lastDeploy": "the kit's deploy log (bossy.ps1 deploy run / record) of the target: the deploy board's last time (manual, probe: a person deploys, no system records it)",
         "deploy": "the row's command.deploy line ({sha} {repo} {mr}; bossy.ps1 deploy run), else UNSUPPORTED: a person deploys, then bossy.ps1 deploy record (probe: it only reads the live commit)",
-        "isRunning": "a bossy.ps1 deploy run of the target in flight (deploys/running-<target>.json, its process alive: deploys.ps1 Test-KitDeployRunning; manual, probe: no system to ask; ssh: the host runs any deployCmd, no lock to read; laneApk: phoney.ps1 build keeps none)",
+        "isRunning": "a bossy.ps1 deploy run of the target in flight (deploys/running-<target>.json, its process alive: deploys.ps1 Test-KitDeployRunning; manual, probe: no system to ask; laneApk: the build runs inside deploy run)",
         "restart": "the row's command.restart line ({service}), else its ssh block (host, manager or restartCmd), else bossy.ps1 deploy restart refuses naming them (a kind is the delivery path, not the runtime: the row says how its service restarts)"
+      },
+      "accepted": {
+        "probe/deploy": "a probe only reads the live commit: no delivery path of its own (command.deploy or a person)",
+        "branch-mr,ci-job,tag,manual,probe/restart": "a kind is the delivery path, not the runtime: the row's command.restart or ssh block says how its service restarts",
+        "manual,probe/lastDeploy": "a person deploys and no system records it: the kit's deploy log (deploy record) is the record",
+        "manual,probe/isRunning": "a person deploys: no system to ask; a kit deploy run's marker covers the runs the kit makes",
+        "laneApk/isRunning": "the build runs inside bossy.ps1 deploy run (phoney.ps1 build, no remote pipeline): its running marker is the whole truth"
       }
     },
     "secret-store": {
@@ -132,6 +145,10 @@
         "import": "the env's seed (envy.ps1 seed: the tenant's rows as seed items) or the app's own tenant import (column: rows share tables with every tenant; instance: the tenant's server is an env of its own)",
         "drop": "instance: the tenant's server is an env of its own (envy.ps1 teardown / down there)",
         "footprint": "instance: the tenant's server is an env of its own (envy.ps1 sql -Query schemaSizes there)"
+      },
+      "accepted": {
+        "instance/drop,import,footprint": "each tenant is an env of its own: envy.ps1 on that env (teardown, seed, sql schemaSizes) is the native path",
+        "column/import": "rows share tables with every tenant: an import risks id clashes and large writes (AGENTS.md \"No large writes\"); the env's seed or the app's own import"
       }
     },
     "migration": {

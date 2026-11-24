@@ -26,7 +26,7 @@ $kl = Join-Path $k 'skills/crafty/kit.local.json'
 & $J @{ repos = @(@{ name = 'svc'; deploys = @(@{ target = 'svc-stage'; ssh = @{ host = 'u@h1'; key = 'k.pem'; service = 'app,app-worker'; busy = 'pgrep -fa agent-turn' } }, @{ target = 'nobusy'; ssh = @{ host = 'u@h2'; service = 'app' } },
   @{ target = 'dock'; ssh = @{ host = 'u@h3'; service = 'web'; manager = 'docker'; sudo = $false } }, @{ target = 'bare'; ssh = @{ host = 'u@h4'; service = 'web'; manager = 'none' } },
   @{ target = 'kube'; production = $false; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output rolled-{service}" } },
-  @{ target = 'probed'; probe = 'echo x'; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output bounced-{service}"; deploy = "`"$pwshExe`" -NoProfile -Command Write-Output shipped-{repo}" } }, @{ target = 'quiet'; probe = 'echo x'; command = @{ deploy = "`"$pwshExe`" -NoProfile -Command exit 0" } }) }); deploy = @{ ssh = @{ manager = 'systemd'; sudo = $true } } } $kl   # LEGACY deploy.ssh
+  @{ target = 'probed'; probe = 'echo x'; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output bounced-{service}"; deploy = "`"$pwshExe`" -NoProfile -Command Write-Output shipped-{repo}" } }, @{ target = 'stacked'; kind = 'awsStack'; awsStack = 'shop'; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output stack-{service}" } }, @{ target = 'lanecmd'; kind = 'laneApk'; laneApk = $true; command = @{ restart = "`"$pwshExe`" -NoProfile -Command Write-Output lane-{service}" } },@{ target = 'quiet'; probe = 'echo x'; command = @{ deploy ="`"$pwshExe`" -NoProfile -Command exit 0" } }) }); deploy = @{ ssh = @{ manager = 'systemd'; sudo = $true } } } $kl   # LEGACY deploy.ssh
 $logs = { @(Get-ChildItem (Kd) -Filter 'ssh.log.*' | Sort-Object Name | ForEach-Object { Get-Content $_.FullName -Raw }) }
 $clear = { Get-ChildItem (Kd) -Filter 'ssh.log.*' | Remove-Item }
 
@@ -61,6 +61,8 @@ $pW = if ((Px $O decide record -Gate deploy -Item probed -Question 'deploy probe
 $pd = Px $O deploy run -To probed -Decision $pW 2>&1 | Out-String
 $qW = if ((Px $O decide record -Gate deploy -Item quiet -Question 'deploy quiet?' -Answer 'yes, deploy quiet' -Source chat 2>&1 | Out-String) -match 'RECORDED (\S+)') { $Matches[1] }; $pq = Px $O deploy run -To quiet -Decision $qW 2>&1 | Out-String
 Expect "deploy kinds: probe restarts and deploys through its command.restart / command.deploy lines, no ssh ($($rp.Trim()) $rpc | $($pd.Trim()))" ($rpc -eq 0 -and $rp -match 'RESTARTED probed \(deploy kind probe, command\.restart\): bounced-api' -and $pd -match 'DEPLOY svc -> probed \(probe\): shipped-svc' -and $pq -match 'DEPLOY svc -> quiet \(probe\): command\.deploy' -and @(& $logs).Count -eq 1 -and -not (Test-Path (Join-Path (TkPath $k 'deploys') 'running-probed.json')))
+$rsk = Px $O deploy restart -Env stacked -Service web 2>&1 | Out-String; $rskc = $LASTEXITCODE; $rlc = Px $O deploy restart -Env lanecmd -Service app 2>&1 | Out-String
+Expect "deploy restart: a row's command.restart wins over its kind's own restart (awsStack, laneApk) ($($rsk.Trim()) $rskc | $($rlc.Trim()))" ($rskc -eq 0 -and $rsk -match 'RESTARTED stacked \(deploy kind awsStack, command\.restart\): stack-web' -and $rlc -match 'RESTARTED lanecmd \(deploy kind laneApk, command\.restart\): lane-app')
 # isRunning: branch-mr = an open MR into its branch, tag = the newest matching tag's CI run, else a live deploy run marker; deploy: awsStack
 # from its template at the deploy head, laneApk refused without a checkout (fixtures: no host, AWS or phone here)
 $dkI = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1'); . (Join-Path $k 'skills/bossy/adapters/deploys.ps1')
@@ -106,8 +108,24 @@ $dkR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pok
     $null -eq (Invoke-KitDeployKind @{ ssh = @{ host = 'dead'; repoDir = '/srv/app' }; target = 't' } 'lastDeploy')
   $dks = @(@{ command = @{ deploy = 'x' }; target = 't' }, @{ ssh = @{ host = 'h1' }; target = 't' }, @{ probe = 'echo x'; target = 't' }, $st, @{ laneApk = $true; target = 't' })
   $dkK.plan = @($dks | Where-Object { -not "$(Invoke-KitDeployKind $_ 'plan')" }).Count -eq 0 -and "$(Invoke-KitDeployKind $dks[1] 'plan')" -match 'a person deploys on h1'
+  # restart: awsStack = a new ECS deployment when the row sets ecsService (else skip: command.restart / ssh run); laneApk = the app stopped on leased phones up
+  function aws { $global:dkAws = "$args"; $global:LASTEXITCODE = 0; 'ecs-svc/123' }
+  $dkK.ecs = (Invoke-KitDeployKind @{ awsStack = 's'; ecsService = 'api'; ecsCluster = 'main'; region = 'eu-west-1'; target = 't' } 'restart') -eq 'ecs service api: new deployment ecs-svc/123' -and
+    $global:dkAws -match '^ecs update-service --region eu-west-1 --cluster main --service api --force-new-deployment' -and (Invoke-KitDeployKind $st 'restart').skip -match 'ecsService'
+  $fph = Join-Path (Kd) 'fakephoney.ps1'; $env:FAKE_PH_LOG = Join-Path (Kd) 'phoney.log'; $KitCmd.swarm = $fph
+  Set-Content $fph "if (`$args[0] -eq 'status') { 'lane1    emulator-5554  up       leased by t-1 since x'; 'lane2    emulator-5556  down     free'; 'lane3    emulator-5558  up       free' } else { Add-Content `$env:FAKE_PH_LOG `"`$args`" }"
+  $ra = Invoke-KitDeployKind @{ laneApk = $true; target = 't' } 'restart'
+  $dkK.phones = $ra -eq 'app stopped on 1 of 1 leased phone(s): emulator-5554' -and (Get-Content $env:FAKE_PH_LOG) -join '|' -eq 'launch -Serial emulator-5554 -Stop'
+  # ssh: deploy holds the host lock (its shell's pid, removed on exit); isRunning reads it: a live pid = yes, none = no, no answer = unknown
+  function Invoke-BoundedSsh($A, $Sec) { $global:dkSsh = $A[-1]; if ($A -contains 'dead') { return @() }; if ($A[-1] -match 'base64') { return 'KIT_DEPLOY_OK' }; if ($A -contains 'busy') { 'KIT_RUN=yes' } else { 'KIT_RUN=no' } }
+  $sl = @{ ssh = @{ host = 'busy'; deployCmd = './ship.sh' }; target = 'Stage 1' }; $dp = Invoke-KitDeployKind $sl 'deploy' @{ repo = @{ name = 'a' } }
+  $dsh = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((($global:dkSsh -split ' ')[1])))
+  $dkK.lock = $dp.id -eq 'ssh busy' -and $dsh -ceq "echo `$`$ > '/tmp/kit-deploy-stage-1.lock'; trap `"rm -f '/tmp/kit-deploy-stage-1.lock'`" EXIT`n./ship.sh" -and
+    (Invoke-KitDeployKind $sl 'isRunning') -eq $true -and $global:dkSsh -match "^p=\`$\(cat '/tmp/kit-deploy-stage-1.lock'" -and
+    (Invoke-KitDeployKind @{ ssh = @{ host = 'h1'; lockFile = '/run/app.lock' }; target = 't' } 'isRunning') -eq $false -and $global:dkSsh -match "cat '/run/app.lock'" -and
+    $null -eq (Invoke-KitDeployKind @{ ssh = @{ host = 'dead' }; target = 't' } 'isRunning')
   $dkK.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
-Expect-Each $dkR 'deploy kind: #' @('stack', 'apk', 'branch', 'tag', 'ssh', 'plan') -Show 7
+Expect-Each $dkR 'deploy kind: #' @('stack', 'apk', 'branch', 'tag', 'ssh', 'plan', 'ecs', 'phones', 'lock') -Show 10
 
 $env:PATH = $path0; Remove-Item Env:FAKE_SSH_LOG, Env:FAKE_SSH_MODE
 # supervise deploy holds (moved from deploys.tests.ps1: its token cap)

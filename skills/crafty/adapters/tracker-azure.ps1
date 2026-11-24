@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # tracker-azure: Azure Boards tracker (tracker.type azure).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/ when tracker.type is azure; helpers come from lib.ps1.
-# Sections: L6 helpers · L18 rest · L26 html · L52 tracker
+# Sections: L6 helpers · L18 rest · L28 html · L54 tracker
 # ---- helpers: only this adapter uses them (kept out of the core lib.ps1)
 function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$File, [string]$CType) {
   if ($__trDry) { Write-Host "DRYRUN: $Method $Uri$(if ($null -ne $Body) { '  body=' + (__TrShort ($Body | ConvertTo-Json -Depth 20 -Compress)) })$(if ($File) { "  file=$File" })"; return $null }
@@ -23,6 +23,8 @@ function __TrAz([string]$Method, [string]$Path, $Body, [string]$CType, [string]$
   __TrHttp $Method "$u$(if ($u -match '\?') { '&' } else { '?' })api-version=7.1$(if ($Path -match '/comments') { '-preview.4' })" $Body (Get-KitAuth AZURE_DEVOPS_EXT_PAT basic) $File $CType
 }
 function __TrAzSet($Id, $F) { __TrAz 'PATCH' "wit/workitems/$Id" @(foreach ($k in @($F.Keys)) { @{ op = 'add'; path = "/fields/$k"; value = $F[$k] } }) 'application/json-patch+json' }
+# a checklist item (child Task tagged kit-checklist): no subtask, no listed task
+function __TrAzCl($W) { @("$($W.fields.'System.Tags')" -split ';\s*') -contains 'kit-checklist' }
 # ---- html: Markdown <-> HTML texts
 # Markdown (lib.ps1 ConvertFrom-KitMarkdown) -> HTML: tables, lists, b / code / a, br (Markdown marks would show as typed)
 function __TrHtmlRuns([string]$s) {
@@ -57,7 +59,7 @@ Register-KitAdapter 'tracker' 'azure' @{
     $f = $j.fields; $rel = { param($t) @($j.relations | Where-Object { $_.rel -eq "System.LinkTypes.Hierarchy-$t" } | ForEach-Object { $_.url -replace '^.*/' }) }; $kids = @(& $rel Forward)
     Add-KitTags ([pscustomobject]@{ id = "$($j.id)"; name = $f.'System.Title'; status = [string]$f.'System.State'; url = Get-TrackerUrl $j.id; parent = @(& $rel Reverse)[0]
       assignees = @($f.'System.AssignedTo'.displayName | Where-Object { $_ }); list = [string]$f.'System.AreaPath'; description = (__TrUnHtml $f.'System.Description')
-      subtasks = @(if ($kids) { (__TrAz 'GET' "wit/workitems?ids=$($kids -join ',')&fields=System.Title,System.State" $null).value | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; name = $_.fields.'System.Title'; status = [string]$_.fields.'System.State'; url = Get-TrackerUrl $_.id } } }) }) @("$($f.'System.Tags')" -split ';\s*')
+      subtasks = @(if ($kids) { (__TrAz 'GET' "wit/workitems?ids=$($kids -join ',')&fields=System.Title,System.State,System.Tags" $null).value | Where-Object { -not (__TrAzCl $_) } | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; name = $_.fields.'System.Title'; status = [string]$_.fields.'System.State'; url = Get-TrackerUrl $_.id } } }) }) @("$($f.'System.Tags')" -split ';\s*')
   }
   'status' = { param($a) $null = __TrAzSet $a.id @{ 'System.State' = $a.status }; "status of $($a.id): $($a.status)" }
   # the states of tracker.issueType in the project (scope = area path; states are per type, not per area); category Proposed -> open, Completed -> closed, Removed / Resolved custom (no role, as linear canceled)
@@ -99,9 +101,37 @@ Register-KitAdapter 'tracker' 'azure' @{
     $null = __TrAz 'PATCH' "wit/workitems/$($a.id)" @(@{ op = 'add'; path = '/relations/-'; value = @{ rel = 'AttachedFile'; url = $u.url } }) 'application/json-patch+json'; "attached $($a.leaf) to $($a.id)"; __TrNote $a
   }
   'list' = { param($a)
-    $q = "SELECT [System.Id] FROM workitems WHERE [System.TeamProject] = @project AND [System.State] = '$($a.status -replace "'", "''")'$(if ($a.list) { " AND [System.AreaPath] UNDER '$($a.list -replace "'", "''")'" })"
+    $q = "SELECT [System.Id] FROM workitems WHERE [System.TeamProject] = @project AND NOT [System.Tags] CONTAINS 'kit-checklist' AND [System.State] = '$($a.status -replace "'", "''")'$(if ($a.list) { " AND [System.AreaPath] UNDER '$($a.list -replace "'", "''")'" })"
     $ids = @((__TrAz 'POST' 'wit/wiql?$top=200' @{ query = $q }).workItems.id | Where-Object { $_ })
     if ($ids) { (__TrAz 'GET' "wit/workitems?ids=$($ids -join ',')&fields=System.Title,System.AssignedTo" $null).value | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; name = [string]$_.fields.'System.Title'; status = $a.status; assignees = @($_.fields.'System.AssignedTo' | Where-Object { $_ } | ForEach-Object { __TrWho $_.uniqueName $_.displayName }) } } }
   }
   'owner' = { param($a) if ($a.name) { $a.name } else { [string](__TrAz 'GET' '/connectionData' $null).authenticatedUser.providerDisplayName } }
+  # the board checklist = child Task work items (learn.microsoft.com/azure/devops/boards/boards/add-task-checklists): one per item, tagged
+  # kit-checklist + kit-checklist-<name>, keyed by the text before the first ' · '; tick = Task's Completed state, untick = its Proposed one;
+  # prune: unwanted kit lines ('<key> · ...') and repeats deleted (keepDone: a done one stays); the old description section goes
+  'checklist' = { param($a)
+    $tg = "kit-checklist-$("$($a.name)".ToLower() -replace '[\s;,]+', '-')"; $key = { param($t) ("$t" -split ' · ', 2)[0].Trim() }
+    $j = __TrAz 'GET' "wit/workitems/$($a.id)?`$expand=relations" $null; if (-not $j.id) { if ($__trDry) { return }; throw "tracker (azure): $($a.id) not found" }
+    $kids = @($j.relations | Where-Object { $_.rel -eq 'System.LinkTypes.Hierarchy-Forward' } | ForEach-Object { $_.url -replace '^.*/' })
+    $mine = @(if ($kids) { (__TrAz 'GET' "wit/workitems?ids=$($kids -join ',')&fields=System.Title,System.State,System.Tags" $null).value | Where-Object { @("$($_.fields.'System.Tags')" -split ';\s*') -contains $tg } })
+    $sts = @((__TrAz 'GET' 'wit/workitemtypes/Task/states' $null).value); $closed = "$(@($sts | Where-Object category -eq 'Completed')[0].name)"; $open = "$(@($sts | Where-Object category -eq 'Proposed')[0].name)"
+    $want = @{}; foreach ($w in @($a.items)) { $want[(& $key $w.text)] = $w }
+    $have = @{}; $n = 0; $rm = 0
+    foreach ($i in $mine) { $k = & $key $i.fields.'System.Title'; $dn = "$($i.fields.'System.State')" -eq $closed
+      $unw = $a.prune -and -not $want.ContainsKey($k) -and $k -notmatch '\s' -and "$($i.fields.'System.Title')".Contains(' · ') -and -not ($a.keepDone -and $dn)
+      if ($unw -or ($a.prune -and $have.ContainsKey($k))) { $null = __TrAz 'DELETE' "wit/workitems/$($i.id)" $null; $n++; if ($unw) { $rm++ } } elseif (-not $have.ContainsKey($k)) { $have[$k] = $i } }
+    foreach ($w in @($a.items)) { $i = $have[(& $key $w.text)]; $ws = if ($w.done) { $closed } else { $open }
+      if (-not $i) {
+        $o = @(@{ op = 'add'; path = '/fields/System.Title'; value = $w.text }, @{ op = 'add'; path = '/fields/System.Tags'; value = "kit-checklist; $tg" }, @{ op = 'add'; path = '/fields/System.AreaPath'; value = $j.fields.'System.AreaPath' },
+          @{ op = 'add'; path = '/relations/-'; value = @{ rel = 'System.LinkTypes.Hierarchy-Reverse'; url = "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '')/_apis/wit/workItems/$($a.id)" } })
+        $t = __TrAz 'POST' 'wit/workitems/$Task' @($o | Where-Object { $null -ne $_.value }) 'application/json-patch+json'; $n++
+        if ($w.done -and $t.id) { $null = __TrAzSet $t.id @{ 'System.State' = $closed } }   # a new item starts in the Proposed state
+        continue }
+      $f = [ordered]@{}; if ("$($i.fields.'System.Title')" -cne $w.text) { $f['System.Title'] = $w.text }
+      if (("$($i.fields.'System.State')" -eq $closed) -ne [bool]$w.done -and $ws) { $f['System.State'] = $ws }
+      if ($f.Count) { $null = __TrAzSet $i.id $f; $n++ } }
+    $md = __TrUnHtml $j.fields.'System.Description'; $nm = [regex]::Escape("$($a.name)".ToLower()); $sx = "(?s)\n*<!-- kit:$nm -->.*?<!-- /kit:$nm -->"
+    if ($md -match $sx) { $null = __TrAzSet $a.id @{ 'System.Description' = (__TrHtml ($md -replace $sx).Trim()) } }   # the fallback's copy, now stale
+    "checklist $($a.name) on $($a.id): $n change(s), $rm removed"
+  }
 }
