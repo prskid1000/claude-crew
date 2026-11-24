@@ -295,7 +295,7 @@ def _deploy_kinds():
 def deploy_kind(d):
     if d.get('kind'):
         return str(d['kind'])
-    # registry: deploy kinds: pokey/adapters/deployed_checks.ps1 (kind deploy-kind)
+    # registry: deploy kinds: pokey/adapters/deployed-checks.ps1 (kind deploy-kind)
     return next((k for k in ('laneApk', 'ssh', 'tag', 'probe', 'manual', 'awsStack', 'command') if d.get(k)), 'ci-job' if d.get('branch') else '')
 
 def config_rules(kit, c):

@@ -1,6 +1,6 @@
 # Local env DB (envy SKILL.md "Model" detail)
 Read by datay, the coordinator (`mark`, `restore`, `seed`, `tenant`, `teardown`, `dbtemp`), kitty wiring `db`, devy with a
-migration layer. `db.engine` = an `adapters/db_engines.ps1` adapter (kind db-engine: mysql, mariadb, postgres, sqlserver,
+migration layer. `db.engine` = an `adapters/db-engines.ps1` adapter (kind db-engine: mysql, mariadb, postgres, sqlserver,
 sqlite, oracle, mongodb; a verb an engine lacks refuses, never another engine's client); marks, restore, the cascade guard and
 the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever dumped whole.
 - Scopes (`Get-DataScopes`): `db.schemas` + `db.schemasQuery`, else `db.name`; a mark records them, a restore uses the mark's.
@@ -71,8 +71,8 @@ the schema tenant model need mysql / mariadb (`supportsMarks`); nothing is ever 
 - `SET GLOBAL` only: keep the configured size (my.cnf / `SET PERSIST`) the idle one.
 
 ## Tenants (owner upkeep)
-- `tenants.model` (kind tenant-model, `adapters/tenant_models.ps1`): none (default: tenant verbs refuse) | schema (a
-  schema per tenant + a registry, `adapters/tenant_schema.ps1`) | database (same, databases as schemas) | column (one
+- `tenants.model` (kind tenant-model, `adapters/tenant-models.ps1`): none (default: tenant verbs refuse) | schema (a
+  schema per tenant + a registry, `adapters/tenant-schema.ps1`) | database (same, databases as schemas) | column (one
   scope; `tenants.column` { table, column }) | instance (`tenants.instances` [{ name, db }]): list only. Non-SQL engines (redis,
   search): `sizes` only.
 - `tenant list | drop -Name <t,..> [-DryRun]` (schema model: `tenants.registry` or flat `tenants` { schema, table, key, name

@@ -19,7 +19,7 @@ supervise: BAD = WATCH).
 ## Indexes (not the tracker's comments)
 - `.state/tasks/<id>.json`: `track` (`bossy.ps1 track`: MRs in merge order, mergeAfter, onMerged, done, `removed[]`, `routes[]`), `docs.<kind>` (url,
   key, type: `devtools.py doc --key <id>:<kind>`), `comments.<kind>` (the comment `tracker comment -Kind` edits), `envRuns[]`
-  (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (`devtools.py cases`); `rollup` (`task_rollup.ps1`; a parent: sections, milestones,
+  (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (`devtools.py cases`); `rollup` (`task-rollup.ps1`; a parent: sections, milestones,
   `closeAsk` = its one close-parent decision, `parentClosed`), `itemIds` / `itemsFrom` / `itemsSig` / `itemsFinal` (the Items checklist), `itemsDropped` (`track forget-item`: never written back), `itemsOpenMrs` (open MRs -> ids: a fix round unticks them), `heldNote` (held item ids: the parent's line stays unticked).
 - `<qa run>/index.json`: `items.<code>` -> tasks, doc, pubKey, pass, fail (`pokey.ps1 finalize`); a build run:
   `work/waves/<run>.json` (`bossy.ps1 report`).
@@ -43,7 +43,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `standing-rules` | `bossy.ps1 decide rules`, `decide answer` (its ask) | `json v1: rules` | keep (approved ones -> `rules/standing-rules.local.md`) |
 | `forgotten` | `kitbag.py forget` | `text v0` | `forget --purge` |
 | `naming` | `kitbag.py naming` | `json v1` | keep |
-| `pool-usage` | `adapters/wt_pool.ps1` | `json v1: repos` | keep (samples 7 d) |
+| `pool-usage` | `adapters/wt-pool.ps1` | `json v1: repos` | keep (samples 7 d) |
 | `disk-writes` | `bossy.ps1 supervise` | `jsonl v0: at m k o + d` | 35 d |
 | `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: server port key holders` | keep |
 | `outcomes-sweep` | `adapters/outcomes.ps1` | `text v0` | 30 d |

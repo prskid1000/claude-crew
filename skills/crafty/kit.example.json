@@ -76,7 +76,7 @@
  "devices": { "type": "none" },
  "kitAudit": { "_readme": "everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off).", "everyDays": 7 },
  "build": { "_readme": "mavenOffline: Maven -o when ~/.m2/repository exists (default false).", "mavenOffline": false },
- "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build_heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}." },
+ "gate": { "_readme": "Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}." },
  "supervise": { "ramActPct": 90, "minDiskFreeGB": 30,"briefSeconds": 40, "heartbeatMinutes": 15, "finishedMinutes": 30 },
  "storage": { "_readme": "storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (>= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop >= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: <id> <GB> <s> <query>; db.kill {id}; db.maxGB. TODO-PARAM.",
   "watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50, "actHours": 1, "factor": 10, "minRateGBh": 5, "scanDropGB": 1, "scanCooldownMin": 30, "scanHours": 24, "drillGB": 1, "flatDays": 7, "holdMinutes": 60,
@@ -115,7 +115,7 @@
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
   "skills/pokey/targets.local.json": {
-   "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]; created.<login> {tenant, role, run, ids}: written by pokey.ps1 user create (api -As uses its tenant). auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: pokey adapters/api_auth.ps1; api may hold {tenant}. userAuth.<user> {path, tenant, ...}: that login's own auth fields (a super admin endpoint). browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
+   "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]; created.<login> {tenant, role, run, ids}: written by pokey.ps1 user create (api -As uses its tenant). auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: pokey adapters/api-auth.ps1; api may hold {tenant}. userAuth.<user> {path, tenant, ...}: that login's own auth fields (a super admin endpoint). browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
    "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000, "diskCache": false },
    "targets": {
@@ -174,18 +174,18 @@
     ["usage.ps1", "ended starts", "startNorm"], ["WATCH", "past peakWatch", "handoff at 80%"], ["ACT", "coordinator", "kitty fix at the source"]] },
   "adapters": {
    "_readme": "README Adapters; code: `adapter:<kind>/<name>` + every verb as a key ('*' = any) up to `adapter-end:<kind>`",
-   "tracker": { "config": "tracker.type", "file": "skills/crafty/adapters/tracker_local.ps1", "verbs": "view url status statuses comment comments create describe rename move attach list owner", "caps": "checklist commentEdit commentDelete statuses move attach dependencies labels", "names": "command none", "vendors": "clickup github gitlab jira jira-server linear youtrack azure" },
+   "tracker": { "config": "tracker.type", "file": "skills/crafty/adapters/tracker-local.ps1", "verbs": "view url status statuses comment comments create describe rename move attach list owner", "caps": "checklist commentEdit commentDelete statuses move attach dependencies labels", "names": "command none", "vendors": "clickup github gitlab jira jira-server linear youtrack azure" },
    "git-host": { "config": "gitHostType", "file": "skills/crafty/lib.ps1", "verbs": "mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect", "names": "command", "vendors": "github gitlab bitbucket azure gitea" },
    "report": { "config": "reports.type", "file": "skills/crafty/devtools.py", "verbs": "publish", "caps": "evidence (reports.evidence report | local | command)", "caps": "evidence", "names": "markdown html command", "vendors": "gdocs pdf confluence notion" },
    "ci": { "config": "ci.type", "file": "skills/crafty/lib.ps1", "verbs": "runs jobs log status config failure parseUrl", "names": "command none", "values": "host", "vendors": "github gitlab bitbucket azure gitea jenkins" },
    "transcript": { "config": "board tool", "file": "skills/crafty/lib.ps1", "verbs": "root last", "names": "claude codex antigravity none" },
-   "deploy-kind": { "config": "repos[].deploys[] (kind)", "file": "skills/pokey/adapters/deployed_checks.ps1", "verbs": "isDeployed", "caps": "deploy", "names": "command ci-job branch-mr ssh tag probe manual awsStack laneApk" },
-   "secret-store": { "config": "secrets.store", "file": "skills/crafty/adapters/secret_store.ps1", "verbs": "get", "caps": "write list rotate", "names": "file env keychain command" },
-   "process-gate": { "config": "process.gates.<gate>", "file": "skills/crafty/adapters/process_gates.ps1", "verbs": "promote merge finish bugFix mrBody", "names": "", "vendors": "testingDocs reproRow" },
-   "db-engine": { "config": "localEnv db.engine", "file": "skills/envy/adapters/db_engines.ps1", "verbs": "query exec jdbc schemaSizes", "names": "", "caps": "marks temp sizes", "vendors": "mysql mariadb postgres sqlserver sqlite oracle mongodb redis elasticsearch opensearch" },
-   "tenant-model": { "config": "localEnv tenants.model", "file": "skills/envy/adapters/tenant_models.ps1", "verbs": "list drop import footprint scopes", "names": "", "caps": "create drop snapshot", "vendors": "none schema database column instance" },
+   "deploy-kind": { "config": "repos[].deploys[] (kind)", "file": "skills/pokey/adapters/deployed-checks.ps1", "verbs": "isDeployed", "caps": "deploy", "names": "command ci-job branch-mr ssh tag probe manual awsStack laneApk" },
+   "secret-store": { "config": "secrets.store", "file": "skills/crafty/adapters/secret-store.ps1", "verbs": "get", "caps": "write list rotate", "names": "file env keychain command" },
+   "process-gate": { "config": "process.gates.<gate>", "file": "skills/crafty/adapters/process-gates.ps1", "verbs": "promote merge finish bugFix mrBody", "names": "", "vendors": "testingDocs reproRow" },
+   "db-engine": { "config": "localEnv db.engine", "file": "skills/envy/adapters/db-engines.ps1", "verbs": "query exec jdbc schemaSizes", "names": "", "caps": "marks temp sizes", "vendors": "mysql mariadb postgres sqlserver sqlite oracle mongodb redis elasticsearch opensearch" },
+   "tenant-model": { "config": "localEnv tenants.model", "file": "skills/envy/adapters/tenant-models.ps1", "verbs": "list drop import footprint scopes", "names": "", "caps": "create drop snapshot", "vendors": "none schema database column instance" },
    "migration": { "config": "migrations.tool", "file": "skills/crafty/adapters/liquibase.ps1", "verbs": "check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes", "names": "", "vendors": "liquibase" },
-   "envy-verb": { "config": "adapters/*.local.ps1", "file": "skills/envy/adapters/tenant_models.ps1", "verbs": "ops run", "names": "", "vendors": "tenant" },
+   "envy-verb": { "config": "adapters/*.local.ps1", "file": "skills/envy/adapters/tenant-models.ps1", "verbs": "ops run", "names": "", "vendors": "tenant" },
    "api-auth": { "config": "targets auth.type", "file": "skills/pokey/pokey.ps1", "verbs": "invoke", "names": "", "vendors": "" }
   },
   "renamed": { "dev-agent": "devy", "mr-reviewer": "revy", "qa-tester": "checky", "qa-verifier": "checky", "kit-auditor": "kitty", "kit-audit": "kitty", "tech-audit": "revy",

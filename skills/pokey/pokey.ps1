@@ -16,8 +16,8 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
 In: targets.local.json (logins; user create writes users.<login> + created.<login>, never prints a password), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage,
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
-Adapters (adapters/): ui_android (ui, deploys[] laneApk), annotate, deployed_checks (deployed), api_auth, report_html (the styled
-  HTML report), ui_ios, media evidence (evidence).
+Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
+  HTML report), ui-ios, media evidence (evidence).
 Sections: L29 lanes · L43 report · L160 seat · L234 api · L487 users · L621 finalize · L1162 results · L1195 retest ·
   L1252 prepare
 #>
@@ -375,12 +375,12 @@ if (($ua = Get-KitMember $t.userAuth $As)) {
   $a = Resolve-ApiAuth ([pscustomobject]$ao); $kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }
   if (-not $PSBoundParameters['Tenant'] -and "$($ua.tenant)") { $Tenant = [string]$ua.tenant }
 }
-$ext = Get-Command 'Get-ApiAuthHeaders' -ErrorAction SilentlyContinue   # adapters/api_auth.ps1: basic, cookie, command
+$ext = Get-Command 'Get-ApiAuthHeaders' -ErrorAction SilentlyContinue   # adapters/api-auth.ps1: basic, cookie, command
 $core = 'login', 'none', 'token', 'query'
 if ($kind -notin $core -and -not ($ext -and $kind -in 'basic', 'cookie', 'command')) {
   # a local auth kind: Register-KitAdapter api-auth <type> @{ invoke = { param($a) ... } } in adapters/*.local.ps1; $a = the bound params
   if ($KitAdapters['api-auth'] -and $KitAdapters['api-auth'][$kind]) { $bp = @{}; foreach ($kv in $PSBoundParameters.GetEnumerator()) { $bp[$kv.Key] = $kv.Value }; $bp.As = $As; $bp.Target = $Target; return Invoke-KitAdapter 'api-auth' $kind 'invoke' $bp }
-  throw "target '$Target' auth.type '$kind' unknown: $($core -join ', ')$(if ($ext) { ', basic, cookie, command' } else { ' (basic, cookie, command: adapters/api_auth.ps1)' })" }
+  throw "target '$Target' auth.type '$kind' unknown: $($core -join ', ')$(if ($ext) { ', basic, cookie, command' } else { ' (basic, cookie, command: adapters/api-auth.ps1)' })" }
 if (-not $t.api -and $Path -notmatch '^https?://') { throw "target '$Target' has no api URL (web-only: use browser.mjs)" }
 $base = ([string]$t.api).Replace('{tenant}', $Tenant).TrimEnd('/'); foreach ($fk in $pfFields.Keys) { $base = $base.Replace("{$fk}", $pfFields[$fk]) }
 $uri = if ($Path -match '^https?://') { $Path } else { $base + $Path }
@@ -888,7 +888,7 @@ function Cnt($arr, $k) { @($arr | Where-Object { $_.result -eq $k }).Count }
 $guideUrl = if ($item.guideUrl) { $item.guideUrl } elseif ($item.guideId -and $rtype -eq 'gdocs') { "https://docs.google.com/document/d/$($item.guideId)/edit" } elseif ($item.guideFile) { $item.guideFile } else { $null }
 $missing = @($checks | ForEach-Object { $c = $_; @($c.evidence) | Where-Object { $_ -and -not $map.files[$_] -and [IO.Path]::GetExtension([string]$_) -match $script:EvidenceExt } | ForEach-Object { "$($c.id): $_" } })
 if ($missing.Count) { throw "$Code`: $($missing.Count) evidence file(s) cited but not uploaded - nothing was published: $($missing -join '; '). Check the upload output above, then re-run." }
-$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # adapters/report_html.ps1
+$html = Get-Command Build-QaReport -ErrorAction SilentlyContinue   # adapters/report-html.ps1
 if ($html) { & $html -Title $title -Code $Code -Item $item -Res $res -Map $map -Run $run -Tester $tester -Date $Date -GuideUrl $guideUrl | Out-File "$D/report.html" -Encoding utf8 }
 
 $cells = @{}
@@ -1267,7 +1267,7 @@ function Split-QaLiveParts($Dep) {
   if ($noTgt.Count -and $noTgt.Count -eq $notLive.Count -and @($Dep | Where-Object { $_.state -match '^DEPLOYED' }).Count) { return @{ notLive = @(); local = @($noTgt | ForEach-Object { "$($_.mr)" }) } }
   @{ notLive = $notLive; local = @() }
 }
-# every row N/A, at least one proven for this target (deployed_checks "n/a for <t>": another branch or no path under it): another product's change
+# every row N/A, at least one proven for this target (deployed-checks "n/a for <t>": another branch or no path under it): another product's change
 function Test-QaOtherTarget($Dep) { $rows = @($Dep | Where-Object { $_ }); $rows.Count -and -not @($rows | Where-Object { "$($_.state)" -ne 'N/A' }).Count -and @($rows | Where-Object { "$($_.detail)" -like 'n/a for *' }).Count }
 function Invoke-Prepare {
 param([string]$Job, [string]$RunDir)
@@ -1329,7 +1329,7 @@ foreach ($tid in @($cand.Keys)) {
     $it.target = "$($hit.target)"; if ($hit.localEnv) { $it.localEnv = "$($hit.localEnv)" }
   } else { $it.target = "$($jb.target)"; if ($null -eq $script:QaJobLocal) { $script:QaJobLocal = Get-TargetLocalEnv $jb.target }; if ($script:QaJobLocal) { $it.localEnv = $script:QaJobLocal } }   # a local target: envy deploys what is missing (lead)
   # 4. live: every MR deployed on the target (N/A, MANUAL count as in; all N/A for this target: left out); a local env: its own check (lead)
-  $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # adapters/deployed_checks.ps1
+  $depFn = Get-Command 'Invoke-Deployed' -ErrorAction SilentlyContinue   # adapters/deployed-checks.ps1
   if (-not $it.localEnv -and $depFn) {
     $dep = @(& $depFn -Mrs $mrs -Target $it.target -Json | ConvertFrom-Json)
     if (Test-QaOtherTarget $dep) { & $out "other product / target: $($mrs -join ', ') N/A on $($it.target) (no change for it)"; continue }
@@ -1371,14 +1371,14 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced (tests): functions o
     'seat' { Invoke-KitVerb Invoke-Seat $__rest }
     'api' { Invoke-KitVerb Invoke-Api $__rest }
     'finalize' { $KitVerbOnError = { 'EXIT=1' }; Invoke-KitVerb Invoke-Finalize $__rest }   # a crash exits 1 (Invoke-KitVerb), EXIT=1 first
-    'deployed' { Invoke-KitVerb Invoke-Deployed $__rest }   # adapters/deployed_checks.ps1
+    'deployed' { Invoke-KitVerb Invoke-Deployed $__rest }   # adapters/deployed-checks.ps1
     'annotate' { Invoke-KitVerb Invoke-Annotate $__rest }   # adapters/annotate.ps1
     'evidence' { Invoke-KitVerb Invoke-Evidence $__rest }   # skills/crafty/adapters/video.ps1
     'retest' { Invoke-KitVerb Invoke-Retest $__rest }
     'prepare' { Invoke-KitVerb Invoke-Prepare $__rest; exit 0 }   # pwsh -File would exit with a helper's git code (128); a crash exits 1 inside
     'lead-notes' { Invoke-KitVerb Invoke-LeadNotes $__rest }
     'results' { Invoke-KitVerb Invoke-Results $__rest }
-    'ui' { if ("$($__rest[0])" -eq 'login') { Invoke-KitVerb Invoke-UiLogin @($__rest | Select-Object -Skip 1) } else { Invoke-KitVerb Invoke-Ui $__rest } }   # adapters/ui_android.ps1
+    'ui' { if ("$($__rest[0])" -eq 'login') { Invoke-KitVerb Invoke-UiLogin @($__rest | Select-Object -Skip 1) } else { Invoke-KitVerb Invoke-Ui $__rest } }   # adapters/ui-android.ps1
     'user' { Invoke-KitVerb Invoke-User $__rest }
     { $_ -in '-h', '--help', 'help', '-?' } { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 0 }
     default { (Get-Content $PSCommandPath -Raw) -replace '(?s)^\s*<#\s*(.*?)#>.*$', '$1'; exit 2 }   # the header only

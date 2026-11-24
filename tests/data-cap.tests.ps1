@@ -1,17 +1,17 @@
 #Requires -Version 7
 <#
-data-cap.tests.ps1: no large writes (owner, 2026-11-18): the crafty guard rule large-writes (adapters/guard_localenv.ps1) and the
-supervise DATA GROWTH flag (skills/bossy/adapters/localenv_supervise.ps1; params data.maxRows, data.maxMB), the WRITES flag and its
-card (adapters/supervise_stats.ps1; params writes.softGBPerHour, writes.hardGBPerHour; disk counter, writes.tracerCsv).
+data-cap.tests.ps1: no large writes (owner, 2026-11-18): the crafty guard rule large-writes (adapters/guard-localenv.ps1) and the
+supervise DATA GROWTH flag (skills/bossy/adapters/localenv-supervise.ps1; params data.maxRows, data.maxMB), the WRITES flag and its
+card (adapters/supervise-stats.ps1; params writes.softGBPerHour, writes.hardGBPerHour; disk counter, writes.tracerCsv).
 Usage: pwsh -NoProfile -File <kit>/tests/data-cap.tests.ps1 (or tests/kit-tests.ps1 -Area data-cap). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 $k = New-TestKit dcap; $gk = $k; $supBossy = Join-Path $k 'skills/bossy/bossy.ps1'
-$dcAd = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $dcAd
+$dcAd = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv-supervise.ps1') $dcAd
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/envy') | Out-Null; '# stub: the hooks only need it present' | Set-Content (Join-Path $k 'skills/envy/envy.ps1')
 $dcCad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters')
-if (-not (Test-Path (Join-Path $dcCad 'guard_localenv.ps1'))) { Copy-Item (Join-Path $src 'skills/crafty/adapters/guard_localenv.ps1') $dcCad }
+if (-not (Test-Path (Join-Path $dcCad 'guard-localenv.ps1'))) { Copy-Item (Join-Path $src 'skills/crafty/adapters/guard-localenv.ps1') $dcCad }
 # no large writes: a schema grown past data.maxRows / data.maxMB since its baseline = one WATCH (first sight sets baselines; flagged once)
 # beats (rows | between): baselines; no sizes (busy / DB down: kept); a 2.1M-row schema; the same; +78 MB; +24900 rows, no MB (an estimate swing)
 $dgWarn = 'mysql: [Warning] Using a password on the command line interface can be insecure.'
@@ -21,8 +21,8 @@ $dg = @(foreach ($dgBeat in "shop`t100`t1", '', "$dgWarn|shop`t5000`t2|scratch_i
     function Invoke-KitBackground { $dgSizes }; @(Get-KitSuperviseFlagsLocalEnv) | Where-Object { $_.what -match '^DATA GROWTH' } | ForEach-Object { $_.what -replace ' since .*' } }) -join ';' })
 # the size query passes envy's read-only check (the function from envy.ps1, not the script)
 $dgFn = [Management.Automation.Language.Parser]::ParseFile((Join-Path $src 'skills/envy/envy.ps1'), [ref]$null, [ref]$null).FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-ReadOnlySql' }, $true)[0].Extent.Text
-# each engine's schemaSizes query (adapters/db_engines.ps1: mysql, postgres)
-$dgSql = @([regex]::Matches((Get-Content (Join-Path $src 'skills/envy/adapters/db_engines.ps1') -Raw), 'schemaSizes = "([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+# each engine's schemaSizes query (adapters/db-engines.ps1: mysql, postgres)
+$dgSql = @([regex]::Matches((Get-Content (Join-Path $src 'skills/envy/adapters/db-engines.ps1') -Raw), 'schemaSizes = "([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
 $dgRo = & { Invoke-Expression $dgFn; $dgSql.Count -ge 2 -and -not @($dgSql | Where-Object { -not (Test-ReadOnlySql $_) }).Count }
 Expect "supervise DATA GROWTH: first sight = baselines, a beat with no sizes keeps them, a new 2.1M-row schema flags once, +79 MB flags, a row estimate swing alone none; envy accepts the query ($($dg -join ' | ') | $dgRo)" (
   $dg[0] -eq '' -and $dg[1] -eq '' -and $dg[2] -eq 'DATA GROWTH: shop scratch_ie1 +2100000 rows / +1200 MB' -and $dg[3] -eq '' -and $dg[4] -eq 'DATA GROWTH: shop shop +5000 rows / +79 MB' -and $dg[5] -eq '' -and $dgRo -eq $true)

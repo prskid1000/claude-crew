@@ -7,7 +7,7 @@ Usage: pwsh -NoProfile -File tests/host-rest.tests.ps1 [-Kit <kit>] (tests/kit-t
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
 . (Join-Path $Kit 'skills/crafty/lib.ps1')
-foreach ($a in 'gitea', 'bitbucket', 'azure_devops', 'ci_jenkins') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
+foreach ($a in 'gitea', 'bitbucket', 'azure-devops', 'ci-jenkins') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
 $__cfg = '{"gitHost":"git.example","repos":[{"name":"jkrepo","ci":"jenkins"}],"ci":{"url":"https://ci.example","job":"job/{repo}"}}' | ConvertFrom-Json
 $KitConf.GitHost = 'git.example'; $script:KitRoot = Join-Path ([IO.Path]::GetTempPath()) "extra-test-$PID"   # tracking.json of the test, not the kit's
 $fx = [ordered]@{
@@ -57,7 +57,7 @@ foreach ($row in $rows) {
 }
 # order (owner 2026-11-23): dependencies (waits on; a known link never posted twice; returns the waits) + labels per adapter
 $env:JIRA_BASE_URL = 'https://j.test'; $env:JIRA_EMAIL = 'a@x'; $env:JIRA_API_TOKEN = 't'; $__trRepo = 'g/p'; $global:ordLog = [Collections.Generic.List[string]]::new(); $global:ordHttp = [Collections.Generic.List[string]]::new()
-foreach ($a in 'tracker_jira', 'gitlab', 'tracker_clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
+foreach ($a in 'tracker-jira', 'gitlab', 'tracker-clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
 function OrdFx($call) { $global:ordLog.Add($call); foreach ($k in $global:ordFx.Keys) { if ($call -match $k) { return $global:ordFx[$k] } }; throw "404 no fixture: $call" }
 function Invoke-RestMethod($Method, $Uri, $Headers, $TimeoutSec, $MaximumRetryCount, $RetryIntervalSec, $Body, $ContentType, $Form, $InFile) { $j = OrdFx "$Method $Uri $ContentType $(if ($Body) { [Text.Encoding]::UTF8.GetString($Body) })"; if ($j) { $j | ConvertFrom-Json } }
 foreach ($c in 'clickup', 'gh') { Set-Item "function:$c" { $global:LASTEXITCODE = 0; OrdFx "$($args -join ' ') " } }

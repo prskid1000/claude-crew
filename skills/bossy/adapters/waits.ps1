@@ -3,7 +3,7 @@
 waits.ps1: waits past their cap in bossy.ps1 supervise (dot-sourced by bossy.ps1 from skills/bossy/adapters/; owner 2026-11-19
 "too much waiting"): WAIT OVER CAP (a test lock or phone lane wait past supervise.stuckMinutes, with its holder) and QA SLOW (a QA
 package past qa.packageMinutes, learned per lane at pokey.ps1 seat release; it goes on, never NOT_TESTED for time). The build gate,
-env starts and trains flag on their own (supervise_resources.ps1, localenv_supervise.ps1).
+env starts and trains flag on their own (supervise-resources.ps1, localenv-supervise.ps1).
 Usage: dot-sourced by bossy.ps1; supervise runs its hook Get-KitSuperviseFlagsWaits (Invoke-KitHooks Get-KitSuperviseFlags).
 Exit codes: none (functions only).
 Sections: L11 waits

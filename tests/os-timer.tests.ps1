@@ -2,13 +2,13 @@
 <#
 tests/os-timer.tests.ps1: install / uninstall / status through a fake scheduler adapter, health (off, fresh, stale, gone ->
 reinstalled, removed, osTimer false), the tick (supervise as session os-timer; skips while paused), the step-aside windows (K102), the CLI verbs once installed; storage (verdicts, folder drill-down, db watchdog, rescue hold).
-Usage: pwsh -NoProfile -File tests/os-timer.tests.ps1 (copies adapters/os_timer.ps1 into its test kit).
+Usage: pwsh -NoProfile -File tests/os-timer.tests.ps1 (copies adapters/os-timer.ps1 into its test kit).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
-$k = New-TestKit ostimer; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $ad = Join-Path $k 'skills/bossy/adapters/os_timer.ps1'
-if (-not (Test-Path $ad)) { New-Item -ItemType Directory -Force (Split-Path $ad) | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/os_timer.ps1') $ad }
+$k = New-TestKit ostimer; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $ad = Join-Path $k 'skills/bossy/adapters/os-timer.ps1'
+if (-not (Test-Path $ad)) { New-Item -ItemType Directory -Force (Split-Path $ad) | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/os-timer.ps1') $ad }
 # owner 2026-11-14: the sweep stopped with every session; the OS task keeps the page, auto-fixes and flags going
 $ob = Invoke-PsTest os-beat @'
 . $args[0]; $script:there = $false
@@ -93,7 +93,7 @@ Expect "supervise: a dead sweep's fresh lock never makes a session step aside" (
 # K102 regression: no supervise.lock yet (fresh install) sweeps, never "Cannot convert null to type System.DateTime"
 Remove-Item -LiteralPath $lk -Force; $noLock = Px $O supervise -Session coord-a | Out-String
 Expect "supervise: a first sweep without supervise.lock runs and writes the lock ($($noLock -match 'FAILED' -as [bool]))" ($noLock -notmatch 'Supervise FAILED' -and (Test-Path -LiteralPath $lk))
-# the CLI verbs reach os_timer.ps1; a paused kit's tick never starts supervise; status of a never-installed timer exits 1
+# the CLI verbs reach os-timer.ps1; a paused kit's tick never starts supervise; status of a never-installed timer exits 1
 $pd = TkPath $k pauses -Create; & $J @{ at = (Get-Date).ToString('o'); reason = 'owner pause'; run = '*'; state = 'paused' } (Join-Path $pd 'pause-t.json')
 $tk = Invoke-TestScript $O heartbeat tick; $st = Invoke-TestScript $O heartbeat status
 Expect "os-timer: heartbeat tick while paused = skipped; heartbeat status of a never-installed timer exits 1 ($($tk.code) $($st.code))" ($tk.out -match 'skipped: paused \(owner pause\)' -and $tk.code -eq 0 -and $st.code -eq 1 -and $st.out -match '^heartbeat: (not installed|UNKNOWN)')

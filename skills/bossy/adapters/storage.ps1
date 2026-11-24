@@ -246,7 +246,7 @@ foreach ($d in @(if ($Drive) { $Drive } else { Get-KitDrives | ForEach-Object na
   foreach ($e in @(Read-KitLog disk $from | Where-Object { $_.drive -eq $d -or $_.event -eq 'db-kill' })) { "  $(([datetime]$e.at).ToString('MM-dd HH:mm')) $($e.event): $(if ($e.lines) { @($e.lines) -join '; ' } else { $e.query })" }
 }
 }
-# ---- orphans: scratch DB servers and suspended git children whose launcher is gone (bossy.ps1 cleanup; moved from supervise_resources.ps1 at its cap)
+# ---- orphans: scratch DB servers and suspended git children whose launcher is gone (bossy.ps1 cleanup; moved from supervise-resources.ps1 at its cap)
 # scratch DB servers (tests' Start-TestMySql, an agent's probe) with a data dir in any kit runtime's work/: launcher gone for
 # idle.graceMinutes -> orphan; Windows mysqld = a monitor + its worker child, so the worker goes too (killing the monitor alone orphaned 6)
 function Get-KitScratchOrphans($Procs = $null, [datetime]$At = (Get-Date)) {

@@ -133,7 +133,7 @@ $wp = pwsh @np $O cleanup -WorktreesOnly -WorktreeRoot $wr 2>&1 | Out-String
 Expect "cleanup: a clean worktree with a gone remote branch goes after worktreeDays (branch kept), an ownerless deploymerge-* after grace; uncommitted files only reported" (-not (Test-Path $dw) -and "$wn" -match 'holder: none' -and -not (Test-Path "$wr/gone") -and (git -C "$wr-main" branch --list 'f/gone') -and (Test-Path "$wr/dirty/dirty.txt") -and $wp -match 'upstream gone, idle' -and $wp -match 'dirty \(f/dirty\): uncommitted files, idle 9 d: kept')
 Remove-Item Env:KIT_TRANSCRIPTS
 Remove-TestKit $k
-# ---- resources (adapters/supervise_resources.ps1)
+# ---- resources (adapters/supervise-resources.ps1)
 $k = New-TestKit sres
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # a gone session's QA seat + claims freed in ONE line; board show lists seats and env leases

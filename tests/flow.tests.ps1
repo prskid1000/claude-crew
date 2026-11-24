@@ -98,7 +98,7 @@ $wo = Px $Q api -Target tw -Path '/x' 2>&1 | Out-String
 $nu = Px $Q api -Target tx -As ghost -Path '/x' 2>&1 | Out-String; $nuc = $LASTEXITCODE
 Expect 'api: a user missing from the target exits 2 NO-USER (not retried), known users named, no stack trace' ($nuc -eq 2 -and $nu -match "NO-USER 'ghost' in target tx \(not retried" -and $nu -match 'Known: admin' -and $nu -notmatch 'Exception|at line')
 Expect 'api: no answer exits 1 (status shown); web-only target' ($ac -eq 1 -and $ao -match 'HTTP 0' -and $wo -match 'no api URL')
-Expect 'api -Save: a full path is split (api_auth.ps1 too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
+Expect 'api -Save: a full path is split (api-auth.ps1 too); a control character is named' ((Test-Path "$(Kd)/q.json") -and $bs -match "-Save 'Q-T1_01\?_poll' holds a control" -and "$gx" -eq 'D:\z|q')
 $api = Start-TestApi; & $J @{ targets = @{ tb = @{ api = "http://127.0.0.1:$($api.port)"; auth = @{ type = 'login'; path = '/bad' }; users = @{ admin = 'u', 'K9' } } } } (Join-Path $k 'skills/pokey/targets.local.json') 6
 $lb = (Px $Q api -Target tb -Path '/l' 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '; $api.proc.Kill(); $lh = Px $Q api -Target tb -Path '/l' 2>&1 | Out-String
 (Get-Item (Join-Path $k 'skills/pokey/targets.local.json')).LastWriteTime = Get-Date; $lr = Px $Q api -Target tb -Path '/l' 2>&1 | Out-String

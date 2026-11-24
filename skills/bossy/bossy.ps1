@@ -617,7 +617,7 @@ function Get-KitWtState([string]$Dir) {
 function Set-KitLaunchField([string[]]$Files, [string]$Name, $Value) {
   foreach ($x in @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) { Invoke-KitLocked $x { $j = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json; if ($null -eq $Value) { $j.PSObject.Members.Remove($Name) } else { $j | Add-Member -Force NoteProperty $Name $Value }; Write-KitState $x $j } }
 }
-# back in seconds, -Status, the finisher: supervise_resources.ps1 "pause"
+# back in seconds, -Status, the finisher: supervise-resources.ps1 "pause"
 function Invoke-Pause { param([string]$Run = '', [switch]$All, [string]$Reason = 'owner pause', [double]$Wait = 10, [switch]$Status, [string]$Finish, [switch]$Everyone) Start-KitPause @PSBoundParameters }
 
 # ---- resume: paused and crashed runs; done steps verified (sha, MR), never redone
@@ -648,7 +648,7 @@ foreach ($p in $pauses) { foreach ($r in @($p.runs)) { foreach ($pair in @(, @($
   if ($pair[0] -and $pair[1] -and -not (Test-Path -LiteralPath $pair[0])) { New-Item -ItemType Directory -Force (Split-Path $pair[0]) | Out-Null; Write-KitAtomic $pair[0] ($pair[1] | ConvertTo-Json -Depth 30) } } }
   foreach ($a in @($p.agents | Where-Object { $_.checkpoint })) { $cf = Get-KitCheckpointFile $a.agent "$($a.checkpoint.run)" -Write; if (-not (Test-Path -LiteralPath $cf)) { New-Item -ItemType Directory -Force (Split-Path $cf) | Out-Null; Write-KitAtomic $cf ($a.checkpoint | ConvertTo-Json -Depth 6) } } }   # cleanup: agents/ after 7 d
 $script:KitDeadline = (Get-Date).AddSeconds($MaxSeconds)   # recover below shares it
-Invoke-KitHooks Close-KitFinishedRuns   # adapters/supervise_resources.ps1
+Invoke-KitHooks Close-KitFinishedRuns   # adapters/supervise-resources.ps1
 $null = Set-KitBoardCrashed
 $go = @(); $todo = @(Get-StoppedRuns -Hours $Hours | Where-Object { $All -or $_.run -eq $Run }); $ri = 0
 foreach ($s in $todo) {
@@ -877,7 +877,7 @@ function RouteRefs($rt) {
     else { @((Read-KitTracking).tasks["$($rt.to)"].mrs) }
   @(@($rr) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
 }
-# MR links: the task's Items checklist (adapters/task_rollup.ps1), no MRs comment
+# MR links: the task's Items checklist (adapters/task-rollup.ps1), no MRs comment
 function Set-KitTaskMrItems($id) { if ($fn = Get-Command Update-KitTaskItems -ErrorAction Ignore) { try { $null = & $fn $id (Get-TrackerTask $id) -Force } catch { Write-Warning "Items of ${id} not updated: $_" } } }
 switch ($Action) {
   'rebuild' { Invoke-TrackRebuild }
@@ -1064,7 +1064,7 @@ switch ($Action) {
     if ($script:merged) {
       Start-Detached (Resolve-Tool pwsh) @('-NoProfile', '-NonInteractive', '-File', $(if ($KitIsWindows) { "`"$($KitCmd.orch)`"" } else { $KitCmd.orch }), 'cleanup', '-WorktreesOnly', '-WorktreeIdleHours', "$(Get-KitParam cleanup.worktreeIdleHours)", '-Quiet')
     }
-    try { Invoke-KitHooks Invoke-KitTrackRollup @{ Quiet = $Quiet } } catch { "ROLLUP hook failed: $("$_".Split("`n")[0])" }   # adapters/task_rollup.ps1: parents' delivery sections
+    try { Invoke-KitHooks Invoke-KitTrackRollup @{ Quiet = $Quiet } } catch { "ROLLUP hook failed: $("$_".Split("`n")[0])" }   # adapters/task-rollup.ps1: parents' delivery sections
   }
   'remove' {
     $rmTask = NormTask $Task; $rmRefs = @(Split-KitList $Mrs | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
@@ -1336,8 +1336,8 @@ if ($AutoFix -and (Within 'tracker checks')) {
   # idle daemons (cleanup.idleDaemons) hold GBs
   if ($pct -ge [int](Get-KitParam 'supervise.ramCleanupPct')) { foreach ($l in @(& $KitCmd.orch cleanup | Select-Object -First 1)) { Flag 'INFO' "auto-fixed: RAM $pct% -> bossy.ps1 cleanup: $l" 'Re-check memory next round.' } }
   elseif (Within 'cleanup') { $null = Invoke-Bounded $KitCmd.orch @('cleanup', '-IfDue', '-Quiet') }
-  if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Sync', '-Json') }   # sync.everyMinutes, detached (wt_pool.ps1 Sync-KitRepo)
-  if ((Get-Command Invoke-KitWeeklyTests -ErrorAction SilentlyContinue) -and (Within 'kit tests')) { foreach ($l in @(Invoke-KitWeeklyTests (-not $active.Count -and -not $liveNames.Count))) { Flag 'ACT' $l 'Spawn kitty (kind fix) on the failed checks the log lists.' } }   # adapters/kit_admin.ps1: one full run a day while idle
+  if (Within 'repo sync') { $null = Invoke-Bounded $KitCmd.dev @('wt', 'pool', '-Sync', '-Json') }   # sync.everyMinutes, detached (wt-pool.ps1 Sync-KitRepo)
+  if ((Get-Command Invoke-KitWeeklyTests -ErrorAction SilentlyContinue) -and (Within 'kit tests')) { foreach ($l in @(Invoke-KitWeeklyTests (-not $active.Count -and -not $liveNames.Count))) { Flag 'ACT' $l 'Spawn kitty (kind fix) on the failed checks the log lists.' } }   # adapters/kit-admin.ps1: one full run a day while idle
 }
 # 4b. owner MRs merged in 24 h, untracked
 if ($KitConf.TrackerType -ne 'none' -and (Within 'untracked MRs')) { foreach ($x in @(Get-KitUntrackedMrFlag $state $now { Within 'untracked MRs' })) { [void]$flags.Add($x) } }
@@ -1346,7 +1346,7 @@ if ((Test-Path (Get-KitPath scope-log)) -and (Within 'scope')) { foreach ($w in 
 # 5. QA results: new [Bug], failedTesting tasks (bossy E6)
 if (-not (Within 'QA bug tasks')) { foreach ($qv in @($script:KitQaBugs.views.Values | Where-Object { $_ })) { Stop-KitProcessTree $qv.p } }
 else {
-  # parents and their tracker views: Start-KitSupervisePrefetchQaBugs (process_gates.ps1), started with the sweep (failed: now)
+  # parents and their tracker views: Start-KitSupervisePrefetchQaBugs (process-gates.ps1), started with the sweep (failed: now)
   if (-not $script:KitQaBugs) { try { Start-KitSupervisePrefetchQaBugs } catch { Flag 'WATCH' "QA bug tasks: parents not read: $($_.Exception.Message)" 'Look at qa-parents.json (cache) and the QA runs; supervise asks again next round.' } }
   $qaRecent = @($script:KitQaBugs.recent); $parents = @($script:KitQaBugs.parents)
   if ($parents.Count) { $null = Update-KitQaParents { param($q) foreach ($qp in $parents) { if ($q[$qp]) { $q[$qp].seen = (Get-KitStamp stored $now) } } } }
@@ -1693,7 +1693,7 @@ if (-not $Quiet) { $summary; $groups | ForEach-Object { '{0,9:N1} MB {1,5} x  {2
 $global:LASTEXITCODE = 0
 }
 
-# ---- learn: signals + LESSONS.md (rest: adapters/kit_admin.ps1)
+# ---- learn: signals + LESSONS.md (rest: adapters/kit-admin.ps1)
 # lessons as LF lines; a "## <name>" section as [start, end)
 function Read-KitLessonLines([string]$Path) { if (Test-Path $Path) { , [Collections.Generic.List[string]]@(([IO.File]::ReadAllText($Path) -replace "`r", '') -split "`n") } else { , [Collections.Generic.List[string]]::new() } }
 function Find-KitLessonSection($Lines, [string]$Name) { $s = $Lines.IndexOf("## $Name"); if ($s -lt 0) { return $null }; $e = $s + 1; while ($e -lt $Lines.Count -and $Lines[$e] -notmatch '^## ') { $e++ }; , @($s, $e) }
@@ -2003,10 +2003,10 @@ if (-not $hook -or $hook.source -ne 'compact') {
 if ($py) { $msgs += @(Invoke-KitBackground 'health checks' $KitCmd.orch @('health', '-Checks')) }
 $od = @(Get-KitBeatOverdue); $msgs += $od   # after a compaction too
 if (-not $od.Count -and ($stopped.Count -or @(Read-KitJsonFiles (Get-KitPath board) | Where-Object status -NotIn 'left', 'crashed').Count)) { $msgs += "heartbeat: $(Get-KitBeatArmLine)" }
-$msgs += @(Invoke-KitHooks Get-KitOsBeatHealth)   # adapters/os_timer.ps1
+$msgs += @(Invoke-KitHooks Get-KitOsBeatHealth)   # adapters/os-timer.ps1
 if ($rs = Get-KitRepoSweep) { $msgs += "repos ($(([datetime]$rs.at).ToString('MM-dd HH:mm')) sweep): $(@($rs.repos | ForEach-Object { "$($_.repo) $($_.branches) branches · $($_.worktrees) worktrees$(if ($_.removable) { " · $($_.removable) to clean" })$(if ($_.kept) { " · $($_.kept) kept" })" }) -join '; ') (kept = unpushed, open or dirty: bossy.ps1 cleanup -DryRun -Detail)" }
 if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
-$msgs += @(Invoke-KitHooks Get-KitHealthLines)   # adapters/kit_admin.ps1: weekly audit nudge
+$msgs += @(Invoke-KitHooks Get-KitHealthLines)   # adapters/kit-admin.ps1: weekly audit nudge
 Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook
 exit 0
 }

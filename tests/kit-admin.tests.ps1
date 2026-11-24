@@ -6,7 +6,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/kit-admin.tests.ps1 (or tests/kit-tests
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/kit_admin.ps1', 'skills/bossy/kit-admin.md', 'skills/bossy/kitbag_admin.py', 'skills/bossy/kitbag_scaffold.py', 'skills/bossy/kitbag_forget.py')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/bossy/adapters/kit-admin.ps1', 'skills/bossy/kit-admin.md', 'skills/bossy/kitbag_admin.py', 'skills/bossy/kitbag_scaffold.py', 'skills/bossy/kitbag_forget.py')   # copied into every New-TestKit kit
 $root = Join-Path ([IO.Path]::GetTempPath()) "kit-admin-$PID"; $kc = New-GitKitCopy $root -Push
 $KT = Join-Path $kc 'skills/bossy/kitbag.py'
 # recover --fix never removes a detached worktree holding commits not on origin/main
@@ -37,7 +37,7 @@ Remove-Item (Join-Path $kc '.state/caps-baseline.json') -ErrorAction SilentlyCon
 Remove-Item (Join-Path $cad 'tracker_zzt.ps1'), (Join-Path $kc 'skills/crafty/kit.local.json'), (Join-Path $kc 'skills/phoney/swarm.config.json') -ErrorAction SilentlyContinue
 # prepush: a pushed git-ignored file = LOCAL FILE; a file an old `# kitbag <kind> <name>` exclude block lists (now tracked) is not
 $ad = Join-Path $kc 'skills/bossy/adapters'; New-Item -ItemType Directory -Force $ad, (Join-Path $kc 'notes') | Out-Null
-Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/kit_admin.ps1') $ad
+Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/kit-admin.ps1') $ad
 $xf = git -C $kc rev-parse --path-format=absolute --git-path info/exclude
 Add-Content $xf "`n`n/notes/l.txt`n`n# kitbag part old-x`n/notes/g.txt`n# kitbag part end"
 $base = git -C $kc rev-parse HEAD; 'l' | Set-Content (Join-Path $kc 'notes/l.txt'); 'g' | Set-Content (Join-Path $kc 'notes/g.txt'); git -C $kc add -f notes/l.txt notes/g.txt; git -C $kc commit -qm 'feat: notes'
@@ -76,7 +76,7 @@ $lfn = (Get-KitFullTestsState).log; $cutAt = { param($t) @{ at = $t.ToString('o'
 & $cutAt (Get-KitBootTime).AddMinutes(-5); $o4 = @(Invoke-KitWeeklyTests $false); $s4 = Get-Content $sf -Raw | ConvertFrom-Json
 & $cutAt (Get-Date).AddMinutes(-5); $o5 = @(Invoke-KitWeeklyTests $false)
 "cut:$(-not $o4.Count -and $s4.read -and $s4.cut -eq 'machine restart' -and ((Get-Date) - [datetime]$s4.at).TotalHours -ge 24 -and $o5.Count -eq 1 -and $o5[0] -match 'no total \(crashed\)')"; "cut detail: $($o4 -join ' ') | $($o5 -join ' ')"
-'@; $ng = @(pwsh @np $nf (Join-Path $kc 'skills/crafty/lib.ps1') (Join-Path $kc 'skills/bossy/adapters/kit_admin.ps1') 2>&1)
+'@; $ng = @(pwsh @np $nf (Join-Path $kc 'skills/crafty/lib.ps1') (Join-Path $kc 'skills/bossy/adapters/kit-admin.ps1') 2>&1)
 Expect-Each $ng 'kit-admin: weekly full kit tests: #' 'busy', 'read', 'week', 'manual', 'cut' -Show 8
 $env:KIT_TESTS_SNAPSHOT = $snap; git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
@@ -97,8 +97,8 @@ $emitted = [regex]::Matches((Get-Content (Join-Path $src 'skills/bossy/kitbag.py
 $named = [regex]::Matches($doc, '\[([A-Z][A-Z, *-]+)\]') | ForEach-Object { $_.Groups[1].Value -split ',\s*' } | Where-Object { $_ -notmatch '\*' -and $_ -ne 'CODE' }
 $stale = @($named | Where-Object { $_ -notin $emitted })
 Expect "kit-admin: kit-admin.md names only lint codes kitbag.py emits (stale: $($stale -join ', '))" ($named.Count -gt 5 -and -not $stale.Count)
-# learn lesson tools and the audit nudge (adapters/kit_admin.ps1): -Bump miss frees the lock; org terms go local; -Fixed shows in -History
-$ad = New-Item -ItemType Directory -Force (Join-Path $kc 'skills/bossy/adapters'); Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/kit_admin.ps1') $ad
+# learn lesson tools and the audit nudge (adapters/kit-admin.ps1): -Bump miss frees the lock; org terms go local; -Fixed shows in -History
+$ad = New-Item -ItemType Directory -Force (Join-Path $kc 'skills/bossy/adapters'); Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/kit-admin.ps1') $ad
 $O = Join-Path $kc 'skills/bossy/bossy.ps1'; $lo = { pwsh -NoProfile -File $O learn @args 2>&1 | Out-String }
 $au = & { . $O; Get-KitHealthLinesAudit }; $null = pwsh -NoProfile -File $O board join -Type kitty -Run kit-fix-0303; $auK = & { . $O; Get-KitHealthLinesAudit }; $null = pwsh -NoProfile -File $O board leave -Agent kitty-kit-fix-0303; $st =& { . (Join-Path $kc 'skills/crafty/lib.ps1'); Get-KitPath last-kitty-audit -Create }; (Get-Date).ToString('s') | Set-Content $st; $au2 = & { . $O; Get-KitHealthLinesAudit }
 Expect 'kit-admin: health nudges a never-run kitty audit, quiet while a kitty-<run> works and right after one' ("$au" -match 'Kit audit due \(last never, every 7 days\)' -and -not $auK -and -not $au2)

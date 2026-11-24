@@ -5,7 +5,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/bossy-generic.tests.ps1 (or tests/kit-t
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/kit_admin.ps1', 'skills/bossy/adapters/waits.ps1')   # learn -Lesson; waits
+$TestKitFiles = @('skills/bossy/adapters/kit-admin.ps1', 'skills/bossy/adapters/waits.ps1')   # learn -Lesson; waits
 $k = New-TestKit bossygen; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # setup -Allow: host + report + OS entries generated, own entries kept, stale generated ones dropped, idempotent
 $al = Invoke-PsTest allow @'
@@ -228,7 +228,7 @@ $h2 = Start-KitExe 'pwsh' @('-NoProfile', '-Command', 'Start-Sleep 30'); $t2 = G
 Expect-Each (Invoke-PsTest 'sweep-memo' $sm @($O, (Kd))) 'sweep memo: # (JSON files by time + size, copies per caller; off outside a sweep; one process snapshot until a kill; a child read later, cut at its timeout)' 'json', 'off', 'procs', 'exe'
 Remove-TestKit $k
 # prefetch hooks: env status -Json cached by its state files minus clocks and RAM (a change or a failed read asks again); state lint read in its section
-$TestKitFiles = @('skills/bossy/adapters/localenv_supervise.ps1', 'skills/bossy/adapters/kit_admin.ps1', 'skills/envy/envy.ps1'); $k = New-TestKit supenv; $TestKitFiles = @()
+$TestKitFiles = @('skills/bossy/adapters/localenv-supervise.ps1', 'skills/bossy/adapters/kit-admin.ps1', 'skills/envy/envy.ps1'); $k = New-TestKit supenv; $TestKitFiles = @()
 $ec = & { . (Join-Path $k 'skills/bossy/bossy.ps1'); function Left { 30 }; function Within { $true }; $now = Get-Date; $global:ecStarts = 0; $global:ecFail = $false
   function Start-KitExe { $global:ecStarts++; @{ at = Get-Date; p = $null } }
   function Receive-KitExe { [pscustomobject]@{ code = $(if ($global:ecFail) { -1 } else { 0 }); out = $(if ($global:ecFail) { '' } elseif ($args[0].lint) { '[{"level":"BAD","file":"x.json","problem":"unreadable"}]' } else { '[{"env":"shop","services":[{"service":"web","state":"up","port":4200}],"leases":[],"holds":[]}]' }); err = ''; timedOut = $global:ecFail } }

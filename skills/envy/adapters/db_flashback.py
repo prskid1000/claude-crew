@@ -76,7 +76,7 @@ class Db:
     def __init__(s, a): s.a = a
     def base(s, exe): return [exe, '-h', s.a.host, '-P', str(s.a.port), '-u', s.a.user]
     def rows(s, sql):
-        """read-only statements; --unbuffered: under CPU load the client lost its buffered output at exit (db_engines.ps1); the end marker tells 0 rows from lost ones"""
+        """read-only statements; --unbuffered: under CPU load the client lost its buffered output at exit (db-engines.ps1); the end marker tells 0 rows from lost ones"""
         for _ in range(3):
             r = subprocess.run(s.base(s.a.mysql) + ['--default-character-set=utf8mb4', '-N', '-B', '--unbuffered'], input=f"{sql.rstrip().rstrip(';')};\nSELECT '{ROWS_END}';\n".encode(), capture_output=True, timeout=600)   # stdin: no command-line cap
             if r.returncode: raise RuntimeError(f'mysql: {r.stderr.decode(errors="replace").strip()[-300:]}')

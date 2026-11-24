@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none here (its verbs exit through envy.ps1).
-# tenant_models.ps1: envs.<env>.tenants.model (kind tenant-model; default none) and the envy verb `tenant` (kind envy-verb).
-# Models (caps: create, drop, snapshot): schema = one schema per tenant + a registry (adapters/tenant_schema.ps1, tenants.registry); database = the same on an
+# tenant-models.ps1: envs.<env>.tenants.model (kind tenant-model; default none) and the envy verb `tenant` (kind envy-verb).
+# Models (caps: create, drop, snapshot): schema = one schema per tenant + a registry (adapters/tenant-schema.ps1, tenants.registry); database = the same on an
 #   engine whose databases are schemas; column = one shared scope, tenants = the values of tenants.column { table, column } (list
 #   only); none = no tenant verbs (every other verb works on the db scope: db.schemas / db.schemasQuery / db.name).
 # Verbs: list @{ e } -> { name, registry, keep, mb } · drop @{ e; names; dryRun } -> lines · import @{ e; from; tenant; as; mask;

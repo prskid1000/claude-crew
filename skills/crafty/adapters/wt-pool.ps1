@@ -1,5 +1,5 @@
 <#
-wt_pool.ps1: fixed worktree slots per repo (crafty.ps1 wt lease / release / pool), leased like phone lanes; a slot is never
+wt-pool.ps1: fixed worktree slots per repo (crafty.ps1 wt lease / release / pool), leased like phone lanes; a slot is never
 deleted, so its build caches stay warm, and one naming scheme for every pooled resource (member n = the n-th bird).
   & <kit>/skills/crafty/crafty.ps1 wt lease -Repo <r> -Branch <b> -Agent <id> [-Target] [-Scope] [-Session] [-WaitMinutes 60]
   & <kit>/skills/crafty/crafty.ps1 wt release -Agent <id> [-Repo] | -Dir <slot> [-Reason]   uncommitted work: a WIP commit, else parked

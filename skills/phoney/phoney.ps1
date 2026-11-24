@@ -12,7 +12,7 @@ phoney.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
-Adapters (adapters/): app_kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
+Adapters (adapters/): app-kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
 Sections: L24 config · L115 phone · L315 build · L461 install · L488 launch · L500 avd · L588 up · L687 down · L717 events ·
   L774 slim
 #>
@@ -33,7 +33,7 @@ function Get-SwarmConfig {
   if (-not $c.app.kind) { $c.app | Add-Member -Force kind 'native' }   # react-native, kmp, flutter, maui, capacitor: set app.kind
   if (-not $c.app.buildTask) { $c.app | Add-Member -Force buildTask $(if ($c.app.kind -in 'native', 'kmp') { 'assembleDebug' } else { 'assembleRelease' }) }
   if (-not $c.app.apkGlob) { $v = if ($c.app.buildTask -match 'Release') { 'release' } else { 'debug' }; $c.app | Add-Member -Force apkGlob "$(if ($c.app.kind -eq 'kmp') { 'composeApp' } else { 'app' })/build/outputs/apk/$v/*.apk" }
-  # Gradle kinds (react-native, native, kmp) or app.buildCmd + app.artifact; other presets: adapters/app_kinds.ps1 (Set-AppKindPreset)
+  # Gradle kinds (react-native, native, kmp) or app.buildCmd + app.artifact; other presets: adapters/app-kinds.ps1 (Set-AppKindPreset)
   if ($c.app.kind -notin 'react-native', 'native', 'kmp' -and -not ($c.app.buildCmd -and $c.app.artifact)) {
     Set-AppKindPreset $c.app
   }
@@ -332,8 +332,8 @@ if (-not $PSBoundParameters.ContainsKey('BuildArgs')) { $BuildArgs = [string]$c.
 $gate = ({ & $KitCmd.dev gate @args })
 $gw = if ($KitIsWindows) { 'gradlew.bat' } else { 'gradlew' }   # the gate runs .\gradlew.bat or ./gradlew
 $cmd = [string]$c.app.buildCmd   # a non-Gradle kind (Get-SwarmConfig presets) or a custom command: no Gradle / Java steps
-if (-not $cmd -and ($ext = Get-Command Invoke-AppPrebuild -ErrorAction SilentlyContinue)) { & $ext $AppDir $gw }   # adapters/app_kinds.ps1: Expo apps generate android/
-$android = if ($cmd) { $AppDir } elseif (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android') (an Expo app: adapters/app_kinds.ps1 runs its prebuild)" }
+if (-not $cmd -and ($ext = Get-Command Invoke-AppPrebuild -ErrorAction SilentlyContinue)) { & $ext $AppDir $gw }   # adapters/app-kinds.ps1: Expo apps generate android/
+$android = if ($cmd) { $AppDir } elseif (Test-Path (Join-Path $AppDir "android/$gw")) { Join-Path $AppDir 'android' } elseif (Test-Path (Join-Path $AppDir $gw)) { $AppDir } else { throw "no $gw in $AppDir or $(Join-Path $AppDir 'android') (an Expo app: adapters/app-kinds.ps1 runs its prebuild)" }
 
 $branch = (git -C $AppDir rev-parse --abbrev-ref HEAD).Trim()
 $dirty = (git -C $AppDir status --porcelain -- . | Measure-Object).Count

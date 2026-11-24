@@ -318,7 +318,7 @@ switch ($Action) {
   'list' { git -C $(if ($Repo) { $Repo } else { (Get-Location).Path }) worktree list }
   'sweep' { $r = Invoke-KitSweep @(if ($Root) { Split-KitList $Root } else { $KitConf.WorktreeRoots }) $IdleHours -DryRun:$DryRun
     if ($Json) { $r | ConvertTo-Json -Depth 4 -Compress } else { $r.actions | ForEach-Object { "$(if ($DryRun) { 'would go' } else { 'gone' }): $($_.path)" }; $r.kept | ForEach-Object { "kept: $_" }; $r.notes } }
-  'lease' { Invoke-WtLease }   # adapters/wt_pool.ps1
+  'lease' { Invoke-WtLease }   # adapters/wt-pool.ps1
   'release' { Invoke-WtRelease }
   'pool' { Invoke-WtPool }
 }
@@ -387,7 +387,7 @@ function Get-Stack($d) {
   $c = [ordered]@{ compile = $null; typecheck = $null; lint = $null; test = $null; e2e = $null; build = $null; format = $null; run = $null }
   $s = $null; $deps = @()
 
-  # adapters/stack_presets.ps1: core always first, then the others stack.presets names (unset = all)
+  # adapters/stack-presets.ps1: core always first, then the others stack.presets names (unset = all)
   $on = Get-KitSetting 'stack.presets' $null; $raw = $__cfg.stack -and (Get-KitProps $__cfg.stack).Name -contains 'presets'
   $det = @{ dir = $d; commands = $c; deps = @() }
   $order = @(@($KitAdapters.stack.core) + @(@(if ($KitAdapters.stack) { $KitAdapters.stack.GetEnumerator() }) | Where-Object { $_.Key -ne 'core' -and $_.Value -and (-not $raw -or @($on) -contains $_.Key) } | ForEach-Object Value)) | Where-Object { $_ }
@@ -569,7 +569,7 @@ function Get-NeedEstimate([double]$Default, [double[]]$Peaks, [double]$TotalGB) 
 $estimate = Get-NeedEstimate $default $peaks (Get-SysMem).TotalGB   # default of learned gate.needGB per kind|project
 $need = if ($NeedGB -gt 0) { $NeedGB } else { [math]::Min((Get-SysMem).TotalGB * 0.6, [double](Get-KitParam 'gate.needGB' $estimate $histKey)) }
 
-# adapters/build_heap.ps1: heap cap from learned peak, floor under pressure
+# adapters/build-heap.ps1: heap cap from learned peak, floor under pressure
 $heap = 0; $heapFloor = 0; $heapTool = $null
 if (($hp = Get-Command Get-GateHeap -ErrorAction SilentlyContinue) -and ($h = & $hp $kind $peaks $NeedGB $need)) { $heap = $h.heap; $heapFloor = $h.floor; $need = $h.need; $heapTool = $h.tool }
 
@@ -798,7 +798,7 @@ function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   $cons = Join-Path (Get-KitPath logs -Create) "constraints-$((Get-KitHash ($Dir.ToLower()) MD5).Substring(0, 12)).txt"; $pins -replace '\[[^\]]*\]' | Set-Content -LiteralPath $cons -Encoding utf8
   Write-Host "[check] ENV-FIX to kitty (shared venv, when no build uses it; never run it from a worktree): `"$venvPy`" -m pip install -c `"$cons`" $quoted"
 }
-# check builds and stamps: adapters/check_stamps.ps1
+# check builds and stamps: adapters/check-stamps.ps1
 # a step's log: per dir, step and run (parallel checks of one dir); cleanup drops it after keep.check-logs hours
 function Get-CheckLog([string]$Dir, [string]$Step) { Join-Path (Get-KitPath check-logs -Create) "$((Get-KitHash $Dir.ToLower() MD5).Substring(0, 12))-$Step-$PID.log" }
 function Invoke-Check {
@@ -1016,7 +1016,7 @@ foreach ($s in $steps) {
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
-  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # adapters/container_tests.ps1
+  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Test-DockerForContainerTests -ErrorAction SilentlyContinue }   # adapters/container-tests.ps1
   if ($ct) {
     $rc = & $ct
     if ($rc -and -not $Show) { exit $rc }
@@ -1055,7 +1055,7 @@ foreach ($s in $steps) {
   if ($Show) { "$s : $cmd"; continue }
   $unrun = $false; $slot = if ($s -in 'compile', 'typecheck', 'test') { "$s|$(Hash12 $cmd)" }   # build: its output may be gone
   if ($slot -and (Test-CheckStamp $st.dir $slot -Force:$Force)) { $ran++; continue }
-  $runLog = $runText = $null   # adapters/ts_typecheck.ps1: a huge tsc baseline = unrun (exit 5)
+  $runLog = $runText = $null   # adapters/ts-typecheck.ps1: a huge tsc baseline = unrun (exit 5)
   $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
   else {
@@ -2175,9 +2175,9 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 }
 # ---- task spec: agents pass facts (JSON), never task markdown; tracker create|update <id>|render -Spec <json> renders the
 # description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
-# (lib.ps1 Format-KitDecisionItems), parent items (adapters/task_items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
+# (lib.ps1 Format-KitDecisionItems), parent items (adapters/task-items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
-# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<label>' (adapters/task_items.ps1 order), proseOk }.
+# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<label>' (adapters/task-items.ps1 order), proseOk }.
 # what a spec lacks (bug: name + problem), a link or MR no full URL
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")

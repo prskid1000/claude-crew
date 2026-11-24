@@ -1,7 +1,7 @@
 // engine-playwright.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
 // browser-engines: browser.engine chromium | firefox | webkit (or KIT_BROWSER_ENGINE) through Playwright, a browser per
 // process (KIT_PLAYWRIGHT = module path); puppeteer method names mapped. Imported by browser.mjs session() from adapters/.
-// quietProfile: the Local State every kit Chrome profile starts with (browser.mjs sessions, media_grab, kitbag ui-check).
+// quietProfile: the Local State every kit Chrome profile starts with (browser.mjs sessions, media-grab, kitbag ui-check).
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'

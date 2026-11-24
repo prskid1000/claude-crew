@@ -10,7 +10,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/kit-tests.ps1 [-Area all|<any tests/<ar
  on Windows, its areas die with it (a kill-on-close job); -Detached: no parent watch (the nightly run, started by a short beat).
 Outputs: the picked areas and why, per area its time and pass count (a failed or crashed area: its whole output), TEST-DUP lines (one case name in two places), TEST-WRITE lines (a test changed a shared snapshot file), TEST-ROOT lines (a new entry at a drive root), TEST-MYSQLD (the one test mysqld started twice: tests/test-mysql.ps1), a recap of the failed checks, then a total.
  A green full run of a clean tree stamps its tree and date in the main clone's cache (kit-tests-green.txt). No git hook runs it: the agent runs the touched areas before it
- commits and pushes; -Full runs from supervise -AutoFix while idle, every kitTests.fullEveryDays, a stamped tree skipped (adapters/kit_admin.ps1). One setup per area: a new case
+ commits and pushes; -Full runs from supervise -AutoFix while idle, every kitTests.fullEveryDays, a stamped tree skipped (adapters/kit-admin.ps1). One setup per area: a new case
  joins the area that builds its setup, as a table row.
 Exit codes: 0 pass · 1 a check failed or a TEST-DUP · 2 usage error.
 #>

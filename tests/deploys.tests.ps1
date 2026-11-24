@@ -6,7 +6,7 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
-$TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/bossy/adapters/deploy-merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed-checks.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit deploys; $O = Join-Path $k 'skills/bossy/bossy.ps1'; $tf = Join-Path $k '.state/tracking.json'
 $cfgF = Join-Path $k 'skills/crafty/kit.local.json'; $dep = { Px $O deploy @args }
 $J0 = $J; $J = { param($o, $f, [int]$d = 8) if ($f -eq $tf) { Remove-Item (Join-Path $k '.state/tasks'), (Join-Path $k '.state/automerge.json') -Recurse -Force -ErrorAction SilentlyContinue }; & $J0 $o $f $d }   # a tracking.json fixture replaces the state it moved into

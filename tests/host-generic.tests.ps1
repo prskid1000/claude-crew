@@ -5,7 +5,7 @@ an ssh deploy managed by docker, an unregistered kind, and no host configured at
 Usage: pwsh -NoProfile -File tests/host-generic.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/pokey/adapters/deployed_checks.ps1', 'skills/crafty/adapters/gitea.ps1', 'skills/crafty/adapters/gitlab.ps1', 'skills/crafty/adapters/github.ps1')
+$TestKitFiles = @('skills/pokey/adapters/deployed-checks.ps1', 'skills/crafty/adapters/gitea.ps1', 'skills/crafty/adapters/gitlab.ps1', 'skills/crafty/adapters/github.ps1')
 $k = New-TestKit host-generic; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $kl = Join-Path $k 'skills/crafty/kit.local.json'
 foreach ($f in $TestKitFiles) { $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) $f) $d }
 $env:HG_HTTP = Join-Path (Kd) 'http.log'; $env:HG_SSH = Join-Path (Kd) 'ssh.log'; $env:HG_CLI = Join-Path (Kd) 'cli.log'

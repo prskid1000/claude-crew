@@ -5,8 +5,8 @@ build heap and temp per stack, spec.mjs without esbuild, the container engine ch
 Usage: pwsh -NoProfile -File tests/crafty-check.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/stack_presets.ps1', 'skills/crafty/adapters/ts_typecheck.ps1', 'skills/crafty/adapters/build_heap.ps1', 'skills/crafty/spec.mjs',
-  'skills/crafty/adapters/container_tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into the test kit
+$TestKitFiles = @('skills/crafty/adapters/stack-presets.ps1', 'skills/crafty/adapters/ts-typecheck.ps1', 'skills/crafty/adapters/build-heap.ps1', 'skills/crafty/spec.mjs',
+  'skills/crafty/adapters/container-tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into the test kit
 $k = New-TestKit check; $D = Join-Path $k 'skills/crafty/crafty.ps1'
 # gate queue (owner 2026-11-19): an agent's build > QA > background; in a class a 20+ min wait first, then fewer recent starts, the shorter build
 $go = Invoke-PsTest 'gate-order' @'
@@ -26,7 +26,7 @@ Expect "inbox: the rule sent once an hour per owner; the owner's next gated buil
 # stack presets: detect finds Android Gradle, .NET, Go, Rust, CMake and Make projects (crafty.ps1 Invoke-Stack helpers, as there)
 $cases = [ordered]@{ 'android-gradle' = @('build.gradle', 'android { productFlavors { create("store") } }'); dotnet = @('a.csproj', '<Project Sdk="Microsoft.NET.Sdk"></Project>'); go = @('go.mod', 'module x'); rust = @('Cargo.toml', '[package]')
   cmake = @('CMakeLists.txt', 'project(x)'); make = @('Makefile', "test:`n`techo ok") }
-$sp = & { . (Lib); . (Join-Path $k 'skills/crafty/adapters/stack_presets.ps1')
+$sp = & { . (Lib); . (Join-Path $k 'skills/crafty/adapters/stack-presets.ps1')
   function Wrapper($d, $name, $winExt, $fallback) { $fallback }
   function ReadJson($f) { try { Get-Content -LiteralPath $f -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null } }
   foreach ($name in $cases.Keys) {

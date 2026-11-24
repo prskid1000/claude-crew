@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-track_rebuild.ps1: bossy.ps1 track -Rebuild (dot-sourced by bossy.ps1 from skills/bossy/adapters/). Recreates the task records
+track-rebuild.ps1: bossy.ps1 track -Rebuild (dot-sourced by bossy.ps1 from skills/bossy/adapters/). Recreates the task records
 (.state/tasks/<id>.json, skills/bossy/STATE.md) from MRs tagged with the tracker tag (last track.rebuildDays, 14 d); runs inside Invoke-Track.
 Usage: & <kit>/skills/bossy/bossy.ps1 track -Rebuild [-Force]
 Exit codes: 0 ok · 1 problem (bossy.ps1 track).

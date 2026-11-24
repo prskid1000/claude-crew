@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none here (its verbs exit through envy.ps1).
-# tenant_schema.ps1: the schema tenant model (one schema per tenant + a registry; mysql / mariadb)
+# tenant-schema.ps1: the schema tenant model (one schema per tenant + a registry; mysql / mariadb)
 # Sections: L5 tenants · L152 tenant import
 # ---- tenants: local tenants nobody keeps dropped (envs.<env>.tenants; mysql / mariadb): admin rows (the registry row, its FK
 #      children found in information_schema, tenants.tables by idColumns / nameColumns), users no other tenant has, the schema

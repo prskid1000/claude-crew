@@ -13,7 +13,7 @@ description: "Load when: an Android phone lane is needed: devy's local test with
 |---|---|
 | `<kit>/LESSONS.md` | step A0 / L0: `bossy.ps1 learn -Read -Skill android-swarm` |
 | `phoney.ps1` | A1-A5 (`acquire`, `ensure`, `launch`, `release`, `status`, `events`), L1-L4 (`build`, `avd`, `install`, `up`, `down`); `slim` runs from `up` |
-| `<kit>/skills/pokey/adapters/ui_android.ps1` | never read: `pokey.ps1 ui` and the `deploys[]` `laneApk` check of `pokey.ps1 deployed` |
+| `<kit>/skills/pokey/adapters/ui-android.ps1` | never read: `pokey.ps1 ui` and the `deploys[]` `laneApk` check of `pokey.ps1 deployed` |
 | `adapters/*` | dot-sourced by `phoney.ps1`: `app.kind` presets, `arrange` |
 | `swarm-ios.ps1` | `devices.type: ios`: `phoney.ps1` forwards its verbs there |
 
@@ -68,7 +68,7 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
 ```json
 {
  "swarm.config.json": {
-   "_readme": "Lanes = AVD names (phoney.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag} over kit.local.json devices.avd (default android-35, pixel_7, google_apis). app.kind: native (default) | react-native | kmp; flutter, maui, capacitor (adapters/app_kinds.ps1). localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
+   "_readme": "Lanes = AVD names (phoney.ps1 avd create; iOS: a udid), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag} over kit.local.json devices.avd (default android-35, pixel_7, google_apis). app.kind: native (default) | react-native | kmp; flutter, maui, capacitor (adapters/app-kinds.ps1). localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
    "avdDir": "",
    "outDir": "",
    "headless": false,

@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-sessions.tests.ps1: several coordinators on one machine (adapters/supervise_resources.ps1 "sessions"): run owners for pause /
+sessions.tests.ps1: several coordinators on one machine (adapters/supervise-resources.ps1 "sessions"): run owners for pause /
 resume / recover (-Everyone), a stepped-aside supervise prints its own runs' flags, task claims at launch, the step-age HANDOFF;
 the dashboard's folds and grouping (supervise page); handoff successors, placeholder task ids, planned areas holding promotion, pause / resume leftovers, pokey api user hints; git-host adapters, crafty.ps1 host MR refs and check's python stale-env; the kit to-do ACT; crafty.ps1 pipes default and statuses; board beat of an unknown session.
 Usage: pwsh -NoProfile -File <kit>/tests/sessions.tests.ps1 (or tests/kit-tests.ps1 -Area sessions).

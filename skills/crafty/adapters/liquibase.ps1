@@ -120,7 +120,7 @@ function Reset-LiquibaseEdited([string]$e, $envRepos, $cur, $newLayers) {
       foreach ($f in @(git -C $wt diff --name-only $prev.sha $l.sha 2>$null | Where-Object { $_ -match $script:MigPattern -or $_ -match '\.sql$' })) {
         $ids = @(Get-EditedChangeSets "$(git -C $wt show "$($prev.sha):$f" 2>$null)" "$(git -C $wt show "$($l.sha):$f" 2>$null)" "$(git -C $wt show "${tgt}:$f" 2>$null)")
         if (-not $ids.Count) { continue }
-        if (-not (Get-Command Invoke-DbSql -ErrorAction SilentlyContinue)) { "checksums of edited changeSets in $f ($($l.branch)) not reset: needs adapters/db_presets.ps1"; continue }
+        if (-not (Get-Command Invoke-DbSql -ErrorAction SilentlyContinue)) { "checksums of edited changeSets in $f ($($l.branch)) not reset: needs adapters/db-presets.ps1"; continue }
         $leaf = Split-Path $f -Leaf; $like = '%/' + ($leaf -replace '([\\%_])', '\$1'); $bad = @()
         $scs = @(@(try { Resolve-MigSets $e } catch { @() }) | ForEach-Object { @($_.schemas) } | Where-Object { $_ } | Select-Object -Unique); if (-not $scs.Count) { $scs = @(LiquibaseSchemas $e) }
         foreach ($sc in $scs) {

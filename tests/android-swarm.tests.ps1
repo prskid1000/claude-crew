@@ -50,7 +50,7 @@ $jl = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'A', '-Lane', 'L2') | S
 "clash:$($ins -join ',') $($jl.lane)"
 '@
 # phoney from a test kit: its own .state (from the source kit, the lease log of a live kit got lanes L1 / L2 held by A, B, C)
-$swk = New-TestKit swarm-state; foreach ($f in 'skills/phoney/phoney.ps1', 'skills/phoney/adapters/app_kinds.ps1', 'skills/phoney/adapters/arrange.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $swk (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }
+$swk = New-TestKit swarm-state; foreach ($f in 'skills/phoney/phoney.ps1', 'skills/phoney/adapters/app-kinds.ps1', 'skills/phoney/adapters/arrange.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $swk (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }
 $swp = Join-Path $swk 'skills/phoney/phoney.ps1'; $srcLeases = Join-Path $src '.state/leases.jsonl'
 $sf = "$([IO.Path]::GetTempPath())swarm-test-$PID"; Set-Content "$sf.ps1" $swt
 $res = @(Px "$sf.ps1" $swp $sf 2>&1)
@@ -102,9 +102,9 @@ function Get-KitSweepProcs { foreach ($pt in 5560, 5558, 5556, 5562) { [pscustom
 $now = Get-Date; (@(Get-KitSuperviseGuardResources) | Where-Object { "$($_.name)" -like 'phone *' } | ForEach-Object { "$($_.name)=$($_.pid)" }) -join ','
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/bossy/adapters'))
 Expect "K92: RAM rows name each emulator by its own port's lane, else its AVD, never the serial ($(@($ram) -join ' '))" ((@($ram) -join ' ') -match 'phone Osprey=5560,phone Kestrel=5558,phone Falcon=5556,phone Heron=5562')
-# pokey.ps1 ui (adapters/ui_android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
+# pokey.ps1 ui (adapters/ui-android.ps1): a tap that finds nothing and a wait that times out exit 1 (fake adb serves one screen)
 $k = New-TestKit swarm-qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; & $J @{ devices = @{ type = 'android' } } (Join-Path $k 'skills/crafty/kit.local.json')   # devices.type default: none
-foreach ($f in 'skills/pokey/adapters/ui_android.ps1', 'skills/crafty/adapters/android_sdk.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $k (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }   # Get-AndroidSdk lives in android_sdk.ps1
+foreach ($f in 'skills/pokey/adapters/ui-android.ps1', 'skills/crafty/adapters/android-sdk.ps1') { $d = New-Item -ItemType Directory -Force (Join-Path $k (Split-Path $f)); Copy-Item (Join-Path $src $f) $d }   # Get-AndroidSdk lives in android-sdk.ps1
 $null = Px $Q ui bogus 2>&1; $uc = $LASTEXITCODE
 $ud = Join-Path (Kd) 'ui'; New-Item -ItemType Directory -Force "$ud/platform-tools" | Out-Null
 Set-Content "$ud/s.xml" '<hierarchy><node text="Hello" resource-id="a:id/h" class="x" bounds="[0,0][10,10]"/></hierarchy>'
@@ -166,7 +166,7 @@ Stop-Process -Id $vis.Id -Force -ErrorAction SilentlyContinue
 Expect-Each $gu 'swarm gpu: another kind holding the GPU -> no lane boot, a software-rendered lane boots: #' @('blocked', 'software') -Show 8
 Remove-Item $gt -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
 # defaults: app.kind native; AVD neutral < kit.local.json devices.avd < swarm.config.json avd; installs by argv, no Invoke-Expression
-$k = New-TestKit swarm-defaults; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force; Copy-Item (Join-Path $src 'skills/crafty/adapters/android_sdk.ps1') (New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters'))
+$k = New-TestKit swarm-defaults; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force; Copy-Item (Join-Path $src 'skills/crafty/adapters/android-sdk.ps1') (New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters'))
 & $J @{ devices = @{ avd = @{ device = 'd9' } } } (Join-Path $k 'skills/crafty/kit.local.json')
 & $J @{ lanes = @(); app = @{ package = 'x' }; avd = @{ api = 'a99' } } (Join-Path $k 'skills/phoney/swarm.config.json')
 $sd = Invoke-PsTest 'swarm-defaults' @"
@@ -235,7 +235,7 @@ Remove-TestKit $k
 # process) and stops it (emu kill); leases.jsonl gets one reclaim and one down line; phoney.ps1 status shows last used
 $k = New-TestKit swarm-reap; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force; & $J @{ devices = @{ type = 'android' } } (Join-Path $k 'skills/crafty/kit.local.json')
 $rp = Join-Path (Kd) 'reap'; New-Item -ItemType Directory -Force "$rp/platform-tools", "$k/skills/crafty/adapters" | Out-Null; $ab = "$rp/platform-tools/adb.cmd"
-Set-Content "$k/skills/crafty/adapters/android_sdk.ps1" "function Get-AndroidSdk { '$rp' }; function Get-ExeName([string]`$Name) { `"`$Name.cmd`" }"   # the fake adb, never the machine's
+Set-Content "$k/skills/crafty/adapters/android-sdk.ps1" "function Get-AndroidSdk { '$rp' }; function Get-ExeName([string]`$Name) { `"`$Name.cmd`" }"   # the fake adb, never the machine's
 Set-Content $ab "@echo off`r`necho %* >> `"$rp/adb.log`"`r`nif `"%3`"==`"emu`" (type nul > `"$rp/killed`")`r`nif `"%1`"==`"devices`" (echo List of devices attached& if not exist `"$rp/killed`" echo emulator-5556`tdevice)`r`nexit /b 0" -Encoding ascii
 & $J @{ lanes = @(@{ name = 'Falcon'; port = 5556 }); adb = $ab; app = @{ package = 'x' } } (Join-Path $k 'skills/phoney/swarm.config.json')
 $ho = @{ holderPid = $PID; holderStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o') }

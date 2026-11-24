@@ -18,7 +18,7 @@ question back:
 4. `bossy.ps1 deploy intest -Apply` once live: every promoted task whose MRs are all live moves, whoever deployed them (supervise
    -AutoFix is the safety net while no opsy is live: FIXED lines; a deployed state it cannot read: a STATUS WATCH).
 Deploy kinds (`repos[].deploys[].kind`, else from the row keys): ci-job (branch + job), branch-mr, ssh, awsStack, probe, tag, manual, laneApk,
-command (`{ isDeployed, lastDeploy, isRunning, restart, deploy }` command lines: `{sha} {target} {branch} {repo} {mr} {service}`). Verbs: pokey adapters/deployed_checks.ps1;
+command (`{ isDeployed, lastDeploy, isRunning, restart, deploy }` command lines: `{sha} {target} {branch} {repo} {mr} {service}`). Verbs: pokey adapters/deployed-checks.ps1;
 a verb a kind lacks = UNKNOWN. Production = `deploys[].production`, else `deploy.productionPattern` (no default).
 
 ## Before an ask

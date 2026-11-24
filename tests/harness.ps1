@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'   # the area files inherit it (dot-sourced), as 
 $src = Split-Path $PSScriptRoot   # the kit
 $script:fails = 0
 Remove-Item Env:CLAUDE_RUNTIME -ErrorAction SilentlyContinue   # own runtime + state per test kit
-# the nightly run inherits supervise's beat env: its API ledger (live cache) failed every host verb of a test kit without process_gates.ps1
+# the nightly run inherits supervise's beat env: its API ledger (live cache) failed every host verb of a test kit without process-gates.ps1
 Remove-Item Env:KIT_API_LEDGER, Env:KIT_NET_TIMEOUT_SEC, Env:KIT_NET_TRIES, Env:KIT_SUPERVISE_HTML, Env:KIT_SUPERVISE_RUNS -ErrorAction SilentlyContinue
 foreach ($v in 'AUTHOR', 'COMMITTER') { Set-Item "env:GIT_${v}_NAME" 't'; Set-Item "env:GIT_${v}_EMAIL" 't@t' }   # test repos commit without a git config
 $np = '-NoProfile', '-File'   # pwsh @np <script>
@@ -131,8 +131,8 @@ $TestKitWrites = @('LESSONS.md')
 # $TestKitWrites); one per area file
 function New-TestKit([string]$name) {
   $k = Join-Path ([IO.Path]::GetTempPath()) "kit-test-$name-$PID\.claude"
-  foreach ($f in @('skills/crafty/lib.ps1', 'skills/crafty/flagged.ps1', 'skills/crafty/adapters/stack_presets.ps1', 'skills/crafty/adapters/tracker_local.ps1', 'skills/crafty/adapters/secret_store.ps1', 'skills/crafty/kit.example.json', 'skills/crafty/crafty.ps1', 'skills/crafty/devtools.py', 'skills/pokey/pokey.ps1',
-      'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise_resources.ps1', 'skills/bossy/adapters/supervise_stats.ps1', 'skills/bossy/adapters/usage.ps1', 'skills/bossy/adapters/outcomes.ps1','skills/bossy/adapters/storage.ps1', 'skills/bossy/adapters/bugbrief.ps1', 'skills/bossy/kitbag.py', 'skills/bossy/params.registry.json', 'LESSONS.md', 'skills/crafty/vocab.json', 'skills/crafty/adapters/process_gates.ps1', 'skills/crafty/adapters/task_items.ps1', 'skills/crafty/adapters/supervise_report.ps1', 'skills/crafty/adapters/wt_pool.ps1', 'skills/crafty/adapters/guard_localenv.ps1', 'skills/crafty/adapters/check_stamps.ps1') + @($TestKitFiles | Where-Object { $_ })) {   # $TestKitFiles: the area's own scripts
+  foreach ($f in @('skills/crafty/lib.ps1', 'skills/crafty/flagged.ps1', 'skills/crafty/adapters/stack-presets.ps1', 'skills/crafty/adapters/tracker-local.ps1', 'skills/crafty/adapters/secret-store.ps1', 'skills/crafty/kit.example.json', 'skills/crafty/crafty.ps1', 'skills/crafty/devtools.py', 'skills/pokey/pokey.ps1',
+      'skills/bossy/bossy.ps1', 'skills/bossy/adapters/supervise-resources.ps1', 'skills/bossy/adapters/supervise-stats.ps1', 'skills/bossy/adapters/usage.ps1', 'skills/bossy/adapters/outcomes.ps1','skills/bossy/adapters/storage.ps1', 'skills/bossy/adapters/bugbrief.ps1', 'skills/bossy/kitbag.py', 'skills/bossy/params.registry.json', 'LESSONS.md', 'skills/crafty/vocab.json', 'skills/crafty/adapters/process-gates.ps1', 'skills/crafty/adapters/task-items.ps1', 'skills/crafty/adapters/supervise-report.ps1', 'skills/crafty/adapters/wt-pool.ps1', 'skills/crafty/adapters/guard-localenv.ps1', 'skills/crafty/adapters/check-stamps.ps1') + @($TestKitFiles | Where-Object { $_ })) {   # $TestKitFiles: the area's own scripts
     $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; $to = Join-Path $d (Split-Path $f -Leaf)
     $sf = if ($f -notin $TestKitWrites -and $f -notin $TestKitFiles) { Get-TestSnapshotFile $f }   # an area's own files: copied (areas copy over them)
     if ($sf -and -not (Test-Path -LiteralPath $to)) { try { $null = New-Item -ItemType HardLink -Path $to -Target $sf -ErrorAction Stop; continue } catch { } }
@@ -197,7 +197,7 @@ require('http').createServer((q, s) => { let b = ''; q.on('data', (d) => b += d)
 # browser.mjs + the kit's puppeteer-core linked ($false: none); NodeT <name> <js> [args]: $js after m = await import(BM)
 function Use-BrowserKit {
   $nm = "$src/skills/pokey/node_modules"; if (-not (Test-Path "$nm/puppeteer-core")) { return $false }
-  Copy-Item "$src/skills/pokey/browser.mjs" "$k/skills/pokey"; Copy-Item "$src/skills/pokey/adapters/engine-playwright.mjs", "$src/skills/pokey/adapters/ui_checks.mjs" (New-Item -ItemType Directory -Force "$k/skills/pokey/adapters"); New-Item -ItemType Junction -Path "$k/skills/pokey/node_modules" -Value (Resolve-Path $nm).Path | Out-Null; $true
+  Copy-Item "$src/skills/pokey/browser.mjs" "$k/skills/pokey"; Copy-Item "$src/skills/pokey/adapters/engine-playwright.mjs", "$src/skills/pokey/adapters/ui-checks.mjs" (New-Item -ItemType Directory -Force "$k/skills/pokey/adapters"); New-Item -ItemType Junction -Path "$k/skills/pokey/node_modules" -Value (Resolve-Path $nm).Path | Out-Null; $true
 }
 # NodeT head: login app at `web` (/login form; /sso-app -> /idp on localhost; a 6-digit c logs in; posts counted; gen++ logs out)
 $LoginApp = @'

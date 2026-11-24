@@ -7,7 +7,7 @@ Exit codes: 0 pass · 1 a check failed.
 param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 # envy.ps1 is not in the core test kit: copy it in
-function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared_builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane_standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
+function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
 # a test kit of its own: each scenario below writes the config it needs
 $k3 = New-LocalEnvKit le3; $k = $k3; $L3 = Join-Path $k3 'skills/envy/envy.ps1'; $cf3 = Join-Path $k3 'skills/crafty/kit.local.json'
 $sq = Kd   # scratch dir next to the kit
@@ -43,8 +43,8 @@ $null = & { . $L3; Update-State t { param($x) $x.loop = @{ pid = 999999; beat = 
     $x.train = @{ id = 't9'; pid = $PID; pstart = (Get-Date).AddDays(-1).ToString('o'); phase = 'merging and building'; at = (Now); requests = @('r1') } } }   # the 10-hour train: its pid now another process's
 $sj = Px $L3 status -Env t -Json 2>$null | Out-String; $sq1 = & { . $L3; "$(@((Read-State t).requests)[0].status)|$($null -eq (Read-State t).train)" }
 Remove-TestKit $k3
-# supervise rows from skills/bossy/adapters/localenv_supervise.ps1: idle vs leased down services, new log errors
-$k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') $ad
+# supervise rows from skills/bossy/adapters/localenv-supervise.ps1: idle vs leased down services, new log errors
+$k = New-LocalEnvKit lsup; $ad = New-Item -ItemType Directory -Force (Join-Path $k 'skills/bossy/adapters'); Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv-supervise.ps1') $ad
 $supBossy = Join-Path $k 'skills/bossy/bossy.ps1'
 $er = & { . $supBossy; Get-KitEnvRows @([pscustomobject]@{ env = 'e'; services = @([pscustomobject]@{ service = 'api'; state = 'down'; why = 'idle for 15 min' }, [pscustomobject]@{ service = 'web'; state = 'down'; why = 'crashed' }, [pscustomobject]@{ service = 'search'; state = 'waiting (CPU)' }); leases = @([pscustomobject]@{ agent = 'a1'; services = @('web', 'search') }); holds = @() }) (Get-Date) }
 Expect 'supervise: a down service with no lease is idle (no row, no flag); a leased one shows and flags SERVICE DOWN; a leased start waiting for room is no down row' (@($er.rows).Count -eq 1 -and $er.rows[0].name -match 'web' -and $er.rows[0].name -notmatch 'api' -and @($er.flags).Count -eq 1 -and $er.flags[0].what -like 'SERVICE DOWN: e web is down (crashed)*')
@@ -101,10 +101,10 @@ $ph = (& { . $supBossy; $global:downs = @(); function Invoke-KitExe([string]$Exe
   [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"api","state":"up"},{"service":"web","state":"up"},{"service":"db","state":"up"},{"service":"x","state":"up (external)"}],"leases":[{"agent":"P1","services":["api"],"graceLeft":8}],"holds":[{"who":"me","services":["db"],"graceLeft":null}]}]' } }
   Invoke-KitPauseLocalEnv; "downs=$($global:downs -join '|')" }) -join "`n"
 Expect 'pause hook: services only a paused agent''s lease (in grace) or nobody needs stop; a live hold and external ones stay' ($ph -match 'stopped api, web \(no live holder\)' -and $ph -match 'downs=api,web$')
-# guard rules (adapters/guard_localenv.ps1): localenv/ pushes and hand-started dev servers are denied; rows: tool, command, deny
+# guard rules (adapters/guard-localenv.ps1): localenv/ pushes and hand-started dev servers are denied; rows: tool, command, deny
 $gk = New-TestKit leguard; New-Item -ItemType Directory -Force (Join-Path $gk 'skills/crafty/adapters') | Out-Null
 # New-TestKit links it already (harness list): a copy over the link failed while another area held the shared file
-if (-not (Test-Path (Join-Path $gk 'skills/crafty/adapters/guard_localenv.ps1'))) { Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/crafty/adapters/guard_localenv.ps1') (Join-Path $gk 'skills/crafty/adapters') }
+if (-not (Test-Path (Join-Path $gk 'skills/crafty/adapters/guard-localenv.ps1'))) { Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/crafty/adapters/guard-localenv.ps1') (Join-Path $gk 'skills/crafty/adapters') }
 $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $bad = @()
 foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('B', 'git push -u origin lane/shop-kestrel', $true), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true),
     @('B', 'npx ng serve --port 4200', $true), @('P', '& D:/kit/skills/envy/envy.ps1 up -Env shop', $false), @('B', 'yarn start', $true), @('P', 'dotnet watch run', $true),
@@ -175,7 +175,7 @@ Set-Content (Join-Path $rrDir 'cl/m.xml') '<databaseChangeLog><changeSet id="m" 
 Set-Content (Join-Path $rrDir 'cl/t.xml') '<databaseChangeLog><changeSet id="t" author="a"><sql>ALTER TABLE x ADD c int</sql><sql>CREATE PROCEDURE r4() BEGIN END</sql></changeSet></databaseChangeLog>'
 $rrOut = & { . $ckL; $global:rrDel = @()
   function Resolve-MigSets { [pscustomobject]@{ name = 'default'; tool = 'liquibase'; searchPath = $rrDir; changelog = $null; dir = $null; masters = @(); schemas = @('s1', 's2') } }
-  function SqlId($n) { "``$n``" }; function SqlQ($v) { "'$v'" }   # adapters/db_engines.ps1 is not in this test kit
+  function SqlId($n) { "``$n``" }; function SqlQ($v) { "'$v'" }   # adapters/db-engines.ps1 is not in this test kit
   function Invoke-DbSql([string]$e, [string]$sql) {
     if ($sql -match '^DELETE') { $global:rrDel += @($sql) }
     elseif ($sql -match 'DATABASECHANGELOG') { , @('cl/r.xml', '1'); , @('cl/m.xml', '2'); , @('cl/t.xml', '3') }

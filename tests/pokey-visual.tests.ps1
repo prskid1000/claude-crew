@@ -1,12 +1,12 @@
 #Requires -Version 7
 <#
-tests/pokey-visual.tests.ps1: pokey's visual helpers on one test kit: annotate draws a labelled box into a copy; ui_checks.mjs
+tests/pokey-visual.tests.ps1: pokey's visual helpers on one test kit: annotate draws a labelled box into a copy; ui-checks.mjs
 layoutIssues / contrast in a real headless Chrome; browser.mjs logins (totp, sso-steps over Playwright, shared cookie, the firefox hint), evidence paths.
 Usage: pwsh -NoProfile -File tests/pokey-visual.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/android_sdk.ps1', 'skills/phoney/SKILL.md', 'skills/phoney/adapters/app_kinds.ps1', 'skills/phoney/adapters/arrange.ps1', 'skills/phoney/phoney.ps1',
-  'skills/pokey/adapters/annotate.ps1', 'skills/pokey/adapters/engine-playwright.mjs', 'skills/pokey/adapters/ui_android.ps1', 'skills/pokey/adapters/ui_checks.mjs', 'skills/pokey/adapters/web-login.mjs')   # copied into the test kit
+$TestKitFiles = @('skills/crafty/adapters/android-sdk.ps1', 'skills/phoney/SKILL.md', 'skills/phoney/adapters/app-kinds.ps1', 'skills/phoney/adapters/arrange.ps1', 'skills/phoney/phoney.ps1',
+  'skills/pokey/adapters/annotate.ps1', 'skills/pokey/adapters/engine-playwright.mjs', 'skills/pokey/adapters/ui-android.ps1', 'skills/pokey/adapters/ui-checks.mjs', 'skills/pokey/adapters/web-login.mjs')   # copied into the test kit
 $k = New-TestKit visual; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $qk = Join-Path $k 'skills/pokey'; $bk = Use-BrowserKit   # browser.mjs + puppeteer-core linked once
 # ---- annotate
 if ($IsWindows) {
@@ -25,7 +25,7 @@ if ($bk) {
     "const c = t(rt + '-x/F1-T1_01_x.jpeg'), d = t(rt.toUpperCase() + '/F1-T1_01_x.jpeg')`n" +
     "console.log(a, b === join(rt, 'qa/F1/shots/F1-T1_01_x.jpeg'), c, process.platform === 'win32' ? d !== 'refused' : true)")
   Expect "browser.mjs evidence: a relative path inside the kit or a runtime sibling is refused; the runtime folder (any case) gets an absolute path ($res)" ("$res" -eq 'refused true refused true')
-  New-Item -ItemType Directory -Force "$qk/adapters" | Out-Null; Copy-Item (Join-Path $src 'skills/pokey/adapters/ui_checks.mjs') "$qk/adapters"
+  New-Item -ItemType Directory -Force "$qk/adapters" | Out-Null; Copy-Item (Join-Path $src 'skills/pokey/adapters/ui-checks.mjs') "$qk/adapters"
   $res = NodeT ui @'
 import { createRequire } from 'node:module'
 const exe = m.CHROME   // browser.mjs: the kit's one lookup and quiet flags
@@ -65,10 +65,10 @@ process.exit(0)
   foreach ($x in 'totp', 'totp-login', 'sso', 'shared', 'hint') { if ($nopw -and $x -in 'sso', 'shared', 'hint') { "SKIP browser.mjs login: $x (no Playwright)" } else { Expect "browser.mjs login: $x" (@($res) -contains "${x}:true") } }
 } else { 'SKIP browser.mjs (no puppeteer-core in skills/pokey)' }
 $bmSrc = Get-Content (Join-Path $src 'skills/pokey/browser.mjs') -Raw
-$bmUsers = @('skills/pokey/adapters/media_grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })
+$bmUsers = @('skills/pokey/adapters/media-grab.mjs', 'skills/bossy/kitbag.py' | Where-Object { (Get-Content (Join-Path $src $_) -Raw) -notmatch 'QUIET_ARGS \}?\s*=\s*await import\(bm\)|import \{ kitPath, QUIET_ARGS \}|args: QUIET_ARGS|args: \[\.\.\.QUIET_ARGS' })
 Expect "browser.mjs: every kit Chrome (sessions, ui-check, media grab) starts with no component, model, safe-browsing or background downloads, no disk cache unless browser.diskCache (missing: $($bmUsers -join ', '))" (
   $bmSrc.Contains("'vocab.json'), 'utf8')).chromeQuietArgs || []") -and $bmSrc.Contains('.quietProfile(`${PROFILES}/') -and $bmSrc.Contains("...QUIET_ARGS,") -and $bmSrc.Contains('.pwPage(eng, bo, VIEW, QUIET_ARGS)') -and $bmSrc.Contains("...(bo.diskCache ? [] : ['--disk-cache-size=1'])") -and -not $bmUsers.Count)
-# one quiet-flag list (vocab.json chromeQuietArgs) for every kit Chromium: browser.mjs, Playwright chromium, report_pdf.py, Cypress Electron (build_heap.ps1, gate kind cypress)
+# one quiet-flag list (vocab.json chromeQuietArgs) for every kit Chromium: browser.mjs, Playwright chromium, report_pdf.py, Cypress Electron (build-heap.ps1, gate kind cypress)
 $qa = @((Get-Content (Join-Path $src 'skills/crafty/vocab.json') -Raw | ConvertFrom-Json).chromeQuietArgs)
 if ($bk) {
   $qpd = Join-Path (Kd) 'qp'; New-Item -ItemType Directory -Force $qpd | Out-Null; [IO.File]::WriteAllText((Join-Path $qpd 'Local State'), '{"browser":{"x":1},"component_updates":{"other":2}}')
@@ -88,7 +88,7 @@ console.log(m.localFile('skills/pokey/targets.local.json', wt) === join(mn, 'ski
 '@ (Join-Path (Kd) 'wtl')
   Expect 'browser.mjs: a kit worktree finds the main clone logins file; a created login keeps its tenant' ("$res" -eq 'true true c,d,e')
 } else { 'SKIP browser.mjs worktree logins (no puppeteer-core in skills/pokey)' }
-$qUsers = @{ 'skills/crafty/adapters/report_pdf.py' = "dt.VOCAB.get('chromeQuietArgs'"; 'skills/pokey/adapters/media_grab.mjs' = 'quietProfile(mkdtempSync('; 'skills/bossy/kitbag.py' = 'userDataDir: ud,'; 'skills/crafty/adapters/build_heap.ps1' = "if (`$Kind -eq 'cypress' -and -not `$env:ELECTRON_EXTRA_LAUNCH_ARGS) { `$env:ELECTRON_EXTRA_LAUNCH_ARGS = `$script:KitVocab.chromeQuietArgs -join"; 'skills/pokey/adapters/engine-playwright.mjs' = "args: eng === 'chromium' ? quiet : []" }
+$qUsers = @{ 'skills/crafty/adapters/report_pdf.py' = "dt.VOCAB.get('chromeQuietArgs'"; 'skills/pokey/adapters/media-grab.mjs' = 'quietProfile(mkdtempSync('; 'skills/bossy/kitbag.py' = 'userDataDir: ud,'; 'skills/crafty/adapters/build-heap.ps1' = "if (`$Kind -eq 'cypress' -and -not `$env:ELECTRON_EXTRA_LAUNCH_ARGS) { `$env:ELECTRON_EXTRA_LAUNCH_ARGS = `$script:KitVocab.chromeQuietArgs -join"; 'skills/pokey/adapters/engine-playwright.mjs' = "args: eng === 'chromium' ? quiet : []" }
 $qMiss = @($qUsers.Keys | Where-Object { -not (Get-Content (Join-Path $src $_) -Raw).Contains($qUsers[$_]) })
 $qCopies = @(git -C $src grep -l -e 'OptimizationGuideModelDownloading' -- 'skills' | Where-Object { $_ -ne 'skills/crafty/vocab.json' })
 Expect "vocab.json chromeQuietArgs: one list, every kit Chromium start reads it (missing: $($qMiss -join ', '); copies: $($qCopies -join ', '))" (

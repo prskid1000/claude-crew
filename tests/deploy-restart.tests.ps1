@@ -6,9 +6,9 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
-$TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/bossy/adapters/deploy-merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed-checks.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit deploy-restart; $O = Join-Path $k 'skills/bossy/bossy.ps1'
-foreach ($f in 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/adapters/deploy_merge.ps1', 'skills/pokey/adapters/deployed_checks.ps1') {
+foreach ($f in 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/adapters/deploy-merge.ps1', 'skills/pokey/adapters/deployed-checks.ps1') {
   $d = Join-Path $k (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) $f) $d
 }
 # fake ssh: logs each decoded host script; a script with a busy check: mode busy = always BUSY, once = BUSY on the first call, then the restarts

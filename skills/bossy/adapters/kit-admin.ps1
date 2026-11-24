@@ -1,5 +1,5 @@
 <#
-kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
+kit-admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   prepush · precommit                       the kit's git hooks (.githooks)
   learn -Stats | -History [-Grep] [-Last]   signals since the last retro, retired lessons
   learn -Skill <s> -When <w> -Do <d> -Why <y> (or -Lesson "<when> -> <do> (<why>)") [-Project <p>] | -Bump <words> [-Append] | -Fixed <words> | -Trim [-Max 40]

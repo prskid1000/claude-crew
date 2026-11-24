@@ -888,7 +888,7 @@ function Get-KitWorkflowRecords($Dir, $Events, $Launches) {
 # no end marker (TaskStop, restart): completed, or quiet and every holder gone (none: every Claude process younger)
 function Get-KitWorkflowStop($Dir, $Records) {
   if (@($Records | Where-Object completed).Count) { return 'completed' }
-  if (Test-KitRunLive $Dir $Records) { return }   # bossy adapters/supervise_resources.ps1
+  if (Test-KitRunLive $Dir $Records) { return }   # bossy adapters/supervise-resources.ps1
   $h = @($Records | Where-Object holderPid); if ($h.Count) { if (-not @($h | Where-Object { (Test-KitHolder $_) -ne $false }).Count) { 'session gone' }; return }
   if (-not @($Records).Count -and ($cs = @(Get-KitClaudeStarts)).Count -and -not @($cs | Where-Object { $_ -le $Dir.CreationTime }).Count) { 'session gone' }   # no Claude process found: unknown
 }
@@ -1029,7 +1029,7 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   $stuck = [double](Get-KitParam 'supervise.stuckMinutes'); $rows = [Collections.Generic.List[object]]::new(); $script:KitTxVersions = @{}
   $last = { param($tool, $file) $t = if ($file) { Get-KitTailCached (Get-KitTranscriptKind $tool) $file }; if ($t.version) { $script:KitTxVersions[($t.version -split ' ')[0]] = $t.version }; $t }
   $max = { param([object[]]$T) @($T | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1] }
-  $doing = { param($t, [string]$stepNow) Format-KitDoing $t $stepNow }; $nextPh = { param([string]$scr, [string]$ph) Get-KitNextPhase $scr $ph }   # Doing · next: adapters/supervise_report.ps1
+  $doing = { param($t, [string]$stepNow) Format-KitDoing $t $stepNow }; $nextPh = { param([string]$scr, [string]$ph) Get-KitNextPhase $scr $ph }   # Doing · next: adapters/supervise-report.ps1
   $outcome = { param($st) if ("$($st.result.summary)") { "$($st.result.summary)" } else { 'done' } }
   $tok = { param($n) if ($n -ge 1e6) { '{0:0.#}M' -f ($n / 1e6) } else { '{0:0}k' -f ($n / 1e3) } }
   # waits: "<run>/<agent>" or "/<agent>" -> why, since, next
@@ -1184,7 +1184,7 @@ function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
 $__trRepo = [string](Get-KitSetting 'tracker.repo' '')
 $__trNoneDir = Get-KitPath tracker-none
 
-# status roles (adapters/task_items.ps1 "status roles"): default names per role = vocab.json statuses (devtools.py reads the same),
+# status roles (adapters/task-items.ps1 "status roles"): default names per role = vocab.json statuses (devtools.py reads the same),
 # tracker.statuses per role; null / [] = that step is skipped; live names per scope: Get-KitScopeRoles
 $__trStatus = [ordered]@{}
 foreach ($__src in @($script:KitVocab.statuses, (Get-KitSetting 'tracker.statuses' $null))) { if ($__src) { foreach ($__p in (Get-KitProps $__src)) { $__trStatus[$__p.Name] = @($__p.Value | Where-Object { "$_".Trim() } | ForEach-Object { [string]$_ }) } } }
@@ -1277,13 +1277,13 @@ function __TrOsFullName {
   ([string]$n).Trim()
 }
 # ----- backends: $a = id, text, status (tracker name), logical, name, list, parent, assignee, priority, file, leaf
-# tracker clickup, github: adapters/tracker_clickup.ps1, adapters/github.ps1
+# tracker clickup, github: adapters/tracker-clickup.ps1, adapters/github.ps1
 # adapter-end:tracker
 # adapters/*.ps1 register before the tracker type is resolved; a vendor file (names below) loads only when config selects one
 # of its names: the tracker here, git host and ci once the host type is known (Import-KitVendorAdapters below)
 # registry: vendor adapter files: crafty/adapters/<vendor>.ps1
-$script:KitVendorOf = @{ github = 'github'; gitlab = 'gitlab'; bitbucket = 'bitbucket'; azure_devops = 'azure'; gitea = 'gitea'; ci_jenkins = 'jenkins'
-  tracker_azure = 'azure'; tracker_clickup = 'clickup'; tracker_jira = @('jira', 'jira-server'); tracker_linear = 'linear'; tracker_youtrack = 'youtrack' }
+$script:KitVendorOf = @{ github = 'github'; gitlab = 'gitlab'; bitbucket = 'bitbucket'; 'azure-devops' = 'azure'; gitea = 'gitea'; 'ci-jenkins' = 'jenkins'
+  'tracker-azure' = 'azure'; 'tracker-clickup' = 'clickup'; 'tracker-jira' = @('jira', 'jira-server'); 'tracker-linear' = 'linear'; 'tracker-youtrack' = 'youtrack' }
 function Import-KitVendorAdapters([string[]]$Want) {   # the file paths to dot-source (at script scope: functions stay defined)
   @(Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | Where-Object {
     $v = $script:KitVendorOf[$_.BaseName]; $_.FullName -notin $script:KitAdapterFiles -and (-not $v -or @($v | Where-Object { $_ -in $Want }).Count) } | ForEach-Object FullName)
@@ -1748,7 +1748,7 @@ function __CiJob($Id, $Name, $Status, $FinishedAt = $null) { $o = [ordered]@{ id
 function __CiStat($Id, $Status) { if ($Status) { [pscustomobject]@{ id = $Id; status = $Status } } }
 function __CommitObj($Sha, $Date = $null) { if ($Sha) { $o = [ordered]@{ id = $Sha }; if ($Date) { $o.committed_date = $Date }; [pscustomobject]$o } }
 
-# git hosts: adapters/gitlab, github, bitbucket, azure_devops, gitea (.ps1)
+# git hosts: adapters/gitlab, github, bitbucket, azure-devops, gitea (.ps1)
 # MR objects: __Mr fills the kit's shape; __GhMr maps a GitHub-shaped PR (github, gitea)
 function __Mr([hashtable]$H) {
   $o = [ordered]@{ iid = $null; title = ''; state = ''; source_branch = ''; target_branch = ''; sha = ''; merge_commit_sha = $null; squash_commit_sha = $null; merged_at = $null; created_at = $null

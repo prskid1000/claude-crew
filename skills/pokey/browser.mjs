@@ -408,12 +408,12 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
-// ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui_checks.mjs)
+// ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui-checks.mjs)
 // matrix(s, fn): fn({ viewport, fontScale, theme, tag }) per qa.matrix variant; [] = axis off
-export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {} } = {}) => (await adapter('ui_checks.mjs')).matrix(s, fn, m)
+export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {} } = {}) => (await adapter('ui-checks.mjs')).matrix(s, fn, m)
 // layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG
-export const layoutIssues = async (...a) => (await adapter('ui_checks.mjs')).layoutIssues(...a)
-export const contrast = async (...a) => (await adapter('ui_checks.mjs')).contrast(...a)
+export const layoutIssues = async (...a) => (await adapter('ui-checks.mjs')).layoutIssues(...a)
+export const contrast = async (...a) => (await adapter('ui-checks.mjs')).contrast(...a)
 
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names: same literal as pokey.ps1 $script:EvidenceName

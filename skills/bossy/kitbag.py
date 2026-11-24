@@ -21,8 +21,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L38 paths · L135 state · L192 kitlog · L294 load · L787 lint · L1201 README graph · L1308 lint command · L1589 audit ·
-  L1737 registry · L2069 arch lint · L2342 prose · L2522 sections · L2652 budget · L2670 migrate · L2818 plugins ·
-  L2875 state lint · L3063 main
+  L1737 registry · L2073 arch lint · L2346 prose · L2526 sections · L2656 budget · L2674 migrate · L2822 plugins ·
+  L2879 state lint · L3067 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1932,7 +1932,11 @@ def registry_lint(k, bad):
                 ln = src.count('\n', 0, m.start()) + 1
                 bad('AGENT-TYPE', f'{p}:{ln}', f'agent() without a crew agentType ({at.group(1) if at else "none: a general-purpose agent"}); use one of {sorted(crew)}')
     olds = man.get('renamed') or {}
-    pats = [(o, old_name_rx(o)) for o in olds]
+    live = {osp.basename(x) for x in k.files}   # a live joined name (guard-<old>.ps1) is no old one
+    # FILE-RENAMES: a kebab-case .ps1 / .mjs's snake_case form (dotted or regex-escaped) is its old name, no manifest row each
+    snake = {b.replace('-', '_'): b for b in live if '-' in b and b.endswith(('.ps1', '.mjs')) and b.replace('-', '_') not in live}
+    pats = [(o, old_name_rx(o)) for o in olds] + [(o, re.compile(r'(?<![\w.-])' + re.escape(o).replace(r'\.', r'\\?\.') + r'(?![\w-])')) for o in snake]
+    olds = {**olds, **snake}
     for f in k.files:
         if '.local.' in f or any(f == x or f.startswith(x + '/') for x in k.local_only):
             continue
@@ -1940,7 +1944,7 @@ def registry_lint(k, bad):
         if f == PATHS_JSON:
             t = re.sub(r'"(renamed|moved)":\s*\{[^}]*\}', '', t)   # the migration notes themselves
         for o, rx in pats:
-            m = rx.search(t)
+            m = next((x for x in rx.finditer(t) if x.group(0) not in live), None)
             if m:
                 bad('OLD-NAME', f'{f}:{t.count(chr(10), 0, m.start()) + 1}', f'old name "{o}" (now "{olds[o]}"): no aliases, update the reference')
         if TODO in t and f not in ('skills/bossy/kitbag.py', 'skills/bossy/kitbag_scaffold.py'):   # the templates live here

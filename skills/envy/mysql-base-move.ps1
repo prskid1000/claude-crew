@@ -52,7 +52,7 @@ function New-BaseIni([string[]]$Template, [int]$Port, [string]$Dir) {
   # a tenant restore (drop + create ~830 tables) measured 2026-11-20: 521 MB; file_per_table OFF 272 (no per-table file init; ibdata1 +31 MB
   # once, reused, never shrinks); adaptive flushing OFF + io_capacity 100 / 200: -5%; both 253; trx_commit 0, dirty pct, lru depth, binlog: noise
   # file_per_table OFF: new and rebuilt (ALTER) tables land in ibdata1, reclaimed only by a lane re-init; partitioned / compressed tables refused (none today)
-  # the binlog stays as the template has it: envy marks and restores read it (db_presets.ps1: log_bin OFF = no marks); the load runs without it
+  # the binlog stays as the template has it: envy marks and restores read it (db-presets.ps1: log_bin OFF = no marks); the load runs without it
   # binlog_row_metadata FULL: the donor's SET PERSIST (mysqld-auto.cnf) stays behind; envy restores by column name need it
   $force = @('innodb_doublewrite=OFF', 'innodb_flush_log_at_trx_commit=2', 'general_log=0', 'slow_query_log=0', 'innodb_redo_log_capacity=64M', 'binlog_row_metadata=FULL', 'innodb_file_per_table=OFF', 'innodb_adaptive_flushing=OFF', 'innodb_io_capacity=100', 'innodb_io_capacity_max=200')
   $drop = '^\s*(innodb[-_]doublewrite|innodb[-_]flush[-_]log[-_]at[-_]trx[-_]commit|innodb[-_]redo[-_]log[-_]capacity|general[-_]log|slow[-_]query[-_]log|binlog[-_]row[-_]metadata|innodb[-_]file[-_]per[-_]table|innodb[-_]adaptive[-_]flushing|innodb[-_]io[-_]capacity(?:[-_]max)?)\s*(=|$)'

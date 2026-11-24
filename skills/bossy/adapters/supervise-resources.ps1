@@ -1,5 +1,5 @@
 <#
-supervise_resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
+supervise-resources.ps1 (core): the machine's shared resources in bossy.ps1, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): build gate holders and queue, test locks, repeated build failures, the file cache flush (gate.cacheFlush),
 phone leases, env leases, QA seats and claims, test browsers and their profiles, idle daemons (cleanup.idleDaemons), the RAM rows of
 the supervise report, agents' background shells (Shells table, ORPHAN / STUCK, -AutoFix kills), the report page (dashboard + Statistics from the logs; supervise.output, publish), seats and leases in board show and recover, the status resource rows, STUCK, pause and silent-run flags, release (every lease of an agent), launch: pauses it releases, a buildy launch's item tasks (-Self / -Check), stop-learn; sessions: several coordinators (run
@@ -537,7 +537,7 @@ function Stop-KitLeftShells($Entry, $Procs = $(Get-KitSweepProcs), $Hits = $null
 function Get-KitSuperviseGuardShells([switch]$AutoFix) {
   $script:KitShellRows = @(); if (-not (Within 'shells')) { return }
   try { $sh = Get-KitShellSweep $state $now -AutoFix:$AutoFix; $script:KitShellRows = $sh.rows; $sh.flags }
-  catch { [pscustomobject]@{ level = 'WATCH'; what = "shell sweep failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Get-KitShellSweep.' } }
+  catch { [pscustomobject]@{ level = 'WATCH'; what = "shell sweep failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise-resources.ps1 Get-KitShellSweep.' } }
 }
 
 # ---- page: report page and -Brief stdout (supervise.output)
@@ -623,13 +623,13 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
   $stats.settings = Get-KitSuperviseSettings $stats.params   # defaults + local overrides + learned params: never an empty section
   $stats.waste = @(try { Get-KitWasteItems @(Get-KitContextSteps $usage) | Select-Object tag, why, role, who, run, kind, tokens, what, runs } catch { $serr.Add("waste: $($_.Exception.Message)") })   # the Waste panel's items and tags
   $stats.gate = try { Get-KitGateStats $d.at @($d.resources) -StatsFrom $statsFrom } catch { $serr.Add("gate: $($_.Exception.Message)") }
-  $stats.waits = try { Get-KitLeaseWaits $d.at -StatsFrom $statsFrom } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at -StatsFrom $statsFrom } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $serr.Add("cpu: $($_.Exception.Message)"); $prior.stats.cpu }   # adapters/supervise_stats.ps1
+  $stats.waits = try { Get-KitLeaseWaits $d.at -StatsFrom $statsFrom } catch { $null }; $stats.qa = try { Get-KitQaDays $d.at -StatsFrom $statsFrom } catch { $null }; $stats.cpu = try { Update-KitCpuStats $prior.stats.cpu $d.at @($d.shells) @($d.resources) } catch { $serr.Add("cpu: $($_.Exception.Message)"); $prior.stats.cpu }   # adapters/supervise-stats.ps1
   $stats.writes = try { $wc = Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'supervise-writes.json') -Raw | ConvertFrom-Json; if ($wc.at) { Get-KitWriteView @($wc.samples) @(Get-Content -LiteralPath (Get-KitPath disk-writes) -ErrorAction SilentlyContinue | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } }) $d.at } } catch { $null }   # Get-KitSuperviseFlagsWrites; history: Update-KitWriteHistory
   $stats.flagHours = try { Update-KitFlagHours $prior.stats.flagHours $d.at $fl } catch { $serr.Add("flag hours: $($_.Exception.Message)"); @($prior.stats.flagHours) }   # the flags heatmap: 24 h (history keeps 12 sweeps)
   # a failed source keeps its last data or none: the sweep says which, never a silent stale section
-  if ($serr.Count) { $stats.errs = @($serr); $w2 = [pscustomobject]@{ level = 'WATCH'; what = "dashboard data not updated this sweep: $($serr -join '; ')"; action = 'Fix the named source (adapters/supervise_stats.ps1); its section shows its last data.' }
+  if ($serr.Count) { $stats.errs = @($serr); $w2 = [pscustomobject]@{ level = 'WATCH'; what = "dashboard data not updated this sweep: $($serr -join '; ')"; action = 'Fix the named source (adapters/supervise-stats.ps1); its section shows its last data.' }
     $fl = @($fl) + $w2; $d.flags = @($d.flags) + $w2; if ($flags -is [Collections.IList]) { [void]$flags.Add($w2) } }
-  $osNext = if (Get-Command Get-KitOsBeatNextSweep -ErrorAction SilentlyContinue) { try { Get-KitStamp stored (Get-KitOsBeatNextSweep $d.at) } catch { $null } }   # adapters/os_timer.ps1
+  $osNext = if (Get-Command Get-KitOsBeatNextSweep -ErrorAction SilentlyContinue) { try { Get-KitStamp stored (Get-KitOsBeatNextSweep $d.at) } catch { $null } }   # adapters/os-timer.ps1
   $j = [pscustomobject]@{ at = (Get-KitStamp stored $d.at); next = $Next; osNext = $osNext; flags = @($fl); agents = @($d.rows); mem = $d.mem; resources = @($d.resources); shells = @($d.shells); history = @($History); stats = $stats }
   # compact, no copy of usage.result.json (0.7 MB): each sweep rewrote 1.8 MB (NTFS journal churn); the page still shows it
   $sj = [ordered]@{}; foreach ($sk in $stats.Keys) { if ($sk -ne 'usage') { $sj[$sk] = $stats[$sk] } }; $sj.usageFile = (Get-KitPath usage-cache) -replace '\.json$', '.result.json'
@@ -644,7 +644,7 @@ function Write-KitSuperviseHtml($d, [string[]]$Sweep, [string]$Next) { try {
     $sp = @{ FilePath = 'pwsh'; ArgumentList = @('-NoProfile', '-NonInteractive', '-ec', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($pub))); ErrorAction = 'Stop' }; if ($KitIsWindows) { $sp.WindowStyle = 'Hidden' }
     $env:KIT_SUPERVISE_HTML = $p; $env:KIT_SUPERVISE_RUNS = $rpd; try { Start-Process @sp | Out-Null } catch { Write-Warning "supervise.publish failed to start: $($_.Exception.Message)" } finally { Remove-Item Env:KIT_SUPERVISE_HTML, Env:KIT_SUPERVISE_RUNS -ErrorAction SilentlyContinue } }
   $p
-  } catch { $w = [pscustomobject]@{ level = 'WATCH'; what = "supervise page failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise_resources.ps1 Write-KitSuperviseHtml.' }; $d.flags = @($d.flags) + $w; if ($flags -is [Collections.IList]) { [void]$flags.Add($w) }
+  } catch { $w = [pscustomobject]@{ level = 'WATCH'; what = "supervise page failed: $($_.Exception.Message)"; action = 'Fix adapters/supervise-resources.ps1 Write-KitSuperviseHtml.' }; $d.flags = @($d.flags) + $w; if ($flags -is [Collections.IList]) { [void]$flags.Add($w) }
     # a failed build never leaves the last good page passing for this sweep: a minimal page that says so
     try { $ep = [IO.Path]::ChangeExtension((Get-KitPath supervise-report -Create), '.html'); Write-KitAtomic $ep "<!doctype html><meta charset=utf-8><title>Supervisor</title><body style='font:14px system-ui;padding:20px'><h1>Supervisor page failed</h1><p>$([Net.WebUtility]::HtmlEncode("$((Get-Date).ToString('yyyy-MM-dd HH:mm')): $($_.Exception.Message)"))</p><p>The sweep's flags and report still ran; the next sweep rebuilds this page.</p>" } catch { }; '' }   # $flags: the supervise verb's list (-Json, plain)
 }
@@ -742,7 +742,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
       free = @(foreach ($dk0 in $dDays) { @($ser | Where-Object { $_.t.ToString('yyyy-MM-dd') -eq $dk0 } | ForEach-Object f)[-1] }) } })
   $wrX = [pscustomobject]@{ rows = @(@($st.writes.rows) + @($diskW)); more = @($st.writes.more); src = "$($st.writes.src)" }   # the drive rows ride the Writes rows
   $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) })
-  $gs = $st.gate; $machTop = Format-KitMachineTop $gs $nw $memPct $memFree $tot ([double]$st.keepFree)   # tiles, RAM bar (supervise_stats.ps1)
+  $gs = $st.gate; $machTop = Format-KitMachineTop $gs $nw $memPct $memFree $tot ([double]$st.keepFree)   # tiles, RAM bar (supervise-stats.ps1)
   $machineHtml = "<div class=mcol>$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }) $wrX $st.waits $gs $machTop)$(Format-KitWritesCard $st.writes $diskW $dDays)</div>"
   # kit health rows of the Trends day heatmap (owner 2026-11-19): sweep s, agents failed / finished, branches, worktrees
   # kit health per day (Format-KitDayHeat): sweep s (stats.live samples), agents failed / finished (calls logs), branches and worktrees
@@ -1110,7 +1110,7 @@ function Get-KitRecoverLinesResources {
   }
 }
 
-# board messages: the file and its reader live in crafty adapters/supervise_report.ps1 (the gate prints them too)
+# board messages: the file and its reader live in crafty adapters/supervise-report.ps1 (the gate prints them too)
 $script:KitMsgKinds = 'note', 'hold', 'dispute', 'rule', 'rollback', 'report', 'pause'   # board msg schema { kind, to, text, ref }
 function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind = 'note', [string]$Ref = '') {
   $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
@@ -1236,13 +1236,13 @@ function Clear-KitPauseFor([string]$Run) {
     "PAUSE $(Split-Path $p.file -Leaf) ($($p.reason)) released for run ${Run}: it was launched again"
   }
 }
-# every task: a description with an Items list (a [Bug] its own shape), written as its Items checklist (adapters/task_rollup.ps1); a subtask
+# every task: a description with an Items list (a [Bug] its own shape), written as its Items checklist (adapters/task-rollup.ps1); a subtask
 # the whole template and a parent with the delivery section, rolled up from the brief dir's item table when it has one.
 # One "TASKS REFUSED" line per gap; an unread task is skipped; -Check (-File) writes nothing
 function Test-KitLaunchTasks($A, [string]$File, [string]$RunName = '') {
   if ($File) { $A = try { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json -AsHashtable } catch { 'usage: launch -Check -ArgsFile <buildy args .json>'; exit 2 } }
   $ids = @(@($A.agents) | ForEach-Object { @("$($_.task)") + @(Get-KitItemTasks "$($_.items)") } | ForEach-Object { NormTask $_ } | Where-Object { $_ } | Select-Object -Unique -First 20)
-  $bd = if ($A.brief) { Split-Path ([string]$A.brief) }; $gc = { param($n) Get-Command $n -ErrorAction SilentlyContinue }   # adapters/task_rollup.ps1
+  $bd = if ($A.brief) { Split-Path ([string]$A.brief) }; $gc = { param($n) Get-Command $n -ErrorAction SilentlyContinue }   # adapters/task-rollup.ps1
   $roll = & $gc Invoke-TaskRollup; $itemsFn = & $gc Update-KitTaskItems; $triFn = & $gc Read-KitTriage; $par = @{}; $read = 0
   $out = @(foreach ($id in $ids) {
       $t = try { Get-TrackerTask $id } catch { $null }; if (-not $t.name) { continue }; $read++; $p = "$($t.parent)"
@@ -1394,7 +1394,7 @@ function Complete-KitPause([string]$Pf, [double]$Wait) {
     foreach ($kv in @{ confirmed = $a.session -notin @($open.session); next = $ck.next; checkpoint = $ck; worktrees = @($dirs | ForEach-Object { Get-KitWtState $_ }) }.GetEnumerator()) { $a | Add-Member -Force NoteProperty $kv.Key $kv.Value }
   }
   if (& $resumed) { "pause $Pf was resumed meanwhile: nothing stopped"; return }
-  $hooks = @(Invoke-KitHooks Invoke-KitPause)   # localenv_supervise.ps1: stops unheld services
+  $hooks = @(Invoke-KitHooks Invoke-KitPause)   # localenv-supervise.ps1: stops unheld services
   if (& $resumed) { "resumed while the local env stopped: start what the run needs again (envy.ps1 up)" }
   # only this finisher's fields onto the current record: a resume's state / released written meanwhile stay
   Invoke-KitLocked $Pf { $now = Get-Content -LiteralPath $Pf -Raw | ConvertFrom-Json; if ($now.state -ne 'resumed') { $now.state = 'paused'; foreach ($kv in @{ finishedAt = (Get-KitStamp); notes = @($hooks | ForEach-Object { "$_" }); agents = @($rec.agents) }.GetEnumerator()) { $now | Add-Member -Force NoteProperty $kv.Key $kv.Value }; Write-KitState $Pf $now } }

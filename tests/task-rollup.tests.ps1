@@ -2,13 +2,13 @@
 <#
 tests/task-rollup.tests.ps1: triage parsing, the delivery / triage Markdown, the marker splice (owner text kept), and a parent
 rollup end to end on tracker none with a recorded git host: sections, Items, milestones; a second run writes nothing.
-Usage: pwsh -NoProfile -File tests/task-rollup.tests.ps1 (copies adapters/task_rollup.ps1 into its test kit).
+Usage: pwsh -NoProfile -File tests/task-rollup.tests.ps1 (copies adapters/task-rollup.ps1 into its test kit).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
-$k = New-TestKit rollup; $ad = Join-Path $k 'skills/bossy/adapters/task_rollup.ps1'
-if (-not (Test-Path $ad)) { New-Item -ItemType Directory -Force (Split-Path $ad) | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/task_rollup.ps1') $ad }
+$k = New-TestKit rollup; $ad = Join-Path $k 'skills/bossy/adapters/task-rollup.ps1'
+if (-not (Test-Path $ad)) { New-Item -ItemType Directory -Force (Split-Path $ad) | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/task-rollup.ps1') $ad }
 $bd = Join-Path (Kd) 'brief'; New-Item -ItemType Directory -Force $bd | Out-Null
 Set-Content (Join-Path $bd 'triage.md') @'
 # Triage

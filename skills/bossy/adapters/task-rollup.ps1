@@ -1,5 +1,5 @@
 <#
-task_rollup.ps1: a parent task's delivery status, triage and subtask Items checklists, all script-built,
+task-rollup.ps1: a parent task's delivery status, triage and subtask Items checklists, all script-built,
 dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 track rollup -Task <parent> [-From <brief dir | item table .md>[;<another>]]   -From stores the run's triage (item
     table + agents) in the parent's task state; then rebuilds and writes what changed; a task without subtasks: its Items only
@@ -9,10 +9,10 @@ dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 track forget-item -Task <id> -Item <code>[,<code>]   items deleted on the tracker stay deleted (task state itemsDropped)
 Reads: task state (.state/tasks: track), the git host (Invoke-HostVerb mr.get / mr.url; merged MRs cached for good),
 the deploy log, the tracker (parent + its subtasks, one view per read). Writes (tracker adapter, only on a diff): the parent
-description between <!-- kit:delivery --> / <!-- kit:triage --> markers, the parent's "Items" checklist (one per subtask, crafty adapters/task_items.ps1
+description between <!-- kit:delivery --> / <!-- kit:triage --> markers, the parent's "Items" checklist (one per subtask, crafty adapters/task-items.ps1
 Update-KitParentItems), each subtask's "Items" checklist (adapter verb checklist, else an <!-- kit:items --> description section),
 one comment per milestone (all merged, deployed to <env>, all closed).
-An item ticks only when done: its MRs merged, no open fix-round MR naming it, not held (crafty adapters/task_items.ps1: deferred, held,
+An item ticks only when done: its MRs merged, no open fix-round MR naming it, not held (crafty adapters/task-items.ps1: deferred, held,
 an area not delivered); else unticked with ' · <reason>'; checklists are pruned of stale kit lines and repeats.
 Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
@@ -161,10 +161,10 @@ function Get-KitDeployIndex {
 # what the local state says about a parent's subtasks: equal + fresh -> no read
 function Get-KitRollupLocalSig($Ro, [string[]]$Subs, $Tracking) {
   $lf = Get-Item -LiteralPath (Get-KitPath deploy-log) -ErrorAction SilentlyContinue
-  $pa = Get-Command Get-KitPlannedAreas -ErrorAction Ignore   # holds and undelivered areas untick items (crafty adapters/task_items.ps1)
+  $pa = Get-Command Get-KitPlannedAreas -ErrorAction Ignore   # holds and undelivered areas untick items (crafty adapters/task-items.ps1)
   Get-KitRollupHash ((@($Subs | Sort-Object | ForEach-Object { $tr = $Tracking[$_]; "$_=$(@($tr.mrs) -join ',')/$($tr.done)/$($tr.holdPromotion)/$(if ($pa -and $tr) { @(Get-KitPlannedAreas $_ $tr.planReleased) -join ',' })" }) + "$($lf.Length)" + ($Ro.triage | ConvertTo-Json -Depth 6 -Compress)) -join '|')
 }
-function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Task (Get-KitItemsLabel) $Items -Prune }   # crafty adapters/task_items.ps1
+function Set-KitItemsChecklist([string]$Task, $Items) { Set-KitTaskChecklist $Task (Get-KitItemsLabel) $Items -Prune }   # crafty adapters/task-items.ps1
 function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $ix = Read-KitState (Get-KitTaskFile $Parent); $ro = if ($ix.rollup -is [Collections.IDictionary]) { $ix.rollup } else { @{} }
   $trk = (Read-KitTracking).tasks; $known = @($ro.subtasks | Where-Object { $_ })
@@ -236,7 +236,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $desc = "$($pt.description)"; $nd = $desc -replace "`r`n", "`n"; $changed = @()
   foreach ($k in $want.Keys) { $h = Get-KitRollupHash $want[$k]; if ($sec[$k] -ne $h -or $nd.IndexOf("<!-- kit:$k -->") -lt 0) { $nd = Set-KitDescSection $nd $k $want[$k] $(if ($k -eq 'triage') { 'delivery' }); $sec[$k] = $h; $changed += $k } }
   if ($changed.Count) { try { $null = Set-TrackerDescription $Parent $nd; $did.Add("description ($($changed -join ', '))") } catch { $did.Add("description FAILED: $("$_".Split("`n")[0])"); foreach ($k in $changed) { $sec.Remove($k) } } }
-  $codeOf = @{}; foreach ($k in $areaOf.Keys) { $codeOf[$k] = "$($areaOf[$k].area)" }   # the parent's Items, one per subtask (crafty adapters/task_items.ps1), after the description write
+  $codeOf = @{}; foreach ($k in $areaOf.Keys) { $codeOf[$k] = "$($areaOf[$k].area)" }   # the parent's Items, one per subtask (crafty adapters/task-items.ps1), after the description write
   $pio = try { Update-KitParentItems $Parent $pt $codeOf } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { $did.Add("$pio") }
   $ms = @($ro.milestones | Where-Object { $_ }); $kit = @($rows | Where-Object { $_.area -or $trk.ContainsKey($_.id) }); $n = $kit.Count   # only subtasks the kit tracks or triaged
   $due = [ordered]@{}

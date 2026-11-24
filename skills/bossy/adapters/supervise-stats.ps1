@@ -1,5 +1,5 @@
 <#
-supervise_stats.ps1 (core): the supervise page's history graphs from the logs the kit already writes, dot-sourced by bossy.ps1
+supervise-stats.ps1 (core): the supervise page's history graphs from the logs the kit already writes, dot-sourced by bossy.ps1
 (skills/bossy/adapters/): the build gate per kind (builds log), lease waits per resource (leases log, builds log, local-env
 lease-wait events, live queues), test-run results per day (qa-runs results.json), CPU + RAM per lane process and the top other
 processes (one process snapshot per sweep), flags per hour, agents shell progress (bossy.ps1 shells), the statistics reset (bossy.ps1 stats); their heatmap cards (shared cells, idle-row fold, card fold) and the
@@ -1091,7 +1091,7 @@ function Format-KitRepoGrid($Repos, $Sync) {
   $sm = @(0..4 | ForEach-Object { $ci = $_; [int](@($rows | ForEach-Object { @($_.v)[$ci] }) | Measure-Object -Sum).Sum })   # folded (owner 2026-11-19): the totals in its header
   & $fold 'repos-now' 'Repos now' $rr.Count "$(Format-KitMetricHeat $rows @('branches', 'worktrees', 'kept', 'dirty', 'diverged') 'repo' 'repo-now')$(Format-KitLegend 'amber dirty · red diverged' 'from the last repo sync · tap a cell for the branches')" -tag h4 -cls 'sub st' -extra "<span class=fsm>$($sm[0]) branches · $($sm[1]) worktrees$(if ($sm[3]) { " · $($sm[3]) dirty" })$(if ($sm[4]) { " · $($sm[4]) diverged" })$(if ($ra = try { [datetime]$Repos.at } catch { $null }) { " · as of $($ra.ToString($(if ($ra.Date -eq $at.Date) { 'HH:mm' } else { 'MM-dd HH:mm' })))" })</span>"
 }
-# ---- shells: progress of agents' background shells without a service or new files (owner 2026-11-18): output file tail, CPU + IO samples; the sweep: supervise_resources.ps1 shells
+# ---- shells: progress of agents' background shells without a service or new files (owner 2026-11-18): output file tail, CPU + IO samples; the sweep: supervise-resources.ps1 shells
 # the last $Bytes of a file another process may be writing ('' when unreadable)
 function Read-KitFileTail([string]$Path, [int]$Bytes) {
   try { $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite, Delete'); try { $n = [int][math]::Min($fs.Length, $Bytes); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $got = $fs.Read($b, 0, $n); [Text.Encoding]::UTF8.GetString($b, 0, $got) } finally { $fs.Dispose() } } catch { '' }

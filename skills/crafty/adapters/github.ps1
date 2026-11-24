@@ -35,7 +35,7 @@ Register-KitAdapter 'tracker' 'github' @{
     $null = __GhCli @('label', 'create', "$__trLp$name", '-R', $r, '--force', '--color', 'ededed')
     __GhCli ($edit + @('--add-label', "$__trLp$name"))
   }
-  # a repo's states: open / closed + its status labels (task_items.ps1 __TrLabelLive; a missing role label is created on its first write)
+  # a repo's states: open / closed + its status labels (task-items.ps1 __TrLabelLive; a missing role label is created on its first write)
   'statuses' = { param($a) __TrLabelLive @(__TrJson (__GhCli @('label', 'list', '-R', $a.scope, '--limit', '200', '--json', 'name'))).name }
   'comment' = { param($a) $r, $n = __TrRef $a.id; __TrGhBody @('issue', 'comment', $n, '-R', $r) $a.text }
   'comments' = { param($a) $r, $n = __TrRef $a.id; @((__TrJson (__GhCli @('issue', 'view', $n, '-R', $r, '--json', 'comments'))).comments) | Where-Object { $_ } | ForEach-Object { __TrComment $_.author.login $_.createdAt $_.body $(if ("$($_.url)" -match '#issuecomment-(\d+)') { $Matches[1] }) } }

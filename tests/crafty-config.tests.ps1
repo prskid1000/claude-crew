@@ -25,7 +25,7 @@ $tt = (& $D stack -Dir $td -Json | ConvertFrom-Json).commands.test
 "stack=$st|spec=$(if (-not $tt) { 'null' } else { $tt })|keep=$('main' -match $kr),$('staging/x' -match $kr),$('critical/a' -match $kr)|links=$(@(Get-DepLinkDefaults | ForEach-Object dir) -join '+')"
 '@
 $swf = Join-Path (Kd) 'switches.ps1'; Set-Content $swf $sw -Encoding utf8
-$spa = "$k/skills/crafty/adapters/stack_presets.ps1"; $spNew = -not (Test-Path $spa); if ($spNew) { New-Item -ItemType Directory -Force (Split-Path $spa) | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/stack_presets.ps1') $spa }
+$spa = "$k/skills/crafty/adapters/stack-presets.ps1"; $spNew = -not (Test-Path $spa); if ($spNew) { New-Item -ItemType Directory -Force (Split-Path $spa) | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/stack-presets.ps1') $spa }
 $dk1 = if (Test-Path $dkl) { Get-Content $dkl -Raw }
 if (Test-Path $dkl) { Remove-Item $dkl }; $s0 = "$(pwsh @np $swf $D $gd $td 2>&1)"
 Set-JsonFile $dkl @{ stack = @{ presets = @() }; tests = @{ fallbackRunner = 'none' }; linkDefaults = @(); guard = @{ heavyPatterns = @('\bbazel\s+(build|test)\b'); e2ePatterns = @('\btestcafe\b') }
@@ -103,7 +103,7 @@ $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; . $args[1]; $kl = Join-Path $KitConf
 "def:$((Get-KitItemsLabel) -eq 'Items' -and (@(Get-KitItemsLabel -All) -join ',') -eq 'Items,Bugs' -and (@(Get-KitDescItems "**Bugs:**`n- B1 x").id -join ',') -eq 'B1' -and (Test-KitBugName '[Bug] x') -and "$((Get-KitNameKind '[Chore] Shop — A1 x').kind)|$((Get-KitNameKind 'Plain name').kind)|$((Get-KitNameKind '[Chore] Shop — A1 x').rest)" -eq 'Chore|Feature|Shop — A1 x' -and (Format-KitBugName 'Shop — x') -eq '[Bug] Shop — x' -and (Format-KitBugName ' [Bug] y') -eq '[Bug] y' -and (Format-KitBugName '[ui] Login broken') -eq '[Bug] [ui] Login broken')"
 $c = @{ tracker = @{ kindPrefixes = @{ bug = 'Defect:'; feature = 'Story:' }; taskTemplate = @(@{ key = 'items'; label = 'Scope'; required = 'subtask' }) } }; Set-Content $kl ($c | ConvertTo-Json -Depth 6); $script:__cfg = $c | ConvertTo-Json -Depth 6 | ConvertFrom-Json
 "custom:$((Get-KitItemsLabel) -eq 'Scope' -and (@(Get-KitDescItems "**Scope:**`n- S1 y").id -join ',') -eq 'S1' -and (@(Get-KitDescItems "**Items:**`n- I1 z").id -join ',') -eq 'I1' -and (Test-KitBugName 'Defect: x') -and (Get-KitKindPrefix 'bug') -eq 'Defect:' -and "$((Get-KitNameKind 'Story: Shop — x').kind)|$((Get-KitNameKind 'Story: Shop — x').rest)|$((Get-KitNameKind 'Defect: y').kind)" -eq 'feature|Shop — x|bug' -and (Format-KitBugName '[Bug] Shop — x') -eq 'Defect: Shop — x')"
-'@ @($D, (Join-Path $src 'skills/bossy/adapters/task_rollup.ps1'))
+'@ @($D, (Join-Path $src 'skills/bossy/adapters/task-rollup.ps1'))
 Expect-Each $ilr 'items label / bug prefix / name kind (Get-KitNameKind) from config: #' 'def', 'custom' -Show 5
 # testers never type [Bug]: a keyed defect's free-text name gets tracker.kindPrefixes.bug (a typed [Bug] swapped); a spec's typed kind prefix re-rendered, [ui] kept
 Set-JsonFile $dkl @{ tracker = @{ kindPrefixes = @{ bug = 'DEFECT:' } } }; $env:KIT_TRACKER_TYPE = 'none'
@@ -143,7 +143,7 @@ $rtv = 'CLAUDE_RUNTIME'; [Environment]::SetEnvironmentVariable($rtv, "$(Split-Pa
 Expect "runtime: '<kit name>/.runtime' resolves from the workspace (lib.ps1, kitbag.py), '.rt2' from the kit ($rtw)" ("$rtw" -match "True\|True\|$([regex]::Escape((Join-Path $k '.rt2')))")
 # run 1123: a kit key tracked where the tracker wants its native id read as "no testing-doc link"; now: a read keyed task maps it, else refused
 $rvK = pwsh -NoProfile -Command "`$env:KIT_TRACKER_TYPE = 'command'; . '$k/skills/crafty/lib.ps1'; Save-TrackerKey ([pscustomobject]@{ id = 'n42'; name = 'AB-CD-007 [Feature] Ui: x' }); `$x = try { Resolve-TrackerId 'AB-CD-008' } catch { 'refused ' + `$_ }; `"`$(Resolve-TrackerId 'AB-CD-007')|`$(Resolve-TrackerId 'n9')|`$(Resolve-TrackerId 'AB-CD-008' -Soft)|`$x|`$(Test-KitHeldLine 'ATTENTION AB-CD-007: MRs merged, task id not readable: x' @('AB-CD-007'))`"" 2>&1 | Out-String
-$gtx = Get-Content (Join-Path $k 'skills/crafty/adapters/process_gates.ps1') -Raw
+$gtx = Get-Content (Join-Path $k 'skills/crafty/adapters/process-gates.ps1') -Raw
 Expect "tracker ids: a kit key -> the native id a read recorded; unknown key refused with the hint (url: kept); an unread task says 'task id not readable', a held one drops that line ($($rvK.Trim()))" ($rvK.Trim() -match '^n42\|n9\|AB-CD-008\|refused .*AB-CD-008 is a kit key, not a command task id: pass the native id.*\|True$' -and $gtx -match 'task id not readable: ')
 Remove-TestKit $k
 Complete-Tests

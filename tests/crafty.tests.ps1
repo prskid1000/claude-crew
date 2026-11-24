@@ -160,7 +160,7 @@ if ($IsWindows) {
 # migrations: own check, else the migrations.tool adapter, else UNRUN: liquibase.tests.ps1
 $sd = Join-Path (Kd) 'stack-only'; New-Item -ItemType Directory -Force $sd | Out-Null; '{ "stack": "custom", "commands": { "compile": "echo ok" } }' | Set-Content "$sd/.claude-stack.json"
 $out = pwsh @np $D gate -Dir $sd -Cmd 'echo gradlew build' 2>&1 | Out-String
-Expect 'gate: runs the command; no heap cap without adapters/build_heap.ps1' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
+Expect 'gate: runs the command; no heap cap without adapters/build-heap.ps1' ($out -match '(?m)^gradlew build' -and $out -notmatch 'jvmargs')
 $lr = Join-Path (Kd) lock-repo; $null = mkdir -Force "$lr/api"; $env:LOCK_LOG = "$lr/log"
 '{ "stack": "custom", "commands": { "test": "node t.js {tests}" } }' | Set-Content "$lr/api/.claude-stack.json"
 'const f=require("fs"),a=w=>f.appendFileSync(process.env.LOCK_LOG,w);a("s");setTimeout(()=>a("e"),1500)' | Set-Content "$lr/api/t.js"
@@ -197,7 +197,7 @@ $tt = pwsh -NoProfile -Command ". '$lw/skills/crafty/lib.ps1'; Get-KitSetting 't
 Expect 'lib: a linked worktree reads the main clone''s kit.local.json (a list of one object stays a list); fetch in a path with spaces runs (no origin: warning, $false)' ($tt -match '(?m)^jira' -and $tt -match '(?m)^q\r?$' -and $tt -match 'git fetch in .*kit wt failed' -and $tt -match '(?m)^False')
 # learned params: shadowDays 3, heartbeat pinned; KIT_NOW = fake clock
 $pk = Join-Path (Kd) 'pk/.claude/skills/crafty'; New-Item -ItemType Directory -Force $pk, "$pk/../bossy", "$pk/adapters" | Out-Null; Copy-Item (Lib), "$k/skills/crafty/kit.example.json" $pk; Copy-Item "$k/skills/bossy/params.registry.json" "$pk/../bossy"
-Copy-Item "$k/skills/crafty/adapters/process_gates.ps1" "$pk/adapters"   # Read-KitLog's Get-KitLogLines
+Copy-Item "$k/skills/crafty/adapters/process-gates.ps1" "$pk/adapters"   # Read-KitLog's Get-KitLogLines
 & $J @{ params = @{ shadowDays = 3 }; supervise = @{ heartbeatMinutes = 12 } } "$pk/kit.local.json"
 $pr = Invoke-PsTest params @'
 . $args[0]; $t = [datetime]'2026-01-01T08:00'; $fl = @()

@@ -198,7 +198,7 @@ mode, Codex run journals (Runs band, stuck checks, `recover`: Claude Code + Anti
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`: a recurring durable
   session cron, plus the opt-in OS timer `bossy.ps1 heartbeat install|uninstall|status` that ticks every `supervise.osTimerTickMinutes` (5) and runs it once the last sweep is a beat old (a session skips one under half a beat),
-  `adapters/os_timer.ps1`) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
+  `adapters/os-timer.ps1`) writes the dashboard ("Live supervisor dashboard" below; alone: `bossy.ps1 status
   [-Watch]`). Its stdout (`supervise.output`): `html` (default) = the page link, one line per ACT /
   WATCH and auto-fix, a count line; `chat` = the tables; `both`. `supervise.publish` (unset = off): a pwsh command run detached
   after each write, `$env:KIT_SUPERVISE_HTML` = the page, `$env:KIT_SUPERVISE_RUNS` = its run pages folder (linked as
@@ -321,7 +321,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `memory` | {"keepDefault": false} | false = auto memory off (settings.json); true = on (settings.local.json). |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
 | `build` | {"mavenOffline": false} | mavenOffline: Maven -o when ~/.m2/repository exists (default false). |
-| `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build_heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
+| `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
 | `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (&gt;= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop &gt;= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: &lt;id&gt; &lt;GB&gt; &lt;s&gt; &lt;query&gt;; db.kill {id}; db.maxGB. TODO-PARAM. |
 | `watch` | {"windows": ["15m", "2h", "24h"], "rising": {"factor": 3, "hits": 10}} | watchy after a deploy: windows = one-shot timers (default 15m, 2h, 24h; bossy E15); rising = a signature at factor x its baseline and at least hits (default 3, 10) |
 | `pool` | {"size": 10} | Worktree pool: size = slots per repo (default 10; repos[].poolSize per repo, 0 = no pool: wt new), created on lease, never deleted; warm = free slots kept made (default 2; repos[].poolWarm); sync.everyMinutes (60): supervise runs wt pool -Sync (fetch, fast-forward, prune, idle slots at origin/&lt;target&gt;); names: the n-th member of every pool (slot, env lane, phone lane); wipRestore: [globs] tracked files a test run rewrites, restored on release (no WIP commit) |
@@ -338,18 +338,18 @@ Vendor adapters sit in `skills/crafty/adapters/` and load only when config selec
 <!-- kit-graph:start table-adapters -->
 | Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Code |
 |---|---|---|---|---|---|
-| tracker | `tracker.type` | view url status statuses comment comments create describe rename move attach list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | `skills/crafty/adapters/tracker_local.ps1` |
+| tracker | `tracker.type` | view url status statuses comment comments create describe rename move attach list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | `skills/crafty/adapters/tracker-local.ps1` |
 | git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect | command | github, gitlab, bitbucket, azure, gitea | `skills/crafty/lib.ps1` |
 | report | `reports.type` | publish; caps: evidence | markdown, html, command | gdocs, pdf, confluence, notion | `skills/crafty/devtools.py` |
 | ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins | `skills/crafty/lib.ps1` |
 | transcript | `board tool` | root last | claude, codex, antigravity, none |  | `skills/crafty/lib.ps1` |
-| deploy-kind | `repos[].deploys[] (kind)` | isDeployed; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | `skills/pokey/adapters/deployed_checks.ps1` |
-| secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | `skills/crafty/adapters/secret_store.ps1` |
-| process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | `skills/crafty/adapters/process_gates.ps1` |
-| db-engine | `localEnv db.engine` | query exec jdbc schemaSizes; caps: marks temp sizes |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb, redis, elasticsearch, opensearch | `skills/envy/adapters/db_engines.ps1` |
-| tenant-model | `localEnv tenants.model` | list drop import footprint scopes; caps: create drop snapshot |  | none, schema, database, column, instance | `skills/envy/adapters/tenant_models.ps1` |
+| deploy-kind | `repos[].deploys[] (kind)` | isDeployed; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | `skills/pokey/adapters/deployed-checks.ps1` |
+| secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | `skills/crafty/adapters/secret-store.ps1` |
+| process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | `skills/crafty/adapters/process-gates.ps1` |
+| db-engine | `localEnv db.engine` | query exec jdbc schemaSizes; caps: marks temp sizes |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb, redis, elasticsearch, opensearch | `skills/envy/adapters/db-engines.ps1` |
+| tenant-model | `localEnv tenants.model` | list drop import footprint scopes; caps: create drop snapshot |  | none, schema, database, column, instance | `skills/envy/adapters/tenant-models.ps1` |
 | migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes |  | liquibase | `skills/crafty/adapters/liquibase.ps1` |
-| envy-verb | `adapters/*.local.ps1` | ops run |  | tenant | `skills/envy/adapters/tenant_models.ps1` |
+| envy-verb | `adapters/*.local.ps1` | ops run |  | tenant | `skills/envy/adapters/tenant-models.ps1` |
 | api-auth | `targets auth.type` | invoke |  |  | `skills/pokey/pokey.ps1` |
 <!-- kit-graph:end -->
 
@@ -467,18 +467,18 @@ flowchart LR
   skills_bossy_SKILL_md -->|"a script's state file changes; an agent needs a…"| skills_bossy_STATE_md["STATE.md"]
   skills_bossy_SKILL_md -->|"a timeout, wait or limit is added or changed…"| skills_bossy_params_registry_json["params.registry.json"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_bugbrief_ps1["bugbrief.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_deploy_merge_ps1["deploy_merge.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_deploy_merge_ps1["deploy-merge.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_deploys_ps1["deploys.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_heartbeat_ps1["heartbeat.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_kit_admin_ps1["kit_admin.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_localenv_supervise_ps1["localenv_supervise.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_os_timer_ps1["os_timer.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_kit_admin_ps1["kit-admin.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_localenv_supervise_ps1["localenv-supervise.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_os_timer_ps1["os-timer.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_outcomes_ps1["outcomes.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_storage_ps1["storage.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_supervise_resources_ps1["supervise_resources.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_supervise_stats_ps1["supervise_stats.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_task_rollup_ps1["task_rollup.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_track_rebuild_ps1["track_rebuild.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_supervise_resources_ps1["supervise-resources.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_supervise_stats_ps1["supervise-stats.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_task_rollup_ps1["task-rollup.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_track_rebuild_ps1["track-rebuild.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_usage_ps1["usage.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_waits_ps1["waits.ps1"]
   skills_bossy_SKILL_md -->|"K3: run by git (bossy.ps1 setup sets…"| _githooks_pre_commit["pre-commit"]
@@ -514,39 +514,39 @@ flowchart LR
   skills_crafty_SKILL_md -->|"dot-sourced by every kit script; never run by…"| skills_crafty_lib_ps1["lib.ps1"]
   skills_crafty_SKILL_md -->|"run by lib.ps1 / envy.ps1 for the calls pwsh…"| skills_crafty_flagged_ps1["flagged.ps1"]
   skills_crafty_SKILL_md -->|"steps 6-7, rebase conflicts (keepboth)"| skills_crafty_devtools_py["devtools.py"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_android_sdk_ps1["android_sdk.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_azure_devops_ps1["azure_devops.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_android_sdk_ps1["android-sdk.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_azure_devops_ps1["azure-devops.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_bitbucket_ps1["bitbucket.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_build_heap_ps1["build_heap.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_check_stamps_ps1["check_stamps.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_ci_jenkins_ps1["ci_jenkins.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_container_tests_ps1["container_tests.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_build_heap_ps1["build-heap.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_check_stamps_ps1["check-stamps.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_ci_jenkins_ps1["ci-jenkins.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_container_tests_ps1["container-tests.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_gitea_ps1["gitea.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_github_ps1["github.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_gitlab_ps1["gitlab.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_guard_localenv_ps1["guard_localenv.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_guard_localenv_ps1["guard-localenv.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_ps1["liquibase.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_py["liquibase.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_module_audit_py["module_audit.py"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_process_gates_ps1["process_gates.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_process_gates_ps1["process-gates.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_report_confluence_py["report_confluence.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_report_gdocs_py["report_gdocs.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_report_notion_py["report_notion.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_report_pdf_py["report_pdf.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_runtimes_ps1["runtimes.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_secret_store_ps1["secret_store.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_stack_presets_ps1["stack_presets.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_supervise_report_ps1["supervise_report.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_task_items_ps1["task_items.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_azure_ps1["tracker_azure.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_clickup_ps1["tracker_clickup.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_jira_ps1["tracker_jira.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_linear_ps1["tracker_linear.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_local_ps1["tracker_local.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_youtrack_ps1["tracker_youtrack.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_ts_typecheck_ps1["ts_typecheck.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_secret_store_ps1["secret-store.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_stack_presets_ps1["stack-presets.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_supervise_report_ps1["supervise-report.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_task_items_ps1["task-items.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_azure_ps1["tracker-azure.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_clickup_ps1["tracker-clickup.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_jira_ps1["tracker-jira.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_linear_ps1["tracker-linear.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_local_ps1["tracker-local.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_tracker_youtrack_ps1["tracker-youtrack.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_ts_typecheck_ps1["ts-typecheck.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_video_ps1["video.ps1"]
-  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_wt_pool_ps1["wt_pool.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_wt_pool_ps1["wt-pool.ps1"]
   skills_crafty_SKILL_md -->|"step 4: check -Step test runs it for a web…"| skills_crafty_spec_mjs["spec.mjs"]
   skills_crafty_SKILL_md -->|"revy kind module (devtools.py findings)"| skills_crafty_module_audit_md["module-audit.md"]
   skills_crafty_SKILL_md -->|"setup (bossy.ps1 setup -WriteLocal; keys:…"| skills_crafty_kit_example_json["kit.example.json"]
@@ -563,14 +563,14 @@ flowchart LR
   skills_pokey_SKILL_md -->|"step 3 (check -Step e2e); L1 Selection (tracker…"| skills_crafty_crafty_ps1["crafty.ps1"]
   skills_pokey_SKILL_md -->|"step 3 (web: read its header first; one…"| skills_pokey_browser_mjs["browser.mjs"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_annotate_ps1["annotate.ps1"]
-  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_api_auth_ps1["api_auth.ps1"]
-  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_deployed_checks_ps1["deployed_checks.ps1"]
+  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_api_auth_ps1["api-auth.ps1"]
+  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_deployed_checks_ps1["deployed-checks.ps1"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_engine_playwright_mjs["engine-playwright.mjs"]
-  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_media_grab_mjs["media_grab.mjs"]
-  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_report_html_ps1["report_html.ps1"]
-  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_ui_android_ps1["ui_android.ps1"]
-  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_ui_checks_mjs["ui_checks.mjs"]
-  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_ui_ios_ps1["ui_ios.ps1"]
+  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_media_grab_mjs["media-grab.mjs"]
+  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_report_html_ps1["report-html.ps1"]
+  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_ui_android_ps1["ui-android.ps1"]
+  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_ui_checks_mjs["ui-checks.mjs"]
+  skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_ui_ios_ps1["ui-ios.ps1"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_web_login_mjs["web-login.mjs"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_video_py["video.py"]
   skills_pokey_SKILL_md -->|"task videos (pokey.ps1 evidence)"| skills_pokey_media_md["media.md"]
@@ -587,12 +587,12 @@ flowchart LR
   skills_envy_SKILL_md -->|"Steps 1-6; owner verbs: Rules"| skills_envy_envy_ps1["envy.ps1"]
   skills_envy_SKILL_md -->|"#quot;Train and leases#quot;, #quot;Lanes#quot;, #quot;Config#quot; (shape +…"| skills_envy_reference_md["reference.md"]
   skills_envy_SKILL_md -->|"#quot;DB marks, restore, seed#quot;, #quot;DB temp#quot;, #quot;DB…"| skills_envy_db_md["db.md"]
-  skills_envy_SKILL_md -->|"kind db-engine: each engine's presets and verbs…"| skills_envy_adapters_db_engines_ps1["db_engines.ps1"]
-  skills_envy_SKILL_md -->|"dot-sourced by envy.ps1: db hooks from the…"| skills_envy_adapters_db_presets_ps1["db_presets.ps1"]
-  skills_envy_SKILL_md -->|"kind tenant-model (tenants.model, default none)…"| skills_envy_adapters_tenant_models_ps1["tenant_models.ps1"]
-  skills_envy_SKILL_md -->|"the schema tenant model: list, drop, import…"| skills_envy_adapters_tenant_schema_ps1["tenant_schema.ps1"]
-  skills_envy_SKILL_md -->|"deploy step 2: a lane's or a check's build of…"| skills_envy_adapters_shared_builds_ps1["shared_builds.ps1"]
-  skills_envy_SKILL_md -->|"doctor rows for the lane service standard:…"| skills_envy_adapters_lane_standard_ps1["lane_standard.ps1"]
+  skills_envy_SKILL_md -->|"kind db-engine: each engine's presets and verbs…"| skills_envy_adapters_db_engines_ps1["db-engines.ps1"]
+  skills_envy_SKILL_md -->|"dot-sourced by envy.ps1: db hooks from the…"| skills_envy_adapters_db_presets_ps1["db-presets.ps1"]
+  skills_envy_SKILL_md -->|"kind tenant-model (tenants.model, default none)…"| skills_envy_adapters_tenant_models_ps1["tenant-models.ps1"]
+  skills_envy_SKILL_md -->|"the schema tenant model: list, drop, import…"| skills_envy_adapters_tenant_schema_ps1["tenant-schema.ps1"]
+  skills_envy_SKILL_md -->|"deploy step 2: a lane's or a check's build of…"| skills_envy_adapters_shared_builds_ps1["shared-builds.ps1"]
+  skills_envy_SKILL_md -->|"doctor rows for the lane service standard:…"| skills_envy_adapters_lane_standard_ps1["lane-standard.ps1"]
   skills_envy_SKILL_md -->|"owner / coordinator: moves a base env's MySQL…"| skills_envy_mysql_base_move_ps1["mysql-base-move.ps1"]
   skills_envy_SKILL_md -->|"run by envy.ps1 restore, release slices, the…"| skills_envy_adapters_db_flashback_py["db_flashback.py"]
 ```
@@ -604,8 +604,8 @@ flowchart LR
   skills_phoney_SKILL_md["phoney"]
   skills_phoney_SKILL_md -->|"step A0 / L0: bossy.ps1 learn -Read -Skill…"| LESSONS_md["LESSONS.md"]
   skills_phoney_SKILL_md -->|"A1-A5 (acquire, ensure, launch, release,…"| skills_phoney_phoney_ps1["phoney.ps1"]
-  skills_phoney_SKILL_md -->|"never read: pokey.ps1 ui and the deploys[]…"| skills_pokey_adapters_ui_android_ps1["ui_android.ps1"]
-  skills_phoney_SKILL_md -->|"dot-sourced by phoney.ps1: app.kind presets,…"| skills_phoney_adapters_app_kinds_ps1["app_kinds.ps1"]
+  skills_phoney_SKILL_md -->|"never read: pokey.ps1 ui and the deploys[]…"| skills_pokey_adapters_ui_android_ps1["ui-android.ps1"]
+  skills_phoney_SKILL_md -->|"dot-sourced by phoney.ps1: app.kind presets,…"| skills_phoney_adapters_app_kinds_ps1["app-kinds.ps1"]
   skills_phoney_SKILL_md -->|"dot-sourced by phoney.ps1: app.kind presets,…"| skills_phoney_adapters_arrange_ps1["arrange.ps1"]
   skills_phoney_SKILL_md -->|"devices.type: ios: phoney.ps1 forwards its…"| skills_phoney_swarm_ios_ps1["swarm-ios.ps1"]
 ```

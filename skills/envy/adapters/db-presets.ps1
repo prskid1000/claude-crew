@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none here (its verbs exit through envy.ps1).
-# db_presets.ps1: dot-sourced by envy.ps1. db.engine (an adapters/db_engines.ps1 adapter, kind db-engine) fills the query /
+# db-presets.ps1: dot-sourced by envy.ps1. db.engine (an adapters/db-engines.ps1 adapter, kind db-engine) fills the query /
 # exec / jdbc / passwordEnv an env leaves unset; an engine with supportsMarks (mysql / mariadb) gives marks (binlog positions),
 # flashback restores and the cascade guard (db_flashback.py; db.cascadeGuard true); other engines: marks unsupported.
 # Placeholders: {H} {P} {U} {N} {URI} = db.host (127.0.0.1), db.port (the engine's), db.user, db.name, db.uri

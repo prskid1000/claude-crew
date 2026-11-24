@@ -3,7 +3,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec <deploy.deployedTimeoutSec, 100>]   merged-not-deployed MRs per test env, trigger, window; per MR its source / test files and OUT-OF-AREA (crafty.ps1 scope)
   bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: their tasks) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
-  bossy.ps1 deploy merge ...   adapters/deploy_merge.ps1
+  bossy.ps1 deploy merge ...   adapters/deploy-merge.ps1
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
@@ -11,7 +11,7 @@ Sections: L15 helpers · L106 intest · L277 deploy · L475 restart · L539 supe
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
-. (Join-Path $PSScriptRoot '../../pokey/adapters/deployed_checks.ps1')   # Get-DeployPaths, Test-DeployTouched: one paths rule for plan, intest, deployed
+. (Join-Path $PSScriptRoot '../../pokey/adapters/deployed-checks.ps1')   # Get-DeployPaths, Test-DeployTouched: one paths rule for plan, intest, deployed
 # ---- helpers: test-env filter, MR refs
 # not a test env: deploys[].production, else deploy.productionPattern on the name (no default: nothing is production by name); -Lanes: + laneApk
 function Get-NoTestRx([Alias('Lane')][switch]$Lanes) { $rx = [string](Get-KitSetting 'deploy.productionPattern' ''); $n = @(@(Get-KitValue 'repos' @()) | ForEach-Object { @($_.deploys) } | Where-Object { $_.target -and ($(if ($null -ne $_.production) { $_.production } else { $rx -and $_.target -match $rx }) -or ($Lanes -and $_.laneApk)) } | ForEach-Object { [regex]::Escape($_.target) }); "^($($n -join '|'))$" }

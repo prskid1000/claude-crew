@@ -6,7 +6,7 @@ Usage: pwsh -NoProfile -File tests/media-evidence.tests.ps1 (New-TestKit gets th
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/video.ps1', 'skills/pokey/adapters/media_grab.mjs', 'skills/pokey/video.py')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/crafty/adapters/video.ps1', 'skills/pokey/adapters/media-grab.mjs', 'skills/pokey/video.py')   # copied into every New-TestKit kit
 $k = New-TestKit media; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $mpy = Join-Path $k 'skills/pokey/video.py'
 $cfgF = Join-Path $k 'skills/crafty/kit.local.json'
 & $J @{ media = @{ stt = @{ baseUrl = 'http://127.0.0.1:9'; ramGB = 0.1 }; image = @{ hosts = @{ 'shots.example' = '#img' } } } } $cfgF

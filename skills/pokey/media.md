@@ -8,7 +8,7 @@
   <verify>`, `bench [-Key <k>] [-Record]`, `status`.
 - One file per type: `skills/pokey/video.py` (the whole flow; `pokey.ps1 evidence <verb>` passes through to it),
   `skills/crafty/adapters/video.ps1` (the pass-through and the `local-stt` lease; lib.ps1 loads it so supervise sees the lease),
-  `skills/pokey/adapters/media_grab.mjs` (headless stream / image grab: needs node + Chrome). Tests: `tests/media-evidence.tests.ps1`.
+  `skills/pokey/adapters/media-grab.mjs` (headless stream / image grab: needs node + Chrome). Tests: `tests/media-evidence.tests.ps1`.
 - One pipeline for every video; per source only a thin fetcher (link -> local file + sidecars), tried in `media.fetchers` order:
   `file` · `jam-public` (`<jam>.md`, `<jam>/transcript.md`, the stream URL from a throw-away headless browser, yt-dlp) ·
   `sharepoint` (yt-dlp + a cookies file per host; none or expired -> `unreadable: re-auth needed`, never a login) · `gdrive`

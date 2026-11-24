@@ -16,12 +16,12 @@ description: "Load when: you reproduce, debug or test a change on the local env 
 | `envy.ps1` | Steps 1-6; owner verbs: Rules |
 | `reference.md` | "Train and leases", "Lanes", "Config" (shape + example), "Speed and disk", "Cleanup": kitty / coordinator editing `localEnv` or running owner verbs; a NOTICE, wait or lane you do not follow |
 | `db.md` | "DB marks, restore, seed", "DB temp", "DB buffer pool", "Tenants": datay, coordinator `mark` / `restore` / `seed` / `tenant` / `dbtemp`, a migration layer, DB drift |
-| `adapters/db_engines.ps1` | kind db-engine: each engine's presets and verbs (sql, pos, binlogs); a missing verb refuses (db.md) |
-| `adapters/db_presets.ps1` | dot-sourced by `envy.ps1`: db hooks from the engine, marks, restore, cascade guard, dbtemp, pool (db.md) |
-| `adapters/tenant_models.ps1` | kind tenant-model (`tenants.model`, default none) and the `tenant` verb (kind envy-verb) (db.md "Tenants") |
-| `adapters/tenant_schema.ps1` | the schema tenant model: list, drop, import (db.md "Tenants") |
-| `adapters/shared_builds.ps1` | deploy step 2: a lane's or a check's build of the same code staged, no build (reference.md `shareBuild`, `shareCheckBuild`); the lane pick (reference.md "Lanes"); thin artifacts (`classpathFile`) |
-| `adapters/lane_standard.ps1` | doctor rows for the lane service standard: external, on C:, shared data path (reference.md "Lane service standard") |
+| `adapters/db-engines.ps1` | kind db-engine: each engine's presets and verbs (sql, pos, binlogs); a missing verb refuses (db.md) |
+| `adapters/db-presets.ps1` | dot-sourced by `envy.ps1`: db hooks from the engine, marks, restore, cascade guard, dbtemp, pool (db.md) |
+| `adapters/tenant-models.ps1` | kind tenant-model (`tenants.model`, default none) and the `tenant` verb (kind envy-verb) (db.md "Tenants") |
+| `adapters/tenant-schema.ps1` | the schema tenant model: list, drop, import (db.md "Tenants") |
+| `adapters/shared-builds.ps1` | deploy step 2: a lane's or a check's build of the same code staged, no build (reference.md `shareBuild`, `shareCheckBuild`); the lane pick (reference.md "Lanes"); thin artifacts (`classpathFile`) |
+| `adapters/lane-standard.ps1` | doctor rows for the lane service standard: external, on C:, shared data path (reference.md "Lane service standard") |
 | `mysql-base-move.ps1` | owner / coordinator: moves a base env's MySQL (and its search data) off the OS service onto its own lane server; dry run default (reference.md "Lane service standard") |
 | `adapters/*.local.ps1` | org-only adapters: `Register-KitAdapter envy-verb <verb> @{ ops; run }` adds an envy verb; db-engine / tenant-model / migration the same way |
 | `adapters/db_flashback.py` | run by `envy.ps1` `restore`, release slices, the cascade guard (`doctor`), `tenant import` masking (db.md) |

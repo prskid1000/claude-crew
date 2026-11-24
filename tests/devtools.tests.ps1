@@ -31,7 +31,7 @@ Expect 'findings summary: <module>-summary.md with the Critical / High table' ($
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters') | Out-Null
 Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/report_gdocs.py') (Join-Path $k 'skills/crafty/adapters')
 New-Item -ItemType Directory -Force (Join-Path $k 'skills/pokey/adapters') | Out-Null
-Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/adapters/report_html.ps1') (Join-Path $k 'skills/pokey/adapters') -Force
+Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/adapters/report-html.ps1') (Join-Path $k 'skills/pokey/adapters') -Force
 $out = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') selftest 2>&1 | Out-String
 Expect 'devtools selftest with the gdocs adapter: share modes, unshared refused, an earlier link updated in place (a timeout retried once), env runs filling the human doc rows (a later NOT TESTED keeps a PASS), Drive evidence' ($LASTEXITCODE -eq 0 -and @([regex]::Matches($out, '(?m)^PASS gdocs')).Count -eq 6)
 $env:KIT_TRACKER_TYPE = 'none'

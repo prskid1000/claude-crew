@@ -319,26 +319,48 @@ def cmd_naming(rest):
     return 2
 
 
+FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.tests)?\.ps1$', '.mjs': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.mjs$',
+           '.js': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.js$'}
+BAK_RX = re.compile(r'\.(?:bak|bad|orig|old|stale)(?:[-.]|$)', re.I)
+HOOK_CFG = ('settings.json', '.agents/hooks.json', '.codex/config.toml')
+
+
+def hook_entry_names(kd, files):
+    """Script basenames the hook configs call, and the scripts those name: a rename would cut running sessions off their guard."""
+    rx = re.compile(r'[\w.-]+\.(?:ps1|mjs|js|py)')
+    names, todo = set(), [c for c in HOOK_CFG if c in files]
+    by_name = {osp.basename(f): f for f in files}
+    while todo:
+        p = osp.join(kd, todo.pop())
+        try:
+            txt = open(p, encoding='utf-8', errors='replace').read()
+        except OSError:
+            continue
+        for n in set(rx.findall(txt)) - names:
+            if '_' in n and n in by_name:
+                names.add(n)
+                todo.append(by_name[n])
+    return names
+
+
 def lint_hook(k, problems, flags):
-    """NAME-CONFIG: a naming registry entry that is no 2-6 letter code (the live names: `naming scan`, WARN-level)."""
+    """NAME-CONFIG: a naming registry entry that is no 2-6 letter code (the live names: `naming scan`, WARN-level).
+    NAME-FILE: a script name off its language's rule (py snake_case; ps1 / mjs / js kebab-case), except hook entry points (hook_entry_names)."""
     c = local_config(k.dir, 'kit.local.json').get('naming') or {}
     for reg in ('products', 'areas'):
         for code in (c.get(reg) or {}):
             if not re.match(r'^[A-Z]{2,6}$', str(code)):
                 problems.append(('NAME-CONFIG', 'kit.local.json', f'naming.{reg} code {code!r}: 2-6 capital letters'))
-
-
-FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.tests)?\.ps1$', '.mjs': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.mjs$',
-           '.js': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.js$'}
-BAK_RX = re.compile(r'\.(?:bak|bad|orig|old|stale)(?:[-.]|$)', re.I)
+    kf = getattr(k, 'files', None) or []   # a plugin caller may pass only dir
+    ex = hook_entry_names(k.dir, set(kf))
+    problems += [('NAME-FILE', f, f'{osp.basename(f)}: {"snake_case" if f.endswith(".py") else "kebab-case"} for {osp.splitext(f)[1]} files')
+                 for f in kf if re.match(r'(?:skills|workflows|tests)/', f) and osp.splitext(f)[1] in FILE_RX
+                 and not re.match(FILE_RX[osp.splitext(f)[1]], osp.basename(f)) and osp.basename(f) not in ex]
 
 
 def warn_hook(k):
-    """NAME-FILE: a script name off its language's rule (py snake_case; ps1 / mjs / js kebab-case; renames: next version, each caller
-    with it). NAME-BACKUP: a backup beside the live config other than `<file>.bak-<yyyyMMdd-HHmmss>` (Get-KitStamp file)."""
-    out = [('NAME-FILE', f, f'{osp.basename(f)}: {"snake_case" if f.endswith(".py") else "kebab-case"} for {osp.splitext(f)[1]} files')
-           for f in k.files if re.match(r'(?:skills|workflows|tests)/', f) and osp.splitext(f)[1] in FILE_RX
-           and not re.match(FILE_RX[osp.splitext(f)[1]], osp.basename(f))]
+    """NAME-BACKUP: a backup beside the live config other than `<file>.bak-<yyyyMMdd-HHmmss>` (Get-KitStamp file)."""
+    out = []
     for base in {k.dir, main_clone(k.dir)}:
         for d in sorted(os.listdir(osp.join(base, 'skills'))) if osp.isdir(osp.join(base, 'skills')) else []:
             sd = osp.join(base, 'skills', d)

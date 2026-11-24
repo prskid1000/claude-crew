@@ -6,7 +6,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/naming.tests.ps1 (or tests/kit-tests.ps
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/kitbag_naming.py', 'skills/bossy/adapters/deploys.ps1', 'skills/pokey/adapters/deployed_checks.ps1')
+$TestKitFiles = @('skills/bossy/kitbag_naming.py', 'skills/bossy/adapters/deploys.ps1', 'skills/pokey/adapters/deployed-checks.ps1')
 $k = New-TestKit naming; $KB = Join-Path $k 'skills/bossy/kitbag.py'; $wd = Join-Path (Kd) 'w'; New-Item -ItemType Directory -Force $wd | Out-Null
 function Kb { $o = & $py -X utf8 $KB @args 2>&1 | Out-String; [pscustomobject]@{ out = $o.Trim(); code = $LASTEXITCODE } }
 $lc = Join-Path $k 'skills/crafty/kit.local.json'
@@ -126,11 +126,19 @@ Expect "scan: an ad hoc doc title is named with where it lives ($($sc.code))" ($
 
 # ---- lint: a registry code that is no 2-6 capitals
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ 'cat-1' = 'x' } } }
+# NAME-FILE: a snake_case .ps1 is a problem; a hook entry point (named by settings.json, or by a script it names) is exempt
+$nfA = Join-Path $k 'skills/crafty/adapters/fake_snake.ps1'; Set-Content $nfA '# fixture'
+$nfH = Join-Path $k 'skills/crafty/hook_one.mjs'; Set-Content $nfH "// spawns hook_two.ps1"; Set-Content (Join-Path $k 'skills/crafty/hook_two.ps1') '# fixture'
+$nfK = Join-Path $k 'skills/crafty/adapters/kebab-one.ps1'; Set-Content $nfK '# fixture'; $nfD = Join-Path $k 'skills/crafty/old-ref.md'; Set-Content $nfD 'see adapters/kebab_one.ps1'
+$nfS = Join-Path $k 'settings.json'; $nfS0 = if (Test-Path $nfS) { Get-Content $nfS -Raw }; Set-Content $nfS '{"hooks":{"PreToolUse":[{"hooks":[{"command":"node skills/crafty/hook_one.mjs"}]}]}}'
 Set-Content (Join-Path $k "AGENTS.md") "# kit"; $ln = Kb lint $k
 Expect 'lint NAME-CONFIG: a lower-case / punctuated area code is a problem' ($ln.out -match "NAME-CONFIG\s+kit.local.json: naming.areas code 'cat-1'")
+Expect "lint NAME-FILE: a snake_case .ps1 counts; hook entry points (settings.json -> hook_one.mjs -> hook_two.ps1) are exempt" ($ln.out -match 'NAME-FILE\s+skills/crafty/adapters/fake_snake.ps1' -and $ln.out -notmatch 'NAME-FILE\s+skills/crafty/hook_(one|two)')
+Expect 'lint OLD-NAME: the snake_case form of a live kebab-case script is its old name (no manifest row)' ($ln.out -match 'OLD-NAME\s+skills/crafty/old-ref.md:1: old name "kebab_one.ps1" \(now "kebab-one.ps1"\)')
+Remove-Item $nfA, $nfH, $nfK, $nfD, (Join-Path $k 'skills/crafty/hook_two.ps1'); if ($null -ne $nfS0) { Set-Content $nfS $nfS0 -NoNewline } else { Remove-Item $nfS }
 Set-Content "$lc.bak" '{}'; Set-Content "$lc.bak-20261123-100506" '{}'; $lw = Kb lint $k --warn
-Expect "lint --warn: NAME-BACKUP for a backup off <file>.bak-<yyyyMMdd-HHmmss>, the standard one passes; NAME-FILE for a snake_case .ps1 (not counted: exit $($lw.code))" (
-  $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.bak:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak-20261123-100506' -and $lw.out -match 'WARN NAME-FILE\s+skills/crafty/adapters/task_items.ps1')
+Expect "lint --warn: NAME-BACKUP for a backup off <file>.bak-<yyyyMMdd-HHmmss>, the standard one passes (not counted: exit $($lw.code))" (
+  $lw.out -match 'WARN NAME-BACKUP skills/crafty/kit.local.json.bak:' -and $lw.out -notmatch 'NAME-BACKUP \S+\.bak-20261123-100506')
 
 # run lineage: a fresh agent of the same type on the next suffix run (kit-x-1520c -> kit-x-1520d) continues the handoff; another run does not
 & $J @{ agent = 'kitty-kit-x-1520c'; type = 'kitty'; session = 'kx-a'; run = 'kit-x-1520c'; status = 'left'; handoffBrief = 'C:/b/kx.md'; joined = (Get-Date).AddHours(-2).ToString('o'); beat = (Get-Date).AddMinutes(-30).ToString('o') } (Join-Path (TkPath $k board -Create) 'kx-a.json')

@@ -265,7 +265,7 @@ $mnv = & { . $O; $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'txm'; $mt = Get-Date; $t
   $said = @(Stop-KitLeftShells ([pscustomobject]@{ agent = 'm'; transcript = $tx }) @([pscustomobject]@{ Id = 5; ParentId = 1; Name = 'claude.exe' }, [pscustomobject]@{ Id = 7; ParentId = 5; Name = 'bash.exe'; CommandLine = "bash -c $mc"; Created = $mt }) $null { }); Remove-Item Env:KIT_TRANSCRIPTS; "$said" }
 Expect "board leave: a finished agent's Monitor is killed, named a monitor ($mnv)" ($mnv -match '^killed monitor 7 of m: ')
 # coordinator 2026-11-19: 4 MR lists took 15 s of a 40 s sweep: at most 2 due repos a beat, oldest first; a missing dep source: WATCH
-Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv_supervise.ps1') (Join-Path $k 'skills/bossy/adapters')
+Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv-supervise.ps1') (Join-Path $k 'skills/bossy/adapters')
 $ul = Invoke-PsTest ulist @'
 . $args[0]; $n = Get-Date; $script:hostCalls = @(); function Invoke-HostVerb($v, $p) { $script:hostCalls += $p.repo; @() }; function Get-HostProject($r, [switch]$Raw) { $r }
 $KitConf.TrackerRepos = @('a', 'b', 'c', 'd'); $s = @{ hostUser = @{ at = "$n"; v = 'u' }; untrackedMrs = @{ user = 'u'; repos = @{ c = @{ at = $n.AddHours(-2).ToString('o'); mrs = @() }; d = @{ at = "$n"; mrs = @() } } } }

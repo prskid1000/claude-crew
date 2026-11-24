@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-dashboard.tests.ps1: the supervise page's history graphs (adapters/supervise_stats.ps1): lease waits per resource from the logs,
+dashboard.tests.ps1: the supervise page's history graphs (adapters/supervise-stats.ps1): lease waits per resource from the logs,
 test-run results per day, CPU per lane process and top other processes; their cards; tile rows of one height (ui-check).
 Usage: pwsh -NoProfile -File <kit>/tests/dashboard.tests.ps1 (or tests/kit-tests.ps1 -Area dashboard).
 Exit codes: 0 pass · 1 a check failed.

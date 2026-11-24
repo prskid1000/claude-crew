@@ -3,7 +3,7 @@
 # tests/api-auth.tests.ps1: cookie + CSRF, refresh token, query key, command signer through pokey.ps1 api (auth none, login: core tests).
 # Next to <kit>/tests/harness.ps1.
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/pokey/adapters/api_auth.ps1')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/pokey/adapters/api-auth.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'
 # pokey api: api GET /x binds the method; a second positional otherwise is an error, not a missing -Path (moved from flow.tests: room; before any targets file)
 $pa = Px $Q api GET '/x' -Target nosuch 2>&1 | Out-String; $pb = Px $Q api '/x' '/y' -Target nosuch 2>&1 | Out-String

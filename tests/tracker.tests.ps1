@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tracker.tests.ps1: task texts rendered from a spec (crafty.ps1 "task spec": description, Items / Decisions checklists, the
-parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args, tracker comment -Spec, board msg, board check claims, the online check, the heartbeat cron line and the OS timer's place in supervise (adapters/os_timer.ps1), the area scope (globs, wt commit, buildy prompts, the OUT-OF-AREA watch).
+parent's subtask items), the prose check of tracker kinds (no local paths); (cap moves) supervise page long flag text, build gate heatmap, unknown workflow args, tracker comment -Spec, board msg, board check claims, the online check, the heartbeat cron line and the OS timer's place in supervise (adapters/os-timer.ps1), the area scope (globs, wt commit, buildy prompts, the OUT-OF-AREA watch).
 Usage: pwsh -NoProfile -File <kit>/tests/tracker.tests.ps1 (or tests/kit-tests.ps1 -Area tracker).
 Exit codes: 0 pass · 1 a check failed.
 #>

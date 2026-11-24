@@ -3,7 +3,7 @@
 # tests/deployed-checks.tests.ps1: probe cmd / url / tag / regex and the ssh script. Next to <kit>/tests/harness.ps1.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
-$TestKitFiles = @('skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1', 'skills/pokey/adapters/ui_android.ps1')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/bossy/adapters/deploy-merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed-checks.ps1', 'skills/pokey/adapters/ui-android.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit qa; $Q = Join-Path $k 'skills/pokey/pokey.ps1'; $kl = Join-Path $k 'skills/crafty/kit.local.json'
 $gr = Join-Path (Kd) 'pr'; git init -q $gr; git -C $gr commit -qm a --allow-empty; git -C $gr tag v1; $s1 = git -C $gr rev-parse HEAD; git -C $gr commit -qm b --allow-empty; $s2 = git -C $gr rev-parse HEAD
 $api = Start-TestApi $s1; $P = $api.port   # the probe url target
@@ -44,7 +44,7 @@ $null = pwsh -NoProfile -File $craftyQ tracker status $tPrep 'in test' 2>&1
 $prepJob = @{ runFolder = "$(Kd)/qa-runs/<yyyy-MM-dd>-dep"; tasks = @($tPrep); target = 'stg'; kitDir = $k } | ConvertTo-Json -Compress
 $prepOut = @(pwsh -NoProfile -File $Q prepare -Job $prepJob 2>&1); $prepCode = $LASTEXITCODE; $env:KIT_TRACKER_TYPE = $null
 $prepRun = try { "$($prepOut[-1])" -replace '^RUN ' | ConvertFrom-Json } catch { $null }
-Expect "prepare with deployed_checks.ps1: exit 0, RUN line, run.json; K106: a task whose MR is in a repo with no deploy config stays in ($prepCode $($prepOut[-2]))" ($prepCode -eq 0 -and $prepRun -and (Test-Path "$($prepRun.runDir)/run.json") -and -not @($prepRun.left).Count)
+Expect "prepare with deployed-checks.ps1: exit 0, RUN line, run.json; K106: a task whose MR is in a repo with no deploy config stays in ($prepCode $($prepOut[-2]))" ($prepCode -eq 0 -and $prepRun -and (Test-Path "$($prepRun.runDir)/run.json") -and -not @($prepRun.left).Count)
 $dj = @($dl | ForEach-Object { try { "$_" | ConvertFrom-Json } catch {} })
 Expect "deployed -Lines: one JSON row per line, exit 1 when not all deployed; K106: a repo not in kit.local.json = N/A, a bad ref BAD-REF ($dlc $(@($dj.state) -join ','))" ($dlc -eq 1 -and $dl.Count -eq 2 -and $dj[0].state -eq 'BAD-REF' -and $dj[1].state -eq 'N/A' -and $dj[1].mr -eq 'zz!1')
 foreach ($x in 'cmd', 'url', 'tag', 'ssh', 'logs', 'rx') { Expect "deployed: $x probe" (@($res) -contains "${x}:True") }
@@ -105,7 +105,7 @@ $env:NA_OVF = '1'; $no = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env
 Expect 'deployed: a partial change list (overflow) never makes a target N/A' (($nor | Where-Object target -eq 'mc').state -eq 'DEPLOYED')
 Expect 'deployed: every row carries the MR target branch (deploy plan: no feeds lookup per MR)' (@($nr).Count -ge 3 -and -not @($nr | Where-Object branch -ne 'main').Count)
 $env:NA_TGT = 'mc,px'; $nt = Px "$(Kd)/na.ps1" $Q 2>&1 | Out-String; Remove-Item Env:NA_TGT; $ntr = @(($nt -replace '(?s)^.*?(\[.*\]).*$', '$1') | ConvertFrom-Json)
-$dcs = Get-Content (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -Raw; $chU = @([regex]::Matches($dcs, "Hv 'mr\.changes' @\{ n = [^}]+\}") | ForEach-Object { $_.Value -replace '\$\(?[\w.]+\)?', 'I' } | Select-Object -Unique)
+$dcs = Get-Content (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1') -Raw; $chU = @([regex]::Matches($dcs, "Hv 'mr\.changes' @\{ n = [^}]+\}") | ForEach-Object { $_.Value -replace '\$\(?[\w.]+\)?', 'I' } | Select-Object -Unique)
 Expect "deployed: -Target takes a list (deploy plan: one run per repo); the paths filter and the content check share one change-list call ($(@($ntr.target) -join ',') | $($chU -join ' '))" ((@($ntr.target) -join ',') -eq 'mc,px' -and $chU.Count -eq 1)
 # a merged MR's change list is kept across supervise beats: the next beat's paths check asks the host no mr.changes
 Set-Content "$(Kd)/chg.ps1" @'
@@ -170,14 +170,14 @@ Expect "prepare: every MR N/A for the target -> left out 'other product / target
 # K93: a beat's parallel deployed probes share a branch-level host answer: one call, the others read it (16 processes asked the same ci.runs: 96 calls a beat)
 $bsw = Join-Path (Kd) 'beat-shared.ps1'; $bsc = Join-Path (Kd) 'beat-calls.txt'
 Set-Content $bsw '. $args[0]; . $args[1]; $env:KIT_API_BEAT = "b1"; $v = Get-BeatShared "ci.runs|ref=main&repo=o/r" { Add-Content $args2 x; Start-Sleep 2; @([pscustomobject]@{ id = 7; created_at = "2026-11-19T05:00:00Z" }) }; "$(@($v).Count)/$(@($v)[0].id)/$([datetimeoffset]@($v)[0].created_at -eq [datetimeoffset]"2026-11-19T05:00:00Z")"'.Replace('$args2', "'$bsc'")
-$bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beat-$_.out") })
+$bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beat-$_.out") })
 foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
 $bso = @(1..3 | ForEach-Object { "$(Get-Content (Join-Path (Kd) "beat-$_.out") -Raw)".Trim() }) -join ' '
 Expect "K93: 3 parallel probes of one beat: one host call, each reads the same answer ($bso, calls $(@(Get-Content $bsc -ErrorAction SilentlyContinue).Count))" ($bso -eq '1/7/True 1/7/True 1/7/True' -and @(Get-Content $bsc).Count -eq 1)
 # a no-answer is shared too (16 probes queued on the lock, each asking a down host again); keys that differ only by / vs _ or case: their own answers
 $bsn = Join-Path (Kd) 'beat-null.txt'; Set-Content $bsw ('. $args[0]; . $args[1]; $env:KIT_API_BEAT = "b2"; $v = Get-BeatShared "mr.list|ref=x" { Add-Content $args2 x; Start-Sleep 1; $null }; "n:$($null -eq $v)"').Replace('$args2', "'$bsn'")
-$bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beatn-$_.out") }); foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
-$bsk = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed_checks.ps1'); $env:KIT_API_BEAT = 'b3'; @('ref=feat/a', 'ref=feat_a', 'ref=Main', 'ref=main') | ForEach-Object { $kv = $_; Get-BeatShared "ci.runs|$kv" { $kv } }; Remove-Item Env:KIT_API_BEAT }
+$bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beatn-$_.out") }); foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
+$bsk = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1'); $env:KIT_API_BEAT = 'b3'; @('ref=feat/a', 'ref=feat_a', 'ref=Main', 'ref=main') | ForEach-Object { $kv = $_; Get-BeatShared "ci.runs|$kv" { $kv } }; Remove-Item Env:KIT_API_BEAT }
 Expect "K93: a null answer: one call for 3 probes; keys feat/a, feat_a, Main, main: 4 answers ($(@(Get-Content $bsn -ErrorAction SilentlyContinue).Count) call(s), $($bsk -join ','))" (@(Get-Content $bsn).Count -eq 1 -and ($bsk -join ',') -eq 'ref=feat/a,ref=feat_a,ref=Main,ref=main')
 Remove-TestKit $k
 Complete-Tests

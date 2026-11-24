@@ -4,7 +4,7 @@
 # the guard's auto lease, supervise -AutoFix on a dead holder; dashboard liveness: run state, Runs band hours and chips, disk rows' age,
 # a failed page or stats source, Trends split cells; usage numbers (prices, outcomes, one row per run, host MRs). Usage: pwsh -NoProfile -File tests/runtimes.tests.ps1
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/container_tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into every New-TestKit kit
+$TestKitFiles = @('skills/crafty/adapters/container-tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # copied into every New-TestKit kit
 $k = New-TestKit rt; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $env:KIT_PARAM_RUNTIMEPROBE_ISUPSEC = '120'   # the fake isUp spawns a pwsh: the guard's 5 s probe timed out under a full parallel run (K76)
 $flag = Join-Path (Kd) 'fake.up'; $log = Join-Path (Kd) 'fake.log'

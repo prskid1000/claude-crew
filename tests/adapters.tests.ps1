@@ -3,7 +3,7 @@
 # tests/adapters.tests.ps1: adapter contracts (README "Adapters"): capabilities (Test-KitCap, UNSUPPORTED, fallbacks), the
 # secret store, evidence store, partition models, data-store caps, deploy strategies, login profiles. Next to <kit>/tests/harness.ps1.
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/tracker_clickup.ps1', 'skills/bossy/adapters/deploy_merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed_checks.ps1')
+$TestKitFiles = @('skills/crafty/adapters/tracker-clickup.ps1', 'skills/bossy/adapters/deploy-merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed-checks.ps1')
 $k = New-TestKit adapters
 
 # caps: declared entry wins, config <kind>.caps.<cap> false switches it off, else the verb; a declared adapter throws UNSUPPORTED
@@ -18,7 +18,7 @@ $capR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $__trType = 'fk'; $f = Join-Path $k 'ev.png'; 'x' | Set-Content $f
   $atR = try { Add-TrackerAttachment 'T1' $f 'shot' 2>&1 } catch { "ERR $_" }
   $o.attachFallback = "$global:fkC" -match 'shot.*ev\.png kept with the run'; if (-not $o.attachFallback) { "attach: $atR" }
-  $o.clickup = & { . (Join-Path $k 'skills/crafty/adapters/tracker_clickup.ps1'); @('checklist', 'commentEdit', 'commentDelete', 'statuses', 'move', 'attach' | Where-Object { -not (Test-KitCap tracker clickup $_) }).Count -eq 0 }
+  $o.clickup = & { . (Join-Path $k 'skills/crafty/adapters/tracker-clickup.ps1'); @('checklist', 'commentEdit', 'commentDelete', 'statuses', 'move', 'attach' | Where-Object { -not (Test-KitCap tracker clickup $_) }).Count -eq 0 }
   $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
 Expect-Each $capR 'caps: #' @('declOff', 'verb', 'noVerb', 'unsupported', 'cfgOff', 'cmd', 'attachFallback', 'clickup') -Show 9
 
@@ -64,7 +64,7 @@ Expect "deploy run: ssh without deployCmd fails naming it; no row = exit 2 ($($d
 Remove-Item $kl
 
 # data stores: redis and search engines answer schemaSizes rows from their own APIs (no SQL); no marks / temp caps
-$dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/envy/adapters/db_engines.ps1')
+$dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/envy/adapters/db-engines.ps1')
   function Get-EnvCfg { @{ db = @{ host = 'h'; port = 1 } } }; function EnvVars { @{ REDISCLI_AUTH = 'x' } }; function With-Env($v, $b) { $script:dsEnv = $v.REDISCLI_AUTH; & $b }; function Get-DbEngine { $KitAdapters['db-engine'][$script:dsEng] }
   function Invoke-KitExe { [pscustomobject]@{ code = 0; out = "used_memory:20971520`ndb0:keys=30,expires=0`ndb1:keys=10,expires=0"; err = '' } }
   function Invoke-RestMethod { @([pscustomobject]@{ index = 'orders'; 'docs.count' = '12'; 'store.size' = '3' }, [pscustomobject]@{ index = '.kibana'; 'docs.count' = '1'; 'store.size' = '1' }) }

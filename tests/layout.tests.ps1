@@ -102,7 +102,7 @@ if (Use-BrowserKit) {
   [IO.File]::WriteAllText($uiRow, '<style>div{display:grid;gap:8px}</style><div style="grid-template-columns:repeat(4,1fr)"><p data-fit>a<p data-fit>b<p data-fit>c</div><div style="grid-template-columns:repeat(3,1fr)"><p data-fit>a<details style="margin:8px"><summary>b</summary></details><p data-fit>c</div><div style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))"><article>lone</article></div><section style="columns:3 300px"><article>col</article></section>')
   $uiRowOut = @(& $py -X utf8 $uiKb ui-check $uiRow --widths 1366,900 2>&1)
   Expect "ui-check: a card row 24+ px short of its box, a lone grid card, empty CSS columns fail at 1280+ px only ($($uiRowOut -match 'rows'))" (@($uiRowOut -match 'CLIP rows: a card row ends').Count -eq 2 -and @($uiRowOut -match 'CLIP rows: a lone card ends').Count -eq 2 -and @($uiRowOut -match 'CLIP rows: CSS columns end').Count -eq 2 -and @($uiRowOut -match '^900 px .* 0 clipped').Count -eq 2)
-  git init -q $k; git -C $k add skills/bossy; git -C $k commit -q -m base; $uiSr = Join-Path $k 'skills/bossy/adapters/supervise_resources.ps1'; Undo-TestKitLink $uiSr; Add-Content $uiSr '# touched'
+  git init -q $k; git -C $k add skills/bossy; git -C $k commit -q -m base; $uiSr = Join-Path $k 'skills/bossy/adapters/supervise-resources.ps1'; Undo-TestKitLink $uiSr; Add-Content $uiSr '# touched'
   $uiWarn = { & $py -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print([w for _, w, _ in kitbag.ui_check_warns(sys.argv[2])])" (Join-Path $k 'skills/bossy') $k }
   $uiWarnBefore = & $uiWarn
   $uiPage = Join-Path (Kd) 'dash.html'
@@ -117,7 +117,7 @@ Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; flags = 
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uiPage) | Out-Null
   $uiOut = @(& $py -X utf8 $uiKb ui-check $uiPage 2>&1); $uiCode = $LASTEXITCODE; $uiShots = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*.png' -ErrorAction SilentlyContinue | Where-Object Name -NotLike '*-open.png'); $uiOpen = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*-open.png' -ErrorAction SilentlyContinue)
   Expect "ui-check: dashboard unclipped at 4 widths x 2 themes, UI-CHECK nudge (exit $uiCode, $($uiShots.Count)+$($uiOpen.Count) shots, before $uiWarnBefore; $($uiOut | Where-Object { $_ -match 'CLIP' } | Select-Object -First 3))" (
-    $uiCode -eq 0 -and $uiShots.Count -eq 8 -and $uiOpen.Count -eq 8 -and [int](@($uiOut -match '^1366 px light loaded: .* (\d+) px tall')[0] -replace '^.* (\d+) px tall.*$', '$1') -le 2700 -and @($uiOut -match '· \d+ px tall as loaded ·').Count -eq 8 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise_resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
+    $uiCode -eq 0 -and $uiShots.Count -eq 8 -and $uiOpen.Count -eq 8 -and [int](@($uiOut -match '^1366 px light loaded: .* (\d+) px tall')[0] -replace '^.* (\d+) px tall.*$', '$1') -le 2700 -and @($uiOut -match '· \d+ px tall as loaded ·').Count -eq 8 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise-resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
 }
 # run records on disk: a resumed run's liveness and its self record re-bound
 $O = Join-Path $k 'skills/bossy/bossy.ps1'; $ld = TkPath $k launches -Create

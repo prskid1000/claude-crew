@@ -1,6 +1,6 @@
-// media_grab.mjs (media evidence): a public page's media in a throw-away headless browser (fresh profile, no login).
-//   node media_grab.mjs <url> video [timeoutMs]              -> {"media": ["<m3u8 / mpd / mp4 url>", ...], "poster": "..."}
-//   node media_grab.mjs <url> image <selector> <out file>    -> {"image": "<src>", "file": "<out file>", "bytes": n}
+// media-grab.mjs (media evidence): a public page's media in a throw-away headless browser (fresh profile, no login).
+//   node media-grab.mjs <url> video [timeoutMs]              -> {"media": ["<m3u8 / mpd / mp4 url>", ...], "poster": "..."}
+//   node media-grab.mjs <url> image <selector> <out file>    -> {"image": "<src>", "file": "<out file>", "bytes": n}
 // Called by video.py (fetchers jam-public, image). Exit codes: 0 ok · 1 nothing found / page failed · 2 usage.
 import puppeteer from 'puppeteer-core'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -9,7 +9,7 @@ import { quietProfile } from './engine-playwright.mjs'
 import { join } from 'node:path'
 
 const [url, mode, a3, a4] = process.argv.slice(2)
-if (!url || !['video', 'image'].includes(mode) || (mode === 'image' && (!a3 || !a4))) { console.error('usage: media_grab.mjs <url> video [timeoutMs] | <url> image <selector> <out file>'); process.exit(2) }
+if (!url || !['video', 'image'].includes(mode) || (mode === 'image' && (!a3 || !a4))) { console.error('usage: media-grab.mjs <url> video [timeoutMs] | <url> image <selector> <out file>'); process.exit(2) }
 const PF = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].filter(Boolean)
 const exe = [process.env.CHROME_PATH, ...PF.map((d) => `${d}/Google/Chrome/Application/chrome.exe`), ...PF.map((d) => `${d}/Microsoft/Edge/Application/msedge.exe`),
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].find((p) => p && existsSync(p))

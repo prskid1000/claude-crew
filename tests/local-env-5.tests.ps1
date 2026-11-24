@@ -1,14 +1,14 @@
 #Requires -Version 7
 <#
 local-env-5.tests.ps1: envy.ps1 thin artifacts (services[].classpathFile): per-release classpath.txt + java.args, {javaArgs};
-a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers.
+a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers; lanes -Sync.
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-5.tests.ps1 (tests/kit-tests.ps1 -Area local-env-5 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 $k = New-TestKit le5; $ed = New-Item -ItemType Directory -Force (Join-Path $k 'skills/envy/adapters'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $ed)
-Copy-Item @((Join-Path $src 'skills/envy/adapters/shared_builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane_standard.ps1')) $ed
+Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) $ed
 $L5 = Join-Path $k 'skills/envy/envy.ps1'
 $api = @{ name = 'api'; repo = 'r'; dir = 'api'; port = 41051; artifact = 'target/app-*.jar'; classpathFile = 'target/classpath.txt'; start = 'java @"{javaArgs}" a.Main' }
 & $J @{ localEnv = @{ envs = @{ t = @{ services = @($api) } } } } (Join-Path $k 'skills/crafty/kit.local.json') 8
@@ -110,4 +110,44 @@ Expect "release under an open PAUSE of the agent's run: layers kept, before boar
 $rlo = Px $L5 release -Agent rl1 2>&1 | Out-String; $rlc = $LASTEXITCODE; $rln = Px $L5 release -Agent rl2 2>&1 | Out-String
 Expect "localenv: release with no -Env picks the leased env; no lease anywhere still needs -Env ($rlc)" ($rlc -eq 0 -and $rlo -match '\[shop\] lease of rl1 released' -and $rln -match '-Env needed')
 Remove-TestKit $k
+# moved from local-env-4.tests.ps1 (its token cap)
+function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
+# lanes -Sync (wt pool -Sync): an idle lane = origin/<target> + its open layers re-merged, a merged layer dropped (state), no upstream;
+# a layer that conflicts with the new target: the lane stays as it was; lanes.json: behind 0, merges
+$syKit = New-LocalEnvKit lesync; $syL = Join-Path $syKit 'skills/envy/envy.ps1'; $k = $syKit; $sq2 = Assert-TestPath (Kd); $so2 = Join-Path $sq2 'so.git'; $sc = Join-Path $sq2 'sc'; $sw2 = Join-Path $sq2 'sw'
+git init -q --bare -b main $so2; git clone -q $so2 $sc 2>$null; 'a' | Set-Content "$sc/a.txt"; Save-GitRepo $sc init; git -C $sc push -q origin main 2>$null; New-Item -ItemType Directory -Force $sw2 | Out-Null
+$lyr = { param($b, $f, $v) git -C $sc checkout -q -b $b main; $v | Set-Content "$sc/$f"; Save-GitRepo $sc $b; git -C $sc checkout -q main; "$(git -C $sc rev-parse $b)".Trim() }
+$shO = & $lyr 'feat-open' 'o.txt' 'o'; $shM = & $lyr 'feat-merged' 'm.txt' 'm'; $shC = & $lyr 'feat-conf' 'a.txt' 'mine'
+$lw = Join-Path $sw2 'lane-shop-falcon-sc'; git -C $sc worktree add -q -b lane/shop-falcon $lw main 2>$null; git -C $lw branch -q --set-upstream-to=origin/main 2>$null
+git -C $sc merge -q --no-ff -m 'merge m' feat-merged 2>$null; 'a2' | Set-Content "$sc/n.txt"; Save-GitRepo $sc next; git -C $sc push -q origin main 2>$null
+Set-JsonFile (Join-Path $syKit 'skills/crafty/kit.local.json') @{ worktreeRoots = @($sw2); repos = @(@{ name = 'sc'; checkout = $sc; target = 'main' }); localEnv = @{ envs = @{ shop = @{ services = @(@{ name = 'api'; repo = 'sc'; port = 18711 }) } } } }
+$syo = & { . $syL help 6>$null *> $null; $null = Assert-TestPath $sc; $null = Assert-TestPath $lw; $sf = Join-Path (Get-KitPath localenv -Create) 'shop.json'
+  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-open'; sha = $shO; agent = 'a1' }, @{ branch = 'feat-merged'; sha = $shM; agent = 'a2' }) } } } }
+  $o1 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st1 = Get-Content $sf -Raw | ConvertFrom-Json; $h1 = "$(git -C $lw rev-parse HEAD)".Trim()
+  $anc = { param($x) git -C $lw merge-base --is-ancestor $x HEAD; -not $LASTEXITCODE }
+  $ok = (& $anc origin/main) -and (& $anc $shO) -and -not "$(git -C $lw config branch.lane/shop-falcon.merge)"
+  $lj = Get-Content (Get-KitLaneSyncFile) -Raw | ConvertFrom-Json; $ljOut = -not (Test-Path (Join-Path (Get-KitPath wt-slots) 'lanes.json'))
+  'c2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc conf; git -C $sc push -q origin main 2>$null
+  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-conf'; sha = $shC; agent = 'a3' }) } } } }
+  $o2 = @(Invoke-LocalEnv lanes -Sync 6>$null); $h2 = "$(git -C $lw rev-parse HEAD)".Trim()
+  # K41: a squash-merged layer (its MR merged on the host, its commit not in main) that conflicts with main: dropped, never re-merged
+  $shS = & $lyr 'feat-sq' 'a.txt' 'sq'; 'sq' | Set-Content "$sc/a.txt"; Save-GitRepo $sc 'squash feat-sq'; 'sq2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc after; git -C $sc push -q origin main 2>$null
+  function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) { if ($Branch -eq 'feat-sq') { @([pscustomobject]@{ iid = 8995; sha = $shS }) } }
+  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-sq'; sha = $shS; agent = 'a4' }) } } } }
+  $o3 = @(Invoke-LocalEnv lanes -Sync -DryRun 6>$null); $o4 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st4 = Get-Content $sf -Raw | ConvertFrom-Json
+  # a layer recorded before a rebase (its MR merged the rebased copy, a hook marker added): dropped; one with a commit the MR lacks: kept
+  $shR = & $lyr 'feat-rb' 'r.txt' 'r'; git -C $sc checkout -q -b feat-rb2 main; 'r' | Set-Content "$sc/r.txt"; 'z' | Set-Content "$sc/z.txt"; Save-GitRepo $sc 'feat-rb +hook'; $shR2 = "$(git -C $sc rev-parse HEAD)".Trim(); git -C $sc checkout -q main
+  git -C $sc checkout -q feat-rb; 'x' | Set-Content "$sc/x.txt"; Save-GitRepo $sc 'extra after the MR'; $shRx = "$(git -C $sc rev-parse HEAD)".Trim(); git -C $sc checkout -q main
+  function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) { if ($Branch -eq 'feat-sq') { @([pscustomobject]@{ iid = 8995; sha = $shS }) } elseif ($Branch -in 'feat-rb', 'feat-rbx') { @([pscustomobject]@{ iid = 8988; sha = $shR2 }) } }
+  $sqSt = Get-Content $sf -Raw; Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-rb'; sha = $shR; agent = 'a5' }, @{ branch = 'feat-rbx'; sha = $shRx; agent = 'a6' }) } } } }
+  $o5 = @(Invoke-LocalEnv lanes -Sync -DryRun 6>$null); [IO.File]::WriteAllText($sf, $sqSt)
+  $rbOk = @($o5 -match '^plan \[shop\] sc: origin/main \+ 1 layer\(s\); drop feat-rb \(merged into main \(MR 8988\)\)$').Count -eq 1
+  $sqOk = $rbOk -and @($o3 -match '^plan \[shop\] sc: origin/main \+ 0 layer\(s\); drop feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and @($o4 -match '^synced \[shop\] sc: .*dropped feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and -not @($st4.release.repos.sc.layers).Count -and "$(git -C $lw rev-parse HEAD)".Trim() -eq "$(git -C $sc rev-parse main)".Trim()
+  $rx1 = '^synced \[shop\] sc: .*1 layer\(s\) re-merged; dropped feat-merged \(merged into main'; $rx2 = '^kept \[shop\] sc: layer feat-conf conflicts'
+  "$($ok -and $ljOut -and $sqOk)|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$($h2 -eq $h1)" }
+Expect "lanes -Sync: idle lane rebuilt on origin/main + its open layer, the merged one dropped, no upstream, behind 0; a conflicting layer leaves the lane as it was ($syo)" ($syo -eq 'True|feat-open|0/1|1|1|True')
+Remove-TestKit $syKit
+# K2X: the sync scratch (a.txt, m-z.txt) stays under the test home, never at a drive root
+$leNew = @(foreach ($dr in $script:rootsAt.Keys) { Get-ChildItem -LiteralPath $dr -Force -Name -ErrorAction SilentlyContinue | Where-Object { $_ -notin $script:rootsAt[$dr] -and $_ -in 'a.txt', 'm.txt', 'n.txt', 'o.txt', 'r.txt', 'x.txt', 'z.txt' } })
+Expect "lanes -Sync scratch under the test home: no new drive-root entry ($($leNew -join ', '))" (-not $leNew.Count -and $sc.StartsWith([IO.Path]::GetTempPath().TrimEnd('\', '/')))
 Complete-Tests

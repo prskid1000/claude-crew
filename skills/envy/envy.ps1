@@ -8,8 +8,8 @@ Verbs: envs · status · doctor [-Fix] · deploy · wait (-Id | -Until up [-Serv
        merged, gone or orphan ones)
        (owner) up -Services [-Owner] · unhold · restart -Services · down · drop -Branch <b> · refresh · teardown · restore -Mark <n> | -Release <n>
        [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] | import -From <source> -Tenant <schema>
-       [-As <name>] -Mask <profile> [-DryRun] [-Refresh] (adapters/tenant_models.ps1) · cleanup [-Quick] [-DryRun] ·
-       lanes -Migrate [-LanesOnly] [-DryRun] | -Sync [-DryRun] (wt_pool.ps1 lanes) ·
+       [-As <name>] -Mask <profile> [-DryRun] [-Refresh] (adapters/tenant-models.ps1) · cleanup [-Quick] [-DryRun] ·
+       lanes -Migrate [-LanesOnly] [-DryRun] | -Sync [-DryRun] (wt-pool.ps1 lanes) ·
        <verb> an adapter registers (kind envy-verb) ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
 Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy warm one; a cold one past localEnv.lanes.openAfterMinutes of queue wait, with room;
@@ -18,8 +18,8 @@ In: kit.local.json localEnv (envs inherit localEnv.defaults, then envs.<env>.ext
 Out: text; status -Json, envs -Json.
 Exit codes: 0 ok · 1 refused / rejected / rolled back / failed / services not up / seed not green / db presets missing · 2 usage
   (unknown env, no localEnv) · 3 still running (wait -Id; use / task got no lease within -Wait).
-DB parts (README "Adapters"): db.engine = adapters/db_engines.ps1 (kind db-engine); marks, slices, restore, the cascade guard
-  (db.cascadeGuard) = adapters/db_presets.ps1; tenants.model = adapters/tenant_models.ps1 + tenant_schema.ps1 (kind tenant-model);
+DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engine); marks, slices, restore, the cascade guard
+  (db.cascadeGuard) = adapters/db-presets.ps1; tenants.model = adapters/tenant-models.ps1 + tenant-schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L238 state · L285 layer drops · L360 leases · L468 code · L479 migrations ·
@@ -113,7 +113,7 @@ $script:KeepReleases = [int](Opt 'keepReleases' 2)   # staged builds kept per se
 # a start's ready line (services[].readyPattern first): health is checked at once, not at the next 5 s poll (TODO-PARAM)
 $script:ReadyPattern = [string](Opt 'readyPattern' '(?i)\bStarted \S+ in [\d.]+ seconds|Application startup complete|Server running at|Compiled successfully|ready in [\d.]+ ?m?s|Now listening on|Listening on')
 $script:MigPattern = [string](Opt 'migrationPattern' '(?i)^(?!.*\.(md|txt|rst|adoc)$)(.*/)?(db/)?(changelog|migrations?|migrate|liquibase|flyway|alembic)(/|\.)')
-# adapters/ files are dot-sourced in name order (db_engines.ps1 registers the engines db_presets.ps1 fills unset db hooks from)
+# adapters/ files are dot-sourced in name order (db-engines.ps1 registers the engines db-presets.ps1 fills unset db hooks from)
 foreach ($__adapter in Get-ChildItem (Join-Path $PSScriptRoot 'adapters') -Filter '*.ps1' -ErrorAction SilentlyContinue | Sort-Object Name) { . $__adapter.FullName }
 foreach ($__k in 'db-engine', 'tenant-model', 'migration', 'envy-verb') { if (-not $KitAdapters[$__k]) { $KitAdapters[$__k] = @{} } }   # a kind nobody registered: lookups find nothing, never a null index
 $script:OomPattern = 'JavaScript heap out of memory|Reached heap limit'   # also scanned in running services' logs
@@ -837,11 +837,11 @@ function Test-Smoke([string]$e) {
   $null
 }
 # ---- marks: a named binlog position + the code live then (zero bytes); restore = the row changes after it flashed back, the
-# migrations recorded after it rolled back, its code started (db.engine mysql / mariadb: adapters/db_presets.ps1)
+# migrations recorded after it rolled back, its code started (db.engine mysql / mariadb: adapters/db-presets.ps1)
 $script:MarkMax = [int](Opt 'marks.max' 60)   # TODO-PARAM (fixed default)
 function MarksOn([string]$e) { [bool](Get-Command Test-DbMarks -ErrorAction SilentlyContinue) -and (Test-DbMarks $e) }
 # the env's data scopes (schemas / databases): db.schemas (names) + db.schemasQuery (one name per row), else db.name; + the tenant
-# model's scopes verb (adapters/tenant_models.ps1), when it has one
+# model's scopes verb (adapters/tenant-models.ps1), when it has one
 function Get-DataScopes([string]$e) {
   $db = (Get-EnvCfg $e).db; $s = @($db.schemas | Where-Object { $_ } | ForEach-Object { "$_" })
   if ($db.schemasQuery) { $s += @(Invoke-DbSql $e ([string]$db.schemasQuery) | ForEach-Object { $_[0] }) }
@@ -1460,7 +1460,7 @@ function Invoke-DbChores([string]$e, $st, [hashtable]$at) {
     $at.temp = Get-Date   # the top temp user above db.tempMaxGB is killed; one gone before the KILL: said
     try { foreach ($k in @(Invoke-DbTempWatch $e)) { $k; Event $e 'db-kill' @{ by = 'watchdog'; what = $k } } } catch { "db temp watchdog: $("$_".Split("`n")[0])" }
   }
-  if (((Get-Date) - $at.pool).TotalSeconds -ge 60 -and (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue)) {   # adapters/db_presets.ps1, db.bufferPool
+  if (((Get-Date) - $at.pool).TotalSeconds -ge 60 -and (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue)) {   # adapters/db-presets.ps1, db.bufferPool
     $at.pool = Get-Date; try { foreach ($k in @(Invoke-DbPool $e)) { $k; Event $e 'db-pool' @{ what = $k } } } catch { "db pool: $("$_".Split("`n")[0])" }
   }
   if ((MarksOn $e) -and ((Get-Date) - $at.marks).TotalSeconds -ge 60 -and (-not $st.binlog -or ((Get-Date) - [datetime]$st.binlog.checkedAt).TotalHours -ge 24)) { $at.marks = Get-Date; try { Update-Marks $e } catch { "marks: $("$_".Split("`n")[0])" } }
@@ -2005,7 +2005,7 @@ function Test-ReadOnlySql([string]$q) {
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
 }
 # ---- verbs: owner / brief asks; calls return within -Wait min (8). Adapters add verbs (kind envy-verb: @{ run = { ... }; ops = @(..) },
-#      run inside Invoke-LocalEnv with its parameters and helpers in scope; e.g. tenant in adapters/tenant_models.ps1)
+#      run inside Invoke-LocalEnv with its parameters and helpers in scope; e.g. tenant in adapters/tenant-models.ps1)
 $script:EnvyVerbs = @('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', 'lanes', '_exec')
 function Test-EnvyVerb([string]$v) {
   $reg = if ($KitAdapters['envy-verb']) { @($KitAdapters['envy-verb'].Keys) } else { @() }
@@ -2038,8 +2038,8 @@ if (-not $EnvName -and $Action -eq 'release') { $relHeld = @(EnvNames | Where-Ob
 if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 $e = $EnvName
-# db.engine without its presets (adapters/db_presets.ps1 missing): stop before anything changes
-$needs = @(foreach ($n in @($e)) { $c = (Get-KitMember $script:LE.envs $n); if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets missing: restore adapters/db_presets.ps1" } })
+# db.engine without its presets (adapters/db-presets.ps1 missing): stop before anything changes
+$needs = @(foreach ($n in @($e)) { $c = (Get-KitMember $script:LE.envs $n); if ($c.db.engine -and -not $script:DbPresets) { "env $n (db.engine): db.engine presets missing: restore adapters/db-presets.ps1" } })
 if ($needs.Count -and $Action -in 'deploy', 'drop', 'refresh', 'promote', 'mark', 'restore', 'seed', 'teardown', 'tenant') { [Console]::Error.WriteLine("envy.ps1: $($needs[0])"); exit 1 }
 
 function Ensure-Loop {
@@ -2192,7 +2192,7 @@ switch ($Action) {
     if (@($rows | Where-Object level -eq 'FAIL').Count) { exit 1 }
   }
   'mark' {   # -Name: a mark of the DB now (zero bytes); without: the env's marks
-    if (-not (MarksOn $e)) { throw "[$e] marks need db.engine mysql or mariadb (adapters/db_presets.ps1): this env has none" }
+    if (-not (MarksOn $e)) { throw "[$e] marks need db.engine mysql or mariadb (adapters/db-presets.ps1): this env has none" }
     if ($Name) { $n = New-Mark $e $Name 'owner'; "[$e] mark $n at $(@((Read-State $e).marks | Where-Object name -eq $n)[0].pos): envy.ps1 restore -Env $e -Mark $n [-DryRun]"; return }
     $st = Read-State $e
     foreach ($m in @($st.marks | Where-Object { $_ })) { '  {0,-34} {1,-8} {2:yyyy-MM-dd HH:mm}  release {3,-4} {4}' -f $m.name, $m.kind, [datetime]$m.at, $m.release, $m.pos }
@@ -2200,7 +2200,7 @@ switch ($Action) {
     if ($st.binlog) { "  the binlog keeps $($st.binlog.days) d (oldest $($st.binlog.oldest))" }
   }
   'restore' {   # owner / coordinator: DB (flashback + rollbacks) and code back to a mark; -DryRun: the plan
-    if (-not (MarksOn $e)) { throw "[$e] restore needs marks: db.engine mysql or mariadb (adapters/db_presets.ps1)" }
+    if (-not (MarksOn $e)) { throw "[$e] restore needs marks: db.engine mysql or mariadb (adapters/db-presets.ps1)" }
     if (-not $Mark -and $Release -lt 0) { throw 'restore needs -Mark <name> or -Release <n> (envy.ps1 mark -Env <env> lists them)' }
     $st = Read-State $e; $m = Find-Mark $st $Mark $Release
     $sch = if ($Schemas.Count) { Test-RestoreScopes $e $Schemas } else { @(Get-MarkScopes $e $m) }
@@ -2225,7 +2225,7 @@ switch ($Action) {
   'lanes' { if ($Sync) { Invoke-LaneResync -DryRun:$DryRun } elseif ($Migrate) { Invoke-LaneMigrate -LanesOnly:$LanesOnly -DryRun:$DryRun } else { throw 'usage: envy.ps1 lanes -Migrate [-LanesOnly] [-DryRun] | -Sync [-DryRun]' } }   # owner / supervise / wt pool -Sync
   'cleanup' { Invoke-EnvCleanup -Quick:$Quick -DryRun:$DryRun }   # owner / coordinator: orphans of envs no longer configured; -Quick: old releases + cleanup.quick
   'teardown' {   # owner: the cascade guard's triggers and journal schema removed (doctor installs them again)
-    if (-not (MarksOn $e)) { throw "[$e] teardown: no marks here (db.engine mysql or mariadb, adapters/db_presets.ps1)" }
+    if (-not (MarksOn $e)) { throw "[$e] teardown: no marks here (db.engine mysql or mariadb, adapters/db-presets.ps1)" }
     $g = Install-DbGuard $e -Remove; "[$e] cascade guard removed: $($g.removed) trigger(s), the journal schema dropped; envy.ps1 doctor -Env $e installs it again"
   }
   'deploy' {
@@ -2394,12 +2394,12 @@ switch ($Action) {
   }
   'sql' {   # read-only, through db.query (a db.engine preset or the env's hook); -Query schemaSizes = the engine's own query
     if ($Query -eq 'schemaSizes' -and (Get-DbEngine $e).sizes -is [scriptblock]) { & (Get-DbEngine $e).sizes @{ e = $e }; return }
-    if ($Query -eq 'schemaSizes') { $Query = (Get-DbEngine $e).schemaSizes; if (-not $Query) { throw "engine $(Get-DbEngineName $e): no schemaSizes query (adapters/db_engines.ps1)" } }
+    if ($Query -eq 'schemaSizes') { $Query = (Get-DbEngine $e).schemaSizes; if (-not $Query) { throw "engine $(Get-DbEngineName $e): no schemaSizes query (adapters/db-engines.ps1)" } }
     if (-not (Test-ReadOnlySql $Query)) { throw 'sql needs -Query with ONE read-only statement (select / show / explain / with ...)' }
     $err = Invoke-Hook $e 'query' @{ sql = $Query }; $script:HookOut; if ($err) { throw $err }
   }
   'dbtemp' {   # '<id> <temp GB> <seconds> <query>' per connection (storage.db.use); -Kill <id> ends one (storage.db.kill)
-    if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTemp $e)) { throw "[$e] dbtemp needs db.engine mysql (adapters/db_presets.ps1)" }
+    if (-not (Get-Command Get-DbTempUse -ErrorAction SilentlyContinue) -or -not (Test-DbTemp $e)) { throw "[$e] dbtemp needs db.engine mysql (adapters/db-presets.ps1)" }
     # storage.db.use polls a resting lane DB every tick (11 refused errors): no connections, no temp
     if (DbSvcDown $e) { "[$e] dbtemp: $((DbSvc $e).name) rests (starts with a lease): no temp"; return }
     # a DB port no managed service owns (base server, a stale port): a hint, never the client's raw ERROR 2003 (retro 2026-11-20, 3x)

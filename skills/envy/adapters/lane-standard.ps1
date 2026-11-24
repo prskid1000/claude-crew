@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (Get-Doctor: the doctor verb, its rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Resolve-SvcDir, Get-LaneWorktreeRows).
-# lane_standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird", no old <product><k> lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
+# lane-standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird", no old <product><k> lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
 # (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs under the kit, off the system drive, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
 # Sections: L7 lane standard · L53 lane worktrees · L123 doctor

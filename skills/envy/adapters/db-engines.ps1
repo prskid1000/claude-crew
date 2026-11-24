@@ -1,6 +1,6 @@
 #Requires -Version 7
-# Usage: dot-sourced by envy.ps1 from adapters/ (before db_presets.ps1). Exit codes: none here (its verbs exit through envy.ps1).
-# db_engines.ps1: the db.engine adapters (kind db-engine). A local-only adapters/*.local.ps1 can add an engine the same way.
+# Usage: dot-sourced by envy.ps1 from adapters/ (before db-presets.ps1). Exit codes: none here (its verbs exit through envy.ps1).
+# db-engines.ps1: the db.engine adapters (kind db-engine). A local-only adapters/*.local.ps1 can add an engine the same way.
 # Props: defaultPort, passwordEnv, supportsMarks (binlog marks, restore, cascade guard, schema tenant model), supportsTemp
 #   (dbtemp, watchdog, pool), query / exec / jdbc (command presets: {H} {P} {U} {N} {URI}, then {sql} {file} {schema}),
 #   schemaSizes (SQL: schema TAB rows TAB MB per schema; envy.ps1 sql -Query schemaSizes, supervise's data-growth check), sizes

@@ -7,7 +7,7 @@ Usage: pwsh -NoProfile -File tests/tracker-adapters.tests.ps1 [-Kit <kit>] (test
 param([string]$Kit = (Split-Path $PSScriptRoot))
 Set-Item Env:CLAUDE_RUNTIME ($trRt = Join-Path ([IO.Path]::GetTempPath()) "kit-tr-rt-$PID")   # own cache: a kit's list statuses changed list calls
 . (Join-Path $Kit 'skills/crafty/lib.ps1')
-foreach ($a in 'tracker_jira', 'tracker_linear', 'tracker_youtrack', 'tracker_azure', 'gitlab', 'tracker_clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
+foreach ($a in 'tracker-jira', 'tracker-linear', 'tracker-youtrack', 'tracker-azure', 'gitlab', 'tracker-clickup') { . (Join-Path (Split-Path $PSScriptRoot) "skills/crafty/adapters/$a.ps1") }
 $global:log = [Collections.Generic.List[string]]::new(); $global:failed = 0
 $__cfg = '{"tracker":{"org":"acme","project":"Shop","commands":{"view":"mytr view {id}","status":"mytr status {id} {status}","comment":"mytr comment {id} {text}","create":"mytr create {list} {name}","list":"mytr list {list} {status}"}}}' | ConvertFrom-Json; $__trRepo = 'g/p'
 $env:JIRA_BASE_URL = 'https://j.test'; $env:JIRA_EMAIL = 'a@x'; $env:JIRA_API_TOKEN = 't'; $env:JIRA_TOKEN = 'pat'; $env:LINEAR_API_KEY = 'k'; $env:AZURE_DEVOPS_EXT_PAT = 'p'; $env:YOUTRACK_URL = 'https://yt.test'; $env:YOUTRACK_TOKEN = 'y'

@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (tracker writes throw).
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
-# state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task_rollup.ps1;
+# state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
 # Sections: L7 items · L87 move · L130 status roles · L276 task text · L293 naming · L368 track lines · L373 task ids · L389 order
 # ---- items: checklists, holds, the parent's Items

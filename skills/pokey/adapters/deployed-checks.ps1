@@ -217,7 +217,7 @@ function Test-DeployedExtra($d) {
 
 # ---- deployed: pokey.ps1 deployed, an MR live per test env
 # pokey.ps1 deployed: is a merged MR live on a test env (CI deploy job, squash-merged deploy MR, same content; laneApk:
-# ui_android.ps1; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
+# ui-android.ps1; the kinds ssh, awsStack, probe, tag, manual: Test-DeployedExtra below)
 # K93: a supervise beat's parallel probes (up to 16 processes) share their branch-level answers: each asked the same ci.runs / ci.jobs (96 calls a beat);
 # the first asker holds the key's lock while it calls, the rest read its answer; bossy.ps1 supervise sets KIT_API_BEAT and drops the folder after the beat
 function Get-BeatShared([string]$Key, [scriptblock]$Call) {

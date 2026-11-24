@@ -7,12 +7,12 @@ Exit codes: 0 pass · 1 a check failed.
 param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 # envy.ps1 is not in the core test kit: copy it in
-function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared_builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane_standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
+function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
 # localenv usage errors exit 2; a start-lock timeout throws, never runs unlocked
 $k2 = New-LocalEnvKit le2; $L2 = Join-Path $k2 'skills/envy/envy.ps1'
 & $J @{ localEnv = @{ envs = @{ shop = @{ services = @(); db = @{ snapshot = 'echo s'; restore = 'echo r' } }; mig = @{ services = @(); db = @{ engine = 'postgres' } } } } } (Join-Path $k2 'skills/crafty/kit.local.json') 6
 $xo = Px $L2 deploy -Env mig -Branch b 2>&1 | Out-String; $xc = $LASTEXITCODE
-Expect "localenv: db.engine without its presets file stops naming it, exit 1 ($xc)" ($xc -eq 1 -and ($xo -replace '\s*\|?\s+', ' ') -match 'db\.engine presets missing: restore adapters/db_presets\.ps1')
+Expect "localenv: db.engine without its presets file stops naming it, exit 1 ($xc)" ($xc -eq 1 -and ($xo -replace '\s*\|?\s+', ' ') -match 'db\.engine presets missing: restore adapters/db-presets\.ps1')
 $hv = Px $L2 help 2>&1 | Out-String; $hc = $LASTEXITCODE
 Expect "localenv: help prints the verbs, exit 0 ($hc)" ($hc -eq 0 -and $hv -match 'Verbs: envs' -and $hv -notmatch 'No local environments')
 $skillText = (Get-Content -LiteralPath (Join-Path $src 'skills/envy/SKILL.md') -Raw) -replace '\s+', ' '

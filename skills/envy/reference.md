@@ -49,7 +49,7 @@ For kitty / the coordinator editing `localEnv` or running owner verbs; any agent
   Spring Boot check skips the repackage: never).
 
 ## Lane service standard
-Every local-env service follows it; `doctor` checks (`adapters/lane_standard.ps1`, rows WARN;
+Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1`, rows WARN;
 `localEnv.laneStandard: "FAIL"` makes `deploy` stop on a breach):
 - One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry the lane id (`{bird}` in a template).
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.

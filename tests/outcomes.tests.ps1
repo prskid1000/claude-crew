@@ -7,7 +7,7 @@ Usage: pwsh -NoProfile -File tests/outcomes.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/outcomes.ps1') + @('github', 'gitlab', 'bitbucket', 'gitea', 'azure_devops', 'tracker_clickup', 'tracker_jira', 'tracker_linear', 'tracker_youtrack', 'tracker_azure' | ForEach-Object { "skills/crafty/adapters/$_.ps1" })   # copied into every New-TestKit kit (the link tests: each host and tracker adapter)
+$TestKitFiles = @('skills/bossy/adapters/outcomes.ps1') + @('github', 'gitlab', 'bitbucket', 'gitea', 'azure-devops', 'tracker-clickup', 'tracker-jira', 'tracker-linear', 'tracker-youtrack', 'tracker-azure' | ForEach-Object { "skills/crafty/adapters/$_.ps1" })   # copied into every New-TestKit kit (the link tests: each host and tracker adapter)
 $k = New-TestKit outcomes; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $fx = Join-Path $k 'fx.ps1'   # runs adapter functions on the test kit
 Set-Content $fx "param([string]`$Code)`n. '$k/skills/crafty/lib.ps1'; . '$k/skills/bossy/adapters/outcomes.ps1'; Invoke-Expression `$Code"

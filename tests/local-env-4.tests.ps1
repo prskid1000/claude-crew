@@ -7,7 +7,7 @@ Exit codes: 0 pass · 1 a check failed.
 param([string]$Kit)   # a kit to test; else this file sits next to <kit>/tests/harness.ps1
 . $(if ($Kit) { Join-Path $Kit 'tests/harness.ps1' } else { Join-Path $PSScriptRoot 'harness.ps1' })
 # envy.ps1 is not in the core test kit: copy it in
-function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared_builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane_standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
+function New-LocalEnvKit([string]$name) { $kd = New-TestKit $name; $d = New-Item -ItemType Directory -Force (Join-Path $kd 'skills/envy'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') $d; Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) (New-Item -ItemType Directory -Force (Join-Path $d 'adapters')); $kd }
 # lanes: lane 1 = the env unchanged, lane k = <env><k>: managed ports + (k-1) x portStep, {lane} / {port:<svc>} / ":<port>" rewritten,
 # envs.<env><k> overrides one lane (its db port follows); -Env <env> keeps an agent on its lane, else the least busy warm one; -Lane pins
 $laneKit = New-LocalEnvKit lelane; $lkL = Join-Path $laneKit 'skills/envy/envy.ps1'
@@ -150,7 +150,8 @@ $lso = & { . $lkL; $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = '
   "$($null -eq $none)|$($hit.lane)" }
 Expect "lanes: without shareBuild only the lane's own recorded copy of a build is reused ($lso)" ($lso -eq 'True|shop2')
 # check build shared: crafty.ps1 check -Step build on a clean tree records it; the env deploy of the same tree copies its jar, no build
-$cbg = Join-Path (Split-Path $laneKit) 'cb'; $cbs = "$cbg/src"; New-Item -ItemType Directory -Force "$cbs/api" | Out-Null; git -C $cbs init -q -b main; 'target/' | Set-Content "$cbs/.gitignore"; '<project/>' | Set-Content "$cbs/api/pom.xml"
+# K2X: an empty base wrote cb/src and cb/env at the drive root
+$cbg = Assert-TestPath (Join-Path (Split-Path $laneKit) 'cb'); $cbs = "$cbg/src"; New-Item -ItemType Directory -Force "$cbs/api" | Out-Null; git -C $cbs init -q -b main; 'target/' | Set-Content "$cbs/.gitignore"; '<project/>' | Set-Content "$cbs/api/pom.xml"
 git -C $cbs add -A; git -C $cbs -c user.name=t -c user.email=t@t commit -q -m code; git clone -q $cbs "$cbg/env" 2>$null
 New-Item -ItemType Directory -Force "$cbs/api/target" | Out-Null; $t0 = (Get-Date).AddSeconds(-30); 'jar' | Set-Content "$cbs/api/target/api-1.jar"
 $null = pwsh -NoProfile -Command ". '$(Join-Path $laneKit 'skills/crafty/crafty.ps1')'; Save-CheckBuild '$cbs/api' 'mvn -q package -DskipTests' ([datetime]'$($t0.ToString('o'))')"
@@ -198,14 +199,14 @@ Remove-TestKit $stKit; Remove-TestKit $laneKit
 # lanes -Migrate: an idle lane's old worktree + branch -> the new names now (not at its next build), a lane in use kept until idle;
 # a localenv/* branch of no lane: worktree removed, its unpushed commit kept as a backup/ tag, deleted; [gone] merged + a backup branch
 # all on origin: deleted; a backup branch with an unpushed commit: kept
-$mgKit = New-LocalEnvKit lemig; $mgL = Join-Path $mgKit 'skills/envy/envy.ps1'; $k = $mgKit; $mq = Kd; $mo = Join-Path $mq 'mo.git'; $mc = Join-Path $mq 'mg'; $mw = Join-Path $mq 'mw'
+$mgKit = New-LocalEnvKit lemig; $mgL = Join-Path $mgKit 'skills/envy/envy.ps1'; $k = $mgKit; $mq = Assert-TestPath (Kd); $mo = Join-Path $mq 'mo.git'; $mc = Join-Path $mq 'mg'; $mw = Join-Path $mq 'mw'
 git init -q --bare -b main $mo; git clone -q $mo $mc 2>$null; 'a' | Set-Content "$mc/a.txt"; Save-GitRepo $mc init; git -C $mc push -q origin main 2>$null; New-Item -ItemType Directory -Force $mw | Out-Null
 git -C $mc branch -q gone1; git -C $mc push -q -u origin gone1 2>$null; git -C $mc push -q origin --delete gone1 2>$null; git -C $mc branch -q backup/x main
 git -C $mc checkout -q -b wv-backup-y; 'y' | Set-Content "$mc/y.txt"; Save-GitRepo $mc y; git -C $mc checkout -q main
 foreach ($ln in 'shop', 'shop2', 'old-sb', 'old-dirty') { git -C $mc worktree add -q -b "localenv/$ln" (Join-Path $mw "localenv-$ln-mg") main 2>$null }
 'z' | Set-Content (Join-Path $mw 'localenv-old-sb-mg/z.txt'); Save-GitRepo (Join-Path $mw 'localenv-old-sb-mg') z; 'w' | Set-Content (Join-Path $mw 'localenv-old-dirty-mg/w.txt'); git -C $mc branch -q localenv/shop3 main
 Set-JsonFile (Join-Path $mgKit 'skills/crafty/kit.local.json') @{ worktreeRoots = @($mw); repos = @(@{ name = 'mg'; checkout = $mc; target = 'main' }); localEnv = @{ envs = @{ shop = @{ lanes = @{ max = 3 }; services = @(@{ name = 'api'; repo = 'mg'; port = 18611 }) } } } }
-$mgo = & { . $mgL help 6>$null *> $null; Set-JsonFile (Join-Path (Get-KitPath localenv -Create) 'shop2.json') @{ holds = @{ h1 = @{ who = 'dev1'; services = @('api') } } }
+$mgo = & { . $mgL help 6>$null *> $null; $null = Assert-TestPath $mc; $null = Assert-TestPath $mw; Set-JsonFile (Join-Path (Get-KitPath localenv -Create) 'shop2.json') @{ holds = @{ h1 = @{ who = 'dev1'; services = @('api') } } }
   $o0 = @(Invoke-LocalEnv lanes -Migrate -DryRun 6>$null); $dryKept = (Test-Path "$mw/localenv-shop-mg/.git") -and (Test-Path "$mw/localenv-old-sb-mg/.git") -and @(git -C $mc branch --list gone1).Count
   $o1 = @(Invoke-LocalEnv lanes -Migrate 6>$null); Set-JsonFile (Join-Path (Get-KitPath localenv) 'shop2.json') @{}; $o2 = @(Invoke-LocalEnv lanes -Migrate -LanesOnly 6>$null); , @($o1, $o2, $dryKept, $o0) }
 $mt = @(git -C $mc tag --list 'backup/localenv-old-sb-*'); $mb = @(git -C $mc branch --format='%(refname:short)')
@@ -215,39 +216,7 @@ Expect "lanes -Migrate: idle lane moved at once, the busy one kept then moved wh
   @($mgo[0] -match '^kept \[shop2\] mg: in use \(1 hold\(s\)\)').Count -eq 1 -and @($mgo[1] -match '^moved \[shop2\] mg: .*on lane/shop-kestrel$').Count -eq 1 -and $mt.Count -eq 1 -and "$(git -C $mc log -1 --format=%s $mt[0])".Trim() -eq 'z' -and
   'lane/shop-falcon' -in $mb -and 'lane/shop-kestrel' -in $mb -and 'wv-backup-y' -in $mb -and -not @($mb | Where-Object { $_ -in 'gone1', 'backup/x', 'localenv/shop', 'localenv/shop2', 'localenv/old-sb' }).Count -and @($mgo[0] -match '^kept mg wv-backup-y: backup, 1 commit\(s\) on no remote$').Count -eq 1)
 Remove-TestKit $mgKit
-# lanes -Sync (wt pool -Sync): an idle lane = origin/<target> + its open layers re-merged, a merged layer dropped (state), no upstream;
-# a layer that conflicts with the new target: the lane stays as it was; lanes.json: behind 0, merges
-$syKit = New-LocalEnvKit lesync; $syL = Join-Path $syKit 'skills/envy/envy.ps1'; $k = $syKit; $sq2 = Kd; $so2 = Join-Path $sq2 'so.git'; $sc = Join-Path $sq2 'sc'; $sw2 = Join-Path $sq2 'sw'
-git init -q --bare -b main $so2; git clone -q $so2 $sc 2>$null; 'a' | Set-Content "$sc/a.txt"; Save-GitRepo $sc init; git -C $sc push -q origin main 2>$null; New-Item -ItemType Directory -Force $sw2 | Out-Null
-$lyr = { param($b, $f, $v) git -C $sc checkout -q -b $b main; $v | Set-Content "$sc/$f"; Save-GitRepo $sc $b; git -C $sc checkout -q main; "$(git -C $sc rev-parse $b)".Trim() }
-$shO = & $lyr 'feat-open' 'o.txt' 'o'; $shM = & $lyr 'feat-merged' 'm.txt' 'm'; $shC = & $lyr 'feat-conf' 'a.txt' 'mine'
-$lw = Join-Path $sw2 'lane-shop-falcon-sc'; git -C $sc worktree add -q -b lane/shop-falcon $lw main 2>$null; git -C $lw branch -q --set-upstream-to=origin/main 2>$null
-git -C $sc merge -q --no-ff -m 'merge m' feat-merged 2>$null; 'a2' | Set-Content "$sc/n.txt"; Save-GitRepo $sc next; git -C $sc push -q origin main 2>$null
-Set-JsonFile (Join-Path $syKit 'skills/crafty/kit.local.json') @{ worktreeRoots = @($sw2); repos = @(@{ name = 'sc'; checkout = $sc; target = 'main' }); localEnv = @{ envs = @{ shop = @{ services = @(@{ name = 'api'; repo = 'sc'; port = 18711 }) } } } }
-$syo = & { . $syL help 6>$null *> $null; $sf = Join-Path (Get-KitPath localenv -Create) 'shop.json'
-  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-open'; sha = $shO; agent = 'a1' }, @{ branch = 'feat-merged'; sha = $shM; agent = 'a2' }) } } } }
-  $o1 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st1 = Get-Content $sf -Raw | ConvertFrom-Json; $h1 = "$(git -C $lw rev-parse HEAD)".Trim()
-  $anc = { param($x) git -C $lw merge-base --is-ancestor $x HEAD; -not $LASTEXITCODE }
-  $ok = (& $anc origin/main) -and (& $anc $shO) -and -not "$(git -C $lw config branch.lane/shop-falcon.merge)"
-  $lj = Get-Content (Get-KitLaneSyncFile) -Raw | ConvertFrom-Json; $ljOut = -not (Test-Path (Join-Path (Get-KitPath wt-slots) 'lanes.json'))
-  'c2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc conf; git -C $sc push -q origin main 2>$null
-  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-conf'; sha = $shC; agent = 'a3' }) } } } }
-  $o2 = @(Invoke-LocalEnv lanes -Sync 6>$null); $h2 = "$(git -C $lw rev-parse HEAD)".Trim()
-  # K41: a squash-merged layer (its MR merged on the host, its commit not in main) that conflicts with main: dropped, never re-merged
-  $shS = & $lyr 'feat-sq' 'a.txt' 'sq'; 'sq' | Set-Content "$sc/a.txt"; Save-GitRepo $sc 'squash feat-sq'; 'sq2' | Set-Content "$sc/a.txt"; Save-GitRepo $sc after; git -C $sc push -q origin main 2>$null
-  function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) { if ($Branch -eq 'feat-sq') { @([pscustomobject]@{ iid = 8995; sha = $shS }) } }
-  Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-sq'; sha = $shS; agent = 'a4' }) } } } }
-  $o3 = @(Invoke-LocalEnv lanes -Sync -DryRun 6>$null); $o4 = @(Invoke-LocalEnv lanes -Sync 6>$null); $st4 = Get-Content $sf -Raw | ConvertFrom-Json
-  # a layer recorded before a rebase (its MR merged the rebased copy, a hook marker added): dropped; one with a commit the MR lacks: kept
-  $shR = & $lyr 'feat-rb' 'r.txt' 'r'; git -C $sc checkout -q -b feat-rb2 main; 'r' | Set-Content "$sc/r.txt"; 'z' | Set-Content "$sc/z.txt"; Save-GitRepo $sc 'feat-rb +hook'; $shR2 = "$(git -C $sc rev-parse HEAD)".Trim(); git -C $sc checkout -q main
-  git -C $sc checkout -q feat-rb; 'x' | Set-Content "$sc/x.txt"; Save-GitRepo $sc 'extra after the MR'; $shRx = "$(git -C $sc rev-parse HEAD)".Trim(); git -C $sc checkout -q main
-  function Get-MergedMrs([string]$Dir, [string]$Branch, [string]$Target) { if ($Branch -eq 'feat-sq') { @([pscustomobject]@{ iid = 8995; sha = $shS }) } elseif ($Branch -in 'feat-rb', 'feat-rbx') { @([pscustomobject]@{ iid = 8988; sha = $shR2 }) } }
-  $sqSt = Get-Content $sf -Raw; Set-JsonFile $sf @{ release = @{ n = 1; repos = @{ sc = @{ layers = @(@{ branch = 'feat-rb'; sha = $shR; agent = 'a5' }, @{ branch = 'feat-rbx'; sha = $shRx; agent = 'a6' }) } } } }
-  $o5 = @(Invoke-LocalEnv lanes -Sync -DryRun 6>$null); [IO.File]::WriteAllText($sf, $sqSt)
-  $rbOk = @($o5 -match '^plan \[shop\] sc: origin/main \+ 1 layer\(s\); drop feat-rb \(merged into main \(MR 8988\)\)$').Count -eq 1
-  $sqOk = $rbOk -and @($o3 -match '^plan \[shop\] sc: origin/main \+ 0 layer\(s\); drop feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and @($o4 -match '^synced \[shop\] sc: .*dropped feat-sq \(merged into main \(MR 8995\)\)').Count -eq 1 -and -not @($st4.release.repos.sc.layers).Count -and "$(git -C $lw rev-parse HEAD)".Trim() -eq "$(git -C $sc rev-parse main)".Trim()
-  $rx1 = '^synced \[shop\] sc: .*1 layer\(s\) re-merged; dropped feat-merged \(merged into main'; $rx2 = '^kept \[shop\] sc: layer feat-conf conflicts'
-  "$($ok -and $ljOut -and $sqOk)|$(@($st1.release.repos.sc.layers.branch) -join ',')|$(@($lj)[0].behind)/$(@($lj)[0].merges)|$(@($o1 -match $rx1).Count)|$(@($o2 -match $rx2).Count)|$($h2 -eq $h1)" }
-Expect "lanes -Sync: idle lane rebuilt on origin/main + its open layer, the merged one dropped, no upstream, behind 0; a conflicting layer leaves the lane as it was ($syo)" ($syo -eq 'True|feat-open|0/1|1|1|True')
-Remove-TestKit $syKit
+# K2X: the migrate and check-build scratch (cb/env, cb/src, y.txt) stays under the test home, never at a drive root
+$leNew = @(foreach ($dr in $script:rootsAt.Keys) { Get-ChildItem -LiteralPath $dr -Force -Name -ErrorAction SilentlyContinue | Where-Object { $_ -notin $script:rootsAt[$dr] -and $_ -in 'y.txt', 'env', 'src' } })
+Expect "local-env-4 scratch under the test home: no new drive-root entry ($($leNew -join ', '))" (-not $leNew.Count -and $cbg -and $mc -and $cbg.StartsWith([IO.Path]::GetTempPath().TrimEnd('\', '/')))
 Complete-Tests

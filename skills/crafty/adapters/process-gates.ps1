@@ -130,7 +130,7 @@ function Add-KitApiCall([string]$Kind, [string]$Verb) {   # from lib.ps1 Invoke-
   try { $fs = [IO.File]::Open($env:KIT_API_LEDGER, 'Append', 'Write', 'ReadWrite'); try { $b = [Text.Encoding]::UTF8.GetBytes("$Kind $Verb $who`n"); $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() } } catch {}   # never fails a call
 }
 # a supervise beat: an empty ledger (a cut beat's lines are never the next one's) and a name for its shared host answers (K93: pokey
-# deployed_checks.ps1 Get-BeatShared); a cut beat's answers go after an hour -> the ledger path
+# deployed-checks.ps1 Get-BeatShared); a cut beat's answers go after an hour -> the ledger path
 function Start-KitApiBeat {
   $ld = Join-Path (Get-KitPath cache -Create) 'supervise-api.txt'; Remove-Item -LiteralPath $ld -Force -ErrorAction SilentlyContinue; $env:KIT_API_LEDGER = $ld; $env:KIT_API_BEAT = "$PID-$([DateTime]::UtcNow.Ticks)"
   Get-ChildItem (Join-Path (Get-KitPath cache) 'api-memo') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue   # walk-ok: beat folders, one level
