@@ -1417,7 +1417,7 @@ def md_to_html(md, title=''):
         i += 1
     close()
     # a phone (ui-check 390 px squeezed a 5-column table's cells to 62 px): each row stacks, a cell under its column name
-    narrow = ('<style>@media (max-width:640px){table,tbody,tr,td{display:block;width:auto!important}tr:first-child{display:none}'
+    narrow = ('<style>@media (max-width:640px){table,tbody,tr,td{display:block;width:auto!important}td{overflow-wrap:anywhere}tr:first-child{display:none}'
               'td::before{content:attr(data-l);display:block;font-weight:bold}}</style>')
     return f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>{narrow}</head><body>' + '\n'.join(out) + '</body></html>'
 
