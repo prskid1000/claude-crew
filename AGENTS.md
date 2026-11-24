@@ -57,11 +57,8 @@ the **Target**. A mixed request is split and each part routed on its own.
 | R19 | Understand a video, screen recording or screenshot (a tester's or user's link or file): what it shows, what was done, where it failed | `vidy` agent (kind question / index) | — (the agent loads `pokey`) |
 | R18 | A question, an explanation, an analysis, a plan, or how the kit fits together (README graph sections); no code change | direct | — |
 
-- **Crew** (the only agent types, spawned only through these targets; names, roles and characters: `kit.example.json`
-  `_manifest`): `devy` builds (one per brief area), `revy` reviews, `checky` tests (lead / test /
-  verify), `kitty` keeps the kit and the machine, `briefy` writes specs, briefs and contracts, `rechy` researches, `opsy` deploys on a
-  person's word, `watchy` watches deployed envs, `datay` guards test and local data, `vidy` reads videos and screenshots for any
-  agent (an existing vidy index is reused, never re-read).
+- **Crew** (the only agent types, spawned only through these targets; roles and characters: `kit.example.json` `_manifest`):
+  one `devy` per brief area; `briefy` writes specs, briefs and contracts; an existing `vidy` index is reused, never re-read.
   Each loads its skill first; its Character shapes judgement, tone and how it argues a dispute or debate, never a rule or the
   Writing standards. Step 0 of every agent reads the board (who is alive here); a disagreement: /buildy `disputes`, a
   debate or `board msg`, still split -> the owner decides (`decide ask`, both sides).

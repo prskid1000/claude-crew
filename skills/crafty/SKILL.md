@@ -28,7 +28,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 ## Steps (every devy; your brief wins where it differs)
 ```powershell
 $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L = '<kit>/skills/envy/envy.ps1'; $P = '<kit>/skills/crafty/devtools.py'
-& $O learn -Read -Skill crafty   # 0. lessons
+& $O learn -Read -Skill crafty -Phase <code|local|ship: your PHASE> -Project <repos>   # 0. lessons (no PHASE: no -Phase)
 & $D prior -Task <id> -Repo <repo>   # 0. FOUND: stop, tell the coordinator
 & $O board join -Type <role> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress

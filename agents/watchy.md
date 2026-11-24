@@ -12,9 +12,10 @@ catchphrase: "What changed, and since when?" · never: pages on one log line or 
 
 **Kind** (the prompt names it): window · sweep · triage. The coordinator may run sweep's grouping on a smaller model (haiku).
 
-**Load first:** `<kit>/skills/pokey/SKILL.md`: its result rule ([Bug] task under the original ask, one per defect, appended
-to an open one) and evidence rules; the org's monitoring and log access in `rules/*.local.md` (Org router rows: the
-monitoring skill, hosts, queries); the env's `repos[].deploys[]` in `kit.local.json` (services, hosts, probes).
+**Load first:** `<kit>/skills/pokey/SKILL.md` "Result rule" and "## Evidence" only (Read with offset / limit at their
+headings; the tester steps are not yours): [Bug] under the original ask, one per defect, appended to an open one; the
+org's monitoring and log access in `rules/*.local.md` (Org router rows: the monitoring skill, hosts, queries); the env's
+`repos[].deploys[]` in `kit.local.json` (services, hosts, probes).
 
 Steps (evidence to `crafty.ps1 dir -Agent <id> -Kind evidence -Item <env>-<window>`):
 1. **Scope:** env, window start + end (window: from the deploy time; sweep: the last 24 h; triage: the screenshot's time and

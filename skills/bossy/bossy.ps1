@@ -2,7 +2,7 @@
 bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skills/bossy/bossy.ps1 <verb> [args]
   board join|beat|check|leave|show|msg|inbox -Agent -Run [-Claims] [-Session] [-Tool] [-Kind] [-Ref]   agent board, messages;
     check -Decision continue|handoff -Reason <why> -Ctx <key>: answers a CONTEXT-CHECK (board beat, the Claude Code hook)
-  learn -Skill -Kind -Text | -Read | -Show (-When -Do -Why | -Bump | -Fixed | -Trim | -Stats | -History)   signals, lessons
+  learn -Skill -Kind -Text | -Read [-Phase -Project] | -Show (-When -Do -Why | -Bump | -Fixed | -Trim | -Stats | -History)   signals, lessons
   launch -RunId -Script -ArgsJson | -Self -Script -Run -ArgsFile -Fnv [-Plan] | -Check -ArgsFile (buildy item tasks) | -Done -RunId|-Run | -List [-Brief]
   recover [-RunId <id> | -Run <runs>] [-Hours 24] [-MaxSeconds 150] [-Everyone]   stopped runs: state, resume brief, exact resume call
   pause -Run <run> | -All [-Reason] [-Wait <min>] [-Everyone] | -Status · resume -Run <run> | -All [-Wait <min>] [-Hours 24] [-MaxSeconds 150] [-Everyone]
@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L252 budget · L282 launch · L525 recover · L612 pause · L623 resume · L690 program · L728 param ·
   L734 track · L1122 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
-  L1733 decide · L1903 debate · L1947 health · L2015 setup · L2110 guard-sendmessage
+  L1734 decide · L1903 debate · L1947 health · L2015 setup · L2110 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1702,7 +1702,7 @@ function Invoke-Learn {
     [string]$Skill, [string]$Kind,
     [string]$Text, [string]$Ref = '', [string]$Source = 'agent',
     [switch]$Show, [int]$Last = 30, [switch]$Stats, [switch]$Read, [switch]$History, [string]$Grep,
-    [string]$Lesson, [string]$When, [string]$Do, [string]$Why, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40
+    [string]$Lesson, [string]$When, [string]$Do, [string]$Why, [string]$Project, [string]$Fixed, [string]$Bump, [string]$Append, [switch]$Trim, [int]$Max = 40, [string]$Phase
   )
   if ($Stats -or $History -or $Lesson -or $When -or $Fixed -or $Bump -or $Trim) {   # the retro's tools (kitty, /tidy)
     Invoke-LearnAdmin @PSBoundParameters; return
@@ -1715,11 +1715,12 @@ function Invoke-Learn {
       $L = Read-KitLessonLines $f; $r = Find-KitLessonSection $L $Skill; if (-not $r) { continue }
       # read cap (learn.readCap, -Max): most-hit lessons; the rest wait for /tidy -Trim
       $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' }); $rcap = if ($PSBoundParameters.ContainsKey('Max')) { $Max } else { [int](Get-KitParam 'learn.readCap') }
+      $lines = @(Select-KitLessonScope $lines $Skill $Phase $Project)
       $lsIdx = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -like '- *' }); $lsOut = @($lsIdx | Sort-Object { if ($lines[$_] -match '\((\d+)[x×]\)\s*$') { -[int]$Matches[1] } else { -1 } }, { -$_ } | Select-Object -Skip $rcap)
       $lines = @(0..($lines.Count - 1) | Where-Object { $_ -notin $lsOut } | ForEach-Object { $lines[$_] }) + @(if ($lsOut.Count) { "($($lsOut.Count) more, fewest hits: learn -Read -Skill $Skill -Max 99)" })
       if ($lines.Count -gt 1) { "$(if ($f -like '*.local.md') { '(local) ' })$($lines -join "`n")" }
     }
-    Get-KitRoleRules $Skill
+    Get-KitRoleRules $Skill $Phase $Project
     return
   }
   $kinds = 'friction | failure | defect-missed | false-positive | rule-violation | stale-env | flaky | idea | win'
@@ -1770,7 +1771,7 @@ function Invoke-Decide {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Context "today: <what happens now>" -Question "<q>" -Options "A: <label> — <its effect>","B: .." -Recommend A [-Fyi] [-Contracts <file>]'; exit 2 }
       $opts = @(Get-KitDecisionChoices @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) $Recommend)
-      # the owner may not know the internals: today's behaviour + why, each option's effect, a recommendation (owner 2026-11-23)
+      # owner 2026-11-23: today + why, each option's effect, a pick
       $miss = @(if ($Kind -eq 'decision') {
           if (-not $Context -and @("$Question" -split '\s+').Count -lt 15) { '-Context "today: <what happens now, a short example>; why it comes up"' }
           if ($opts.Count -lt 2) { 'two or more -Options' }
@@ -1818,8 +1819,7 @@ function Invoke-Decide {
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
-      # a scope ask (-Gate scope, or its question names `decide record -Gate scope`) answered with a pick that records or approves:
-      # the scope word too (wt commit -ScopeOk needs it)
+      # a scope ask (-Gate scope, or naming `decide record -Gate scope`) answered by a recording pick: the scope word (wt commit -ScopeOk)
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($o.gate -eq 'scope') { "$($o.item)" }
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))\b" })[0]
       if ($scItem -and $By -notmatch $crewRx) {

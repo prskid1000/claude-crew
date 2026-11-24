@@ -111,6 +111,9 @@ $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE
 Expect 'kit-admin: learn -Bump miss exits 1, LESSONS.md lock released' ($bc -eq 1 -and -not (Test-FileLockHeld (Join-Path $kc 'LESSONS.md')))
 Add-Content (Join-Path $kc 'LESSONS.md') "`n## zz`n- old one -> a (b)`n- hit -> a (b) (3×)`n- new one -> a (b)"; $rz = @((& $lo -Read -Skill zz -Max 2) -split "`r?`n" | Where-Object { $_ }) -join '|'
 Expect "learn -Read cap: the most-hit lessons in file order, the oldest of the fewest-hit left out and counted (T7) ($rz)" ($rz -match '^## zz\|- hit -> a \(b\) \(3×\)\|- new one -> a \(b\)\|\(1 more, fewest hits' -and $rz -notmatch 'old one')
+Add-Content (Join-Path $kc 'LESSONS.md') "`n## zy`n- [code] c1 -> a (b)`n- [ship] s1 -> a (b)`n- all1 -> a (b)`n### Logins (pokey)`n- lg -> a (b)`n### Project: p1`n- pj1 -> a (b)`n### Project: p2`n- pj2 -> a (b)"
+$ry = (& $lo -Read -Skill zy -Phase code -Project p1) -join '|'; $ra = (& $lo -Read -Skill zy) -join '|'
+Expect "learn -Read -Phase -Project: [phase] lines, '### (skills)' blocks and Project blocks scoped; no flag: all but other skills' blocks ($ry / $ra)" ($ry -match 'c1' -and $ry -match 'all1' -and $ry -match 'pj1' -and $ry -notmatch 's1|lg|pj2' -and $ra -match 's1' -and $ra -match 'pj2' -and $ra -notmatch 'lg')
 '{ "orgTerms": ["Acmecorp"] }' | Set-Content (Join-Path $kc 'skills/crafty/kit.local.json')
 $null = & $lo -Skill revy -When 'a generic case' -Do 'a generic lesson' -Why 'test'; $null = & $lo -Skill revy -When 'an Acmecorp case' -Do 'an Acmecorp lesson' -Why 'org'
 $null = & $lo -Skill revy -Lesson 'free text, no shape'; $freeCode = $LASTEXITCODE

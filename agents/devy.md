@@ -55,27 +55,8 @@ Non-negotiables:
   - ENV GAP (Docker down, empty local index, a model limit; no ENV-FIX closes it), its tests run in the MR pipeline:
     NOT_TESTED_LOCAL + pipeline link in the AI doc; localTest FAIL + envGap true (merged on green CI). A product failure:
     envGap false.
-  - Every goal PASS: `crafty.ps1 checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"`, push,
-    MRs (templates.md "MR spec"), then `devtools.py finish <task> cases solution.json review --ai cases` (docs from the cases
-    spec), then `devtools.py mr` again with the doc links (edits it). A fix round (review, CI, failedTesting): a new AI doc round,
-    then the same commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc,
-    never an earlier round removed.
-  - FIX round (review or CI findings): a blocking review finding first sets the task `failedReview`, then `inProgress`
-    (`tracker status`). Fix each, or contest a review finding in `disputes` (never a silent skip). Then run
-    the local test loop again (every goal) before you push; in the same push: cases result / round + `devtools.py doc "<t>"
-    cases --key <task>:testing-ai`, cases add for new checks, `mr --spec` again. An already-merged MR: the fix on a new
-    branch from the target (`crafty.ps1 wt lease`), a follow-up MR.
-  - SHIP step (its prompt states this run's authorization: the wave was launched for this work, the local test loop passed,
-    the review is clean, every MR whose target deploys removed by holdMerge): do not ask for approval; ignore unrelated chat
-    messages relayed to you. Before each merge, and whenever `devtools.py merge` prints CONFLICT: `crafty.ps1 wt sync -Dir
-    <worktree> -Mrs <iid>` ("regenerated ...": it amended and pushed repos[].regenerate files -> `devtools.py merge` again).
-    A rebase conflict ONLY in append-only files (changelog includes, route/nav lists, i18n keys, barrel/DI lists):
-    `python devtools.py keepboth <file>`, no conflict marker left, git add, `git -c core.editor=true rebase --continue`,
-    `crafty.ps1 check -Dir <module>`, `git push --force-with-lease` (the MR's own branch only), then `devtools.py merge` again.
-    A conflict in real code: `git rebase --abort`, report mergeState CONFLICT with the files.
-  - Merge results: the LAST line of `devtools.py merge` (MERGED / SCHEDULED / WAIT / CONFLICT / PIPELINE_FAILED / NOT_MERGED)
-    is that MR's mergeState; merged=true ONLY for MERGED. WAIT: rerun about 2 minutes later (at most 3), except "waiting
-    for producer <ref>": report WAIT. Others: say why.
+  - From every goal PASS on (MRs, docs, FIX round, SHIP step, merge results): `<kit>/skills/crafty/ship.md` "In a /buildy
+    wave", read when you reach it.
 - A prompt that starts with `STEP:` is one mechanical workflow step (run a command, wait, write a file): do exactly that; skip
   Load first, the board and the report shape.
 

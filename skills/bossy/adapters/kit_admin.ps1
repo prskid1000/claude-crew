@@ -6,16 +6,33 @@ kit_admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L118 health · L127 browser policy · L170 prepush · L234 weekly tests · L270 state lint · L279 precommit
+Sections: L13 learn · L135 health · L144 browser policy · L187 prepush · L251 weekly tests · L287 state lint · L296 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
 # ---- learn: lesson tools, -Stats, -History
 # learn -Read: org rules only some roles need (kept out of the always-loaded rules/): each ROLES.local.md '## a, b' section naming the skill, blank lines dropped, never cut (rules)
-function Get-KitRoleRules([string]$Skill) {
+function Get-KitRoleRules([string]$Skill, [string]$Phase = '', [string]$Project = '') {
   $on = $false
   $ro = @(foreach ($rl in (Read-KitLessonLines (Join-Path $KitConf.Kit 'ROLES.local.md'))) { if ($rl -match '^## (.+)$') { $on = @($Matches[1] -split ',' | ForEach-Object { $_.Trim() }) -contains $Skill }; if ($on -and $rl.Trim()) { $rl } })
+  $ro = @(Select-KitLessonScope $ro $Skill $Phase $Project)
   if ($ro.Count -gt 1) { "(org rules for ${Skill}: ROLES.local.md)`n$($ro -join "`n")" }
+}
+# learn -Read scope (owner 2026-11-24: lessons per phase and role): '- [<phase>] ...' lines only in that phase; a '### <title> (<a, b>)'
+# block whose names are all skills, agents or phases only for those; '### Project: <p>' only for -Project p. No -Phase / -Project: all.
+function Select-KitLessonScope([string[]]$Lines, [string]$Skill, [string]$Phase, [string]$Project) {
+  $phases = 'code', 'local', 'ship'; $known = @($phases) + @(Get-ChildItem (Join-Path $KitConf.Kit 'skills') -Directory -ErrorAction SilentlyContinue).Name + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).BaseName
+  $projects = @($Project -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }); $keep = $true
+  foreach ($ln in $Lines) {
+    if ($ln -match '^## ') { $keep = $true; $ln; continue }
+    if ($ln -match '^### Project:\s*(.+?)\s*$') { $keep = -not $projects.Count -or $Matches[1] -in $projects }
+    elseif ($ln -match '^### .*\(([^)]+)\)\s*$' -and ($tags = @($Matches[1] -split ',' | ForEach-Object { $_.Trim() })) -and -not @($tags | Where-Object { $_ -notin $known }).Count) {
+      $keep = $Skill -in $tags -or ($Phase -and $Phase -in $tags) -or (-not $Phase -and @($tags | Where-Object { $_ -in $phases }).Count) }
+    elseif ($ln -match '^### ') { $keep = $true }
+    if (-not $keep) { continue }
+    if ($Phase -and $ln -match '^- \[([a-z]+)\] ' -and $Matches[1] -in $phases -and $Matches[1] -ne $Phase) { continue }
+    $ln
+  }
 }
 # a lesson naming a vendor / stack / runner word or an org-shaped name (lint-vocab.json lesson families, lessonOrg; lint LESSONS-ORG) -> local
 function Test-KitVendorLesson([string]$Text) {

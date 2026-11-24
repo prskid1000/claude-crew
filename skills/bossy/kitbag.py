@@ -20,9 +20,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L38 paths · L135 state · L192 kitlog · L294 load · L756 lint · L1168 README graph · L1275 lint command · L1556 audit ·
-  L1704 registry · L2036 arch lint · L2309 prose · L2489 sections · L2619 budget · L2635 migrate · L2783 plugins ·
-  L2840 state lint · L3028 main
+Sections: L38 paths · L135 state · L192 kitlog · L294 load · L778 lint · L1190 README graph · L1297 lint command · L1578 audit ·
+  L1726 registry · L2058 arch lint · L2331 prose · L2511 sections · L2641 budget · L2659 migrate · L2807 plugins ·
+  L2864 state lint · L3052 main
 """
 import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -331,6 +331,28 @@ def start_rows(k):
         skill = m.get('skill') or ''
         own = ftok(f'agents/{agent}.md') + (ftok(f'skills/{skill}/SKILL.md') if skill else 0) + sum(section_tok(x) for x in {agent, skill} if x)
         rows.append((agent, always, own))
+    return rows
+
+# buildy.js PH: a fresh devy per phase (crafty steps); its lessons are untagged + '- [<phase>]' ones (learn -Read -Phase)
+PHASES = {'devy': {'code': 0, 'local': 5, 'ship': 6}}
+def phase_rows(k):
+    """[(role:phase, always, own)]: a phased role's start per phase: agent file, skill, its lessons for that phase and each
+    Files-index doc whose step range starts at the phase's first step (ship: ship.md). Lint START-BUDGET, like start_rows."""
+    tok = lambda s: (len(s.encode('utf-8')) + 3) // 4
+    lessons = k.texts.get('LESSONS.md') or ''
+    rows, base = [], {r: (a, o) for r, a, o in start_rows(k)}
+    for role, phases in PHASES.items():
+        skill = ((manifest(k.dir).get('agents') or {}).get(role) or {}).get('skill') or ''
+        if role not in base:
+            continue
+        always, own = base[role]
+        full = sum(tok((re.search(r'^## ' + re.escape(x) + r'\r?\n(.*?)(?=^## |\Z)', lessons, re.S | re.M) or [''])[0]) for x in {role, skill} if x)
+        for ph, first in phases.items():
+            keep = ''.join(l + '\n' for x in {role, skill} if x for l in ((re.search(r'^## ' + re.escape(x) + r'\r?\n(.*?)(?=^## |\Z)', lessons, re.S | re.M) or [''])[0]).splitlines()
+                           if not (m := re.match(r'- \[(\w+)\] ', l)) or m.group(1) not in phases or m.group(1) == ph)
+            docs = sum(tok(read(osp.join(k.dir, f)) or '') for n, when, hits in k.index.get(skill, []) for f in hits[:1]
+                       if f.endswith('.md') and (m := re.search(r'\bsteps? (\d+)(?:-\d+)?\b', when)) and int(m.group(1)) == first and first)
+            rows.append((f'{role}:{ph}', always, own - full + tok(keep) + docs))
     return rows
 def instr_cap(kdir, key='cap', dflt=75000):
     """budget.instructions.<key> of kit.example.json: cap = kit-instruction tokens one agent may hold (75k at the 200k design
@@ -941,10 +963,10 @@ def lint(k, g=None, org_terms=None):
     if len(plumbing) > cap_p:
         bad('PLUMBING-CAP', 'kit', f'{len(plumbing)} plumbing files (cap {cap_p}: LICENSE, .gitignore, .gitattributes, .githooks/*, '
          f'.github/*, settings.json): {", ".join(plumbing)}')
-    # ---- token budgets: per role at start, per file type
-    for role, always, own in start_rows(k):
+    # ---- token budgets: per role (and devy phase) at start, per file type
+    for role, always, own in start_rows(k) + phase_rows(k):
         if always + own > instr_cap(k.dir, 'start', START_CAP):
-            bad('START-BUDGET', f'agents/{role}.md', f'{role} loads {always + own} tokens at start (always-loaded {always} + own {own}; cap '
+            bad('START-BUDGET', f'agents/{role.split(":")[0]}.md', f'{role} loads {always + own} tokens at start (always-loaded {always} + own {own}; cap '
                 f'{START_CAP}): move detail behind a pointer (a doc its skill names at the step that needs it)')
     sizes = {f: size_tokens(k.dir, f) for f in counted}
     icap = instr_cap(k.dir)
@@ -2626,6 +2648,8 @@ def cmd_budget(a):
     k = load(KIT_DIR)
     sizes = {f: size_tokens(KIT_DIR, f) for f in counted_files(KIT_DIR)}
     reads = {r: t for r, t, _ in read_rows(k, sizes)}
+    for role, always, own in phase_rows(k):
+        print(f'{role:10} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own}: phase lessons, entry docs)')
     for role, always, own in start_rows(k):
         print(f'{role:8} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own}) · with every read {reads.get(role, 0)} of {instr_cap(KIT_DIR)}')
     total, tests = split_total(sizes)
