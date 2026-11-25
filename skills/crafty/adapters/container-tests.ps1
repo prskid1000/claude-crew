@@ -68,6 +68,18 @@ function Add-KitReactorTestFlags([string]$Cmd) {
 }
 # ---- engine: a container engine answers before Testcontainers tests (a configured runtime is leased)
 function Invoke-KitJvmTestPrep { Test-DockerForContainerTests }
+# tests.containerWhen {"<repo>/<module>" glob: [path globs]} (owner 2026-11-25: skip local container tests unless needed): a run of
+# only container / integration tests goes on here when the diff touches one of the paths (persistence), else CI / staging runs them
+function Exit-KitContainerLocal([bool]$OnlyContainer) {
+  $cw = Get-KitSetting 'tests.containerWhen' $null; if ($Force -or $Show -or -not $cw) { return }
+  $Repo = Get-CheckRepo; if (-not $Repo.top) { return }
+  $key = "$(if ($Repo.conf.name) { $Repo.conf.name } else { Split-Path "$($Repo.top)" -Leaf })/$([IO.Path]::GetRelativePath("$($Repo.top)", $st.dir).Replace('\', '/'))".TrimEnd('/', '.')
+  $globs = @(foreach ($p in @(Get-KitProps $cw)) { if ($key -match (ConvertTo-GlobRx $p.Name)) { @($p.Value) } }); if (-not $globs.Count) { return }
+  $hit = @(Get-ChangedFiles | ForEach-Object { [IO.Path]::GetRelativePath("$($Repo.top)", $_).Replace('\', '/') } | Where-Object { Test-Glob $_ $globs })
+  if ($hit.Count) { Write-Host "[check] container tests run here: the diff touches persistence ($($hit[0]))"; return }
+  if (-not $OnlyContainer) { Write-Host "[check] container tests named with unit tests: no persistence change (tests.containerWhen '$key'): name the unit tests alone, CI runs the rest"; return }
+  Write-Host "[check] container / integration tests left to CI: the diff touches no persistence path (tests.containerWhen '$key'); -Force runs them here"; exit 0
+}
 function Test-DockerForContainerTests {
   $names = @($Tests -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { (($_ -split '#')[0] -split '\.')[-1] })
   $need = @($names | Where-Object { $_ -match '(Container|IT)(Test)?$' }).Count -gt 0
@@ -86,6 +98,7 @@ function Test-DockerForContainerTests {
     }
   }
   if (-not $need) { return 0 }
+  Exit-KitContainerLocal ($names.Count -gt 0 -and -not @($names | Where-Object { $_ -notmatch '(Container|IT)(Test)?$' }).Count)   # -AllTests: the unit tests run
   $why = 'neither docker nor podman is on PATH'   # Colima: the docker CLI; Podman for Testcontainers: DOCKER_HOST = its socket
   foreach ($x in 'docker', 'podman') {
     if ((Get-Command Use-KitRuntime -ErrorAction SilentlyContinue) -and (Get-KitSetting "runtimes.$x.isUp" '')) {   # a configured runtime: leased (started when down)

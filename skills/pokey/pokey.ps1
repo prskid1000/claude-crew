@@ -1426,7 +1426,14 @@ if ($ids.Count) {
   $subIn = { param($Sub) if ($stPick.Count) { [bool]@($stPick | Where-Object { (Test-TrackerStatus "$($Sub.status)" $_) -or "$($Sub.status)" -ieq $_ }).Count } else { -not (Test-TrackerStatus "$($Sub.status)" 'closed') } }
   foreach ($tid in $ids) { $cand["$tid"] = ''; foreach ($sub in @((Get-TrackerTask "$tid").subtasks | Where-Object { $_.id })) { if (& $subIn $sub) { $cand["$($sub.id)"] = '' } } }
 } else { foreach ($ls in $lists) { foreach ($st in $sts) { foreach ($row in @(Get-TrackerTasks "$ls" "$st")) { if ($row.id) { $cand["$($row.id)"] = "$ls" } } } } }
-foreach ($tid in @($jb.exclude | Where-Object { $_ })) { $cand.Remove("$tid") }
+# tracked tasks a list sweep misses (a ClickUp list omits subtasks; another list): merged within deploy.doneLookbackDays, live status
+# in a selected role (2026-11-25: 18 subtasks in "for test" never selected, not even left out)
+$nTracked = 0
+if (-not $ids.Count -and -not @($jb.lists | Where-Object { $_ }).Count) { $lbD = [double](Get-KitParam 'deploy.doneLookbackDays')
+  foreach ($o in @((Read-KitTracking).tasks.Values | Where-Object { $_.task -and $_.done -and $_.doneAt -and -not $cand.Contains("$($_.task)") -and ((Get-Date) - [datetime]$_.doneAt).TotalDays -le $lbD })) {
+    $lt = try { Get-TrackerTask "$($o.task)" } catch { $null }
+    if ($lt -and @($sts | Where-Object { (Test-TrackerStatus "$($lt.status)" $_) -or "$($lt.status)" -ieq $_ }).Count) { $cand["$($o.task)"] = ''; $nTracked++ } } }
+foreach ($tid in @($jb.exclude | Where-Object { $_ })) { $cand.Remove("$tid") }; $nList = $cand.Count - $nTracked
 $owner = if ($jb.mine) { "$(Get-TrackerOwner)" }
 $tgtRules = Get-KitSetting "qa.targets.$($jb.target)" $null
 $gSpec = Get-QaGuideDocSpec
@@ -1480,11 +1487,11 @@ $run = [ordered]@{ name = "$($jb.name)"; label = "$lb"; started = (Get-KitStamp)
 foreach ($rk in @(@($jb.runSettings.Keys) | Where-Object { $_ -and $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
 Write-KitAtomic "$dir/run.json" ($run | ConvertTo-Json -Depth 8)
 $cell = { param($Text) "$Text" -replace '\s+', ' ' -replace '\|', '\|' }
-$ln = @("# Lead notes: $(Split-Path $dir -Leaf)", "**Result:** $($items.Count) in, $($left.Count) left out · target $($jb.target)", '', '## Prerequisites', '', '| Item | Flags / accounts / data ids | State |', '|---|---|---|') +
+$ln = @("# Lead notes: $(Split-Path $dir -Leaf)", "**Result:** $($items.Count) in, $($left.Count) left out of $($cand.Count) $($sts -join ' / ') task(s) on $($jb.target) (lists $nList, tracked off-list $nTracked)", '', '## Prerequisites', '', '| Item | Flags / accounts / data ids | State |', '|---|---|---|') +
   @($items | ForEach-Object { "| $($_.code) $(& $cell $_.title) | from the guide | $(if ($_.localEnv) { "envy.ps1 status -Env $($_.localEnv): every MR commit running?" } else { 'to check' }) |" }) + @('', '## Left out', '', '| Task | Reason |', '|---|---|') +
   @($left | ForEach-Object { "| $($_.id) $(& $cell $_.name) | $(& $cell $_.reason) |" }) + @('', '## Answers (newest last)', '')
 Write-KitAtomic "$dir/lead-notes.md" (($ln -join "`n") + "`n")
-"prepared $dir`: $($items.Count) item(s), $($left.Count) left out"
+"prepared $dir`: $($items.Count) item(s), $($left.Count) left out of $($cand.Count) (lists $nList, tracked off-list $nTracked)"
 & $printRun $run
 }
 # testers ask and the lead answers in lead-notes.md: one line each under "## Answers (newest last)"

@@ -8,7 +8,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/dashboard-2.tests.ps1 (or tests/kit-tes
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/adapters/waits.ps1', 'skills/bossy/adapters/deploys.ps1')   # DEPLOY IDLE / STALLED
+$TestKitFiles = @('skills/bossy/adapters/waits.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/adapters/deploy-merge.ps1', 'skills/pokey/adapters/deployed-checks.ps1')   # DEPLOY IDLE / STALLED
 $k = New-TestKit dashboard2; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # no parity panel (owner 2026-11-24: parity stays internal, kitbag.py parity): an old report's stats.parity renders nothing, no kitbag.py call
 $pq = & { . $O; $global:pqx = 0; function Invoke-KitExe { $global:pqx++; [pscustomobject]@{ code = 0; out = '{}'; err = '' } }
@@ -119,5 +119,8 @@ $dw = & { . $O; $n = Get-Date; $iso = { param($m) $n.AddMinutes(-$m).ToString('o
     (Get-Item $tf).LastWriteTime = $n.AddMinutes(-20); Set-JsonFile (Join-Path $bd "$($a[0]).json") @{ agent = $a[0]; type = $a[1]; status = 'working'; transcript = $tf } }
   "$(@(Get-KitDeployIdle $n 10 | ForEach-Object { "$($_.name)/$($_.agent)" }) -join ',')|$(@(Get-KitStalledWaits $n 10 | ForEach-Object agent) -join ',')|$(@(Get-KitSuperviseFlagsWaits -At $n | Where-Object level -eq 'ACT' | ForEach-Object kind) -join ',')" }
 Expect "waits: DEPLOY IDLE (done, or its CI run done, no record) names the live opsy; STALLED = a wait with no open background command ($dw)" ($dw -eq 'A/opsy-1,C/opsy-1|opsy-1|DEPLOY IDLE,DEPLOY IDLE,STALLED')
+# deploy intest probe: never under one -TimeoutSec round once lookups used the budget (was a 15 s floor); no budget: 10 x -TimeoutSec
+$ip = & { . $O; $s = (Get-Date).AddSeconds(-40); @((Get-KitInTestProbeSec 50 240 $s), (Get-KitInTestProbeSec 300 100 $s), (Get-KitInTestProbeSec 0 100 $s) | ForEach-Object { [int][math]::Round($_ / 10) * 10 }) -join ',' }
+Expect "deploy intest: probe seconds = budget left, at least -TimeoutSec + 10; no budget 10 x ($ip)" ($ip -eq '250,260,1000')
 Remove-TestKit $k
 Complete-Tests

@@ -5,7 +5,8 @@ Usage: pwsh -NoProfile -File <kit>/tests/crafty-config.tests.ps1 (or tests/kit-t
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$k = New-TestKit config; $D = Join-Path $k 'skills/crafty/crafty.ps1'
+$TestKitFiles = @('skills/crafty/adapters/container-tests.ps1', 'skills/crafty/adapters/runtimes.ps1')   # containerWhen
+$k = New-TestKit config; $D =Join-Path $k 'skills/crafty/crafty.ps1'
 $dkl = "$k/skills/crafty/kit.local.json"
 $tr = Join-Path (Kd) 'touched-repo'; New-Item -ItemType Directory -Force "$tr/src" | Out-Null; '{ "stack": "custom", "commands": { "test": "node -e 0" } }' | Set-Content "$tr/.claude-stack.json"
 'x' | Set-Content "$tr/src/Audit.spec.ts"; Save-GitRepo $tr i; 'x' | Set-Content "$tr/src/Audit.ts"
@@ -189,6 +190,18 @@ $raceJs = Join-Path (Kd) 'stamp-race.js'; "require('fs').appendFileSync(process.
 (@{ stack = 'custom'; commands = @{ test = "node `"$raceJs`" {tests}" } } | ConvertTo-Json) | Set-Content "$sd/.claude-stack.json"; git -C $sd init -q; git -C $sd add -A; git -C $sd -c user.name=t -c user.email=t@t commit -q -m init
 $slotsOf = { @((Get-Content (pwsh -NoProfile -Command ". '$(Lib)'; Get-CheckStampFile '$sd'") -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -AsHashtable).Values | Where-Object { $_ -and -not $_.rc }).Count }
 $rc1 = pwsh @np $D check -Dir $sd -Step test -Tests A 2>&1 | Out-String; $rs1 = & $slotsOf; $null = pwsh @np $D check -Dir $sd -Step test -Tests B 2>&1; $rs2 = & $slotsOf
+# tests.containerWhen (owner 2026-11-25): container / IT tests alone run here only when the diff touches a persistence glob; mixed
+# with unit tests they run (with a hint); a matching change runs them (no engine here: exit 4)
+$ctd = Join-Path (Kd) 'ct-repo'; $ctm = Join-Path $ctd 'api'; $ctb = Join-Path (Kd) 'ct-bin'; New-Item -ItemType Directory -Force $ctm, $ctb | Out-Null
+'<project><dependency>org.testcontainers</dependency></project>' | Set-Content "$ctm/pom.xml"; '{ "stack": "java-maven", "commands": { "test": "echo {tests}" } }' | Set-Content "$ctm/.claude-stack.json"
+if ($IsWindows) { foreach ($x in 'docker', 'podman') { '@exit /b 1' | Set-Content "$ctb/$x.cmd" } } else { foreach ($x in 'docker', 'podman') { "#!/bin/sh`nexit 1" | Set-Content "$ctb/$x"; chmod +x "$ctb/$x" } }
+git -C $ctd init -q; git -C $ctd add -A; git -C $ctd -c user.name=t -c user.email=t@t commit -q -m init
+$ctCf = Join-Path $k 'skills/crafty/kit.local.json'; $ctWas = Get-Content $ctCf -Raw -ErrorAction SilentlyContinue   # an earlier case's switches (presets off) would hide the JVM prep
+& $J @{ tests = @{ containerWhen = @{ 'ct-repo/*' = @('**/repository/**', '**/liquibase/**') } } } $ctCf
+$ctP0 = $env:PATH; $env:PATH = "$ctb$([IO.Path]::PathSeparator)$env:PATH"; $ctRun = { param([string]$T) $o = pwsh @np $D check -Dir $ctm -Step test -Tests $T 2>&1 | Out-String; "${LASTEXITCODE}:$([int]($o -match 'left to CI')):$([int]($o -match 'name the unit tests alone')):$([int]($o -match 'touches persistence'))" }
+$ctr = @(& $ctRun 'OrderIT'; & $ctRun 'OrderIT,OrderTest'; (New-Item -Force -ItemType File "$ctm/src/main/java/a/repository/R.java" | Out-Null); & $ctRun 'OrderIT')
+$env:PATH = $ctP0; if ($ctWas) { Set-Content $ctCf $ctWas -NoNewline } else { Remove-Item $ctCf }
+Expect "check: tests.containerWhen leaves container tests to CI without a persistence change; mixed run with a hint; a repository change runs them ($($ctr -join ' '))" (($ctr -join ' ') -eq '0:1:0:0 4:0:1:0 4:0:0:1')
 Expect "check stamps: an edit during the run is said and not stamped; a clean run is ($([int]($rc1 -match 'changed during')) $rs1 $rs2)" ($rc1 -match 'sources changed during the run' -and $rs1 -eq 0 -and $rs2 -eq 1)
 Remove-TestKit $k
 Complete-Tests

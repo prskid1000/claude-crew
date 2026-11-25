@@ -118,5 +118,12 @@ if ($bk) {
     "const r = await m.matrix(s, async (v) => v.tag, o(['1280x720', '1920x1080'], [2])); console.log(r.map((x) => x.result).join(), vs.join(), await m.matrix(s, 0, o(['1280'])).catch((e) => /<width>x<height>/.test(e.message)))")
   Expect 'browser.mjs matrix: each qa.matrix variant, viewport restored; a bad viewport names its fix' ("$res" -eq '1280x720_f2,1920x1080_f2 1280,1920,9 true')
 }
+# prepare (moved from qa-config: its cap): the run title is cut to 25 words
+$ttl = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Limit-KitWords ((1..30 | ForEach-Object { ""w`$_"" }) -join ' ') 25 '+3-items'), (Limit-KitWords 'a b' 25 x)"
+Expect "prepare: the run title is cut to 25 words at creation (finalize -Check limit), the last word says how many items ($($ttl[0]))" (@($ttl[0] -split ' ').Count -eq 25 -and $ttl[0] -match 'w24 \+3-items$' -and $ttl[1] -eq 'a b' -and (Get-Content $Q -Raw) -match 'title = \(Limit-KitWords ')
+# guide copy (owner 2026-11-22: a 1494-line guide of earlier runs): the head + the newest env run, older runs only counted; one run: whole
+$gkept = Join-Path (Kd) 'kept.md'; Set-Content $gkept "# Testing: X`n## Checks`n| C1 | a |`n## shop-staging run 2026-11-05 16:54`nold-a`n## shop-staging run 2026-11-07 09:18`nnew-b`n### Results`nnew-c`n## docs-staging run 2026-11-06 10:20`nold-d"
+$gcp = pwsh -NoProfile -Command "`$a = [Management.Automation.Language.Parser]::ParseFile('$Q', [ref]`$null, [ref]`$null); iex `$a.Find({ param(`$n) `$n.Name -eq 'Copy-QaGuide' }, `$true).Extent.Text; Copy-QaGuide '$gkept' '$gkept.out'; Copy-QaGuide '$gkept.out' '$gkept.one'; (Get-Content '$gkept.out') -join '|'; (Get-Content '$gkept.one') -join '|'"
+Expect "guide copy: head + newest run (its ### parts), older runs named; a one-run doc copied whole ($($gcp -join ' // '))" ($gcp[0] -match '^# Testing: X\|## Checks\|\| C1 \| a \|\|## shop-staging run 2026-11-07 09:18\|new-b\|### Results\|new-c\|\|> Older runs \(2\): ' -and $gcp[0] -notmatch 'old-' -and $gcp[1] -eq $gcp[0])
 Remove-TestKit $k
 Complete-Tests

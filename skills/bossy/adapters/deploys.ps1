@@ -9,7 +9,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy watch -Env <target>[,..] [-Started <name>=<sha>,..] [-Finished <name>=success|failed,..] [-WaitMinutes <deploy.pipelineWaitMinutes>] [-Json]   one bounded poll loop over the schedule's started pipelines: START (a gate opened) · DONE (verify it) · FAILED (its dependents held) · WAIT; logs actual vs predicted
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated] [-Agent <ids> (laneApk: phones free or leased by them only)]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L17 helpers · L108 intest · L312 deploy · L523 schedule · L764 restart · L848 supervise
+Sections: L17 helpers · L108 intest · L315 deploy · L526 schedule · L767 restart · L851 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -106,6 +106,9 @@ function Get-DeployedByAncestry([Alias('Mr')][string[]]$Mrs, $Repos, [string[]]$
 }
 
 # ---- intest: promoted tasks live on a test env -> inTest
+# the probe's seconds: what -BudgetSec leaves, never under one -TimeoutSec round (a 15 s floor cut every probe once the tracker
+# lookups had used the 50 s default: -TimeoutSec 240 ignored, 18 tasks unmoved 2026-11-25); no budget: 10 x -TimeoutSec (K31)
+function Get-KitInTestProbeSec([int]$BudgetSec, [int]$TimeoutSec, [datetime]$Start) { if ($BudgetSec -gt 0) { [math]::Max($TimeoutSec + 10.0, $BudgetSec - ((Get-Date) - $Start).TotalSeconds) } else { 10.0 * $TimeoutSec } }
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
 param([switch]$Apply, [switch]$Quiet, [Alias('Item')][string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @(), [Alias('BudgetSeconds')][int]$BudgetSec = -1, [string[]]$Env = @())   # not $Mrs: pwsh names ignore case ($mrs below)
@@ -120,7 +123,7 @@ if ($Env.Count -and -not $FromMrs.Count) {
   if (-not $FromMrs.Count) { "mark-in-test: no deploy record for $($Env -join ', '): nothing to check (deploy record -Env <target> -Mrs <refs> first, or pass -Mrs)"; return }
 }
 # bounded (-Mrs / -Task 50 s, else 240 s: one page fits an agent shell): named tasks first, the rest after 60% of it waits for a re-run; progress per task on stderr
-if ($BudgetSec -lt 0) { $BudgetSec = if ($FromMrs.Count -or $Task.Count) { 50 } else { 240 } }; $t0 = Get-Date
+if ($BudgetSec -lt 0) { $BudgetSec = if ($FromMrs.Count -or $Task.Count) { [math]::Max(50, $TimeoutSec + 30) } else { [math]::Max(240, $TimeoutSec + 30) } }; $t0 = Get-Date
 function Write-InTestProgress([string]$s) { if (-not $Quiet) { [Console]::Error.WriteLine("intest $([int]((Get-Date) - $t0).TotalSeconds)s $s") } }
 function Out-Line($s) { if (-not $Quiet -or $s -like 'MARKED*') { $s } }
 # -Mrs / -Env (what opsy deployed): the kit maps each MR to its task (tracking, else the tag in its title), never the caller; only those
@@ -213,7 +216,7 @@ foreach ($id in $cand.Keys) {
 }
 # ONE deployed probe for every task's MRs (pokey memoises the branch lookups per repo); rounds re-probe what its -TimeoutSec left
 # unchecked until none is left or a round checks nothing (a hung host: K31). Per-MR calls in one budget left 4 of 10 tasks unchecked
-$rowsOf = @{}; $whyOf = @{}; $round = 0; $probeEnd = (Get-Date).AddSeconds($(if ($BudgetSec) { [math]::Max(15.0, $BudgetSec - ((Get-Date) - $t0).TotalSeconds) } else { 10 * $TimeoutSec }))   # a host slower than -TimeoutSec per MR: one MR a round (K31)
+$rowsOf = @{}; $whyOf = @{}; $round = 0; $probeEnd = (Get-Date).AddSeconds((Get-KitInTestProbeSec $BudgetSec $TimeoutSec $t0))
 $todo = @($ready | ForEach-Object { $_.mrs } | ForEach-Object { Get-CanonMr (ConvertTo-MrRef $_) } | Select-Object -Unique)
 while ($todo.Count) {
   Write-InTestProgress "probe round $($round + 1): $($todo.Count) MR(s)"; $round++; $cap = [int][math]::Max(5.0, [math]::Min($TimeoutSec * 1.5 + 5.0, ($probeEnd - (Get-Date)).TotalSeconds))

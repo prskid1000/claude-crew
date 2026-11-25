@@ -88,10 +88,8 @@ $pNotes = Get-Content -Raw "$($pRun.runDir)/lead-notes.md"; $null = pwsh -NoProf
 $pDay = (Split-Path $pRun.runDir -Leaf) -replace '-stg$'   # a date placeholder -> the testy counter id (N3: no dates in names)
 Expect "prepare: one item (MR + doc + in test), the doc-less task left out, exclude honoured; exit 0, the last line is RUN <run>; lead-notes skeleton + lead-notes add ($ppCode $($pp[-2]))" ($ppCode -eq 0 -and "$($pp[-1])".StartsWith('RUN ') -and @($pRun.items).Count -eq 1 -and $pRun.items[0].code -eq 'T1' -and $pRun.items[0].subtasks[0].mrs -eq 'web!5' -and $pRun.items[0].target -eq 'stg-a' -and
   (Get-Content -Raw $pRun.items[0].guideFile) -match 'https://docs.example/h1' -and @($pRun.left).Count -eq 1 -and $pRun.left[0].reason -match 'Testing doc' -and $pRun.mandate[0] -eq 'test the sort' -and $pRun.runDir -match "qa-runs/testy(?:-[a-z0-9]+)*-stg$" -and
-  (Gold $pNotes "# Lead notes: $pDay-stg`n**Result:** 1 in, 1 left out · target stg-a`n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| T1 [Bug] Orders sort | from the guide | to check |`n`n## Left out`n`n| Task | Reason |`n|---|---|`n| $tB [Bug] No doc | no ""Testing doc (human):"" link |`n`n## Answers (newest last)") -and
+  (Gold $pNotes "# Lead notes: $pDay-stg`n**Result:** 1 in, 1 left out of 2 inTest task(s) on stg-a (lists 2, tracked off-list 0)`n`n## Prerequisites`n`n| Item | Flags / accounts / data ids | State |`n|---|---|---|`n| T1 [Bug] Orders sort | from the guide | to check |`n`n## Left out`n`n| Task | Reason |`n|---|---|`n| $tB [Bug] No doc | no ""Testing doc (human):"" link |`n`n## Answers (newest last)") -and
   (Get-Content -Raw "$($pRun.runDir)/lead-notes.md") -match '(?m)^- \d\d:\d\d T1: which tenant\? -> madrid\r?$')
-$ttl = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Limit-KitWords ((1..30 | ForEach-Object { ""w`$_"" }) -join ' ') 25 '+3-items'), (Limit-KitWords 'a b' 25 x)"
-Expect "prepare: the run title is cut to 25 words at creation (finalize -Check limit), the last word says how many items ($($ttl[0]))" (@($ttl[0] -split ' ').Count -eq 25 -and $ttl[0] -match 'w24 \+3-items$' -and $ttl[1] -eq 'a b' -and (Get-Content $PKp -Raw) -match 'title = \(Limit-KitWords ')
 $ppAgain = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', "$pDay-stg") 2>&1); $ppAgainCode = $LASTEXITCODE
 $null = New-Item -ItemType Directory -Force "$wd/qa-runs/$pDay-empty/guides"; $pjobEmpty = $pjob -replace '<yyyy-MM-dd>-stg', "$pDay-empty"
 $ppEmpty = @(pwsh -NoProfile -File $PKp prepare -Job $pjobEmpty 2>&1); $ppEmptyCode = $LASTEXITCODE
@@ -105,6 +103,13 @@ $idsJob = @{ runFolder = 'w/qa-runs/-ids'; statuses = @('inTest'); tasks = @($tA
 $ppIds = @(pwsh -NoProfile -File $PKp prepare -Job $idsJob 2>&1); $idsRun = ("$($ppIds[-1])" -replace '^RUN ') | ConvertFrom-Json
 $idsGot = @(@($idsRun.items.subtasks.id) + @($idsRun.left.id) | Sort-Object) -join ','
 Expect "prepare select.tasks: only the named task + its in-test subtask (not $tB, not SUB2); a '-ids' folder gets the testy counter id, no date; a relative runFolder is from the workspace root ($idsGot | $($idsRun.runDir))" ($idsGot -eq ((@($tA, 'SUB1') | Sort-Object) -join ',') -and $idsRun.runDir -match 'qa-runs/testy(?:-[a-z0-9]+)*-ids$' -and $idsRun.runDir.StartsWith(($wd -replace '\\', '/')))
+# a tracked, merged task the list sweep misses (ClickUp lists omit subtasks; here another list) in an in-test status is selected and counted
+& $J @{ id = 'OFF1'; name = '[Bug] Off-list sub'; status = 'in test'; parent = $tA; list = 'L2'; assignees = @(); description = 'MR: https://git.example/g/web/-/merge_requests/11'; comments = @() } (Join-Path $store 'OFF1.json')
+$offTd = "$(pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitPath tasks -Create")".Trim(); & $J @{ task = 'OFF1'; track = @{ task = 'OFF1'; done = $true; doneAt = (Get-Date).ToString('o'); mrs = @('web!11') } } (Join-Path $offTd 'OFF1.json')
+Set-JsonFile $kl @{ process = @{ docs = @() }; trackerLists = @('L1') }
+$ppOff = @(pwsh -NoProfile -File $PKp prepare -Job ($pjob -replace '<yyyy-MM-dd>-stg', '-off') 2>&1); $offRun = ("$($ppOff[-1])" -replace '^RUN ') | ConvertFrom-Json
+Set-JsonFile $kl @{ process = @{ docs = @() } }; Remove-Item (Join-Path $offTd 'OFF1.json'), (Join-Path $store 'OFF1.json')
+Expect "prepare: a tracked merged task outside the swept lists in an in-test status is selected and counted ($($ppOff[-2]))" (@(@($offRun.items.subtasks.id) + @($offRun.left.id)) -contains 'OFF1' -and "$($ppOff[-2])" -match 'tracked off-list 1\)')
 foreach ($subId in 'SUB1', 'SUB2') { New-Task $subId 'closed sub' $tA 'closed' }   # out of the later status sweeps
 # NOT_TESTED undeployed whose MRs are all N/A for the target (another product's change): kept open, never failedTesting; NOT-DEPLOYED, a mixed row or another untested check still fails
 $naFin = @'
@@ -228,9 +233,5 @@ $qbs = & { . (Join-Path $k 'skills/crafty/lib.ps1'); function Get-TrackerTask($I
   @('ok', 'bad', 'slow', 'none') | ForEach-Object { "$($_):$(@(Get-KitQaBugSubtasks $_ 1).id -join ',')" } }
 Expect "QA bug tasks: a prefetched view's subtasks, a failed child viewed inline, a timed-out one none this beat ($($qbs -join ' '))" (($qbs -join ' ') -eq 'ok:B1 bad:inline-bad slow: none:inline-none')
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE -ErrorAction SilentlyContinue
-# guide copy (owner 2026-11-22: a 1494-line guide of earlier runs): the head + the newest env run, older runs only counted; one run: whole
-$gkept = Join-Path (Kd) 'kept.md'; Set-Content $gkept "# Testing: X`n## Checks`n| C1 | a |`n## shop-staging run 2026-11-05 16:54`nold-a`n## shop-staging run 2026-11-07 09:18`nnew-b`n### Results`nnew-c`n## docs-staging run 2026-11-06 10:20`nold-d"
-$gcp = pwsh -NoProfile -Command "`$a = [Management.Automation.Language.Parser]::ParseFile('$Q', [ref]`$null, [ref]`$null); iex `$a.Find({ param(`$n) `$n.Name -eq 'Copy-QaGuide' }, `$true).Extent.Text; Copy-QaGuide '$gkept' '$gkept.out'; Copy-QaGuide '$gkept.out' '$gkept.one'; (Get-Content '$gkept.out') -join '|'; (Get-Content '$gkept.one') -join '|'"
-Expect "guide copy: head + newest run (its ### parts), older runs named; a one-run doc copied whole ($($gcp -join ' // '))" ($gcp[0] -match '^# Testing: X\|## Checks\|\| C1 \| a \|\|## shop-staging run 2026-11-07 09:18\|new-b\|### Results\|new-c\|\|> Older runs \(2\): ' -and $gcp[0] -notmatch 'old-' -and $gcp[1] -eq $gcp[0])
 Remove-TestKit $k
 Complete-Tests
