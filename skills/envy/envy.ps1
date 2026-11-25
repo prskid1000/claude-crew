@@ -1388,7 +1388,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     $code = Invoke-Shell $ic $ilog (EnvVars $e $s) ([int]$(if ($s.init.timeoutSec) { $s.init.timeoutSec } else { 1800 }))
     if ($code) { Event $e 'init-failed' @{ service = $s.name; why = (Get-ShellWhy $code) }; throw "[$e] $($s.name): init failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 5) -join ' | '). Log: $ilog" }
     Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
-    if ((DbSvc $e).name -eq $s.name) { $null = New-Mark $e (New-KitName baseline $e) 'baseline' }   # fresh data = its baseline
+    if ((DbSvc $e).name -eq $s.name) { $null = New-Mark $e (New-KitName baseline $e) 'baseline' }
   }
   # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
   $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { 'Global\kit-localenv-start' } else { 'kit-localenv-start' }))

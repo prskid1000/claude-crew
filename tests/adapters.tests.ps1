@@ -38,8 +38,8 @@ $tagR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $mem = @{ T1 = [pscustomobject]@{ id = 'T1'; name = 'SHOP-CAT-004 grid'; status = 'open'; description = "Problem: x" } }
   Register-KitAdapter 'tracker' 'fkt' @{ caps = @{ labels = $false }; view = { param($a) $mem[$a.id] }; describe = { param($a) $mem[$a.id].description = $a.text; 'ok' }; url = { param($a) $a.id } }
   $__trType = 'fkt'; $null = Set-KitTaskTags T1 @('key=SHOP-CAT-004', 'kind=Bug', 'wave=3')
-  $o.fallbackLine = $mem.T1.description -match '\*\*Tags:\*\* bug, catalogue, shop(\r?\n|$)' -and ((Get-KitTaskTags T1) -join ',') -eq 'bug,catalogue,shop'
-  $null = Set-KitTaskTags T1 @('env=needs-deploy'); $null = Set-KitTaskTags T1 @('env=-'); $o.exclusive = ((Get-KitTaskTags T1) -join ',') -eq 'bug,catalogue,shop'
+  $o.fallbackLine = $mem.T1.description -match '\*\*Tags:\*\* bug, shop(\r?\n|$)' -and ((Get-KitTaskTags T1) -join ',') -eq 'bug,shop'
+  $null = Set-KitTaskTags T1 @('env=needs-deploy'); $null = Set-KitTaskTags T1 @('env=-'); $o.exclusive = ((Get-KitTaskTags T1) -join ',') -eq 'bug,shop'
   $o.bugByTag = (Test-KitBugTask $mem.T1) -and -not (Test-KitBugName $mem.T1.name)
   $o.bugGaps = -not @(Get-KitTaskTextGaps $mem.T1.name 'free text' -Subtask -Bug:(Test-KitBugTask $mem.T1)).Count   # a keyed bug: no template gaps
   $null = Format-KitKeyedName '[ui] fix button' 'SHOP-CAT-004'; $o.oddKind = ($script:KitNameTags -join ',') -eq 'key=SHOP-CAT-004,kind=Feature'
@@ -57,8 +57,8 @@ $null = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 2>&1; $rv2 = pwsh -NoPr
 $rpo = pwsh -NoProfile -File $Dc tracker status LOCAL-91 promoted 2>&1 | Out-String; $rp = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','
 $null = pwsh -NoProfile -File $Dc tracker status LOCAL-91 closed 2>&1; $rc = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','; Remove-Item Env:KIT_TRACKER_TYPE
 Expect "tracker retag: dry run = table only; apply = <KEY> <outcome> + tags, the old wave label gone; promoted -> needs-deploy, closed clears ($($rv.name) | $($rv.tags -join ',') | $rp | $rc | $rpo)" (
-  $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \| SHOP-CAT-002 \| SHOP-CAT-002 Crash on save \| no kind tag, no area tag, no product tag \| bug, catalogue, shop \|' -and $rtD -match 'DRY RUN: 2 keyed' -and $rt0 -like '*`[Feature`]*' -and
-  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'SHOP-CAT-001 Price grid' -and $rv2.name -eq $rv.name -and ([regex]::Matches("$($rv2.description)", 'Old title').Count) -eq 1 -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,catalogue,shop' -and $rp -eq 'bug,catalogue,shop,needs-deploy' -and $rc -eq 'bug,catalogue,shop')
+  $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \| SHOP-CAT-002 \| SHOP-CAT-002 Crash on save \| no kind tag, no product tag \| bug, shop \|' -and $rtD -match 'DRY RUN: 2 keyed' -and $rt0 -like '*`[Feature`]*' -and
+  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'SHOP-CAT-001 Price grid' -and $rv2.name -eq $rv.name -and ([regex]::Matches("$($rv2.description)", 'Old title').Count) -eq 1 -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,shop' -and $rp -eq 'bug,shop,needs-deploy' -and $rc -eq 'bug,shop')
 
 # secret store: file round trip (targets.local.json shape kept), names only, env read-only, secret:<name> refs, a fake store,
 # the guard denies the configured store's backing file and keeps the file store's default

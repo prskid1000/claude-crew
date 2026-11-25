@@ -896,7 +896,7 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
   $atOf = { param($d) if ($d.answeredAt -is [datetime]) { $d.answeredAt } else { try { [datetime]"$($d.answeredAt)" } catch { $Now } } }   # JSON gives a DateTime: "$x" drops the offset
   $words = @{}; foreach ($d in @(Read-KitLog decisions-log $Now.AddDays(-(Get-KitParam 'deploy.wordsDays')) | Where-Object { $_.event -eq 'answered' -and $_.gate -eq 'deploy' -and $_.kind -ne 'envfix' -and "$($_.answer)".Trim() } | Sort-Object { (& $atOf $_).ToUniversalTime().Ticks })) { foreach ($t in @(Split-KitList @("$($d.item)"))) { if (-not $words[$t]) { $words[$t] = [Collections.Generic.List[object]]::new() }; $words[$t].Add($d) } }
   $cfgHold = @(Split-KitList @(Get-KitSetting 'deploy.hold' @()))
-  $waitOf = { param($t, $d) $ans = "$($d.answer)".Trim(); $at = & $atOf $d; $sid = "$($d.id)" -replace '^(?:dec|envfix)-'
+  $waitOf = { param($t, $d) $ans = "$($d.answer)".Trim(); $at = & $atOf $d; $sid = if ("$($d.id)" -match '^(?:dec|envfix)-(.+)$') { $Matches[1] } else { ("$($d.id)" -split '-')[-1] }
     $retry = if ($ans -match '\b([01]?\d|2[0-3]):([0-5]\d)\b') { $rt = $at.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); if ($rt -le $at) { $rt.AddDays(1) } else { $rt } } else { $at.AddMinutes((Get-KitParam 'deploy.waitRetryMinutes')) }
     $why = if ("$($d.question) $ans" -match '(?i)\bbusy\b') { 'host busy' } else { "wait ($($d.by))" }
     [pscustomobject]@{ target = $t; state = $(if ($Now -lt $retry) { 'waiting' } else { 'due' }); sid = $sid; why = $why; retry = $retry; text = "$t waiting: $why, retry $($retry.ToString('HH:mm')) ($sid)" } }
@@ -904,7 +904,7 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
   foreach ($t in $tgs) {
     if ($t -in $cfgHold) { $hold[$t] = [pscustomobject]@{ target = $t; state = 'held'; sid = 'deploy.hold'; new = @(); text = "$t held by config: deploy.hold" }; continue }
     $ws = @($words[$t] | Where-Object { $_ }); if (-not $ws.Count) { continue }
-    $d = $ws[-1]; $sid = "$($d.id)" -replace '^(?:dec|envfix)-'; $kind = Get-KitDeployWordKind "$($d.answer)"
+    $d = $ws[-1]; $sid = if ("$($d.id)" -match '^(?:dec|envfix)-(.+)$') { $Matches[1] } else { ("$($d.id)" -split '-')[-1] }; $kind = Get-KitDeployWordKind "$($d.answer)"
     $cond = if ($kind -in 'wait', 'no', 'noAll') { Get-KitDeployCondition "$($d.answer)" }
     if ($cond) { $askedId = "$(Get-KitMember $Cache.condAsked $t)"; $met = Test-KitDeployCondition $cond
       $st = if (-not $met) { 'until' } elseif ($askedId -eq "$($d.id)") { 'asked' } else { 'met' }

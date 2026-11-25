@@ -11,7 +11,7 @@
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
   python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug env=- ...   # JSON {tags, add, remove}
-Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, area, product: tags)
+Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, product: tags)
  · tag `on-staging` (lowercase kebab, from the TAG_GROUPS vocabulary) · desc `ask catalogue create-only prompt`
  · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-ask` · agent `devy-ask-prompts` (no topic: `devy-4`) · area `ask-prompts`
    (what it covers; a tie `-2`) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
@@ -23,8 +23,9 @@ PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags);
+one kind and one product tag first (scan, WATCH TAGS; fix: tracker retag); no area or wave tag (owner 2026-11-25).
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L32 model · L109 no repeats · L213 tags
+Sections: L33 model · L110 no repeats · L214 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -212,9 +213,9 @@ def make(kind, p, cfg=None):
 
 # ---- tags: what a title no longer says (owner 2026-11-24); tracker labels / tags, MR labels, doc properties carry them
 # group: (exclusive: one value at a time, values | a value regex | None: the registries' names / repo names); the comment: who sets it
-TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, area, product, then the rest; a person's own tags last)
+TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, product, then the rest; a person's own tags last)
     'kind': (True, ('feature', 'bug', 'chore', 'spike', 'docs', 'test')),   # tracker create (the old [Type]), a QA bug
-    'area': (True, None), 'product': (True, None),                         # tracker create: the key's AREA / PRODUCT names
+    'product': (True, None), 'area': (True, None),                         # tracker create: the key's PRODUCT name; area RETIRED (owner 2026-11-25: the description holds it)
     'wave': (True, r'wave-\d+'),                                            # RETIRED (owner 2026-11-25: no numbers): any wave= clears; old wave-N tags go
     'phase': (True, ('spec', 'build', 'review', 'qa')),                     # by hand: tracker tags <id> phase=qa
     'repo': (False, None),                                                  # by hand / brief repos: api-code -> api
@@ -224,6 +225,7 @@ TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, area, 
     'origin': (True, ('qa-found', 'tester-report', 'retro')),               # a QA run's bug: qa-found; others by hand
     'test': (False, ('ui', 'api', 'mobile')),                               # by hand / testing doc
 }
+RETIRED = ('wave', 'area')   # owner 2026-11-25: no numbers; the area lives in the description
 KIND_TAG = {'feat': 'feature', 'fix': 'bug', 'refactor': 'chore', 'perf': 'chore'}
 
 
@@ -272,9 +274,9 @@ def tags(parts, have=(), cfg=None):
         p.setdefault('product', km[1]); p.setdefault('area', km[2])
     if 'type' in p:
         p.setdefault('kind', p.pop('type'))
-    p.pop('wave', None)   # retired group: never set
+    p.pop('wave', None); p.pop('area', None)   # retired groups: never set
     have = [str(h).strip() for h in have if str(h).strip()]
-    keep = [h for h in have if tag_group(h, cfg, groups) != 'wave']   # old wave-N / 'Wave: x' tags go on any update
+    keep = [h for h in have if tag_group(h, cfg, groups) not in RETIRED]   # old wave-N / 'Wave: x' / area tags go on any update
     for g, raw in p.items():
         if g not in TAG_GROUPS:
             bad.append(f'unknown tag group {g!r} ({", ".join(TAG_GROUPS)})')
@@ -293,18 +295,18 @@ def tags(parts, have=(), cfg=None):
         keep += [t for t in new if t not in [k.lower() for k in keep]]
     if bad:
         raise ValueError('; '.join(bad))
-    keep.sort(key=lambda t: list(TAG_GROUPS).index(g) if (g := tag_group(t, cfg, groups)) else len(TAG_GROUPS))   # kind, area, product, the rest; a person's own last
+    keep.sort(key=lambda t: list(TAG_GROUPS).index(g) if (g := tag_group(t, cfg, groups)) else len(TAG_GROUPS))   # kind, product, the rest; a person's own last
     low = lambda xs: {x.lower() for x in xs}   # trackers lower-case tags (ClickUp)
     return {'tags': keep, 'add': [t for t in keep if t.lower() not in low(have)], 'remove': [h for h in have if h.lower() not in low(keep)]}
 
 
 def tag_gaps(have, cfg=None):
-    """[problem]: a kit task carries exactly one kind, one area and one product tag (owner 2026-11-25); a wave tag is retired."""
+    """[problem]: a kit task carries exactly one kind and one product tag (owner 2026-11-25); area and wave tags are retired."""
     cfg = cfg or naming_cfg()
     groups = tag_groups(cfg)
     by = [tag_group(t, cfg, groups) for t in have]
-    out = [f'{n or "no"} {g} tags' if n else f'no {g} tag' for g in ('kind', 'area', 'product') if g in groups and (n := by.count(g)) != 1]
-    return out + (['a wave tag (retired: no numbers)'] if 'wave' in by else [])
+    out = [f'{n} {g} tags' if n else f'no {g} tag' for g in ('kind', 'product') if g in groups and (n := by.count(g)) != 1]
+    return out + [f'{g} tag {t!r} (retired)' for t, g in zip(have, by) if g in RETIRED]
 
 
 def next_key(product, area, cfg=None):
@@ -337,13 +339,14 @@ def live_names(kit=None):
 
 
 def tag_scan(cfg):
-    """[(kind 'tags', task name, where, why)]: a tracked task with a kit key whose recorded tags (task index) miss or double a kind /
-    area / product tag or keep a wave tag; fix: crafty.ps1 tracker retag <parent> [-DryRun] (supervise WATCH TAGS)."""
-    out = []
-    for tid, t in ((read_tracking() or {}).get('tasks') or {}).items():
-        tg = (state_read(task_file(tid)) or {}).get('tags') if isinstance(t, dict) and re.match(r'[A-Z]{2,6}-[A-Z]{2,6}-\d+', str(t.get('name') or '')) else None
-        if isinstance(tg, list) and (gaps := tag_gaps([str(x) for x in tg], cfg)):
-            out.append(('tags', str(t['name']), f'tracking {tid}', '; '.join(gaps)))
+    """[(kind 'tags', task name, where, why)]: a task whose tags the kit recorded (task index: the kit tagged it) miss or double a
+    kind / product tag or keep an area / wave tag; fix: crafty.ps1 tracker retag <ids> [-DryRun] (supervise WATCH TAGS)."""
+    out, tr, d = [], (read_tracking() or {}).get('tasks') or {}, kit_path('tasks')
+    for fn in sorted(os.listdir(d)) if osp.isdir(d) else []:
+        x = state_read(osp.join(d, fn)) if fn.endswith('.json') else None
+        tid = str((x or {}).get('task') or '')
+        if tid and isinstance(x.get('tags'), list) and (gaps := tag_gaps([str(t) for t in x['tags']], cfg)):
+            out.append(('tags', str((tr.get(tid) or {}).get('name') or tid), f'tracking {tid}', '; '.join(gaps)))
     return out
 
 
