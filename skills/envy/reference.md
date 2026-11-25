@@ -7,8 +7,8 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
 - A layer also leaves when merged, gone from origin, its agent finished (`bossy.ps1 release`) or no live holder past the
   grace (supervise); never a paused or handed-off agent's. An env without lease or hold drops at the next lease (`status`,
   leases.jsonl kind env-layer).
-- A lease keeps services up while its holder is live (README "Leases") and uses them; unused
-  `leaseIdleMinutes` (default `idle.graceMinutes`): released. Only a person's `-Owner` lease ends at a time.
+- A lease keeps services up while its holder is live (README "Leases") and uses them (its gated check or browser.mjs session
+  counts); unused `leaseIdleMinutes`: released. Only an `-Owner` lease ends at a time.
 - A train waits for leases on what it changes up to `leaseMinutes` (30), then tells holders ("deploy of <svc> starting,
   pause"; board inbox + `status -Agent` NOTICE), deploys, then "deploy done, re-run your checks"; leases stay.
 - A train whose worker is gone (pid + start time) or whose phase and log stay quiet `trainStallMinutes` (45): killed,

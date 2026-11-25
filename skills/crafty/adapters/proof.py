@@ -1,12 +1,12 @@
-# Usage: loaded by devtools.py from adapters/ (a plugin); its verb: python -X utf8 devtools.py proof <task> [--impact] | --branch <b> --impact | selftest. Exit codes: 0 ok · 1 gaps · 2 usage.
+# Usage: loaded by devtools.py from adapters/ (a plugin); its verb: python -X utf8 devtools.py proof <task> [--impact] | --branch <b> --impact | selftest · matrix-scope [<task>] --dir <wt> [--json]. Exit codes: 0 ok · 1 gaps · 2 usage.
 """Proof plugin (testing.md "Proof"): each goal (cases spec check) proven on its own channel, and the impact map before code.
 Wraps devtools.py: finish's builtin:testingDocs gate, mr_create (a non-Draft MR), render_cases (goals: proof + impact sections),
 cases_cmd (`cases result ... viewport=<WxH> hit=PASS|FAIL`; `cases add` warns), cases_fill_checks (a filled check gets a channel).
 crafty.ps1 wt commit runs `proof --branch <b> --impact` (refuses a non-WIP commit on a task branch without the map).
 Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844);
 qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack).
-Sections: L13 gaps · L151 wraps · L218 verb"""
-import os, re, sys
+Sections: L13 gaps · L151 wraps · L218 matrix scope · L314 verb"""
+import json, os, re, sys
 
 DT = None
 CHANNELS = ('ui', 'api', 'job', 'ai')
@@ -215,6 +215,102 @@ def wrap_fill(orig):
     return run
 
 
+# ---- matrix scope: the qa.matrix variants a diff needs (qa.matrixRun); ui-checks.mjs matrix --task runs the recorded set
+MX_RUN = {'parallel': 4, 'full': [r'\.(css|scss|sass|less|styl|pcss)$', r'(^|/)(layouts?|styles?|themes?|tokens?)(/|\.|$)', r'tailwind\.config',
+                                  r'\.(svg|png|jpe?g|webp|gif|woff2?|ttf)$'],
+          'newScreen': [r'\.(html|vue|svelte|jsx|tsx)$', r'(^|/)(pages?|screens?|views?|routes?)(/|\.|$)'], 'reduced': {'viewports': ['web', 'mobile'], 'locales': 1}}
+AXES = ('viewports', 'fontScales', 'themes', 'locales')
+MX_LINE = re.compile(r'(?im)\bMatrix:(.*)$')
+
+
+def mx_run():
+    v = DT.cfg('qa.matrixRun', None)
+    return {**MX_RUN, **(v if isinstance(v, dict) else {})}
+
+
+def matrix_scope(files):
+    """files [(git status A|M|D, path)] -> {scope, reason, matrix}: full when a path matches qa.matrixRun.full (layout, style,
+    assets) or an added one .newScreen, or no diff was read; else reduced: .reduced viewports (testerViewport names or WxH) and
+    the first .reduced.locales of qa.matrix.locales."""
+    run, full = mx_run(), DT.cfg('qa.matrix', None) or {}
+    def rx(k):
+        try:
+            return [re.compile(p, re.I) for p in run.get(k) or []]
+        except re.error as e:
+            raise SystemExit(f'kit.local.json qa.matrixRun.{k}: a pattern is no regex ({e}): fix it')
+    hit = lambda pats, fs: next((p for _, p in fs if any(x.search(p) for x in pats)), '')
+    paths = [(str(s), str(p).replace('\\', '/')) for s, p in files]
+    why = (f'{h} is layout / style' if (h := hit(rx('full'), paths)) else '') or (f'{h} is a new screen' if (h := hit(rx('newScreen'), [f for f in paths if f[0].startswith('A')])) else '')
+    if why or not paths:
+        return {'scope': 'full', 'reason': why or 'no diff read', 'matrix': {k: list(full.get(k) or []) for k in AXES}}
+    red, tv = run.get('reduced') or {}, viewports()
+    return {'scope': 'reduced', 'reason': f'{len(paths)} file(s), no layout / style or new screen',
+            'matrix': {'viewports': list(dict.fromkeys(tv.get(v, v) for v in red.get('viewports') or [])), 'locales': list(full.get('locales') or [])[:int(red.get('locales', 1) or 0)]}}
+
+
+def changed_files(wt):
+    """The worktree's diff against its merge base with origin/<target>, uncommitted and untracked files too; [] when unreadable."""
+    g = ['git', '-C', wt, '-c', 'core.quotepath=false']   # plain paths: a quoted "my style.css" missed \.css$
+    base = DT._run(g + ['merge-base', 'HEAD', f'origin/{DT.target_of(wt) or "main"}']).strip()
+    if not re.fullmatch(r'[0-9a-f]{7,40}', base):
+        return []
+    fs = [tuple(ln.split('\t', 1)) for ln in DT._run(g + ['diff', '--name-status', '--no-renames', base]).splitlines() if '\t' in ln]
+    return fs + [('A', p) for p in DT._run(g + ['ls-files', '--others', '--exclude-standard']).splitlines() if p and not re.match(r'(warning|error|fatal):', p)]
+
+
+def matrix_scope_cmd(argv):
+    """matrix-scope [<task>] --dir <worktree> [--json]: the variants the diff needs, recorded on the task (its branch's when not named)
+    as cases.matrixScope; the gate then accepts that reduced set, its line ending "(reduced: <reason>)"."""
+    if '--dir' not in argv[:-1]:
+        print(matrix_scope_cmd.__doc__, file=sys.stderr)
+        return 2
+    wt = argv[argv.index('--dir') + 1]
+    own = DT.task_of_branch(br := DT._run(['git', '-C', wt, 'rev-parse', '--abbrev-ref', 'HEAD']))
+    tid = next((x for x in argv if not x.startswith('-') and x != wt), '') or own
+    if own and tid != own:
+        raise SystemExit(f'matrix-scope: {wt} is on {br}, task {own}\'s branch, not {tid}\'s: --dir <{tid}\'s worktree>. Nothing was recorded.')
+    sc = {**matrix_scope(changed_files(wt)), 'head': DT._run(['git', '-C', wt, 'rev-parse', 'HEAD'])[:12], 'dir': os.path.abspath(wt)}
+    if tid:
+        DT.task_index(tid, lambda x: x.setdefault('cases', {}).__setitem__('matrixScope', sc))
+    n = 1
+    for k in AXES:
+        n *= max(1, len(sc['matrix'].get(k) or []))
+    if '--json' in argv:
+        print(json.dumps(sc))
+        return 0
+    print(f'matrix-scope {tid or wt}: {sc["scope"]} ({sc["reason"]}): {n} variant(s) per UI case {json.dumps({k: v for k, v in sc["matrix"].items() if v})}'
+          + (f'\nrun: node <kit>/skills/pokey/adapters/ui-checks.mjs matrix --task {tid} --case <id> --script <case.mjs> --out <dir>' if tid else ' (no task: not recorded)'))
+    return 0
+
+
+def wrap_gaps(orig):
+    """case_gaps + the change-sized matrix: a "(reduced: ...)" Matrix line passes on the recorded reduced set (finish: the task must
+    record it); a full line also needs each qa.matrix.locales value."""
+    def run(ai_md, *a, **k):
+        out, tid = orig(ai_md, *a, **k), (a[5] if len(a) > 5 else k.get('tid', ''))
+        line = ' '.join(MX_LINE.findall(ai_md or '')).lower()
+        toks, norm = set(re.split(r'[\s,;_|()]+', line)), (lambda v: re.sub(r'[^a-z0-9.]+', '-', str(v).lower()).strip('-'))
+        gi = next((i for i, g in enumerate(out) if g.startswith('UI cases miss qa.matrix')), None)
+        if '(reduced:' not in line:
+            locs = [v for v in (DT.cfg('qa.matrix', None) or {}).get('locales') or [] if norm(v) not in toks]
+            if locs and gi is None and re.search(r'!\[|<img\b|\.(png|jpe?g)\b', ai_md or '', re.I):
+                out.append(f'UI cases miss qa.matrix locale(s) {", ".join(locs)}: run each per variant (ui-checks.mjs matrix), then add them to the "Matrix:" line')
+            return out
+        rec = ((DT.state_read(DT.task_file(tid)) or {}).get('cases') or {}).get('matrixScope') if tid else None
+        fs = changed_files(rec['dir']) if tid and (rec or {}).get('scope') == 'reduced' and os.path.isdir(rec.get('dir') or '') else []
+        now = matrix_scope(fs) if fs else None   # gone or unreadable worktree: the record holds
+        if tid and ((rec or {}).get('scope') != 'reduced' or (now or {}).get('scope') == 'full'):   # recomputed: a later CSS / layout / screen commit
+            msg = (f'task {tid} now needs the full matrix ({now["reason"]})' if now and now['scope'] == 'full' else
+                   f'the "Matrix:" line says reduced but task {tid} records scope {(rec or {}).get("scope") or "none"}') + f': devtools.py matrix-scope {tid} --dir <worktree>, then run the variants it names'
+            return out[:gi] + [msg] + out[gi + 1:] if gi is not None else out + [msg]
+        want = (rec or matrix_scope([('M', 'x')]))['matrix']
+        miss = [str(v) for kx in AXES for v in want.get(kx) or [] if norm(v) not in toks]
+        if gi is not None:
+            out = out[:gi] + ([f'UI cases miss reduced-matrix value(s) {", ".join(miss)}: run them (ui-checks.mjs matrix --task {tid or "<task>"})'] if miss else []) + out[gi + 1:]
+        return out
+    return run
+
+
 # ---- verb: proof <task> | --branch <b> --impact | selftest
 def proof_cmd(argv):
     if argv[:1] == ['selftest']:
@@ -315,6 +411,48 @@ def selftest():
     finally:
         globals()['on'] = g_on
     ex('a filled check gets a channel (ui, a noUi one job); an older one keeps its gap', [g.get('channel') for g in fc['checks']] == [None, 'ui', 'job'])
+    keep = {n: getattr(DT, n) for n in ('cfg', 'state_read')}
+    try:   # owner 2026-11-25: a menu change ran 9 variants x 5 cases; the matrix is sized to the diff
+        mx = {'viewports': ['1366x768', '1920x1080', '390x844'], 'fontScales': [1, 1.5, 2], 'locales': ['en-GB', 'de-DE']}
+        conf = {'qa.matrix': mx, 'qa.testerViewport': {'web': '1366x768', 'mobile': '390x844'}}
+        DT.cfg = lambda p, d=None: conf.get(p, d)
+        sc = lambda *fs: matrix_scope(list(fs))
+        ex('matrix scope: CSS, a layout file, a new screen or no diff = full; a menu label / logic edit = tester web + mobile + one locale',
+           [sc(('M', 'src/app/menu.scss'))['scope'], sc(('M', 'src/layout/shell.ts'))['scope'], sc(('A', 'src/app/orders/list.html'))['scope'], sc()['scope']] == ['full'] * 4
+           and sc(('M', 'src/app/menu/menu.component.html'), ('M', 'src/i18n/en.json')) == {'scope': 'reduced', 'reason': '2 file(s), no layout / style or new screen',
+                                                                                              'matrix': {'viewports': ['1366x768', '390x844'], 'locales': ['en-GB']}}
+           and sc(('M', 'a.css'))['matrix']['fontScales'] == [1, 1.5, 2])
+        conf['qa.matrixRun'] = {'full': ['('], 'reduced': {'viewports': ['web'], 'locales': 0}}
+        try:
+            sc(('M', 'x.ts'))
+            bad = ''
+        except SystemExit as e:
+            bad = str(e)
+        conf['qa.matrixRun'] = {'reduced': {'viewports': ['web'], 'locales': 0}}
+        ex('qa.matrixRun: a bad pattern names its key; reduced keys override the default', 'qa.matrixRun.full' in bad and sc(('M', 'x.ts'))['matrix'] == {'viewports': ['1366x768'], 'locales': []})
+        conf.pop('qa.matrixRun')
+        core = lambda md, *a: ['UI cases miss qa.matrix value(s) 1920x1080 (case(s) A1): run each'] if '1920x1080' not in md else []
+        doc = lambda line: f'| A1 | s | PASS | ![a](https://h/a.png) |\n{line}\n'
+        rec = {'scope': 'reduced', 'matrix': {'viewports': ['1366x768', '390x844'], 'locales': ['en-GB']}}
+        DT.state_read = lambda f: {'cases': {'matrixScope': rec}}
+        g = wrap_gaps(core)
+        red = 'Matrix: 1366x768_en-gb, 390x844_en-gb (reduced: 1 file(s), no layout / style or new screen)'
+        ex('gate: a reduced line passes on the recorded set; a missing value, an unrecorded scope and a full scope do not',
+           g(doc(red), None, '', (), 'x', (), 'T1') == [] and 'reduced-matrix value(s) 390x844' in g(doc(red.replace(', 390x844_en-gb', '')), None, '', (), 'x', (), 'T1')[0]
+           and (DT.__setattr__('state_read', lambda f: {}) or 'records scope none' in g(doc(red), None, '', (), 'x', (), 'T1')[0])
+           and (rec.update(scope='full') or DT.__setattr__('state_read', lambda f: {'cases': {'matrixScope': rec}}) or 'records scope full' in g(doc(red), None, '', (), 'x', (), 'T1')[0]))
+        cf0, rec2 = globals()['changed_files'], {**rec, 'scope': 'reduced', 'dir': os.getcwd()}
+        try:
+            DT.state_read = lambda f: {'cases': {'matrixScope': rec2}}
+            globals()['changed_files'] = lambda d: [('M', 'menu.ts'), ('A', 'shell/theme.scss')]
+            ex('gate: a reduced record goes stale when its worktree diff now holds a style file (recomputed at the gate)',
+               'now needs the full matrix (shell/theme.scss is layout / style)' in g(doc(red), None, '', (), 'x', (), 'T1')[0])
+        finally:
+            globals()['changed_files'] = cf0
+        ex('gate: a full line also needs every qa.matrix.locales value', 'locale(s) de-DE' in ' '.join(g(doc('Matrix: 1366x768_f1_en-gb, 1920x1080_f2_en-gb'))) and not g(doc('Matrix: 1920x1080_en-gb, de-de')))
+    finally:
+        for n, f in keep.items():
+            setattr(DT, n, f)
     return 0 if all(res) else 1
 
 
@@ -322,8 +460,10 @@ def register(dt):
     global DT
     DT = dt
     dt.VERBS['proof'] = proof_cmd
+    dt.VERBS['matrix-scope'] = matrix_scope_cmd
     if sys.argv[1:2] == ['selftest']:   # devtools.py selftest proves the core gates alone; proof selftest proves these
         return
+    dt.case_gaps = wrap_gaps(dt.case_gaps)
     gates = dt.BUILTIN_GATES.get('testingDocs') or {}
     if 'finish' in gates:
         gates['finish'] = wrap_finish(gates['finish'])

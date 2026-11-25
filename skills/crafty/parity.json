@@ -192,7 +192,7 @@
     "browser-engine": {
       "config": "browser.engine",
       "file": "skills/pokey/adapters/engine-playwright.mjs",
-      "verbs": "session",
+      "verbs": "session context",
       "caps": "reuse",
       "names": "chrome chromium firefox webkit"
     },

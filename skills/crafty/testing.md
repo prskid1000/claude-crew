@@ -50,6 +50,8 @@ Each check carries `channel`: `ui` (a person sees it on a screen) · `api` · `j
   evidence / Result empty (an env run fills them: pokey finalize or a person, a dated "<env> run" section).
 - `cases` = every positive, negative, edge and regression case (invalid input, role denials, boundaries, empty data,
   concurrency, nearby features, impact edges), each human check run by a case naming it (`check`); a bug fix: a `repro` case
-  (`process.gates.bugFix` `builtin:reproRow`: merge refuses without); UI cases at every `qa.matrix` variant (`matrix`); a
+  (`process.gates.bugFix` `builtin:reproRow`: merge refuses without); UI cases at the variants the diff needs (`devtools.py
+  matrix-scope <task> --dir <wt>`: layout / style / a new screen = all of `qa.matrix`, else `qa.matrixRun.reduced`: tester web
+  + mobile + one locale), run at once (pokey `ui-checks.mjs matrix`), its line in `matrix`; a
   failing case is FAIL, never "pre-existing"; a `qa.notLocal` stub path NOT_TESTED_LOCAL, never PASS; a result needs an
   evidence link (screenshot, request / response JSON, run output: `devtools.py evidence`).

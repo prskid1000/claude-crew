@@ -1,7 +1,9 @@
-// ui-checks.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
+// ui-checks.mjs: a module skills/pokey/browser.mjs imports, and a CLI. Usage: below. Exit codes: (CLI) 0 all variants PASS · 1 a FAIL · 2 usage.
 // ui-checks.mjs: layout faults, contrast, hit tests for any web UI, selector-free, and the qa.matrix loop; browser.mjs re-exports them.
 //   const b = await import('file:///<kit>/skills/pokey/browser.mjs'); await b.layoutIssues(s.page); await b.contrast(s.page, '.icon')
-// Sections: L6 checks · L80 matrix
+//   node <kit>/skills/pokey/adapters/ui-checks.mjs matrix --case A3 --script case.mjs --out <dir> [--task <id>] [--agent <id>]: the case at
+//   every variant, n contexts at once; case.mjs: export default async ({ page, tag, viewport, locale, b, out }) => ({ result: 'PASS' })
+// Sections: L8 checks · L82 matrix
 
 // ---- checks: layout, contrast, hit test
 // controls another element covers (hit test at the centre of the first line box), text boxes overlapping, text cut by an overflow
@@ -77,20 +79,84 @@ export async function hitTest(page, targets) {
   return { pass: rows.length > 0 && rows.every((x) => x.ok), rows }
 }
 
-// ---- matrix: qa.matrix variants
-// browser.mjs matrix(): fn per qa.matrix variant (m = qa.matrix), the viewport restored after
-export async function matrix(s, fn, m) {
-  const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()
-  try {
-    for (const viewport of ax('viewports')) for (const fontScale of ax('fontScales')) for (const theme of ax('themes')) {
-      if (viewport) {
-        const [width, height] = String(viewport).split('x').map(Number)
-        if (!(width > 0 && height > 0)) throw new Error(`qa.matrix.viewports "${viewport}" is not <width>x<height>, e.g. 1280x720: fix kit.local.json`)
-        await s.page.setViewport({ ...(v0 || {}), width, height })   // keeps scale factor / mobile / touch
-      }
-      const tag = [viewport, fontScale != null && 'f' + fontScale, theme].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9.]+/g, '-')).join('_')
-      out.push({ variant: tag, result: await fn({ viewport, fontScale, theme, tag }) })
-    }
-  } finally { if (v0) await s.page.setViewport(v0) }
+// ---- matrix: qa.matrix variants, serial on s.page or a browser context each (parallel), the case CLI
+const dims = (v) => { const [width, height] = String(v).split('x').map(Number); if (!(width > 0 && height > 0)) throw new Error(`qa.matrix.viewports "${v}" is not <width>x<height>, e.g. 1280x720: fix kit.local.json`); return { width, height } }
+export function variants(m) {   // the axes' product; an empty axis = off
+  const ax = (k) => (m[k]?.length ? m[k] : [null]), out = []
+  for (const viewport of ax('viewports')) for (const fontScale of ax('fontScales')) for (const theme of ax('themes')) for (const locale of ax('locales')) {
+    if (viewport) dims(viewport)
+    out.push({ viewport, fontScale, theme, locale, tag: [viewport, fontScale != null && 'f' + fontScale, theme, locale].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9.]+/g, '-')).join('_') })
+  }
   return out
+}
+// a context of s's browser: own viewport, locale, colour scheme, storage (s.page's login copied), its tab registered (browser.mjs openTab)
+// s.page's login once per run, over CDP (no page script): cookies, web storage
+async function seedOf(s) {
+  if (s.page.__pw) return null
+  const cdp = await s.page.createCDPSession(), o = /^https?:/.test(s.page.url()) ? new URL(s.page.url()).origin : ''
+  const items = async (isLocalStorage) => (o ? (await cdp.send('DOMStorage.getDOMStorageItems', { storageId: { securityOrigin: o, isLocalStorage } }).catch(() => ({ entries: [] }))).entries : [])
+  try { await cdp.send('DOMStorage.enable').catch(() => {}); return { cookies: (await cdp.send('Network.getAllCookies')).cookies, st: { o, l: await items(true), ss: await items(false) } } } finally { await cdp.detach().catch(() => {}) }
+}
+async function variantPage(s, v, seed) {
+  const vp = v.viewport && dims(v.viewport), scheme = /^(light|dark)$/i.test(v.theme || '') ? v.theme.toLowerCase() : null, url = s.page.url()
+  let page, close
+  if (s.page.__pw) {
+    const ctx = await s.browser.newContext({ ...(vp && { viewport: vp }), ...(v.locale && { locale: v.locale }), ...(scheme && { colorScheme: scheme }), storageState: await s.page.context().storageState() })
+    page = (await import('./engine-playwright.mjs')).wrapPage(ctx, await ctx.newPage()); close = () => ctx.close()
+  } else {
+    const b = await import('../browser.mjs'), ctx = await s.browser.createBrowserContext(), { cookies, st } = seed
+    page = await b.openTab(s.browser, s.key, { agent: s.page.__qa?.agent, ctx }); close = async () => { await b.closeTab(page, s.key); await ctx.close().catch(() => {}) }
+    if (vp) await page.setViewport({ ...(s.page.viewport() || {}), ...vp })
+    if (cookies.length) await page.setCookie(...cookies.map(({ name, value, domain, path, expires, httpOnly, secure, sameSite }) => ({ name, value, domain, path, expires, httpOnly, secure, sameSite })))
+    if (st) await page.evaluateOnNewDocument((st) => { if (location.origin === st.o && !sessionStorage.getItem('qa-seeded')) { for (const [k, x] of st.l) localStorage.setItem(k, x); for (const [k, x] of st.ss) sessionStorage.setItem(k, x); sessionStorage.setItem('qa-seeded', '1') } }, st)
+    if (v.locale) { await page.setExtraHTTPHeaders({ 'Accept-Language': v.locale }); await page.evaluateOnNewDocument((l) => { Object.defineProperty(navigator, 'language', { get: () => l }); Object.defineProperty(navigator, 'languages', { get: () => [l] }) }, v.locale) }
+    if (scheme) await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: scheme }])
+  }
+  page.__qa = s.page.__qa
+  if (/^https?:/.test(url)) await page.goto(url, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
+  return { page, close }
+}
+// browser.mjs matrix(): fn per variant (m = qa.matrix); parallel <= 1: on s.page in turn, its viewport restored after; parallel n:
+// n variants at once, each in its own context (fn gets its page: use v.page, never s.page); a throw is that variant's FAIL
+export async function matrix(s, fn, m, { parallel = 1 } = {}) {
+  const vs = variants(m), out = new Array(vs.length), v0 = s.page.viewport?.(), own = vs.some((v) => v.locale || /^(light|dark)$/i.test(v.theme || ''))
+  if (own && !s.browser) throw new Error('matrix: a locale or light / dark theme variant needs a context of its own: pass a browser.mjs session')
+  if (parallel <= 1 && !own || !s.browser) {   // s.page in turn; a locale / scheme: contexts, one at a time at least
+    try { for (const [i, v] of vs.entries()) { if (v.viewport) await s.page.setViewport({ ...(v0 || {}), ...dims(v.viewport) }); out[i] = { variant: v.tag, result: await fn({ ...v, page: s.page }) } } } finally { if (v0) await s.page.setViewport(v0) }
+    return out
+  }
+  let next = 0; const seed = await seedOf(s)
+  const work = async () => { for (let i; (i = next++) < vs.length;) {
+    const v = vs[i], t0 = Date.now(); let ctx = null
+    try { ctx = await variantPage(s, v, seed); out[i] = { variant: v.tag, result: await fn({ ...v, page: ctx.page }) } } catch (e) { out[i] = { variant: v.tag, result: { result: 'FAIL', error: String(e.message || e).slice(0, 300) } } } finally { await ctx?.close().catch(() => {}) }
+    out[i].ms = Date.now() - t0 } }
+  await Promise.all(Array.from({ length: Math.min(parallel, vs.length) }, work))
+  return out
+}
+const qaCfg = async () => { const b = await import('../browser.mjs'), { readFileSync } = await import('node:fs'); try { return JSON.parse(readFileSync(b.localFile('skills/crafty/kit.local.json'), 'utf8')).qa || {} } catch { return {} } }
+// browser.mjs testerScreen(s, fn, { mobile }): fn at qa.testerViewport (web 1366x768, mobile 390x844)
+export async function testerScreen(s, fn, { mobile = false } = {}) { const v = { web: '1366x768', mobile: '390x844', ...(await qaCfg()).testerViewport }; return matrix(s, fn, { viewports: [v[mobile ? 'mobile' : 'web']] }) }
+export const passed = (r) => r === true || /^pass/i.test(String(r?.result ?? r))
+// the AI doc's "Matrix:" line (devtools.py case_gaps reads it); a reduced set names its reason (proof.py matrix-scope)
+export const matrixLine = (rows, sc) => `Matrix: ${rows.map((x) => x.variant || 'default').join(', ')}${sc?.scope === 'reduced' ? ` (reduced: ${sc.reason})` : ''}`
+
+// CLI: one case x every variant it needs, concurrently in one browser; exit 0 all PASS · 1 a FAIL · 2 usage
+if (process.argv[2] === 'matrix' && (await import('node:path')).resolve(process.argv[1] || '') === (await import('node:url')).fileURLToPath(import.meta.url)) {
+  const { mkdirSync, readFileSync, writeFileSync } = await import('node:fs'), { join, resolve } = await import('node:path'), { pathToFileURL } = await import('node:url')
+  const arg = (k) => { const i = process.argv.indexOf('--' + k); return i > 2 ? process.argv[i + 1] : '' }
+  if (!arg('case') || !arg('script') || !arg('out')) { console.error('usage: node ui-checks.mjs matrix --case <id> --script <case.mjs> --out <dir> [--task <id>] [--agent <id>] [--target <t>] [--tenant <x>] [--as <user>] [--path </screen>] [--parallel <n>]'); process.exit(2) }
+  if (arg('agent')) process.env.CLAUDE_AGENT = arg('agent')
+  const b = await import('../browser.mjs'), cfg = await qaCfg()
+  // the variants: the task's recorded scope (devtools.py matrix-scope <task> --dir <wt>), else the full qa.matrix
+  const sc = arg('task') ? (() => { try { return JSON.parse(readFileSync(join(b.kitPath('tasks'), arg('task').replace(/[^\w.-]/g, '_') + '.json'), 'utf8')).cases?.matrixScope } catch { return null } })() : { scope: 'full', matrix: cfg.matrix || {} }
+  if (!sc?.matrix) { console.error(`matrix: task ${arg('task')} has no recorded scope: python -X utf8 <kit>/skills/crafty/devtools.py matrix-scope ${arg('task')} --dir <worktree>, then again`); process.exit(2) }
+  const out = resolve(arg('out')), fn = (await import(pathToFileURL(resolve(arg('script'))).href)).default, t0 = Date.now()
+  mkdirSync(out, { recursive: true })
+  const s = await b.session({ target: arg('target') || undefined, tenant: arg('tenant') || undefined, as: arg('as') || undefined })
+  let rows
+  try { if (arg('path')) await b.go(s.page, arg('path')); rows = await matrix(s, (v) => fn({ ...v, b, out, case: arg('case') }), sc.matrix, { parallel: Number(arg('parallel')) || cfg.matrixRun?.parallel || 4 }) } finally { await s.done() }
+  const line = matrixLine(rows, sc), fails = rows.filter((x) => !passed(x.result))
+  writeFileSync(join(out, `${arg('case')}-matrix.json`), JSON.stringify({ case: arg('case'), scope: sc.scope, reason: sc.reason || '', ms: Date.now() - t0, rows, line }, null, 1))
+  for (const x of rows) console.log(`${passed(x.result) ? 'PASS' : 'FAIL'} ${arg('case')} ${x.variant} ${x.ms ?? ''} ms ${JSON.stringify(x.result).slice(0, 160)}`)
+  console.log(line); process.exit(fails.length ? 1 : 0)
 }

@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db-presets.ps1; tenants.model = adapters/tenant-models.ps1 + tenant-schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L240 state · L287 layer drops · L362 leases · L470 code · L481 migrations ·
-  L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L770 hooks · L844 marks · L1028 seed ·
-  L1095 processes · L1459 daemon · L1931 cleanup · L2003 verbs
+Sections: L36 config · L240 state · L287 layer drops · L362 leases · L471 code · L482 migrations ·
+  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L632 shared builds · L771 hooks · L845 marks · L1029 seed ·
+  L1096 processes · L1460 daemon · L1932 cleanup · L2004 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -365,6 +365,7 @@ function Prune($st) {
     $l = $st.leases[$a]
     if (-not (Update-KitLease $l)) { $st.leases.Remove($a); $script:EnvLeaseWhy["leases|$a"] = $(if ($l.graceMin) { "reclaim: no live holder for $($l.graceMin) min" } else { 'owner lease ended' }); continue }
     if (-not $l.owner -and $l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalMinutes -ge $script:LeaseIdleMin) {   # nobody uses it: trains need not wait, services may idle
+      if (Test-KitAgentBusy $(if ($l.agent) { "$($l.agent)" } else { ($a -split '/')[0] })) { $l.lastUse = (Now); continue }   # its check runs (gate, browser.mjs): a use
       $st.leases.Remove($a); $script:EnvLeaseWhy["leases|$a"] = "unused for $($script:LeaseIdleMin) min"; Set-Notice $st $(if ($l.agent) { $l.agent } else { $a }) "lease on $(@($l.services) -join ',') released: unused for $($script:LeaseIdleMin) min (use again to re-lease)"
     }
   }

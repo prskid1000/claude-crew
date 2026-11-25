@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix, testerScreen, hitTest } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L250 session · L302 actions · L401 ui checks · L411 evidence
+// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L250 session · L303 actions · L402 ui checks · L409 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -183,7 +183,7 @@ export function kitParam(key, def, ctx = '') {
   return v ?? def
 }
 const GRACE_MS = 60000 * kitParam('idle.graceMinutes', 10)
-// close tabs idle past idle.graceMinutes (caller holds the tabs lock); unregistered: from first sight
+// close tabs idle past idle.graceMinutes (under the tabs lock); unregistered: from first sight
 async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bossy.ps1 release)
   const f = tabsFile(key), reg = readJson(f, {}), keep = { _key: key }, now = Date.now()   // _key: file names lose '__' vs '|'
   let live = 0, closed = 0
@@ -201,12 +201,12 @@ async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bo
   return { live, closed }
 }
 // a free tab slot: count + open + register under one lock; waits <= waitMs, then fails
-export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT || `pid-${process.pid}`, waitMs = TAB_WAIT_MS } = {}) {
+export async function openTab(browser, key, { agent = process.env.CLAUDE_AGENT || `pid-${process.pid}`, waitMs = TAB_WAIT_MS, ctx = browser } = {}) {
   const end = Date.now() + waitMs
   for (;;) {
     const page = await withLock(`tabs-${keyFile(key)}`, async () => {
       if ((await sweep(browser, key)).live >= MAX_TABS) return null
-      const p = await browser.newPage(), f = tabsFile(key), reg = readJson(f, {})
+      const p = await ctx.newPage(), f = tabsFile(key), reg = readJson(f, {})
       reg[await tabId(p)] = { agent, pid: process.pid, at: Date.now() }; reg._key = key; delete reg._idle; leaseLog('acquire', key, { agent, at: end - waitMs })
       saveJson(f, reg)
       return p
@@ -265,7 +265,7 @@ export async function session({ target, tenant, as } = {}) {
   const key = sessionKey(tn, tenant, as), VIEW = { width: Number(bo.width), height: Number(bo.height) }
   BASE = t.web
   let browser, page, port = null
-  const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`
+  const agentId = process.env.CLAUDE_AGENT || `pid-${process.pid}`, busy = /^pid-/.test(agentId) ? '' : join(kitPath('agents'), agentId, `busy-${process.pid}.json`)
   const eg = (await adapter('engine-playwright.mjs')).engine(eng), served = typeof eg.reuse === 'function'   // Playwright: pwServed
   if (!eg.reuse) ({ browser, page } = await eg.session(eng, bo, VIEW, QUIET_ARGS))
   else if (served) ({ browser, page } = await eg.reuse(eng, bo, VIEW, QUIET_ARGS, port = await sessionPort(tn, tenant, as), kitPath('sessions', { create: true })))
@@ -288,8 +288,9 @@ export async function session({ target, tenant, as } = {}) {
     if (bo.timezone) await page.emulateTimezone(bo.timezone).catch(() => {})
   }
   // served: close() ends its context; the server stays
-  const done = async () => { openDone.delete(done); if (port === null || served) return browser.close().catch(() => {}); await closeTab(page, key); try { browser.disconnect() } catch {} }
-  releaseOnExit(done)
+  const done = async () => { openDone.delete(done); busy && rmSync(busy, { force: true }); if (port === null || served) return browser.close().catch(() => {}); await closeTab(page, key); try { browser.disconnect() } catch {} }
+  releaseOnExit(done)   // then the busy file (lib.ps1 Test-KitAgentBusy: env leases stay), gone with done()
+  try { busy && (mkdirSync(dirname(busy), { recursive: true }), writeFileSync(busy, JSON.stringify({ pid: process.pid, start: new Date(Date.now() - process.uptime() * 1000).toISOString() }))) } catch {}
   page.__qa = { t, tenant, as, key, agent: agentId }
   page.setDefaultTimeout(20000); page.setDefaultNavigationTimeout(90000)
   const net = watch(page, t.apiPattern)
@@ -399,14 +400,11 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 }
 
 // ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui-checks.mjs)
-// matrix(s, fn): fn({ viewport, fontScale, theme, tag }) per qa.matrix variant; [] = axis off
-export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {} } = {}) => (await adapter('ui-checks.mjs')).matrix(s, fn, m)
-// layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG
-export const layoutIssues = async (...a) => (await adapter('ui-checks.mjs')).layoutIssues(...a)
-export const contrast = async (...a) => (await adapter('ui-checks.mjs')).contrast(...a)
-// testerScreen(s, fn, { mobile }): fn at qa.testerViewport (web 1366x768, mobile 390x844); hitTest(page, [sel | { text }]): elementFromPoint
-export const testerScreen = async (s, fn, { mobile = false } = {}) => { const v = { web: '1366x768', mobile: '390x844', ...readJson(KLF, {}).qa?.testerViewport }; return matrix(s, fn, { matrix: { viewports: [v[mobile ? 'mobile' : 'web']] } }) }
-export const hitTest = async (...a) => (await adapter('ui-checks.mjs')).hitTest(...a)
+// matrix(s, fn, { parallel }): fn per qa.matrix variant (adapters/ui-checks.mjs matrix)
+export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {}, parallel } = {}) => (await adapter('ui-checks.mjs')).matrix(s, fn, m, { parallel })
+// layoutIssues(page, { scope, ignore }), contrast(page, sel, { min }), hitTest(page, [sel | { text }])
+// testerScreen(s, fn, { mobile }): fn at qa.testerViewport (web 1366x768, mobile 390x844)
+export const [layoutIssues, contrast, hitTest, testerScreen] = ['layoutIssues', 'contrast', 'hitTest', 'testerScreen'].map((n) => async (...a) => (await adapter('ui-checks.mjs'))[n](...a))
 
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names: same literal as pokey.ps1 $script:EvidenceName

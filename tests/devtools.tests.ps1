@@ -178,6 +178,12 @@ $pfOk = & $py -X utf8 $DT proof PF1 2>&1 | Out-String; $pfOkc = $LASTEXITCODE; $
 if ($null -ne $pfOld) { [IO.File]::WriteAllText($pdF, $pfOld) } else { Remove-Item -LiteralPath $pdF }
 Expect "proof: an API-only PASS on a ui goal stays a gap; a screenshot at 1366x768 + hit PASS closes it; the goals doc shows proof and impact map; the code commit goes in ($pfOkc $pfYes)" (
   $pfApiG -match 'T1 \(ui\): no PASS case with UI evidence' -and $pfOkc -eq 0 -and $pfGoals -match '## Impact map' -and $pfGoals -match 'A1 PASS viewport 1366x768 hit PASS' -and $pfYes -eq 0)
+# owner 2026-11-25: the matrix sized to the diff (proof.py matrix-scope): .ts edits = reduced, recorded on the task; a new .scss = full
+git -C $pfRepo update-ref refs/remotes/origin/main (git -C $pfRepo rev-list --max-parents=0 HEAD)
+$msR = & $py -X utf8 $DT matrix-scope PF1 --dir $pfRepo 2>$null | Out-String; 'x{}' | Set-Content "$pfRepo/my menu.scss"; $msF = & $py -X utf8 $DT matrix-scope --dir $pfRepo --json 2>$null | Out-String
+$msRec = & { . (Join-Path $k 'skills/crafty/lib.ps1'); (Get-Content (Join-Path (Get-KitPath tasks) 'PF1.json') -Raw | ConvertFrom-Json).cases.matrixScope }
+Expect "matrix-scope: .ts edits = reduced (1366x768 + 390x844), recorded on the task; an untracked .scss (a space in its name) = full, named ($($msR.Trim() -split "`n" | Select-Object -First 1))" (
+  $msR -match '^matrix-scope PF1: reduced \(2 file\(s\), no layout / style or new screen\): 2 variant\(s\)' -and $msRec.scope -eq 'reduced' -and @($msRec.matrix.viewports) -join ',' -eq '1366x768,390x844' -and ($msF | ConvertFrom-Json).reason -eq 'my menu.scss is layout / style')
 # owner 2026-11-25 ("it will take soooo much time, never do this"): an ai goal = a code guard + ONE local run; no kit text asks for N reruns
 $aiRx = @'
 (\bai\b|\bmodel|\bllm|\bprompt|llm-driven).{0,80}([0-9]+\+?|\bN) (times|runs|reruns|attempts)

@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L925 status · L1128 tracker · L1456 prior ·
-  L1475 ask bugs · L1660 deploy words · L1704 git-host · L1892 kitlog · L2002 params · L2307 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L931 status · L1134 tracker · L1462 prior ·
+  L1481 ask bugs · L1666 deploy words · L1710 git-host · L1898 kitlog · L2008 params · L2313 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -496,6 +496,12 @@ function New-KitLease([string]$Agent, [string]$Session = '', [int]$OwnerMinutes 
 }
 $script:KitLiveCache = @{}
 function Get-KitGateLedger { Get-KitPath build-gate }   # one <pid>.json per running gated command (crafty.ps1 gate)
+# a check of the agent runs: a gated build / test (running or queued) or a browser.mjs session (agents/<id>/busy-<pid>.json); envy: a use
+function Test-KitAgentBusy([string]$Agent) {
+  if (-not $Agent) { return $false }; $gl = Get-KitGateLedger
+  [bool]@(@(Read-KitJsonFiles $gl) + @(Read-KitJsonFiles (Join-Path $gl 'queue')) | Where-Object { "$($_.owner)" -eq $Agent -and (Test-KitPid $_.pid $_.start) }).Count -or
+  [bool]@(Read-KitJsonFiles (Join-Path (Get-KitPath agents) $Agent) 'busy-*.json' | Where-Object { Test-KitPid $_.pid $_.start }).Count
+}
 function Get-KitLiveCached([string]$k, [scriptblock]$b) { $c = $script:KitLiveCache[$k]; if (-not $c -or ((Get-Date) - $c.at).TotalSeconds -gt 15) { $c = @{ at = Get-Date; v = (& $b) }; $script:KitLiveCache[$k] = $c }; $c.v }
 function Test-KitLive($l) {
   $now = Get-Date; $bm = [double](Get-KitParam 'idle.beatMinutes'); $a = "$($l.agent)"

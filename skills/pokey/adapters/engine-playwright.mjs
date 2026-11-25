@@ -29,12 +29,15 @@ export async function pwPage(eng, bo, VIEW, quiet = [], ws = '') {
   const pw = await pwType(eng), hint = `npx playwright install ${eng}`
   const browser = await (ws ? pw.connect(ws) : pw.launch({ headless: true, args: eng === 'chromium' ? quiet : [] })).catch((e) => { throw new Error(`browser.engine ${eng}: ${String(e.message).split('\n')[0]} - ${hint}`) })
   const ctx = await browser.newContext({ viewport: VIEW, locale: bo.lang, timezoneId: bo.timezone || undefined })
-  const page = await ctx.newPage(), go0 = page.goto.bind(page), wn = page.waitForNavigation.bind(page)
+  return { browser, page: wrapPage(ctx, await ctx.newPage()) }
+}
+// a context's page with the puppeteer method names browser.mjs calls (ui-checks.mjs matrix: a context per variant)
+export function wrapPage(ctx, page) {
+  const go0 = page.goto.bind(page), wn = page.waitForNavigation.bind(page)
   const wu = (o = {}) => ({ ...o, waitUntil: o.waitUntil === 'networkidle2' ? 'networkidle' : o.waitUntil })
-  Object.assign(page, { __pw: true, goto: (u, o) => go0(u, wu(o)), waitForNavigation: (o) => wn(wu(o)),
+  return Object.assign(page, { __pw: true, goto: (u, o) => go0(u, wu(o)), waitForNavigation: (o) => wn(wu(o)),
     waitForNetworkIdle: (o = {}) => page.waitForLoadState('networkidle', { timeout: o.timeout }),
-    cookies: () => ctx.cookies(), setCookie: (...c) => ctx.addCookies(c) })
-  return { browser, page }
+    cookies: () => ctx.cookies(), setCookie: (...c) => ctx.addCookies(c), viewport: () => page.viewportSize(), setViewport: (v) => page.setViewportSize({ width: v.width, height: v.height }) })
 }
 // reuse: one Playwright browser server per login key and port (a detached `node engine-playwright.mjs serve`), each call connects
 // with a fresh context (the saved login restores it); the server exits after KIT_PW_IDLE_MS (30 min) without a client touching
@@ -68,11 +71,11 @@ if (process.argv[2] === 'serve' && resolve(process.argv[1] || '') === fileURLToP
   const end = async () => { await srv.close().catch(() => {}); if (readTok(tokF) === tok) rmSync(tokF, { force: true }); process.exit(0) }
   setInterval(() => { let at = 0; try { at = statSync(used).mtimeMs } catch {}; if (Date.now() - at > idle) end() }, Math.min(5000, idle))
 }
-// registry (parity.json browser-engine; browser.mjs session() picks by browser.engine): chrome = a CDP session per login, reused
+// registry (parity.json browser-engine; browser.mjs session() picks by browser.engine; context: ui-checks.mjs matrix): chrome = a CDP session per login, reused
 // across calls (browser.mjs); the Playwright engines a browser server per login, reused across calls (pwServed)
 export const ADAPTERS = { 'browser-engine': {} }
-ADAPTERS['browser-engine']['chrome'] = { session: true, reuse: true }
-ADAPTERS['browser-engine']['chromium'] = { session: pwPage, reuse: pwServed }
-ADAPTERS['browser-engine']['firefox'] = { session: pwPage, reuse: pwServed }
-ADAPTERS['browser-engine']['webkit'] = { session: pwPage, reuse: pwServed }
+ADAPTERS['browser-engine']['chrome'] = { session: true, reuse: true, context: true }
+ADAPTERS['browser-engine']['chromium'] = { session: pwPage, reuse: pwServed, context: wrapPage }
+ADAPTERS['browser-engine']['firefox'] = { session: pwPage, reuse: pwServed, context: wrapPage }
+ADAPTERS['browser-engine']['webkit'] = { session: pwPage, reuse: pwServed, context: wrapPage }
 export const engine = (eng) => ADAPTERS['browser-engine'][eng] || (() => { throw new Error(`browser.engine ${eng}: unknown (${Object.keys(ADAPTERS['browser-engine']).join(' | ')})`) })()

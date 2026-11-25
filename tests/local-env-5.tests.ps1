@@ -226,4 +226,11 @@ $dx = (Px $L2 deploy -Env shop -Dir "$dd1,$dd2" 2>&1 | Out-String) -replace '\s*
 $pyDoc = Px $L2 doctor -Env shop 2>&1 | Out-String; $pyEnvs = Px $L2 envs 2>&1 | Out-String
 Expect "doctor: a start script inside a lane worktree not made yet = WARN, a missing one elsewhere still FAIL; envs: AI path on the aiStack service only" ($pyDoc -match 'WARN shop: py\.start: script .*python\.exe is in a lane worktree not made yet' -and $pyDoc -notmatch 'FAIL shop: py\.start' -and $pyDoc -match 'FAIL shop: tool\.start: script .*run\.ps1 does not exist' -and $pyEnvs -match '(?m)^\s+py\s.*:41062.*AI path' -and $pyEnvs -notmatch '(?m)^\s+api\s.*AI path')
 Expect "localenv: down without -Env prints usage + envs, exit 2 ($dnc); down -All runs on each env, exit 0 ($dac); deploy -Dir a,b binds and checks each dir (a path with a space stays whole)" ($dnc -eq 2 -and $dn -match 'usage: envy\.ps1 down -Env' -and $dn -match 'shop' -and $dn -match 'mig' -and $dn -notmatch 'At .*char:' -and $dac -eq 0 -and $da -notmatch 'usage:|-Env needed' -and $dx -notmatch 'argument transformation' -and $dx -match 'wt a is not a git worktree')
+# owner 2026-11-25: a lane lease lapsed while its holder's UI checks ran: the holder's live gated check or browser.mjs session is a use
+$lb = & { . $L2; $gl = Get-KitGateLedger; $ag = Get-KitPath agents; New-Item -ItemType Directory -Force (Join-Path $gl 'queue'), "$ag/br" | Out-Null
+  @{ pid = $PID; start = (Get-KitPidStart $PID); owner = 'gt' } | ConvertTo-Json | Set-Content "$gl/queue/1.json"; @{ pid = 999999; owner = 'dead' } | ConvertTo-Json | Set-Content "$gl/2.json"
+  @{ pid = $PID } | ConvertTo-Json | Set-Content "$ag/br/busy-$PID.json"; $st = @{ leases = @{}; holds = @{}; notices = @{}; requests = @() }
+  foreach ($a in 'gt', 'br', 'dead', 'idle') { $st.leases[$a] = @{ services = @('api'); agent = $a; holderPid = $PID; lastUse = (Get-Date).AddMinutes(-60).ToString('o') } }
+  Prune $st; Remove-Item "$gl/queue/1.json", "$gl/2.json", "$ag/br/busy-$PID.json"; "$(($st.leases.Keys | Sort-Object) -join ',')|$(([datetime]$st.leases.gt.lastUse) -gt (Get-Date).AddMinutes(-1))" }
+Expect "leases: a holder's queued gate check or browser.mjs session keeps its unused lease (used now); a dead check or none: released ($lb)" ($lb -eq 'br,gt|True')
 Complete-Tests
