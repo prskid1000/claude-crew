@@ -62,7 +62,7 @@ const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume comp
  ...(a.debate && [].concat(a.debate.options || []).length !== 2 ? [`agents.${a.id}.debate.options (2)`] : [])])]
 if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words): agents may drop items for the latest chat message (bossy step 3).')
-const RUN = A.run || `${(A.brief.split(/[\\/]/).pop() || 'wave').replace(/\.md$/, '')}-${fnv(String(A.brief)).slice(0, 4)}`   // hash: same name, other wave
+const RUN = A.run || 'buildy-' + (A.brief.split(/[\\/]/).pop().toLowerCase().replace(/\.md$/, '').match(/[a-z0-9]+/g) || ['wave']).slice(0, 3).join('-')
 const LEARN = A.learn === undefined ? true : A.learn
 const LOCAL_RETRIES = 1
 const PHASED = A.phases !== false && MODE !== 'resume'
@@ -360,7 +360,7 @@ const unitRan = (u) => /crafty\.ps1\W+check\b/.test(String((u || {}).command)) &
 const fallbackOk = (lt, r) => (lt.fallback !== 'unit' || unitRan(lt.unitRun)) && (((r && r.mrs) || []).length ? r.mrs.every((m) => [lt.fallback || 'ci', 'ci'].includes(repoNames(m).map((n) => CFG.local[n]).find(Boolean))) : !!Object.keys(CFG.local)[0])
 // BLOCKED, a FAIL beyond env gaps; with a: a code area's NONE, no decide id or fallback
 const noneGated = (lt, a, r) => !!a && !!lt && lt.status === 'NONE' && !['doc', 'spike', 'repro'].includes(a.kind) && !fallbackOk(lt, r)
-const holdsMerge = (lt, a, r) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap) || (noneGated(lt, a, r) && !/^(?:dec-\d+|d-\d{14}-[\w-]+)$/.test(lt.decisionId)))
+const holdsMerge = (lt, a, r) => !!lt && (lt.status === 'BLOCKED' || (lt.status === 'FAIL' && !lt.envGap) || (noneGated(lt, a, r) && !/^(?:dec-[a-z0-9]+(?:-[a-z0-9]+)*|d-\d{14}-[\w-]+)$/.test(lt.decisionId)))
 // NONE: a person's merge / scope / other word on this area
 async function noneWordOk(a, r, id) {
  const its = [a.id, a.task, AREA_TASK[a.id], a.branch, ...[].concat(a.branches || []), ...String(a.items).split(','), ...r.mrs.flatMap((x) => repoNames(x).map((n) => `${n}!${(/(\d+)\/?$/.exec(nu(x.url)) || [])[1]}`))]

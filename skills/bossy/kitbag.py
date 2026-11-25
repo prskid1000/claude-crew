@@ -22,11 +22,11 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L40 paths · L137 state · L264 kitlog · L366 load · L859 lint · L1273 README graph · L1391 lint command · L1673 audit ·
-  L1821 registry · L1881 tools · L1969 parity · L2570 arch lint · L2843 prose · L3025 sections · L3157 budget · L3175 migrate ·
-  L3323 plugins · L3380 state lint · L3568 main
+Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L358 kitlog · L460 load · L953 lint ·
+  L1367 README graph · L1485 lint command · L1767 audit · L1915 registry · L1975 tools · L2063 parity · L2664 arch lint ·
+  L2937 prose · L3119 sections · L3251 budget · L3269 migrate · L3417 plugins · L3474 state lint · L3662 main
 """
-import ast, contextlib, datetime, fnmatch, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
+import ast, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -179,13 +179,102 @@ def next_id(kind):
             return rid
     raise SystemExit(f'naming next id: 100 {kind} ids live on the board')
 
-NAME_STOP = {'a', 'an', 'the', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'after', 'before', 'from', 'via'}
+NAME_STOP = {'a', 'an', 'the', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'after', 'before', 'from', 'via', 'all', 'are',
+             'is', 'be', 'do', 'does', 'should', 'can', 'this', 'that', 'it', 'now', 'then', 'will', 'what', 'which', 'how', 'when', 'why',
+             'who', 'we', 'you', 'every', 'each', 'any', 'some', 'not', 'yes', 'its', 'our', 'your'}
+# ---- the one name normaliser (owner 2026-11-25): every id the kit makes or shows is `<role>-<2-3 topic words>`, its text
+# `<short lowercase plain words>`: words split by single hyphens, codes, waves, versions, dates and padding out; lanes / slots never
+NAME_VOCAB = frozenset('''ai ui ux api qa db sql e2e s3 k8s i18n css js ts img image edit fix test lane env deploy build cart pick wave
+prompt reason cancel order account pay price list page menu run check lint name gate dev prod local data seed mark repo web app mobile
+phone lease slot doc spec brief plan review retro tidy kit audit ask only create other type field lost new old auto merge task bug view
+show hide sync report log user login cost time home flow item role tag key mr branch ship proof rest live envfix typecheck oauth2 http2
+http3 ipv4 ipv6 utf8 sha256 base64 mp4 h264 s3'''.split())
+NAME_DATE = r'(?<!\d)(?:19|20)\d\d-?(?:0[1-9]|1[0-2])-?(?:0[1-9]|[12]\d|3[01])(?:-\d{2,6})?(?!\d)'
+CODE_RX = re.compile(r'(?<![\w-])[A-Za-z]{2,6}-[A-Za-z]{2,6}-\d+(?:\.\d+)?(?![\w-])|[\w.-]+![0-9]+\b|(?<![\w.])!\d+\b|#\d+\b|(?<![\w-])cu-[0-9a-z]{5,}\b'
+                     r'|(?<![\w.])v?\d+(?:\.\d+)+\b|(?<![\w-])v\d+\b'
+                     r'|(?<![a-z])waves?[\s-]*\d+\b|' + NAME_DATE, re.I)
+
+@functools.lru_cache(None)
+def role_words():
+    """The crew and workflow names (_manifest agents + workflows)."""
+    m = (load_json(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'))[0] or {}).get('_manifest') or {}
+    return {str(x).lower() for k in ('agents', 'workflows') for x in (m.get(k) or {})}
+
+@functools.lru_cache(None)
+def name_vocab():
+    """NAME_VOCAB + the crew names + the words of naming.products / naming.areas (kit.local.json): the known words a jam splits into."""
+    c = local_config(KIT_DIR, 'kit.local.json').get('naming') or {}
+    org = {w for k in ('products', 'areas') for v in (c.get(k) or {}).values() for w in re.findall(r'[a-z0-9]+', str(v).lower())}
+    return NAME_VOCAB | role_words() | org
+
+def name_words(text, vocab=None):
+    """Lowercase words of a name: camelCase and jams split (ask011 -> ask 11, aiedit -> ai edit: both halves known), padding off."""
+    vocab = name_vocab() if vocab is None else vocab
+    out = []
+    for w in re.findall(r'[a-z0-9]+', re.sub(r'([a-z])([A-Z])', r'\1 \2', str(text or '')).lower()):
+        m = w not in vocab and re.fullmatch(r'([a-z]{3,})(\d+)', w)
+        for p in ([m[1], m[2]] if m else [w]):
+            if p.isdigit():
+                out.append(str(int(p)))
+                continue
+            cut = next((i for i in range(len(p) - 2, 1, -1) if p not in vocab and len(p) >= 5 and p[:i] in vocab and p[i:] in vocab), 0)
+            out += [p[:cut], p[cut:]] if cut else [p]
+    return out
+
+def name_code(w, vocab):
+    """A word that is a code, not a word: digits only, or letters and digits mixed (t15, s42, x7k9q2m4) and not a known word."""
+    return w.isdigit() or (bool(re.search(r'\d', w)) and w not in vocab)
+
+def name_describe(text, cap=60):
+    """The text after an id (owner 2026-11-25): short lowercase plain words, no task code, wave, version, date or leading role word."""
+    vocab = name_vocab()
+    t = CODE_RX.sub(' ', str(text or ''))
+    t = re.sub(r'\s*[:;|·—–]\s*|\s+-\s+', ' ', t).lower()
+    toks = [' '.join(name_words(w, vocab)) if re.fullmatch(r'[a-z]+\d*', w) else w for w in re.findall(r"[\w'+&/.-]+|,", t)]   # jams split first (ask011 -> ask 11)
+    toks = [w for w in toks if not (re.fullmatch(r'[\w -]+', w) and not w.replace(' ', '').isdigit() and all(name_code(p, vocab) for p in re.split(r'[\s-]+', w.strip('-')) if p))]
+    while toks and (toks[0] in role_words() or toks[0] == ','):
+        toks.pop(0)
+    s = re.sub(r'\s+,', ',', ' '.join(toks))
+    s = re.sub(r'\b(\w+)( \1\b)+', r'\1', re.sub(r'(?:,\s*)+', ', ', s)).strip(' ,.-')
+    if len(s) > cap:   # a summary, never a cut word: the last whole clause, else the last whole word
+        s = (s[:cap].rsplit(', ', 1)[0] if ', ' in s[:cap] else s[:cap].rsplit(' ', 1)[0]).strip(' ,.-')
+    return s
+
+def name_normal(kind, name, topic='', live=(), role=''):
+    """The shown form of an id: words split by single hyphens; numbers and codes give way to <topic> words; a tie suffix
+    (-b, -2) only when another live name has the same base; <role> leads when given. lane / slot: as given (owner)."""
+    if kind in ('lane', 'slot') or not str(name or '').strip():
+        return str(name or '')
+    vocab, roles = name_vocab(), role_words()
+    ws = name_words(re.sub(NAME_DATE, ' ', str(name)), vocab) or name_words(name, vocab)   # a dated old id (buildy-20261123-01) loses the date
+    head = [ws[0]] if ws and ws[0] in roles else [role] if role in roles else []
+    rest = ws[1:] if head and ws and ws[0] == head[0] else ws
+    room = 16 - (len(head[0]) + 1 if head else 0)
+    if topic and (not rest or any(name_code(w, vocab) for w in rest)):
+        tt = CODE_RX.sub(' ', str(topic)).split(':', 1)   # 'Website v2 wave 3: payments, ...': the words after the colon say the work
+        tp = name_slug(tt[1] if len(tt) > 1 and re.search(r'[a-z]{3}', tt[1], re.I) else tt[0], set(head), words=3, room=room, tail=kind == 'agent')
+        rest = tp.split('-') if tp else rest
+    elif len(rest) > 1 and re.fullmatch(r'[a-z]|\d+', rest[-1]):
+        base = '-'.join(head + rest[:-1])
+        if not any(name_normal(kind, o, '', (), role) == base for o in live if o != name and name_words(o, vocab) != ws):
+            rest = rest[:-1]
+    return '-'.join(head + (rest[:3] + rest[-1:] if len(rest) > 3 and re.fullmatch(r'[a-z]|\d+', rest[-1]) else rest[:3]))   # 2-3 topic words (+ a kept tie)
+
+def name_shown(kind, name, topic='', live=(), role=''):
+    """`<id> · <description>` (owner 2026-11-25 reference: 'devy-only-prompt · ask catalogue create-only prompt')."""
+    if kind == 'desc':
+        return name_describe(name)
+    n, d = name_normal(kind, name, topic, live, role), name_describe(topic)
+    said = d and (d.replace(' ', '-') == n.split('-', 1)[-1] or all(any(w.startswith(x) for w in n.split('-')) for x in re.findall(r'[a-z0-9]+', d)))
+    return f'{n} · {d}' if d and not said else n   # the id says it already (devy-cat · cat, kitty-ask · kit)
 
 def name_slug(text, drop=(), words=2, room=12, tail=False):
-    """A topic as kebab words (no date, stop word or word <drop> says), <= <words> words and <room> characters: too long drops
-    the last word (tail: the first, a product word the run already says); one long word is cut."""
-    t = re.sub(r'(?<!\d)(?:19|20)\d\d-?(?:0[1-9]|1[0-2])-?(?:0[1-9]|[12]\d|3[01])(?:-\d{2,6})?(?!\d)', ' ', str(text or '').lower())
-    ws = list(dict.fromkeys(w for w in re.findall(r'[a-z0-9]+', t) if w not in NAME_STOP and w not in drop))
+    """A topic as kebab words (no code, date, stop word or word <drop> says; 3+ letter words first), <= <words> words and <room>
+    characters: too long drops the last word (tail: the first, a product word the run already says); one long word is cut."""
+    vocab = name_vocab()
+    ws = list(dict.fromkeys(w for w in name_words(CODE_RX.sub(' ', str(text or '')), vocab) if w not in drop and not name_code(w, vocab)))
+    ws = [w for w in ws if w not in NAME_STOP] or ws   # only stop words (pause 'all'): they are the topic
+    ws = [w for w in ws if len(w) > 2] or ws
     ws = ws[-words:] if tail else ws[:words]
     while len(ws) > 1 and len('-'.join(ws)) > room:
         ws.pop(0 if tail else -1)
@@ -196,17 +285,22 @@ def next_name(kind, topic='', folder='', cap=12):
     the names in <folder> (a record there), else every name issued before and the live board runs."""
     if not re.match(r'^[a-z]+(?:-[a-z0-9]+)*$', kind):
         raise SystemExit(f'naming next name: kind {kind!r}: lowercase words joined by -')
-    base = '-'.join(x for x in (kind, name_slug(topic, set(kind.split('-')), room=cap - len(kind) - 1, tail=cap > 12)) if x)
+    slug = next((s for alt in str(topic or '').split(' ~ ') if (s := name_slug(alt, set(kind.split('-')), room=cap - len(kind) - 1, tail=cap > 12 and kind in role_words()))), '')   # 'a ~ b': the first with words; an agent's area: its last words
+    base = '-'.join(x for x in (kind, slug) if x)
     cands = (base if n == 1 else f'{base}-{n}' for n in range(1, 10000))
-    if folder:
-        have = {osp.splitext(n)[0] for n in os.listdir(folder)} if osp.isdir(folder) else set()
-        return next(c for c in cands if c not in have)
-    f, live = kit_path('naming', create=True), board_live('run')
+    f, live = kit_path('naming', create=True), set() if folder else board_live('run')
     with locked(f):
         x = state_read(f) or {}
-        used = set(x.get('names') or [])
-        name = next(c for c in cands if c not in used and c not in live)
-        x['names'] = (list(x.get('names') or []) + [name])[-5000:]
+        if folder:   # vs its files, and a name handed out in the last 2 min under this lock (two parallel askers never share one)
+            have, now, fk = {osp.splitext(n)[0] for n in os.listdir(folder)} if osp.isdir(folder) else set(), time.time(), osp.abspath(folder).lower()
+            hold = {k: v for k, v in (x.get('hold') or {}).items() if now - float(v) < 120}
+            name = next(c for c in cands if c not in have and f'{fk}|{c}' not in hold)
+            hold[f'{fk}|{name}'] = now
+            x['hold'] = hold
+        else:
+            used = set(x.get('names') or [])
+            name = next(c for c in cands if c not in used and c not in live)
+            x['names'] = (list(x.get('names') or []) + [name])[-5000:]
         state_write(f, x)
     return name
 

@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L191 names · L284 slots · L317 lease · L429 release · L474 lanes · L595 sync · L697 pool · L740 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L317 lease · L429 release · L475 lanes · L596 sync · L698 pool · L741 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -431,7 +431,8 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
 # checked to reverse-apply, then the tree goes back to HEAD; '' = saved, else the reason the slot stays parked (files kept)
 function Save-WtWipPatch([string]$Path, [string]$Branch, [string]$Refused) {
   $hd = "$(git -C $Path rev-parse --short=12 HEAD 2>$null)".Trim()
-  $pf = Join-Path (Get-KitPath wip-patches -Create) "$($Branch -replace '[^\w.-]', '_')~$hd~$((Get-Date).ToString('yyyyMMdd-HHmmss')).patch"
+  $wpBase = Join-Path (Get-KitPath wip-patches -Create) "$($Branch -replace '[^\w.-]', '_')~$hd"; $pf = "$wpBase.patch"; $wpTie = 2   # owner 2026-11-25: branch + commit name it, no date; a tie -2
+  while (Test-Path -LiteralPath $pf) { $pf = "$wpBase-$wpTie.patch"; $wpTie++ }
   git -C $Path diff --cached --binary --output="$pf" 2>$null
   if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $pf) -or -not (Get-Item -LiteralPath $pf).Length) { git -C $Path reset -q 2>$null; Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue; return "$Refused; patch not written" }
   git -C $Path apply --check -R --cached "$pf" 2>$null; if ($LASTEXITCODE) { git -C $Path reset -q 2>$null; return "$Refused; patch $pf does not reverse-apply: files kept" }
@@ -711,7 +712,7 @@ function Invoke-WtPool {   # slots per pooled repo; -Migrate [-DryRun]: per-task
         if ($dt.Count) {   # a merged branch whose only leftovers are edits of tracked files (regenerated fixtures): saved as a patch, then discarded (K38)
           if (-not $bv.delete -or @($dt | Where-Object { $_ -notmatch '^( M|M |MM) ' }).Count) { "keep  ${label}: uncommitted files"; continue }
           if ($DryRun) { "would go  ${label}: $($bv.why); $($dt.Count) edited file(s) saved as a patch first"; continue }
-          $pf = Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'patches')).FullName "$(Split-Path $d -Leaf)-$(New-KitId patch).patch"
+          $pd = (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'patches')).FullName; $pf = Join-Path $pd "$(New-KitName patch (Split-Path $d -Leaf) $pd -Cap 40).patch"   # patch-<slot leaf>, a tie -2
           git -C $d diff HEAD --binary --output="$pf" 2>$null; if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $pf) -or -not (Get-Item -LiteralPath $pf).Length) { "keep  ${label}: uncommitted files (patch failed)"; continue }   # git writes the bytes (CRLF, binary kept)
           git -C $d checkout -q HEAD -- . 2>$null; if ($LASTEXITCODE) { "keep  ${label}: uncommitted files (reset failed; patch $pf)"; continue }; "patched  ${label}: $($dt.Count) edited file(s) saved to $pf" }
         if ($w.branch) { if (-not $bv.delete) { "keep  ${label}: $($bv.why)"; continue }; $gw = $bv.why }

@@ -5,23 +5,26 @@
   python -X utf8 skills/bossy/kitbag.py naming next name <kind> [<topic>] [--dir d]  # <kind>-<topic> <= 12 chars (buildy-ask, tidy); a tie -2 (--dir: vs its files)
   python -X utf8 skills/bossy/kitbag.py naming next id <kind>                      # <kind>-<n> unpadded (dec-12): only where no word names it
   python -X utf8 skills/bossy/kitbag.py naming make <kind> key=<KEY> type=<t> ...  # a name from its parts (title doc branch mr case item)
+  python -X utf8 skills/bossy/kitbag.py naming norm <kind> <name> [--topic t] [--live a,b] [--role r]   # shown: <id> · <description>
+  python -X utf8 skills/bossy/kitbag.py naming shown --in <rows.json>               # batch [[kind, name, topic, role]] -> JSON [shown]
   python -X utf8 skills/bossy/kitbag.py naming scan [--json]                       # live names (tasks, docs, board, launches) vs the standard
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
-  python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug wave=2 env=- ...   # JSON {tags, add, remove}
-Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, product, area: tags)
- · tag `wave-2` (lowercase kebab, from the TAG_GROUPS vocabulary)
- · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-ask` · agent `devy-ask-prompts` (no area: `devy-4`) · area `ask-prompts`
+  python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug env=- ...   # JSON {tags, add, remove}
+Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, area, product: tags)
+ · tag `on-staging` (lowercase kebab, from the TAG_GROUPS vocabulary) · desc `ask catalogue create-only prompt`
+ · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-ask` · agent `devy-ask-prompts` (no topic: `devy-4`) · area `ask-prompts`
    (what it covers; a tie `-2`) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
- · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-12`.
+ · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-close-parent`.
 WORDS (owner 2026-11-24): a name says what it is; a number only breaks a tie. NO-DATE: the date lives in the record's fields
-(at, started). PADDED: no zero-padded counter. Old dated / padded ids (`buildy-20261123-01`, `dec-0012`) still resolve, never made.
+(at, started). PADDED: no zero-padded counter. SHOWN (owner 2026-11-25): '<role>-<2-3 topic words> · <plain words>'
+(kitbag.py name_shown: the one normaliser; SHAPE, TIE-LETTER, NUMBERED, DESC flag the rest; lint NAME-NUMBER: a counter name says why). Old dated / padded ids (`buildy-20261123-01`, `dec-0012`) still resolve, never made.
 PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code: name}); an unknown code or a key without
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
-rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags).
+rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags);
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L29 model · L98 no repeats · L208 tags
+Sections: L32 model · L109 no repeats · L213 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -48,8 +51,8 @@ def patterns(cfg):
     return {'key': rf'^{key}$', 'item': rf'^{key}\.\d+ {slug}$', 'case': rf'^{key}-TC\d{{2,}}$',
             'title': rf'^{key}(?:\.\d+)? \S.*$', 'tag': r'^[a-z0-9]+(?:-[a-z0-9]+)*$',
             'doc': rf'^{key}(?:\.\d+)? (?:{"|".join(map(re.escape, DOC_KINDS))}) v\d+ — \S.*$',
-            'run': r'^[a-z]+(?:-[a-z0-9]+)*$', 'id': r'^[a-z]+(?:-[a-z]+)*-[1-9]\d*$', 'agent': r'^[a-z]+(?:-[a-z0-9]+)+$',
-            'area': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$', 'lane': r'^lane-\d{2,}$', 'label': r'^\S.*$',
+            'run': r'^[a-z]+(?:-[a-z0-9]+)*$', 'id': r'^[a-z]+(?:-[a-z0-9]+)+$', 'agent': r'^[a-z]+(?:-[a-z0-9]+)+$',
+            'area': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$', 'lane': r'^lane-\d{2,}$', 'label': r'^\S.*$', 'desc': r'^[a-z0-9].*$',
             'branch': rf'^(?:{ty})/{key}-{slug}$', 'mr': rf'^(?:{ty})(?:\([\w./-]+\))?!?: \S.* \[{key}\]$'}
 
 
@@ -67,6 +70,14 @@ def name_problem(kind, name, cfg=None):
         return f'NUMBERED: {name!r} is a code + counter; name the area by what it covers ({EXAMPLES[kind]})'
     if kind in ('run', 'agent', 'area') and len(re.sub(r'-\d+$', '', name)) > 16:   # owner: ~12, 16 at most, a tie suffix aside
         return f'LONG: {name!r}: at most 16 characters (aim for 12), short words ({EXAMPLES[kind]})'
+    if kind in ('run', 'agent', 'area', 'id') and (w := '-'.join(name_words(name))) != name:   # the one normaliser's shape (owner 2026-11-25)
+        return f'SHAPE: {name!r} is {w!r} in lowercase words split by single hyphens ({EXAMPLES[kind]})'
+    if kind in ('run', 'agent', 'area') and re.search(r'-[a-z]$', name):
+        return f'TIE-LETTER: {name!r}: a tie is -2, never a letter; better a topic word ({EXAMPLES[kind]})'
+    if kind in ('run', 'agent') and (ws := name.split('-')) and (rs := ws[1:] if ws[0] in role_words() else ws) and all(name_code(x, name_vocab()) for x in rs):
+        return f'NUMBERED: {name!r} says no topic; <role>-<2-3 topic words>, a number only to break a tie ({EXAMPLES[kind]})'
+    if kind == 'desc' and (w := name_describe(name, 10 ** 6)) != name:
+        return f'DESC: {name!r} is {w!r}: short lowercase plain words, no task code, wave, version, date or role word (ask catalogue create-only prompt)'
     codes = {c for reg in ('products', 'areas') for c, n in cfg[reg].items() if slugify(n, 6) != c.lower()}   # a name equal to its code is the name
     if kind == 'tag' and re.match(rx, name) and (len(name) > 30 or name.upper() in codes):
         return f'a tag is 1-30 characters and never a PRODUCT / AREA code (the key says it): {name!r}'
@@ -84,7 +95,7 @@ def name_problem(kind, name, cfg=None):
 
 EXAMPLES = {'key': 'SHOP-CAT-004', 'item': 'SHOP-CAT-004.2 add-price-projection', 'case': 'SHOP-CAT-004-TC03',
             'title': 'SHOP-CAT-004 <outcome>', 'tag': 'wave-2', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
-            'run': 'buildy-ask', 'id': 'dec-12', 'agent': 'devy-ask-prompts', 'area': 'ask-prompts', 'lane': 'lane-01', 'label': 'fix: rest',
+            'run': 'buildy-ask', 'id': 'dec-close-parent', 'agent': 'devy-ask-prompts', 'area': 'ask-prompts', 'lane': 'lane-01', 'label': 'fix: rest', 'desc': 'ask catalogue create-only prompt',
             'branch': 'feat/SHOP-CAT-004-public-catalogue', 'mr': 'feat(web): <summary> [SHOP-CAT-004]'}
 
 
@@ -137,12 +148,6 @@ def clean(text, key, cfg, ty='', labels=False):
             if m and t[m.end():].strip() and not re.match(r'(?i)(?:and|or|plus|&|\+)(?![a-z0-9])', t[m.end():]):   # 'catalogue and cart blocks' keeps its subject
                 t, changed = re.sub(r'(?i)^(?:for|of|on|about|by)\s+(?=\S)', '', t[m.end():]), True   # "Spec of the page" -> "the page"
     return t.strip()
-
-
-def role_words():
-    """The crew and workflow names (_manifest agents + workflows)."""
-    m = (load_json(osp.join(KIT_DIR, 'skills', 'crafty', 'kit.example.json'))[0] or {}).get('_manifest') or {}
-    return {str(x).lower() for k in ('agents', 'workflows') for x in (m.get(k) or {})}
 
 
 def dup_words(kind, name, cfg):
@@ -207,10 +212,10 @@ def make(kind, p, cfg=None):
 
 # ---- tags: what a title no longer says (owner 2026-11-24); tracker labels / tags, MR labels, doc properties carry them
 # group: (exclusive: one value at a time, values | a value regex | None: the registries' names / repo names); the comment: who sets it
-TAG_GROUPS = {
+TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, area, product, then the rest; a person's own tags last)
     'kind': (True, ('feature', 'bug', 'chore', 'spike', 'docs', 'test')),   # tracker create (the old [Type]), a QA bug
-    'product': (True, None), 'area': (True, None),                         # tracker create: the key's PRODUCT / AREA names
-    'wave': (True, r'wave-\d+'),                                            # tracker order (brief waves)
+    'area': (True, None), 'product': (True, None),                         # tracker create: the key's AREA / PRODUCT names
+    'wave': (True, r'wave-\d+'),                                            # RETIRED (owner 2026-11-25: no numbers): any wave= clears; old wave-N tags go
     'phase': (True, ('spec', 'build', 'review', 'qa')),                     # by hand: tracker tags <id> phase=qa
     'repo': (False, None),                                                  # by hand / brief repos: api-code -> api
     'env': (True, r'needs-deploy|on-[a-z0-9]+(?:-[a-z0-9]+)*'),           # promoted: needs-deploy · in test: on-<env> · closed: cleared
@@ -267,8 +272,9 @@ def tags(parts, have=(), cfg=None):
         p.setdefault('product', km[1]); p.setdefault('area', km[2])
     if 'type' in p:
         p.setdefault('kind', p.pop('type'))
+    p.pop('wave', None)   # retired group: never set
     have = [str(h).strip() for h in have if str(h).strip()]
-    keep = list(have)
+    keep = [h for h in have if tag_group(h, cfg, groups) != 'wave']   # old wave-N / 'Wave: x' tags go on any update
     for g, raw in p.items():
         if g not in TAG_GROUPS:
             bad.append(f'unknown tag group {g!r} ({", ".join(TAG_GROUPS)})')
@@ -287,9 +293,18 @@ def tags(parts, have=(), cfg=None):
         keep += [t for t in new if t not in [k.lower() for k in keep]]
     if bad:
         raise ValueError('; '.join(bad))
-    keep.sort(key=lambda t: list(TAG_GROUPS).index(g) if (g := tag_group(t, cfg, groups)) else -1)   # others' first, then kind, product, area, wave ...
+    keep.sort(key=lambda t: list(TAG_GROUPS).index(g) if (g := tag_group(t, cfg, groups)) else len(TAG_GROUPS))   # kind, area, product, the rest; a person's own last
     low = lambda xs: {x.lower() for x in xs}   # trackers lower-case tags (ClickUp)
     return {'tags': keep, 'add': [t for t in keep if t.lower() not in low(have)], 'remove': [h for h in have if h.lower() not in low(keep)]}
+
+
+def tag_gaps(have, cfg=None):
+    """[problem]: a kit task carries exactly one kind, one area and one product tag (owner 2026-11-25); a wave tag is retired."""
+    cfg = cfg or naming_cfg()
+    groups = tag_groups(cfg)
+    by = [tag_group(t, cfg, groups) for t in have]
+    out = [f'{n or "no"} {g} tags' if n else f'no {g} tag' for g in ('kind', 'area', 'product') if g in groups and (n := by.count(g)) != 1]
+    return out + (['a wave tag (retired: no numbers)'] if 'wave' in by else [])
 
 
 def next_key(product, area, cfg=None):
@@ -318,6 +333,17 @@ def live_names(kit=None):
     dd = kit_path('decisions')
     out += [('id', fn[:-5], 'decisions') for fn in sorted(os.listdir(dd)) if fn.endswith('.json')
             and (state_read(osp.join(dd, fn)) or {}).get('status') == 'pending'] if osp.isdir(dd) else []
+    return out
+
+
+def tag_scan(cfg):
+    """[(kind 'tags', task name, where, why)]: a tracked task with a kit key whose recorded tags (task index) miss or double a kind /
+    area / product tag or keep a wave tag; fix: crafty.ps1 tracker retag <parent> [-DryRun] (supervise WATCH TAGS)."""
+    out = []
+    for tid, t in ((read_tracking() or {}).get('tasks') or {}).items():
+        tg = (state_read(task_file(tid)) or {}).get('tags') if isinstance(t, dict) and re.match(r'[A-Z]{2,6}-[A-Z]{2,6}-\d+', str(t.get('name') or '')) else None
+        if isinstance(tg, list) and (gaps := tag_gaps([str(x) for x in tg], cfg)):
+            out.append(('tags', str(t['name']), f'tracking {tid}', '; '.join(gaps)))
     return out
 
 
@@ -361,12 +387,12 @@ def plan_rows(plan, cfg):
             tg = tags({'key': key, 'kind': ty, **({'wave': wave} if wave else {})}, live, cfg)
         except ValueError as e:
             tg, bad = {'tags': live, 'add': [], 'remove': []}, bad + [str(e)]
-        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad, **tg})
+        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad, 'gaps': tag_gaps(live, cfg), **tg})
     return rows
 
 
 def cmd_naming(rest):
-    a = [x for i, x in enumerate(rest) if not x.startswith('--') and not (i and rest[i - 1] in ('--have', '--plan', '--dir', '--cap'))]   # a flag's value is no part
+    a = [x for i, x in enumerate(rest) if not x.startswith('--') and not (i and rest[i - 1] in VALUED)]   # a flag's value is no part
     js = '--json' in rest
     opt = lambda f: rest[rest.index(f) + 1] if f in rest and rest.index(f) + 1 < len(rest) else ''
     cfg = naming_cfg()
@@ -378,8 +404,18 @@ def cmd_naming(rest):
         bad = [(n, w) for n in a[2:] if (w := name_problem(a[1], n, cfg))]
         print('\n'.join(f'NAME {a[1]} {n!r}: {w}' for n, w in bad) or f'naming: {len(a) - 2} {a[1]} name(s) fit the standard')
         return 1 if bad else 0
+    if verb == 'norm' and len(a) >= 3:   # the shown form: <id> · <description>; --live: the other live names (a tie suffix stays on a clash)
+        print(name_shown(a[1], a[2], opt('--topic'), [x for x in opt('--live').split(',') if x], opt('--role')))
+        return 0
+    if verb == 'shown' and opt('--in'):   # batch for the dashboard / board show: [[kind, name, topic, role], ...] -> [shown, ...]
+        rows = [r for r in (load_json(opt('--in'))[0] or []) if isinstance(r, list) and len(r) >= 2]
+        live = {}
+        for r in rows:
+            live.setdefault(r[0], set()).add(str(r[1]))
+        print(json.dumps([name_shown(r[0], str(r[1]), str((r + ['', ''])[2] or ''), live.get(r[0], ()), str((r + ['', '', ''])[3] or '')) for r in rows], ensure_ascii=False))
+        return 0
     if verb == 'next' and len(a) >= 3 and a[1] in ('key', 'id', 'name'):
-        print(next_key(a[2], a[3] if len(a) > 3 else '', cfg) if a[1] == 'key' else next_id(a[2]) if a[1] == 'id' else next_name(a[2], ' '.join(a[3:]), opt('--dir'), int(opt('--cap') or 12)))
+        print(next_key(a[2], a[3] if len(a) > 3 else '', cfg) if a[1] == 'key' else next_id(a[2]) if a[1] == 'id' else next_name(a[2], ' '.join(a[3:]), opt('--dir'), int(opt('--cap') or 12)))   # NAME-NUMBER: the CLI of the maker
         return 0
     if verb == 'make' and len(a) >= 2:
         try:
@@ -409,7 +445,7 @@ def cmd_naming(rest):
         print(f'naming {a[1].upper()}: next key after {a[2]}')
         return 0
     if verb == 'scan':
-        bad = [(k, n, w, why) for k, n, w in live_names() if (why := name_problem(k, n, cfg))]
+        bad = [(k, n, w, why) for k, n, w in live_names() if (why := name_problem(k, n, cfg))] + tag_scan(cfg)
         if js:
             print(json.dumps([{'kind': k, 'name': n, 'where': w, 'why': y} for k, n, w, y in bad], ensure_ascii=False, indent=1))
         else:
@@ -426,10 +462,10 @@ def cmd_naming(rest):
         if js:
             print(json.dumps(rows, ensure_ascii=False, indent=1))
         else:
-            print('| Old code | Tracker id | Old title | New key | New title | Tags | Tags removed | Problems |\n|---|---|---|---|---|---|---|---|')
+            print('| Old code | Tracker id | Old title | New key | New title | Tag gaps now | Tags | Tags removed | Problems |\n|---|---|---|---|---|---|---|---|---|')
             for r in rows:
                 print('| ' + ' | '.join(str(r[k]).replace('|', '\\|') for k in ('old', 'id', 'oldTitle', 'key', 'title')) + ' | '
-                      + ' | '.join(', '.join(r[k]) or '—' for k in ('tags', 'remove')) + f' | {"; ".join(r["problems"]) or "—"} |')
+                      + ' | '.join(', '.join(r[k]) or '—' for k in ('gaps', 'tags', 'remove')) + f' | {"; ".join(r["problems"]) or "—"} |')
             top = {}
             for r in rows:
                 g, n = r['key'].rsplit('-', 1)
@@ -445,6 +481,7 @@ FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9
            '.mjs': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.local)?\.mjs$', '.js': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.local)?\.js$'}   # adapters/*.local.ps1: org overlays
 BAK_RX = re.compile(r'\.(?:bak|bad|orig|old|stale)(?:[-.]|$)', re.I)
 PAD_RX = re.compile(r"""-(?:\{[^{}]*:0\d+d\}|\{\d+:(?:0{2,}|D\d)\}|\$\(Get-Date -Format '[yMdHms]{6,}'\))""")   # padded or dated after a dash
+NUM_RX = re.compile(r'\bNew-KitId\s+[-$(\w]|\bnext_id\(')   # NAME-NUMBER: a made counter name
 HOOK_CFG = ('settings.json', '.agents/hooks.json', '.codex/config.toml')
 
 
@@ -469,7 +506,8 @@ def hook_entry_names(kd, files):
 def lint_hook(k, problems, flags):
     """NAME-CONFIG: a naming registry entry that is no 2-6 letter code (the live names: `naming scan`, WARN-level).
     NAME-FILE: a script name off its language's rule (py snake_case; ps1 / mjs / js kebab-case), except hook entry points (hook_entry_names).
-    NAME-PADDED: kit code making a name with a padded counter or a date (PAD_RX)."""
+    NAME-PADDED: kit code making a name with a padded counter or a date (PAD_RX).
+    NAME-NUMBER: kit code making a counter name (New-KitId / next_id) with no `NAME-NUMBER: <why>` on the line (owner 2026-11-25)."""
     c = local_config(k.dir, 'kit.local.json').get('naming') or {}
     for reg in ('products', 'areas'):
         for code in (c.get(reg) or {}):
@@ -487,6 +525,9 @@ def lint_hook(k, problems, flags):
             continue
         problems += [('NAME-PADDED', f'{f}:{i}', 'a padded counter or a date in a made name (owner 2026-11-24): <kind>-<words> (kitbag.py naming next name), '
                       '<kind>-<n> only to break a tie (next id)') for i, s in enumerate(lines, 1) if PAD_RX.search(s)]
+        problems += [('NAME-NUMBER', f'{f}:{i}', 'a counter as a name (owner 2026-11-25): New-KitName <kind> <topic> / next_name; a number only where '
+                      'nothing names it: say why on the line (# NAME-NUMBER: <why>)') for i, s in enumerate(lines, 1)
+                     if NUM_RX.search(s) and 'NAME-NUMBER:' not in s and not re.match(r'\s*(?:#|def |function |//|\*)', s)]
 
 
 def warn_hook(k):
@@ -502,4 +543,5 @@ def warn_hook(k):
 
 
 COMMANDS = {'naming': cmd_naming}
-ARGS = {'naming': ({'--json', '--help'}, {'--plan', '--have', '--dir', '--cap'}, False)}
+VALUED = {'--plan', '--have', '--dir', '--cap', '--topic', '--live', '--role', '--in'}
+ARGS = {'naming': ({'--json', '--help'}, VALUED, False)}

@@ -249,7 +249,7 @@ LOCAL ENV "${e}": ours, so NOT_TESTED is not final: ${KIT}/skills/envy/SKILL.md 
 }
 const COMMON = (it) => `${PATHS}
 WHY: ${R.mandate && R.mandate.length ? `the task owner asked, verbatim:\n${[].concat(R.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}your assignment is the guide below: run its checks, report real results, never decline or return early.
-BOARD: & ${ORCH} board join -Type checky -Run ${RUNNAME} -Area <CODE> -Claims <phone serial (app lanes)>; CLAIM/DUPLICATE -> stop; leave when done.
+BOARD: & ${ORCH} board join -Type checky -Run ${RUNNAME} -Area <CODE>${(it && it.title) ? ` -Subject '${String(it.title).replace(/[^\w\s-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)}'` : ''} -Claims <phone serial (app lanes)>; CLAIM/DUPLICATE -> stop; leave when done.
 RULES: ${QA}/SKILL.md tester steps, "Shared environment" and "Evidence" (in <outDir>/shots|evidence); ~10 min per check, scripts < 2 min with progress.
 OUT_OF_SCOPE (not NOT_TESTED): steps that only exercise ${(R.outOfScope || []).length ? [].concat(R.outOfScope).join(', ') : `the channels in ${KIT}/skills/crafty/kit.local.json qa.outOfScope`}; name the channel, still test the in-app part. Never for an app / web part with no build on this target (deployed: NO-TARGET): test it on the local env (& '${KIT}/skills/phoney/phoney.ps1' build -Local + a lane), report it as a "local run"; no lane can run it -> NOT_TESTED phone-only.
 TARGET "${tgt(it) || '(default)'}" (a targets.local.json entry: never read that file; api -As / seat / session() log in for you), ONLY this target${(R.alsoTargets || []).length ? ' (and ' + [].concat(R.alsoTargets).join(', ') + ')' : ''}.${(it.localParts || []).length ? `
@@ -521,7 +521,7 @@ async function runItem(it, idx, L) {
   const need = open.map((c) => `${c.id}: ${c.env_fix || c.cause || 'unknown'}: ${c.observed}`).join(' | ').slice(0, 1200).replace(/'/g, "''").replace(/[\r\n]+/g, ' ')
   const asked = await runStep(`& ${ORCH} decide ask -Kind envfix -Run '${RUNNAME}' -Agent 'qa-${it.code}' -Item '${it.code}' -Contracts '${R.runDir}/lead-notes.md' -Question 'Local env ${LOCALENV(it)}, item ${it.code}: fix so these checks can run: ${need}'`,
    `envfix-ask:${it.code}`, 'Verify')
-  const id = (/\b(e-\d{14}-[\w-]+)/.exec((asked && asked.output) || '') || [])[1]
+  const id = (/\b(envfix-[a-z0-9]+(?:-[a-z0-9]+)*|e-\d{14}-[\w-]+)/.exec((asked && asked.output) || '') || [])[1]
   if (!id) { envFix = { cycles: cyc, state: 'not raised', output: asked ? asked.output : 'agent returned nothing' }; break }
   log(`${it.code}: ENV-FIX ${id} (cycle ${cyc}/${ENV_FIX_CYCLES}) -> the coordinator: ${open.map((c) => c.id).join(', ')}`)
   let ans = null

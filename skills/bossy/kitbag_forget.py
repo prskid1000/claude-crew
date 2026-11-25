@@ -277,7 +277,7 @@ def _cut(p, xs, now):
         for x in sorted(xs, key=lambda x: -x['start']):   # anchor: the nearest line above that stays (a restore of one cut alone finds it)
             j = next((j for j in range(x['start'] - 1, -1, -1) if L[j].strip() and j not in gone), -1)
             at = j - len([g for g in gone if g < j]) if j >= 0 else -1   # the anchor's line once every cut is out
-            xid = next_id(p['kind'])   # NO-DATE: <kind>-<nnnn>; the day file holds the time
+            xid = next_name(p['kind'], x.get('label') or x['text'][:80], cap=24)   # owner 2026-11-25: <kind>-<its words> (lesson-pushing-kit), a tie -2; the day file holds the time
             fh.write(f"## {xid}\n- file: {p['rel'] or p['path']}\n- at: {at}\n- after: {L[j] if j >= 0 else ''}\n- why: {x['why']}\n{FENCE}\n{x['text']}\n{FENCE}\n\n")
             del L[x['start']:x['end']]
             ids.append(xid)
@@ -364,7 +364,7 @@ def _show(p, out):
 
 def _batch(p, xs, now):
     path = osp.abspath(p['path'])
-    b = next_id('fb')   # NO-DATE: fb-<nnnn>; the batch file keeps path and items
+    b = next_name('forget', osp.splitext(osp.basename(path))[0], _adir('pending'), cap=24)   # forget-<file words>, a tie -2; the batch file keeps path and items
     state_write(osp.join(_adir('pending'), b + '.json'), {'batch': b, 'path': path, 'kind': p['kind'],
                 'items': [{'text': x['text'], 'why': x['why'], 'label': x['label']} for x in xs]})
     names = ', '.join(x['label'] for x in xs)[:200]

@@ -147,7 +147,7 @@ $fgL = Join-Path $fgD 'LESSONS-fg.md'
 [IO.File]::WriteAllText($fgL, "## alpha`n- a hot case -> keep it (seen) (3×)`n- a cold case -> drop it (once)`n- (fixed in kit) an old case -> gone (fixed)`n- an owner case -> keep (owner, 2026-01-01)`n## Decisions`n- an ADR line`n")
 $fo = & $fgRun --target $fgL --section alpha --to 2 --apply; $fgT = [IO.File]::ReadAllText($fgL)
 Expect "forget: lessons over cap lose the fixed-in-kit line, then the lowest hits; owner lines and Decisions stay ($($fo.Trim()))" ($fgT -notmatch 'an old case|a cold case' -and $fgT -match 'a hot case' -and $fgT -match 'an owner case' -and $fgT -match 'an ADR line' -and $fo -match 'FORGOT .*2 item')
-$fgId = [regex]::Match($fo, 'lessons-\d+\b').Value; $ro = & $fgRun --restore $fgId
+$fgId = [regex]::Match($fo, 'lessons-[a-z0-9]+(?:-[a-z0-9]+)*').Value; $ro = & $fgRun --restore $fgId
 $fgRet = Get-Content (Join-Path (TkPath $kc forgotten) 'retention.json') -Raw | ConvertFrom-Json
 Expect "forget --restore puts the line back after its anchor and doubles the kind's retention 7 -> 14 d ($($ro.Trim()))" ($ro -match "restored $fgId" -and [IO.File]::ReadAllText($fgL) -match '(cold|old) case' -and $fgRet.kinds.lessons.days -eq 14)
 [IO.File]::WriteAllText((Join-Path $fgD 'doc.md'), "# Doc`n## Used part`nkept: named elsewhere`n## Old notes`nnobody names this`n## Hard rules`nnever cut`n")
@@ -157,14 +157,14 @@ $fgDn = 'zq' + '_unused_fn'   # built: the literal name in this file would count
 git -C $kc add fg 2>&1 | Out-Null; git -C $kc commit -q -m 'test: forget fixtures' 2>&1 | Out-Null
 $fo = & $fgRun --target (Join-Path $fgD 'doc.md') --to 5 --apply --unused-days 0; $fgT = [IO.File]::ReadAllText((Join-Path $fgD 'doc.md'))
 Expect "forget: an unreferenced section goes; a referenced one and a protected heading stay ($($fo.Trim()))" ($fgT -notmatch 'Old notes' -and $fgT -match 'Used part' -and $fgT -match 'Hard rules')
-$fo = & $fgRun --target (Join-Path $fgD 'tool.py') --to 1 --apply; $fgB = [regex]::Match($fo, 'BATCH (fb-\S+):').Groups[1].Value
+$fo = & $fgRun --target (Join-Path $fgD 'tool.py') --to 1 --apply; $fgB = [regex]::Match($fo, 'BATCH (forget-\S+):').Groups[1].Value
 $co = & $fgRun --confirm $fgB --decision d-fg-1; $coRc = $LASTEXITCODE
 Expect "forget: a feature (0 call sites) is never cut by --apply: one BATCH + decide ask; --confirm without an answer refuses (1) ($($co.Trim()))" ($fo -match "CONFIRM .*$fgDn" -and $fo -match 'decide ask' -and $fgB -and $coRc -eq 1 -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match $fgDn)
 $fgDl = TkPath $kc decisions-log -Create
 '{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-0","item":"deploy-x","answer":"yes","by":"owner"}', ('{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-2","item":"forget-' + $fgB + '","answer":"yet to decide","by":"owner"}') | Add-Content $fgDl
 $c0 = & $fgRun --confirm $fgB --decision d-fg-0; $c2 = & $fgRun --confirm $fgB --decision d-fg-2
 Expect "forget --confirm refuses a yes to another ask and a 'yet ...' answer ($($c0.Trim()) | $($c2.Trim()))" ($c0 -match 'not the owner' -and $c2 -match 'kept' -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match $fgDn)
-Push-Location $kc; $fo = & $fgRun --target fg/tool.py --to 1 --apply; Pop-Location; $fgB = [regex]::Match($fo, 'BATCH (fb-\S+):').Groups[1].Value
+Push-Location $kc; $fo = & $fgRun --target fg/tool.py --to 1 --apply; Pop-Location; $fgB = [regex]::Match($fo, 'BATCH (forget-\S+):').Groups[1].Value
 ('{"at":"2026-01-01T00:00:00+00:00","event":"answered","id":"d-fg-1","item":"forget-' + $fgDn + '","answer":"yes","by":"owner"}') | Add-Content $fgDl   # item may name the feature instead of the batch
 $co = & $fgRun --confirm $fgB --decision d-fg-1
 Expect "forget --confirm after the owner's yes removes the feature, archived, used_fn stays ($($co.Trim()))" ($co -match 'forgot 1 feature' -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -notmatch $fgDn -and [IO.File]::ReadAllText((Join-Path $fgD 'tool.py')) -match 'used_fn')

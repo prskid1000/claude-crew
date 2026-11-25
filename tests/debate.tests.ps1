@@ -19,7 +19,7 @@ $dbj.rows = @(@{ option = 'A'; label = 'Per request'; change = 'always current';
   @{ option = 'B'; label = 'Cached'; change = 'lags 5 min'; cost = '-35 ms'; risk = 'stale price'; effort = '1 d'; evidence = @('C.java:20'); against = 'a wrong price at 9:00' })
 Set-JsonFile $dbf $dbj; $dbk = pwsh @np $O debate ask -File $dbf | Out-String
 Expect "debate: 2nd per run refused (1), -Owner allowed, options not A:/B: or rows not [A, B] = usage (2); brief: Character + round; ask: table, decide ask ($dbc $dbu $dbx)" ($dbc -eq 1 -and $dbo -match '^DEBATE ' -and $dbu -eq 2 -and $dbx -eq 2 -and
-  $dbA -match 'Cite it or drop it.*\n.*\n.*ROUND 0 \(blind' -and $dbR -match 'Show me the' -and $dbk -match '\| B: Cached \| lags 5 min \| -35 ms \| stale price \| 1 d \| C\.java:20 \| a wrong price at 9:00 \|' -and $dbk -match 'revy recommends A' -and $dbk -match 'DECISION dec-[1-9]\d*')
+  $dbA -match 'Cite it or drop it.*\n.*\n.*ROUND 0 \(blind' -and $dbR -match 'Show me the' -and $dbk -match '\| B: Cached \| lags 5 min \| -35 ms \| stale price \| 1 d \| C\.java:20 \| a wrong price at 9:00 \|' -and $dbk -match 'revy recommends A' -and $dbk -match 'DECISION dec-[a-z0-9-]+')
 # ---- decide ask (moved from bossy.tests: room): structured, blocking; today's context, option effects, a recommendation (A5)
 $cf = Join-Path (Kd) 'brief.contracts.md'; '# contracts' | Set-Content $cf
 $out = pwsh @np $O decide ask -Run w1 -Agent X1 -Item A2 -Context 'edits recompute it' -Question 'Keep the old total?' -Options 'B: recompute — old invoices change','A: keep — no data change' -Recommend A -Contracts $cf | Out-String
@@ -31,7 +31,7 @@ $null = pwsh @np $O decide answer -Id $id -Answer 'A, keep it'
 $w = pwsh @np $O decide wait -Id $id -MaxMinutes 1 | Out-String
 Expect 'decide answer: wait returns it, contracts carry it, none pending' ($w -match 'ANSWERED' -and $w -match 'keep it' -and (Get-Content $cf -Raw) -match "$id ANSWERED" -and -not @(pwsh @np $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' }).Count)
 $out = pwsh @np $O decide ask -Kind envfix -Run w1 -Agent X1 -Item A3 -Question 'refresh the release' -Contracts $cf | Out-String
-$eid = if ($out -match 'ENV-FIX (envfix-[1-9]\d*) pending') { $Matches[1] }
+$eid = if ($out -match 'ENV-FIX (envfix-[a-z0-9-]+) pending') { $Matches[1] }
 $pend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' })
 $null = Px $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
 $w = Px $O decide wait -Id $eid -MaxMinutes 1 | Out-String

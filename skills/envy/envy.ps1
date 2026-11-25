@@ -227,7 +227,7 @@ function With-Env($vars, [scriptblock]$body) {
 function LogFile([string]$e, [string]$n) { Join-Path (Get-KitPath localenv-logs -Create) "$e-$n.log" }
 # a failed start's log, kept past the next start's rotation (last 3 per service; TODO-PARAM fixed default) -> "<cause line>. Log: <kept>"
 function Save-FailLog([string]$log, $release) {
-  $keep = $log -replace '\.log$', ".fail-$(ConvertTo-KitSlug $(if ($release) { $release } else { New-KitId fail -Number })).log"
+  $keep = $log -replace '\.log$', ".fail-$(ConvertTo-KitSlug $(if ($release) { $release } else { New-KitId fail -Number })).log"   # NAME-NUMBER: seq
   $t = @(Get-Content -LiteralPath $log -Tail 2000 -ErrorAction SilentlyContinue); Copy-Item -LiteralPath $log $keep -Force -ErrorAction SilentlyContinue
   Get-ChildItem -LiteralPath (Split-Path $log) -Filter "$([IO.Path]::GetFileNameWithoutExtension($log)).fail-*.log" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force -ErrorAction SilentlyContinue
   $c = @($t | Where-Object { $_ -match '^\s*Caused by:' })[-1]; if (-not $c) { $c = @($t | Where-Object { $_ -match '\bERROR\b|Exception' })[0] }
@@ -1088,7 +1088,7 @@ function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
   Event $e 'seed' @{ check = [bool]$Check; bad = $bad }
   "[$e] seed$(if ($Check) { ' -Check' })$(if ($Tables) { " ($(@($items).Count) item(s) for $($Tables -join ', '))" }): $($items.Count - $bad.Count)/$($items.Count) ok ($f)"; $lines
   if ($skipped.Count) { "[$e] seed could not create $($skipped.Count): $($skipped -join '; ')" }
-  if (-not $bad.Count -and -not $Check -and -not $Tables) { $n = New-Mark $e (New-KitId baseline) 'baseline'; if ($n) { "[$e] mark ${n}: restore -Mark $n brings the env back to this seed" } }
+  if (-not $bad.Count -and -not $Check -and -not $Tables) { $n = New-Mark $e (New-KitName baseline $e) 'baseline'; if ($n) { "[$e] mark ${n}: restore -Mark $n brings the env back to this seed" } }
   if ($bad.Count) { $script:SeedBad = $true }
 }
 
@@ -1388,7 +1388,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     $code = Invoke-Shell $ic $ilog (EnvVars $e $s) ([int]$(if ($s.init.timeoutSec) { $s.init.timeoutSec } else { 1800 }))
     if ($code) { Event $e 'init-failed' @{ service = $s.name; why = (Get-ShellWhy $code) }; throw "[$e] $($s.name): init failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 5) -join ' | '). Log: $ilog" }
     Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
-    if ((DbSvc $e).name -eq $s.name) { $null = New-Mark $e (New-KitId baseline) 'baseline' }   # fresh data = its baseline (taken once it is up)
+    if ((DbSvc $e).name -eq $s.name) { $null = New-Mark $e (New-KitName baseline $e) 'baseline' }   # fresh data = its baseline
   }
   # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
   $mx = [Threading.Mutex]::new($false, $(if ($KitIsWindows) { 'Global\kit-localenv-start' } else { 'kit-localenv-start' }))
@@ -1456,7 +1456,7 @@ function Add-SeedBaseline([string]$e, [string]$by) {
     $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { return }
     if (@((Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).items | Where-Object { $_ -and -not $_.check.sql }).Count) { return "[$e] no baseline mark: its seed has non-SQL checks (envy.ps1 seed -Env $e once the env is up)" }
     $script:SeedBad = $false; $null = Invoke-Seed $e -Check
-    if ($script:SeedBad) { "[$e] no baseline mark: the seed check is not green (envy.ps1 seed -Env $e)" } else { "[$e] mark $(New-Mark $e (New-KitId baseline) 'baseline') (seed check green at the $by start)" }
+    if ($script:SeedBad) { "[$e] no baseline mark: the seed check is not green (envy.ps1 seed -Env $e)" } else { "[$e] mark $(New-Mark $e (New-KitName baseline $e) 'baseline') (seed check green at the $by start)" }
   } catch { "[$e] no baseline mark: $("$_".Split("`n")[0])" }
 }
 

@@ -1382,7 +1382,7 @@ function Set-TrackerDescription([string]$Id, [string]$Text, [switch]$Resolved) {
   $script:KitDescBackup = ''
   if (-not $__trDry) { Clear-TrackerMemo $Id; $otk = Get-TrackerTask $Id; if (-not $otk.name) { throw "tracker describe ${Id}: the old description cannot be read for its backup: nothing written" }; $od = "$($otk.description)"
     if ($od.Trim() -and ($od -replace "`r`n", "`n") -ne ("$nd" -replace "`r`n", "`n")) { $bd = Join-Path (Get-KitPath desc-backups -Create) ($Id -replace '[^\w.-]+', '_'); $null = New-Item -ItemType Directory -Force -Path $bd
-      $bf = Join-Path $bd "$(New-KitId desc $bd).md"; [IO.File]::WriteAllText($bf, $od, [Text.UTF8Encoding]::new($false))
+      $bf = Join-Path $bd "$(New-KitName desc '' $bd).md"; [IO.File]::WriteAllText($bf, $od, [Text.UTF8Encoding]::new($false))   # desc, a tie desc-2 (the folder names the task)
       @(Get-ChildItem -LiteralPath $bd -Filter '*.md' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 10) | Remove-Item -ErrorAction SilentlyContinue
       $script:KitDescBackup = $bf } }
   Clear-TrackerMemo $Id; __TrA 'describe' @{ id = $Id; text = $nd }
@@ -1615,11 +1615,11 @@ function Get-KitUtcTicks($At) { try { ([datetimeoffset]"$At").UtcTicks } catch {
 function Format-KitDecisionItems($Rows, [string]$Link, [string]$Task) {
   $ans = @($Rows | Where-Object { $_.status -eq 'answered' -and $_.answer }); $sup = @{}; $tk = @{}; foreach ($r in $ans) { $tk["$($r.id)"] = Get-KitUtcTicks $r.at }
   foreach ($r in $ans) {
-    $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+((?:dec|envfix)-\d+|d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
+    $ids = @($r.supersedes) + @([regex]::Matches("$($r.answer)", '(?i)\bsupersedes\s+((?:dec|envfix)-[a-z0-9]+(?:-[a-z0-9]+)*|d-\d{14}-[\w-]+)') | ForEach-Object { $_.Groups[1].Value })
     foreach ($o in $ans) { if ($tk["$($o.id)"] -lt $tk["$($r.id)"] -and ("$($o.id)" -in $ids -or (ConvertTo-KitLetters $o.question) -eq (ConvertTo-KitLetters $r.question))) { $sup["$($o.id)"] = $r.id } }
   }
   $dup = @($Rows | Group-Object { ("$($_.id)" -split '-')[-1] } | Where-Object Count -gt 1 | ForEach-Object Name)
-  $sid = { param($i) $p = "$i" -split '-'; if ($p[-1] -in $dup) { $p[-2..-1] -join '-' } else { $p[-1] } }   # the checklist keys items by it: a clash takes the agent part too
+  $sid = { param($i) if ("$i" -match '^(?:dec|envfix)-(.+)$') { return $Matches[1] }; $p = "$i" -split '-'; if ($p[-1] -in $dup) { $p[-2..-1] -join '-' } else { $p[-1] } }   # the checklist keys items by it (dec-12: 12, dec-close-parent: close-parent; old d-<stamp>: its tail)
   $day = { param($r) try { ([datetimeoffset]"$($r.at)").ToString('MM-dd') } catch { '' } }
   $q = { param($r) $t = ("$($r.question)" -replace "\s*\($([regex]::Escape($Task))\)", '').Trim(); if ($t -match '^(.{4,}?\?)(\s|$)') { $t = $Matches[1] }; $t }
   $a = { param($r) ("$($r.answer)" -replace '\s*\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?\)', '' -replace '\([\w ]+,? \d{4}-\d\d-\d\d(?: \d\d:\d\d)?;\s*', '(').Trim() }   # "(owner, <date>)": the item says both

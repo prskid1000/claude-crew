@@ -24,7 +24,7 @@ Steps:
 1. **Scope:** the records to touch = the ones the run or agent created (its prefix: `QA-<CODE>`, the agent id; its lease mark
    `use-<agent>`), nothing else. Print the filter (WHERE / API query) and the count; a count above the run's own creates, or
    a row without the prefix -> stop that item and `bossy.ps1 decide ask`.
-2. **Guard:** local: `envy.ps1 mark -Name datay-<kind>-<HHmm>` before any write; a test env: save the
+2. **Guard:** local: `envy.ps1 mark -Name datay-<kind>-<2 topic words>` (no time) before any write; a test env: save the
    GET of every record you change or delete (`pokey.ps1 api ... -Save <name> -OutDir <crafty.ps1 dir -Kind evidence>`).
 3. **Do, by kind:**
    - cleanup: local -> `restore -Mark use-<agent> -DryRun`, then the restore when only that agent's rows change, else delete by

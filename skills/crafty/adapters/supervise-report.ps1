@@ -78,7 +78,7 @@ function Test-KitAckWhole([string]$Ack) {
 # an ack of a flag with ackNeeds (no fix MR linked) names a decision id or an MR in its reason and hides it 2 h
 # (a recorded decision, or an MR some task tracks: a made-up ref hides nothing)
 function Test-KitAckRef([string]$Reason) {
-  foreach ($d in [regex]::Matches("$Reason", '\b(?:(?:dec|envfix)-\d+|d-\d{8,}-[\w-]+)\b')) { if (Test-Path -LiteralPath (Join-Path (Get-KitPath decisions) "$($d.Value).json")) { return $true } }
+  foreach ($d in [regex]::Matches("$Reason", '\b(?:(?:dec|envfix)-[a-z0-9]+(?:-[a-z0-9]+)*|d-\d{8,}-[\w-]+)\b')) { if (Test-Path -LiteralPath (Join-Path (Get-KitPath decisions) "$($d.Value).json")) { return $true } }
   $named = @([regex]::Matches("$Reason", '(?<r>[\w.-]+)(?:!|/-/merge_requests/|/pulls?/)(?<n>\d+)') | ForEach-Object { "$($_.Groups['r'].Value)!$($_.Groups['n'].Value)" })
   if (-not $named.Count) { return $false }
   [bool]@((Read-KitTracking).tasks.Values | ForEach-Object { @($_.mrs) } | Where-Object { $_ -and ("$_" -split '/')[-1] -in $named }).Count

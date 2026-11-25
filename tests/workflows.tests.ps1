@@ -73,7 +73,7 @@ run(args, agent, _n, _n, pipeline).then((o) => console.log(`ask:${calls.filter((
   && o.decisions.some((d) => d.agent === 'X1' && d.decisionId === 'd1') && o.openFindings.length > 0}`)).catch(_err)
 '@
 Expect-Each (Invoke-Js dw-ask $jsb $wfd) 'buildy: #' 'ask' -Show 5
-Expect 'buildy: default run name = bossy.ps1 Get-LaunchRunName (the brief name + 4 hex of its path)' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -match '^wave-x-[0-9a-f]{4}$')
+Expect 'buildy: default run name = bossy.ps1 Get-LaunchRunName (buildy-<brief words>, no hash)' (@($res | Where-Object { "$_" -eq "run:$want" }).Count -eq 1 -and $want -eq 'buildy-wave-x')
 # buildy: a batch's next run drops producers outside its list
 $jsn = @'
 const o1 = await run({ brief: 'C:/b/w.md', ..._kl, batch: 1, agents: [{ id: 'X0', items: 'A1' }, { id: 'X1', items: 'A2', dependsOn: ['X0'] }] }, _pass, _n, _n, pipeline)

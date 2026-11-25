@@ -1,15 +1,14 @@
 #Requires -Version 7
-# Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# ts-typecheck: crafty.ps1 check -Step typecheck for tsc. TS5103 (a TypeScript too new for the tsconfig) -> one retry with a
-# temp tsconfig (ignoreDeprecations); errors count only in changed files (+ config errors); > 200 baseline errors = UNRUN (exit 5).
-# Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $log, Hash12, Get-ChangedFiles, Get-WtTarget.
+# Usage: dot-sourced by lib.ps1 into Invoke-Check ($st, $log, Hash12, Get-ChangedFiles, Get-WtTarget). Exit codes: none.
+# ts-typecheck: crafty.ps1 check -Step typecheck for tsc. TS5103 (TypeScript newer than the tsconfig) -> one retry with a
+# temp tsconfig (ignoreDeprecations); errors count only in changed files (+ config ones); > 200 baseline errors = UNRUN (exit 5).
 function Invoke-Typecheck([string]$TcCmd) {
   $top = git -C $st.dir rev-parse --show-toplevel 2>$null
   $top = if ($top) { [IO.Path]::GetFullPath("$top".Trim()) } else { $null }
   $Repo = Split-Path $(if ($top) { $top } else { $st.dir }) -Leaf
-  $log = Join-Path (Get-KitPath logs -Create) "typecheck-$Repo-$(New-KitId typecheck -Number).log"
-  # 2 newest per repo kept (355 piled up); older after 1 h
-  Get-ChildItem -LiteralPath (Split-Path $log) -Filter "typecheck-$Repo-*.log" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^typecheck-$([regex]::Escape($Repo))-\d{8}-\d{6}\.log$" } | Sort-Object Name -Descending | Select-Object -Skip 2 | Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } | Remove-Item -Force -ErrorAction SilentlyContinue
+  $log = Join-Path ($lg = Get-KitPath logs -Create) "$(New-KitName typecheck $Repo $lg -Cap 32).log"
+  # 2 newest per repo kept; older after 1 h
+  $tb = [IO.Path]::GetFileNameWithoutExtension($log) -replace '-\d+$'; Get-ChildItem -LiteralPath $lg -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^$([regex]::Escape($tb))(-\d+)?\.log$" } | Sort-Object LastWriteTime -Descending | Select-Object -Skip 2 | Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-1) } | Remove-Item -Force -ErrorAction SilentlyContinue
   $proj = if ($TcCmd -match '\s-p\s+"?([^"\s]+)"?') { $Matches[1] } else { 'tsconfig.json' }
   $base = [IO.Path]::GetFullPath((Join-Path $st.dir $proj))
   $bin = $null; $d = $st.dir

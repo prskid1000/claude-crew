@@ -394,7 +394,7 @@ GATES = {
     ('Build', r"HANDOFF at its budget", "A devy returning `handoff`: a fresh devy continues from that resume brief (at most 3 times)."),
     ('Review', r"const holdsMerge", "Not reviewed, not merged (the coordinator decides) when the local test is BLOCKED, FAIL beyond env gaps, "
       "or NONE in a code area (kind not doc / spike / repro) without an owner word."),
-    ('Review', r"decide check -Id \$\{id\} -Gate 'merge,scope,other'", "NONE needs `localTest.decisionId` = `dec-<n>` (older: `dec-<nnnn>`, `d-<14 digits>-<suffix>`) and "
+    ('Review', r"decide check -Id \$\{id\} -Gate 'merge,scope,other'", "NONE needs `localTest.decisionId` = `dec-<words>` (older: `dec-<n>`, `dec-<nnnn>`, `d-<14 digits>-<suffix>`) and "
       "`& <kit>/skills/bossy/bossy.ps1 decide check -Id <id> -Gate 'merge,scope,other' -Item '<area>,<task>,<branch>,<items>,<repo>!<iid>' "
       "-MaxHours 720` printing `WORD ` (any other output: held)."),
     ('Review', r"a\.migrations \? agent\(migrationPrompt", "One revy per area, plus datay on an area with `migrations`; an empty review blocks the merge."),

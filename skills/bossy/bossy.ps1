@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L256 budget · L286 launch · L529 recover · L616 pause · L627 resume · L694 program · L722 param ·
-  L728 track · L1118 supervise · L1466 report · L1546 audit · L1606 storage · L1609 bugbrief · L1611 cleanup · L1698 learn ·
-  L1736 decide · L1902 debate · L1946 health · L2014 setup · L2109 guard-sendmessage
+Sections: L40 init · L51 board · L250 budget · L280 launch · L523 recover · L610 pause · L621 resume · L688 program · L716 param ·
+  L722 track · L1112 supervise · L1461 report · L1541 audit · L1601 storage · L1604 bugbrief · L1606 cleanup · L1693 learn ·
+  L1731 decide · L1897 debate · L1941 health · L2009 setup · L2104 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -62,15 +62,6 @@ function Set-KitBoardCrashed {
 function Get-KitCheckpoint([string]$Agent, [string]$Run = '') { $f = Get-KitCheckpointFile $Agent $Run; if (Test-Path -LiteralPath $f) { try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch {} } }
 function Get-KitResumeBriefFile([string]$Agent, [string]$Run = '') { (Get-KitCheckpointFile $Agent $Run) -replace '\.json$', '-brief.md' }   # resume.json -> resume-brief.md
 function Get-KitActivePause([string]$Run) { @(Read-KitJsonFiles (Get-KitPath pauses) | Where-Object { $_.state -ne 'resumed' -and (Test-KitPauseCovers $_ $Run) } | Sort-Object { [datetime]$_.at })[-1] }
-# <role>-<area or item> (devy-ask-prompts), else <role>-<n> (never reused: an old inbox); $Legacy -> aliases (msg -To)
-function New-KitAgentId([string]$Type, [string]$Legacy = '', [string]$Area = '', [string[]]$Items = @()) { $f = Get-KitPath naming -Create; $role = $Type.ToLower()
-  $ar = ("$Area" -replace '^(?i)area-', '').ToLower().Trim(); $topic = if ($ar -match '[a-z0-9]' -and $role -notlike "$ar*") { $ar } else { "$(@(Split-KitList $Items)[0])".ToLower().Trim() }
-  $named = if ($topic -match '[a-z0-9]') { New-KitName $role $topic -Cap 16 }
-  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' } | ForEach-Object { "$($_.agent)" })   # never a live id
-  Invoke-KitLocked $f { $x = Read-KitState $f; if ($x -isnot [Collections.IDictionary]) { $x = @{} }; $k = "agent:$role"; $id = $named
-    while (-not $id -or ($id -in $live -and -not $named -and $x[$k] -lt 999)) { $x[$k] = 1 + [int]$x[$k]; $id = "$role-$($x[$k])" }
-    if ($Legacy) { if ($x.aliases -isnot [Collections.IDictionary]) { $x.aliases = @{} }; if (-not $x.aliases[$Legacy]) { $x.aliases[$Legacy] = $id } }; Write-KitState $f $x; $id } }
-function Resolve-KitAgentAlias([string]$Id) { $a = (Read-KitState (Get-KitPath naming)).aliases; if ($a -is [Collections.IDictionary] -and $a[$Id]) { $a[$Id] } else { $Id } }
 function Invoke-Board {
 param(
   [Parameter(Position = 0)][ValidateSet('join', 'beat', 'show', 'list', 'check', 'leave', 'msg', 'inbox', 'help')][string]$Action = 'show',
@@ -111,10 +102,12 @@ function Warnings($me, $act) {
 function Print($act) {
   if (-not $act) { 'board: no other active agents'; return }
   'board (active agents):'
-  # N3 (owner 2026-11-23): a run line '<run id> · <KEY> <short title>', its agents '<agent id> · <area>'
-  foreach ($g in @($act | Group-Object { "$($_.run)" } | Sort-Object Name)) { if ($g.Name) { $rt = Get-KitRunTitle $g.Name (@($g.Group | ForEach-Object { "$($_.subject)" } | Where-Object { $_ }))[0]; "  run $rt$(if ($rt -ne $g.Name) { " ($($g.Name))" })" }
+  # owner 2026-11-25: '<role>-<topic> · <plain words> (<id>)' per run and agent, one normaliser call
+  Register-KitShownNames (@($act | Group-Object { "$($_.run)" } | Where-Object Name | ForEach-Object { , (Get-KitRunShownRow $_.Name (Get-KitBoardRunTopic $_.Group)) }) + @($act | ForEach-Object { , @('agent', "$($_.agent)", ("$($_.area)".Trim() -replace '^(?i)area-'), "$($_.type)".ToLower()) }))
+  foreach ($g in @($act | Group-Object { "$($_.run)" } | Sort-Object Name)) { if ($g.Name) { $rt = Get-KitRunTitle $g.Name (Get-KitBoardRunTopic $g.Group); "  run $rt$(if ($rt -ne $g.Name) { " ($($g.Name))" })" }
   $g.Group | Sort-Object agent | ForEach-Object { $task = "$($_.items)"; $cl = (@($_.worktrees | Where-Object { $_ } | ForEach-Object { Split-Path "$_" -Leaf }) -join ',')
-    '    {0,-24} {1,-8} {2,-30} {3,-22} {4} | beat {5}{6}' -f (Get-KitAgentLabel ([pscustomobject]@{ n = $_.agent; ar = $_.area; sub = $_.type })), "$(if ($_.holderPid) { "s$($_.holderPid)" })", $task.Substring(0, [math]::Min(30, $task.Length)), $cl.Substring(0, [math]::Min(22, $cl.Length)), $_.status, ([datetime]$_.beat).ToString('HH:mm'), $(if ($_.budget) { " | spend $([int]($_.spend / 1000))k/$([int]($_.budget / 1000))k" }) } }
+    $al = Get-KitAgentLabel ([pscustomobject]@{ n = $_.agent; ar = $_.area; sub = $_.type }); if (($al -replace ' · .*$') -ne "$($_.agent)") { $al = "$al ($($_.agent))" }
+    '    {0,-24} {1,-8} {2,-30} {3,-22} {4} | beat {5}{6}' -f $al, "$(if ($_.holderPid) { "s$($_.holderPid)" })", $task.Substring(0, [math]::Min(30, $task.Length)), $cl.Substring(0, [math]::Min(22, $cl.Length)), $_.status, ([datetime]$_.beat).ToString('HH:mm'), $(if ($_.budget) { " | spend $([int]($_.spend / 1000))k/$([int]($_.budget / 1000))k" }) } }
 }
 
 switch ($Action) {
@@ -125,7 +118,8 @@ switch ($Action) {
     $auto = $Type -and $Type -ne 'coordinator' -and $Agent -in @($null, '', $Type)   # one coordinator per session: its role is its name
     # a legacy row (area id or <type>-<run>) keeps its id
     if ($auto) { $Agent = @(All | Where-Object { $Run -and $Area -and $_.type -eq $Type -and $_.run -eq $Run -and $_.area -eq $Area -and ($_.agent -like "$($Type.ToLower())-*" -or $_.agent -in @($Area, "$Type-$Run")) } | Sort-Object { [datetime]$_.joined })[-1].agent
-      if (-not $Agent) { $Agent = New-KitAgentId $Type $(if ($Run) { "$Type-$Run" }) $Area $Items }; $notes += "RUN-ID: you are $Agent (checkpoint, inbox: -Agent $Agent)" }
+      if (-not $Agent) { $Agent = New-KitAgentId $Type $(if ($Run) { "$Type-$Run" }) $Area $Items $Subject }; $notes += "RUN-ID: you are $Agent (checkpoint, inbox: -Agent $Agent)" }
+    if ($auto -and $Run) { try { $null = Invoke-KitNaming @('check', 'run', $Run) } catch { $notes += "$_" -replace '^kitbag\.py naming check run \S+: ' } }   # a warning, never a refusal
     if (-not $Agent) { $Agent = $Type }
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
@@ -384,7 +378,7 @@ function Get-SelfLaunchFile([string]$Leaf, [string]$Run, [string]$Fnv = '') { Jo
 function Get-LaunchRunName($a) {
   if (-not $a) { return '' }
   if ($a.run) { return [string]$a.run }
-  if ($a.brief) { $fnv = Get-KitFnv ([string]$a.brief); return "$([IO.Path]::GetFileName([string]$a.brief) -replace '\.md$', '')-$(if ($fnv.Length -ge 4) { $fnv.Substring(0, 4) } else { $fnv })" }
+  if ($a.brief) { $bw = @([regex]::Matches(([IO.Path]::GetFileName([string]$a.brief).ToLower() -replace '\.md$', ''), '[a-z0-9]+') | Select-Object -First 3 | ForEach-Object Value); return "buildy-$(if ($bw.Count) { $bw -join '-' } else { 'wave' })" }   # = buildy.js RUN
   if ($a.runDir) { return (Split-Path ([string]$a.runDir) -Leaf) }
   if ($a.select) { return "select-$(if ($a.name) { $a.name } elseif ($a.target) { $a.target } else { 'run' })" }
   ''
@@ -1343,6 +1337,7 @@ if ($AutoFix -and (Within 'tracker checks')) {
 }
 # 4b. owner MRs merged in 24 h, untracked
 if ($KitConf.TrackerType -ne 'none' -and (Within 'untracked MRs')) { foreach ($x in @(Get-KitUntrackedMrFlag $state $now { Within 'untracked MRs' })) { [void]$flags.Add($x) } }
+if ((Test-KitNamingOn) -and (Within 'tags')) { foreach ($x in @(Get-KitTagGapFlag)) { [void]$flags.Add($x) } }
 if ((Test-Path (Get-KitPath scope-log)) -and (Within 'scope')) { foreach ($w in @(@(Invoke-Bounded $KitCmd.dev @('scope')) -match '^WATCH ')) { $wp = "$w".Substring(6) -split ' \| ', 2; Flag 'WATCH' $wp[0] $wp[1] } }
 
 # 5. QA results: new [Bug], failedTesting tasks (bossy E6)
@@ -1772,7 +1767,7 @@ function Invoke-Decide {
       $shown = "$(if ($Context) { "Today: $(($Context.Trim() -replace '^(?i)today\s*:\s*').TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }
-      $o = [ordered]@{ id = (New-KitId $(if ($Kind -eq 'envfix') { 'envfix' } else { 'dec' }) $dir)   # NO-DATE: the counter, the time in at
+      $o = [ordered]@{ id = (New-KitName $(if ($Kind -eq 'envfix') { 'envfix' } else { 'dec' }) "$Question" $dir -Cap 16)   # question words (owner 2026-11-25); old dec-12 resolve
         kind = $Kind; run = $Run; agent = $Agent; item = $Item; question = $Question
         options = $opts; recommend = $Recommend; blocking = -not $Fyi; contracts = $Contracts; status = 'pending'; at = (Get-KitStamp)
         task = $resolvedTask; mrs = $mrsClean; commit = $Commit; parentId = $ParentId; gate = $(if ($Gate -in $kitGates) { $Gate }) }
@@ -1822,7 +1817,7 @@ function Invoke-Decide {
         # a pick is judged by its own label (its description: only "merge .. as is"): the owner's why may name the other side (dec-47)
         $asIs = $pick -and "$($pick.description)" -match '(?i)\bmerge\b.{0,30}\bas is\b'
         if ($said -notmatch $denyRx -and ((($said -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept|change|extend)\b' -or $asIs) -and ($pick -or $Answer -notmatch $denyRx)) -or ($Answer -match '(?i)\bscope[- ]?ok\b' -and $Answer -notmatch $denyRx))) {
-          $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
+          $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitName dec "scope $scItem" $dir -Cap 16)
             kind = 'decision'; run = $o.run; agent = 'coordinator'; item = $scItem; gate = 'scope'; question = $o.question; options = @(); blocking = $false; status = 'answered'; at = $now
             task = "$($o.task)"; mrs = @($o.mrs); branches = $scBr; answer = $Answer; by = $By; source = 'chat'; answeredAt = $now; supersedes = @(); parentId = $Id }
           & $save $sc; $o | Add-Member -Force scopeId $sc.id; & $save $o; & $note $o.contracts "DECISION $Id SCOPE WORD $($sc.id) ($scItem)"; "SCOPE RECORDED $($sc.id) (scope $scItem, from $Id): pass it to the agent (wt commit -ScopeOk $($sc.id))"
@@ -1850,7 +1845,7 @@ function Invoke-Decide {
       if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: -By names the person who gave the word, never an agent or the coordinator ($By): omit -By (default owner) or name the person; the coordinator runs it without -Agent"; exit 2 }
       $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
       $now = (Get-KitStamp)
-      $o = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
+      $o = [pscustomobject][ordered]@{ id = (New-KitName dec "$Question" $dir -Cap 16)
         kind = 'decision'; run = $Run; agent = 'coordinator'; item = $Item; gate = $Gate; question = $Question
         options = @(); blocking = $false; contracts = $Contracts; status = 'answered'; at = $now; task = $resolvedTask
         mrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); answer = $Answer; by = $By; source = $Source; answeredAt = $now; supersedes = $supIds; commit = $Commit }
@@ -1912,7 +1907,7 @@ function Invoke-Debate {
       $own = $Owner -or $Why -eq 'owner'
       $had = @(Read-KitJsonFiles $dir | Where-Object { $Run -and $_.run -eq $Run -and -not $_.owner })
       if ($had.Count -and -not $own) { "REFUSED: run $Run had its debate ($($had[0].id)); 1 per run unless the owner asks (-Owner): ask A/B with decide ask"; exit 1 }
-      $id = New-KitId debate $dir; $f = Join-Path $dir "$id.json"
+      $id = New-KitName debate "$Question" $dir -Cap 16; $f = Join-Path $dir "$id.json"
       Write-KitState $f ([ordered]@{ id = $id; run = $Run; agent = $Agent; item = $Item; question = $Question; options = $opts; trigger = $Why; owner = [bool]$own })
       "DEBATE $f"
     }

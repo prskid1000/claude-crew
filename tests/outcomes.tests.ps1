@@ -98,23 +98,23 @@ $lm = @('N1,api!7', 'api!7') | ForEach-Object { pwsh @np $O decide check -Id $lm
 Expect "decide check lists: gate one of -Gate, item any of -Item or the record's MR ($($lg -join ' '))" ("$lg" -eq 'WO NO NO' -and @($lm -match '^WORD ').Count -eq 2)
 # standing rules: one ask, the owner's A, auto-answers (never deploy), a gate check refuses it, revoke
 $po = pwsh @np $O decide rules -Propose | Out-String
-$askId = if ($po -match 'ask (dec-\d+)') { $Matches[1] }
+$askId = if ($po -match 'ask (dec-[a-z0-9-]+)') { $Matches[1] }
 Expect 'decide rules -Propose: two proposals, one pending ask' ($po -match 'PROPOSED 2 standing rule' -and $askId -and (pwsh @np $O decide list -Pending | Out-String) -match 'standing-rules')
 $null = pwsh @np $O decide answer -Id $askId -Answer 'approve all except the deploy one'
 $rx = pwsh @np $O decide rules | Out-String
 Expect 'an unclear pick ("except") approves nothing; the rules wait for the next ask' ($rx -notmatch 'APPROVED' -and ([regex]::Matches($rx, 'PROPOSED')).Count -eq 2)
-$po2 = pwsh @np $O decide rules -Propose | Out-String; $askId2 = if ($po2 -match 'ask (dec-\d+)') { $Matches[1] }
+$po2 = pwsh @np $O decide rules -Propose | Out-String; $askId2 = if ($po2 -match 'ask (dec-[a-z0-9-]+)') { $Matches[1] }
 $null = pwsh @np $O decide answer -Id $askId2 -Answer 'A: approve all'
 $md = Join-Path $k 'rules/standing-rules.local.md'; $rl = pwsh @np $O decide rules | Out-String
 Expect 'owner A -> approved (date, by), rules/standing-rules.local.md written, deploy one marked guidance' ((Test-Path $md) -and (Get-Content $md -Raw) -match 'guidance: never auto-answered' -and (Get-Content $md -Raw) -match 'approved \d{4}-\d\d-\d\d by owner' -and ([regex]::Matches($rl, 'APPROVED')).Count -eq 2)
 $aa = pwsh @np $O decide ask -Run r -Agent devy -Item t9 -Gate scope -Context 'missed slots are dropped' -Question 'Replay sends for earlier slots on re-activate?' -Options 'A: Replay — send missed', 'B: No replay — next slot only' -Recommend B | Out-String
 $aid = if ($aa -match 'DECISION (\S+)') { $Matches[1] }
-Expect 'decide ask matching an approved rule -> answered by it, option B, logged' ($aa -match 'ANSWERED by standing rule sr-' -and $aa -match 'B: No replay' -and (pwsh @np $O decide wait -Id $aid -MaxMinutes 0 | Out-String) -match '^ANSWERED')
+Expect 'decide ask matching an approved rule -> answered by it, option B, logged' ($aa -match 'ANSWERED by standing rule rule-' -and $aa -match 'B: No replay' -and (pwsh @np $O decide wait -Id $aid -MaxMinutes 0 | Out-String) -match '^ANSWERED')
 $ck = pwsh @np $O decide check -Id $aid -Gate scope -Item t9 | Out-String
 Expect 'decide check: a standing rule answer is no person''s word' ($ck -match 'NO-WORD' -and $ck -match 'no person' -and $ck -match 'never an open option')   # retro 2205: NO-WORD names what to do meanwhile
 $dd = pwsh @np $O decide ask -Run r -Agent opsy -Item staging -Gate deploy -Context 'merged, not deployed' -Question 'Deploy the api to staging now?' -Options 'A: yes deploy — testers get it', 'B: wait — nothing changes' -Recommend B | Out-String
 Expect 'decide ask on a deploy gate: never auto-answered' ($dd -match 'pending' -and $dd -notmatch 'standing rule')
-$sid = if ($rl -match 'APPROVED (sr-\w+) \[scope\]') { $Matches[1] }
+$sid = if ($rl -match 'APPROVED (rule-[\w-]+) \[scope\]') { $Matches[1] }
 $null = pwsh @np $O decide rules -Revoke $sid
 $a2 = pwsh @np $O decide ask -Run r -Agent devy -Item t9 -Gate scope -Context 'missed slots are dropped' -Question 'Replay sends for earlier slots on create?' -Options 'A: Replay — send missed', 'B: No replay — next slot only' -Recommend B | Out-String
 Expect 'decide rules -Revoke: the rule stops answering; the rules file keeps only the deploy guidance' ($a2 -match 'pending' -and (Get-Content $md -Raw) -notmatch [regex]::Escape($sid))

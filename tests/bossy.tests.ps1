@@ -160,7 +160,7 @@ $j1 = pwsh @np $O board join -Type devy -Agent X7 -Run w7 -Items 'A1' -Claims 'C
 $j2 = pwsh @np $O board join -Type revy -Agent R7 -Run w7 | Out-String
 $null = pwsh @np $O board msg -Agent R7 -To X7 -Text 'I need a.ts'
 $ib = pwsh @np $O board inbox -Agent X7 | Out-String
-Expect 'board: join -Type shown; msg in inbox' ($j2 -match 'X7 · devy' -and $ib -match 'from R7: I need a\.ts')
+Expect 'board: join -Type shown; msg in inbox' ($j2 -match 'devy-x7 \(X7\)' -and $ib -match 'from R7: I need a\.ts')
 $bh = pwsh @np $O board help 2>&1 | Out-String; $bhc = $LASTEXITCODE
 Expect "board help: the board usage lines, exit 0 (retro 1709: failed validation) ($bhc)" ($bhc -eq 0 -and $bh -match 'board join\|beat' -and $bh -match 'check -Decision')
 $dx = Invoke-TestScript $O board dispute -Agent X7 -With R7

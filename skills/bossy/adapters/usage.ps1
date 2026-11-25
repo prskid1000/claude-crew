@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L384 context · L732 waste (owner 2026-11-23 · L802 split · L876 budget · L944 handoffs
+Sections: L9 usage · L382 context · L730 waste (owner 2026-11-23 · L800 split · L874 budget · L942 handoffs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -110,31 +110,28 @@ function Get-KitUsageHostMrs([datetime]$Since, [datetime]$Now, $Prev) {
 function Get-KitPct($Vals, [double]$P) { $s = @($Vals | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ } | Sort-Object); if (-not $s.Count) { return $null }; $s[[int][math]::Min($s.Count - 1, [math]::Floor($P * $s.Count))] }
 # runs, steps, background agents of the last $Days days; parses for at most $Seconds (the cache keeps offsets: the rest next call); stored with the result
 # one window for every number: the $Days calendar days ending today (tokens cut by the day they were spent)
-# a run's human label: its mandate's first words, else the first agent's area or items, else a test run's name and target, else the brief's file name (the run id: the tooltip)
-# a run's short title (owner 2026-11-21): QA name · target, else the run name, else the brief; its task codes unless the title holds
-# them; the mandate only when nothing else names it (the row tooltip shows it: Get-KitRunMandate)
-function Get-KitRunLabel($A, [string]$Run = '', [string]$RunDir = '') {
-  # N3 (owner 2026-11-23): '<run id> · <KEY> <short title>'; the title from args.label (wave-brief render) or <runDir>/run.json label (pokey prepare)
+# a run's shown name (owner 2026-11-25 reference: 'devy-only-prompt · ask catalogue create-only prompt'): '<role>-<topic> · <plain words>'
+# by the one normaliser (Get-KitShownName); the topic: args.label (wave-brief render) or <runDir>/run.json label, else the QA name ·
+# target, the brief's file name, the mandate, the first agent's area; task codes, waves, dates never shown (the row tooltip: the run id)
+function Get-KitRunTopic($A, [string]$RunDir = '') {
   $lb = "$($A.label)".Trim(); $rd = if ($RunDir) { $RunDir } else { "$($A.runDir)" }
-  if ($rd) { if ((Split-Path $rd -Leaf) -match $script:KitRunIdRx) { $Run = $Matches[0] }; if (-not $lb) { $lb = try { "$((Read-KitText (Join-Path $rd 'run.json') | ConvertFrom-Json).label)".Trim() } catch { '' } } }
-  $std = if ($Run -match $script:KitRunIdRx) { $Run; $Run = '' }   # a standard id: the row tooltip shows it (owner 2026-11-24); a legacy name stays the title
-  if ($lb) { return (@($Run, $lb) | Where-Object { $_ }) -join ' · ' }
-  $s = @(@(if ($A.name) { "$($A.name)$(if ($A.target) { " · $($A.target)" })" }) + $Run + @(if ($A.brief) { [IO.Path]::GetFileNameWithoutExtension("$($A.brief)") }) + @($A.mandate) + @(@($A.agents)[0].area) | ForEach-Object { ("$_" -replace '\s+', ' ').Trim() } | Where-Object { $_ -and $_ -notmatch '^<' })[0]
-  $cs = @(@(@($A.agents) | ForEach-Object { "$($_.items)" -split '[,\s]+' }) + @($A.select.tasks) + @($A.tasks) + @($A.task) | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^(?=[\w-]*\d)[\w-]{2,}$' -and "$s" -notmatch [regex]::Escape($_) } | Select-Object -Unique)
-  $sfx = if ($cs.Count -le 2) { $cs -join ', ' } else { "$($cs.Count) items" }; $room = 48 - $(if ($sfx) { $sfx.Length + 3 } else { 0 })   # the codes are never cut
-  if ("$s".Length -gt $room) { $s = ("$s".Substring(0, [math]::Max(8, $room) - 1) -replace '\s+\S*$', '') + '…' }
-  $out = (@($s, $sfx) | Where-Object { $_ }) -join ' · '; if ($out) { $out } else { Format-KitRunName $std }
+  if ($rd -and -not $lb) { $lb = try { "$((Read-KitText (Join-Path $rd 'run.json') | ConvertFrom-Json).label)".Trim() } catch { '' } }
+  if ($lb) { return $lb }
+  @(@(if ($A.name) { "$($A.name)$(if ($A.target) { " · $($A.target)" })" }) + @(if ($A.brief) { [IO.Path]::GetFileNameWithoutExtension("$($A.brief)") }) + @($A.mandate) + @(@($A.agents)[0].area) | ForEach-Object { ("$_" -replace '\s+', ' ').Trim() } | Where-Object { $_ -and $_ -notmatch '^<' })[0]
 }
-# a run id shown (owner 2026-11-24): no date (the day group shows it), no role word (the kind chip / agent row shows it), no counter
-# (a collision adds it): kitty-fix-0007 + subject 'rest' -> 'fix: rest' · legacy kitty-20261124-rest -> 'rest' · buildy-0042 -> 'buildy' · a word name (testy-retest) is its own
-function Format-KitRunName([string]$Run, [string]$Subject = '') {
-  if ("$Run" -notmatch '^[a-z]+(?:-[a-z]+)*-(?:\d{8}-[\w-]+|\d{4,})$') { return $(if ($Subject) { $Subject } else { "$Run" }) }   # a hand-made name is its own title
-  $w = @("$Run" -split '-' | Where-Object { $_ -and $_ -notmatch '^\d{8}$' }); if ($w.Count -gt 1 -and $w[-1] -match '^\d+$') { $w = @($w | Select-Object -SkipLast 1) }
-  $tail = @($w | Select-Object -Skip 1) -join '-'; $out = (@($(if ($Subject) { $tail }), $(if ($Subject) { $Subject } else { $tail })) | Where-Object { $_ }) -join ': '
-  if ($out) { $out } else { $w[0] }
+function Get-KitRunLabelRow($A, [string]$Run = '', [string]$RunDir = '', [string]$Role = '') {
+  $rd = if ($RunDir) { $RunDir } else { "$($A.runDir)" }; if (-not $Run -and $rd) { $Run = Split-Path $rd -Leaf }
+  $tp = "$(Get-KitRunTopic $A $rd)"; if ($Run) { , @('run', $Run, $tp, $Role) } else { , @('desc', $tp, '', '') }
 }
-# a run id's label from its newest launch record (board show); no record: Format-KitRunName (-Subject: board join -Subject)
-function Get-KitRunTitle([string]$Run, [string]$Subject = '') { $r = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { "$($_.run)" -eq $Run -or ($_.runDir -and (Split-Path "$($_.runDir)" -Leaf) -eq $Run) } | Sort-Object { try { [datetime]$_.at } catch { [datetime]0 } })[-1]; if ($r.args) { Get-KitRunLabel $r.args $Run "$($r.runDir)" } else { Format-KitRunName $Run $Subject } }
+function Get-KitRunLabel($A, [string]$Run = '', [string]$RunDir = '', [string]$Role = '') { $rw = Get-KitRunLabelRow $A $Run $RunDir $Role; Get-KitShownName @rw }
+# a run's normaliser row @(run, id, topic, role) from its newest launch record; no record: -Subject (board join -Subject). A page
+# registers every row once (Register-KitShownNames: one call, live names compared for ties), then Get-KitRunTitle reads the memo
+function Get-KitRunShownRow([string]$Run, [string]$Subject = '') { if ($script:KitLaunchRecs -isnot [array] -or ((Get-Date) - $script:KitLaunchRecsAt).TotalSeconds -gt 30) { $script:KitLaunchRecsAt = Get-Date; $script:KitLaunchRecs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Sort-Object { try { [datetime]$_.at } catch { [datetime]0 } }) }
+  $r = @($script:KitLaunchRecs | Where-Object { "$($_.run)" -eq $Run -or ($_.runDir -and (Split-Path "$($_.runDir)" -Leaf) -eq $Run) })[-1]
+  if ($r.args) { , @('run', $Run, "$(Get-KitRunTopic $r.args "$($r.runDir)")", [IO.Path]::GetFileNameWithoutExtension("$($r.script)")) } else { , @('run', $Run, $Subject, '') } }
+# a board run's topic: its -Subject, else its first agent's area (fix-ask-012 + "cancel SO reason" -> cancel-reason)
+function Get-KitBoardRunTopic($Rows) { @(@($Rows | ForEach-Object { "$($_.subject)" }) + @($Rows | ForEach-Object { "$($_.area)" -replace '^(?i)area-' }) | Where-Object { $_.Trim() })[0] }
+function Get-KitRunTitle([string]$Run, [string]$Subject = '') { $rw = Get-KitRunShownRow $Run $Subject; Get-KitShownName @rw }
 function Get-KitRunMandate($A) { $m = ((@($A.mandate) | Where-Object { $_ }) -join ' · ' -replace '\s+', ' ').Trim(); if ($m.Length -gt 400) { $m.Substring(0, 399) + '…' } else { $m } }
 function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seconds = 60) {
   $cf = Get-KitPath usage-cache -Create; $all = try { Read-KitText $cf | ConvertFrom-Json -AsHashtable } catch { $null }; $cache = $all.files; if ($cache -isnot [hashtable]) { $cache = @{} }
@@ -212,7 +209,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
         $name = $rm.Groups[2].Value; $scr = $rm.Groups[1].Value
         $a0 = @($launch | Where-Object { $_.run -eq $name -and $_.args -and (Split-Path "$($_.script)" -Leaf) -eq $scr } | Sort-Object { [math]::Abs(([datetime]$_.at - $w.CreationTime).TotalMinutes) } | ForEach-Object args)[0] }
       $rTasks = @(@(@($a0.agents) | ForEach-Object { $_.task }) + @($a0.select.tasks) + @($a0.tasks) + @($a0.task) | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^(?=[\w-]*\d)[\w-]{4,}$' } | Select-Object -Unique)   # a page link each
-      $runs.Add((& $withSplit ([pscustomobject]@{ run = $name; id = $w.Name; label = (Get-KitRunLabel $a0 $(if ($name -ne $w.Name) { $name }) "$(@($rec.runDir | Where-Object { $_ })[-1])"); mandate = (Get-KitRunMandate $a0); qaName = "$($a0.name)"; tasks = $rTasks; mrAll = @($rs | ForEach-Object { $_.mrAll } | Where-Object { $_ } | Select-Object -Unique); kind = $(if ($scr -match 'testy') { 'test' } elseif ($scr -match 'buildy') { 'build' } elseif ($scr -match 'tidy|retro') { 'kit' } else { '' }); started = (Get-KitStamp stored $w.CreationTime); status = $(if ($live) { 'running' } elseif ($rst -eq 'paused') { 'paused' } else { 'ended' }); state = $rst; lastAt = (Get-KitStamp stored $lastW); cap = [long]$cap; spent = [long]$spent; tok = [long]($rs | Measure-Object tok -Sum).Sum; cost = $(if (@($rs | Where-Object { $null -ne $_.cost }).Count) { [math]::Round(($rs | Measure-Object cost -Sum).Sum, 2) })
+      $runs.Add((& $withSplit ([pscustomobject]@{ run = $name; id = $w.Name; label = (Get-KitRunLabelRow $a0 $(if ($name -ne $w.Name) { $name }) "$(@($rec.runDir | Where-Object { $_ })[-1])" ([IO.Path]::GetFileNameWithoutExtension($scr))); mandate = (Get-KitRunMandate $a0); qaName = "$($a0.name)"; tasks = $rTasks; mrAll = @($rs | ForEach-Object { $_.mrAll } | Where-Object { $_ } | Select-Object -Unique); kind = $(if ($scr -match 'testy') { 'test' } elseif ($scr -match 'buildy') { 'build' } elseif ($scr -match 'tidy|retro') { 'kit' } else { '' }); started = (Get-KitStamp stored $w.CreationTime); status = $(if ($live) { 'running' } elseif ($rst -eq 'paused') { 'paused' } else { 'ended' }); state = $rst; lastAt = (Get-KitStamp stored $lastW); cap = [long]$cap; spent = [long]$spent; tok = [long]($rs | Measure-Object tok -Sum).Sum; cost = $(if (@($rs | Where-Object { $null -ne $_.cost }).Count) { [math]::Round(($rs | Measure-Object cost -Sum).Sum, 2) })
           wall = [math]::Round(($wEnd - $w.CreationTime).TotalMinutes); roles = (@($rs | Group-Object role | Sort-Object Count -Descending | ForEach-Object { "$(if ($_.Name) { $_.Name } else { 'step' }) $($_.Count)" }) -join ' · ')
           done = @($rs | Where-Object { $_.result -in 'pass', 'empty', 'fail' }).Count; total = $rs.Count; merged = @($rs.mrs | Where-Object { $_ } | Select-Object -Unique).Count; items = $items
           loop = [long](@($rs | Where-Object { $_.type -in 'review', 'fix' }) | Measure-Object tok -Sum).Sum; at = (Get-KitStamp stored $wEnd); steps = @($rs) }) $rs)) }
@@ -233,6 +230,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
     $steps.Add($st); $coord.Add((& $withSplit ([pscustomobject]@{ session = $f.BaseName; model = $st.model; tok = $st.tok; cost = $(if ($null -ne $st.cost) { [math]::Round($st.cost, 2) }); min = $st.min; at = $st.at }) @($st))) }
   foreach ($k in @($cache.Keys)) { if (-not $seen[$k]) { $cache.Remove($k) } }   # older than $Days: dropped
   # one run = one row: a resumed run's folders merge (the newest folder's id and status, sums, MRs unique, items the max; resumed = older folders)
+  Register-KitShownNames @($runs | ForEach-Object { , @($_.label) }); foreach ($r in $runs) { $lr = @($r.label); $r.label = Get-KitShownName @lr }   # label rows -> shown names: one normaliser call
   $byRun = [ordered]@{}; foreach ($r in @($runs | Sort-Object { "$($_.started)" })) { $rk = "$($r.run)"; if (-not $byRun.Contains($rk)) { $byRun[$rk] = [Collections.Generic.List[object]]::new() }; $byRun[$rk].Add($r) }
   $runs = @(foreach ($grpRun in $byRun.Values) { if ($grpRun.Count -eq 1) { $grpRun[0]; continue }
       $nw = $grpRun[-1]; $ss = @($grpRun | ForEach-Object { $_.steps }); $sumOf = { param([string]$p) [long](@($grpRun | ForEach-Object { [double](Get-KitMember $_ $p) }) | Measure-Object -Sum).Sum }

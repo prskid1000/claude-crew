@@ -62,6 +62,7 @@ Set-Content (Join-Path $kc 'skills/crafty/zz_tmp.ps1') $ftp -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/zz_tmp.py') "import tempfile`nd = tempfile.mkdtemp()" -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/zz_tmpk.py') "from kitbag import kit_path`nimport tempfile`nd = tempfile.mkdtemp()" -Encoding utf8
 Set-Content (Join-Path $kc 'skills/crafty/zz_tmp.mjs') "import { tmpdir } from 'node:os'`nconst d = tmpdir()" -Encoding utf8
+Set-Content (Join-Path $kc 'skills/crafty/zz_num.ps1') "`$a = New-KitId dec `$d`n`$b = New-KitId stale -Number   # NAME-NUMBER: a tie`n# New-KitId x in a comment" -Encoding utf8
 $ex = Join-Path $kc 'skills/crafty/kit.example.json'; $t = [IO.File]::ReadAllText($ex)
 [IO.File]::WriteAllText($ex, ($t -replace '(?s)^\{', "{`n `"zzDeadKey`": 1, `"zzLiveKey`": 2,"))
 $l1 = & $py -X utf8 $KT3 lint --no-flow --warn 2>&1 | Out-String
@@ -108,6 +109,17 @@ $sbSame = @(foreach ($sc in @(@($sbJ, 'a'), @($sbJ, 'b'), @($sbJ, 'c'), @($sbJ, 
 $sbP = [pscustomobject]@{ v = 1 }; Set-KitMember $sbP 'v' 5
 Expect 'Get-KitMember = $o.$k (scalars, arrays, empty, null, member enumeration one level flat, hashtables); Set-KitMember; Get-KitProps = PSObject property order; Get-KitHash = SHA256 hex' (-not @($sbSame | Where-Object { -not $_ }).Count -and
   $sbP.v -eq 5 -and (@(Get-KitProps $sbJ).Name -join ',') -eq 'a,b,c,d,e,arr' -and -not @(Get-KitProps $null).Count -and (Get-KitHash 'abc') -eq 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD' -and (Get-KitHash 'abc' MD5) -eq '900150983CD24FB0D6963F7D28E17F72')
+Expect 'NAME-NUMBER: a counter name (New-KitId) is a problem at its line; a NAME-NUMBER: <why> line and a comment pass' ($l1 -match '(?m)^NAME-NUMBER\s+skills/crafty/zz_num\.ps1:1:' -and $l1 -notmatch 'zz_num\.ps1:[23]:')
+# the one name normaliser, owner examples (2026-11-25): '<role>-<topic> · <plain words>'; jams split, a tie only on a clash, codes give way to topic words
+$nrmIn = @(@('run', 'fix-ask-012', 'SHOP-ASK-012 cancel SO reason', ''), @('run', 'fix-ask011', 'ask catalogue create-only prompt', ''), @('run', 'aiedit-b', 'AI edit lost fields other types', ''),
+  @('run', 'v2-wave3', 'Website v2 wave 3: payments, my account, events, fix round', 'buildy'), @('agent', 'devy-only-prompt', 'ask catalogue create-only prompt', ''), @('agent', 'devy-askimg', '-', ''), @('agent', 'devy-cartpick', '-', ''))
+$nrm = @($nrmIn | ForEach-Object { "$(& $py -X utf8 $KT3 naming norm $_[0] $_[1] --topic $_[2] @(if ($_[3]) { '--role', $_[3] }) 2>&1)".Trim() }); $nTie = "$(& $py -X utf8 $KT3 naming norm run aiedit-b --live aiedit-a,aiedit-b 2>&1)".Trim()
+$nWant = @('cancel-reason · cancel so reason', 'ask-catalogue · ask catalogue create-only prompt', 'ai-edit · ai edit lost fields other types', 'buildy-payments · website payments, my account, events, fix round',
+  'devy-only-prompt · ask catalogue create-only prompt', 'devy-ask-img', 'devy-cart-pick')
+$nChk = @(@('run', 'aiedit-b'), @('run', 'fix-ask011'), @('run', 'kitty-48'), @('agent', 'datay-5'), @('run', 'buildy-ask'), @('run', 'testy-retest-2'), @('desc', 'Website v2 wave 3: payments'), @('desc', 'ask catalogue create-only prompt')) | ForEach-Object { $null = & $py -X utf8 $KT3 naming check $_[0] $_[1] 2>&1; $LASTEXITCODE }
+$nDir = Join-Path $kc 'zz-names'; $nPair = @(1, 2 | ForEach-Object { "$(& $py -X utf8 $KT3 naming next name dec 'Merge the cart change now or wait?' --dir $nDir --cap 16 2>&1)".Trim() })   # no file yet: the hold breaks the tie
+$nBad = @(@(if (($nPair -join ',') -ne 'dec-merge-cart,dec-merge-cart-2') { "held tie: $($nPair -join ',')" }) + @(0..($nWant.Count - 1) | Where-Object { $nrm[$_] -ne $nWant[$_] } | ForEach-Object { "$($nrmIn[$_][1]) -> $($nrm[$_])" }))
+Expect "naming norm: owner examples ($($nBad -join ' | ')); a clash keeps the tie ($nTie); check flags jam / tie letter / number / code text ($($nChk -join ','))" (-not $nBad.Count -and $nTie -eq 'ai-edit-b' -and ($nChk -join ',') -eq '1,1,1,1,0,0,1,0')
 Remove-Item (Join-Path $kc 'skills/bossy/lint-vocab.json')
 $l2 = & $py -X utf8 $KT3 lint --no-flow 2>&1 | Out-String
 Expect 'ARCH-VOCAB: a missing lint-vocab.json is a counted problem' ($l2 -match '(?m)^ARCH-VOCAB\s+skills/bossy/lint-vocab\.json: missing')

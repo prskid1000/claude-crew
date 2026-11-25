@@ -63,7 +63,7 @@ function Ensure-Worktree([string]$e, $r) {
   if (Test-LaneWorktree $r.wt) { return }
   if (Test-Path -LiteralPath $r.wt) {   # a plain folder or a dead .git link: moved aside (cleanup sweep judges it), made again below
     if (-not (Test-DeadLaneDir $r.wt)) { throw "[$e] $($r.wt) has a live .git but is not its own git worktree (toplevel: $("$(git -C $r.wt rev-parse --show-toplevel 2>&1)".Trim())): check it by hand (never moved)" }
-    $aside = "$($r.wt).stale-$(New-KitId stale -Number)"   # unique (the counter): Move-Item into an existing folder nests
+    $aside = "$($r.wt).stale-$(New-KitId stale -Number)"   # NAME-NUMBER: a tie only (the folder name says what it is); Move-Item into an existing folder nests
     Move-Item -LiteralPath $r.wt $aside; git -C $co worktree prune 2>$null | Out-Null
     Write-Warning "[$e] $($r.wt) was not its own git worktree: moved to $aside" }
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"

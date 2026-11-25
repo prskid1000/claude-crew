@@ -257,7 +257,7 @@ $script:KitRuleNeverRx = '(?i)\b(' + ((@('prod\w*', 'deploy\w*', 'release', 'rol
 function Get-KitTopicWords([string]$Question) { Get-KitWordSet ("$Question" -replace '\([^)]*\)', ' ' -replace '\b[A-Za-z]+-\d+[a-z]?\b', ' ' -replace '\b[0-9a-z_]*\d[0-9a-z_]*\b', ' ') }
 # choice words keep short ones (no, keep, all): polarity matters
 function Get-KitChoiceWords([string]$Answer) {
-  $s = "$Answer".ToLower() -replace '\(recommended\)', ' ' -replace '\((owner|by|via|standing)[^)]*\)', ' ' -replace '^\s*[a-z0-9]{1,2}\s*[:.)]\s+', '' -replace '\b(?:[de]-\d{14}\S*|(?:dec|envfix|debate)-\d+)', ' ' -replace "\b(don|doesn|didn|won|can|shouldn|wouldn|isn|aren|couldn)['’]?t\b|\bcannot\b", ' not '
+  $s = "$Answer".ToLower() -replace '\(recommended\)', ' ' -replace '\((owner|by|via|standing)[^)]*\)', ' ' -replace '^\s*[a-z0-9]{1,2}\s*[:.)]\s+', '' -replace '\b(?:[de]-\d{14}\S*|(?:dec|envfix|debate)-[a-z0-9]+(?:-[a-z0-9]+)*)', ' ' -replace "\b(don|doesn|didn|won|can|shouldn|wouldn|isn|aren|couldn)['’]?t\b|\bcannot\b", ' not '
   $h = [Collections.Generic.HashSet[string]]::new(); foreach ($m in [regex]::Matches($s, '[a-z][a-z0-9-]+')) { if ($m.Value -notin 'the', 'an', 'of', 'to', 'on', 'in', 'for', 'and', 'or', 'as', 'is', 'it', 'be', 'by', 'at', 'its') { [void]$h.Add($m.Value) } }; , $h
 }
 function ConvertTo-KitWordSet($Words) { $h = [Collections.Generic.HashSet[string]]::new(); foreach ($x in @($Words)) { if ($x) { [void]$h.Add("$x") } }; , $h }
@@ -306,7 +306,7 @@ function Set-KitStandingRuleAnswer([string]$AskId, [string]$Answer, [string]$By)
   $file = Get-KitPath standing-rules -Create
   Invoke-KitLocked $file {
     $rules = @(Read-KitStandingRules); $mine = @($rules | Where-Object { $_.askId -eq $AskId -and $_.status -eq 'proposed' }); if (-not $mine.Count) { return }
-    $named = @([regex]::Matches("$Answer", 'sr-[0-9a-f]{4,}') | ForEach-Object Value)
+    $named = @($mine | Where-Object { "$Answer" -match "(?<![\w-])$([regex]::Escape($_.id))(?![\w-])" } | ForEach-Object id)   # a proposed rule's own id (old sr-<hex>, new rule-<words>); prose 'rule-based' is none
     if ("$Answer" -match '(?i)\b(except|but not|excluding)\b') { foreach ($r in $mine) { $r.askId = '' }; Save-KitStandingRules $rules; return }   # unclear pick: the next prep asks again
     $all = -not $named.Count -and "$Answer" -match '(?i)^\s*(a\s*([:.)]|$)|approve all\b|all\b|yes\b)'
     foreach ($r in $mine) { if ($all -or $r.id -in $named) { $r.status = 'approved'; $r.approvedAt = (Get-KitStamp); $r.approvedBy = $By } else { $r.status = 'rejected' } }
@@ -343,7 +343,7 @@ function Invoke-KitStandingRules([switch]$Propose, [string]$Approve, [string]$Re
       foreach ($p in @(Get-KitDecisionPatterns)) {
         $have = Find-KitStandingRule $rules $p.gate (ConvertTo-KitWordSet $p.words)
         if ($have) { $have.evidence = @(@($have.evidence) + @($p.evidence) | Select-Object -Unique); continue }   # rejected / revoked stay so: the owner re-opens with -Approve
-        $r = [pscustomobject][ordered]@{ id = "sr-$([guid]::NewGuid().ToString('N').Substring(0, 6))"; status = 'proposed'; gate = $p.gate; question = $p.question; answer = $p.answer
+        $r = [pscustomobject][ordered]@{ id = (New-KitName rule "$($p.question)" -Cap 20); status = 'proposed'; gate = $p.gate; question = $p.question; answer = $p.answer
           evidence = @($p.evidence); words = @($p.words); auto = $p.auto; proposedAt = (Get-KitStamp); askId = '' }
         $rules.Add($r); $added += $r
       }

@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L93 move · L136 status roles · L295 task text · L312 naming · L435 track lines · L440 task ids ·
-#   L456 tags · L515 order
+# Sections: L8 items · L93 move · L136 status roles · L295 task text · L312 naming · L456 track lines · L461 task ids ·
+#   L477 tags · L542 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -324,10 +324,31 @@ function New-KitName([string]$Kind, [string]$Topic = '', [string]$Dir, [int]$Cap
   $nid = Invoke-KitNaming (@('next', 'name', $Kind, $Topic, '--cap', $Cap) + @(if ($Dir) { '--dir', $Dir }))
   if ($nid -notmatch "^$([regex]::Escape($Kind))(?:-[a-z0-9]+)*$") { throw "kitbag.py naming next name $Kind gave '$nid'" }; $nid
 }
+# the one normaliser's shown form (kitbag.py naming shown, owner 2026-11-25): '<role>-<topic words> · <lowercase plain words>';
+# Register-KitShownNames: one batch call for a page's rows, Get-KitShownName: memo hit (a miss: one call). Rows: @(kind, name, topic, role)
+function Register-KitShownNames($Rows) { if ($script:KitShown -isnot [hashtable]) { $script:KitShown = @{} }
+  if (@($Rows).Count -and @($Rows)[0] -is [string]) { $Rows = @(, @($Rows)) }   # one row: @() flattened it
+  $miss = @(@($Rows) | Where-Object { $_ -and "$($_[1])" } | ForEach-Object { , @("$($_[0])", "$($_[1])", "$(@($_)[2])", "$(@($_)[3])") } | Where-Object { -not $script:KitShown.ContainsKey($_ -join "`t") })
+  if (-not $miss.Count) { return }
+  $inF = New-KitTempFile '.json'; [IO.File]::WriteAllText($inF, (ConvertTo-Json -InputObject @($miss | ForEach-Object { , $_ }) -Depth 3 -Compress))
+  try { $outL = Invoke-KitNaming @('shown', '--in', $inF); $got = @($outL | ConvertFrom-Json) } catch { $got = @() } finally { Remove-Item -LiteralPath $inF -ErrorAction SilentlyContinue }
+  for ($si = 0; $si -lt $miss.Count; $si++) { $script:KitShown[$miss[$si] -join "`t"] = $(if ($si -lt $got.Count -and "$($got[$si])") { "$($got[$si])" } else { $miss[$si][1] }) }   # no python: the name as given
+}
+function Get-KitShownName([string]$Kind, [string]$Name, [string]$Topic = '', [string]$Role = '') { if (-not $Name) { return '' }
+  $sk = @($Kind, $Name, $Topic, $Role) -join "`t"; if ($script:KitShown -isnot [hashtable] -or -not $script:KitShown.ContainsKey($sk)) { Register-KitShownNames @(, @($Kind, $Name, $Topic, $Role)) }; $script:KitShown[$sk] }
+# <role>-<area, subject or item words> (devy-ask-prompts, kitty-naming), else <role>-<n> (never reused: an old inbox); $Legacy -> aliases (msg -To)
+function New-KitAgentId([string]$Type, [string]$Legacy = '', [string]$Area = '', [string[]]$Items = @(), [string]$Subject = '') { $f = Get-KitPath naming -Create; $role = $Type.ToLower()
+  $ar = ("$Area" -replace '^(?i)area-', '').ToLower().Trim(); $topic = (@($(if ($ar -match '[a-z0-9]' -and $role -notlike "$ar*") { $ar }), $Subject, "$(@(Split-KitList $Items)[0])") | ForEach-Object { "$_".Trim() -replace '~', ' ' } | Where-Object { $_ }) -join ' ~ '   # the first with words
+  $named = if ($topic -match '[a-z0-9]') { New-KitName $role $topic -Cap 16 }; if ($named -match "^$role(?:-\d+)?$") { $named = $null }
+  $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' } | ForEach-Object { "$($_.agent)" })   # never a live id
+  Invoke-KitLocked $f { $x = Read-KitState $f; if ($x -isnot [Collections.IDictionary]) { $x = @{} }; $k = "agent:$role"; $id = $named
+    while (-not $id -or ($id -in $live -and -not $named -and $x[$k] -lt 999)) { $x[$k] = 1 + [int]$x[$k]; $id = "$role-$($x[$k])" }
+    if ($Legacy) { if ($x.aliases -isnot [Collections.IDictionary]) { $x.aliases = @{} }; if (-not $x.aliases[$Legacy]) { $x.aliases[$Legacy] = $id } }; Write-KitState $f $x; $id } }
+function Resolve-KitAgentAlias([string]$Id) { $a = (Read-KitState (Get-KitPath naming)).aliases; if ($a -is [Collections.IDictionary] -and $a[$Id]) { $a[$Id] } else { $Id } }
 function New-KitId([string]$Kind, [string]$Dir, [switch]$Number) {
   for ($ni = 0; $ni -lt 100; $ni++) { $nid = Invoke-KitNaming @('next', 'id', $Kind); if ($nid -notmatch "^$([regex]::Escape($Kind))-[1-9]\d*$") { throw "kitbag.py naming next id $Kind gave '$nid'" }
     if (-not $Dir -or -not @("$nid", "$nid.json", "$nid.md" | Where-Object { Test-Path -LiteralPath (Join-Path $Dir $_) }).Count) { return $(if ($Number) { $nid.Substring($Kind.Length + 1) } else { $nid }) } }
-  throw "New-KitId ${Kind}: 100 ids taken in $Dir"
+  throw "New-KitId ${Kind}: 100 ids taken in $Dir"   # NAME-NUMBER: the maker itself
 }
 # an old id still resolves: dec-12 <-> dec-0012 (padded), whichever <id>[.json|.md] exists in $Dir; none: $Id as given
 function Resolve-KitIdAlias([string]$Id, [string]$Dir) {
@@ -478,6 +499,12 @@ function Write-KitTaskTags([string]$Task, $T, $J) {
   elseif ($T) { $null = Set-TrackerDescription $Task (Set-KitDescSection $T.description 'tags' $(if (@($J.tags).Count) { "**Tags:** $(@($J.tags) -join ', ')" } else { '' }) '') }
   Clear-TrackerMemo $Task; if (-not $__trDry) { Update-KitTaskIndex $Task { param($x) $x.tags = @($J.tags) } }   # a later read in this process sees them
 }
+# ONE WATCH for kit tasks off the tag rule (owner 2026-11-25: one kind, one area, one product tag, no wave tag; kitbag.py naming scan); fix: tracker retag
+function Get-KitTagGapFlag { $lec = $global:LASTEXITCODE; $rows = @(@(try { & (Get-Python) -X utf8 $KitCmd.kitbag naming scan --json 2>$null | Out-String | ConvertFrom-Json } catch { }) | Where-Object { $_.kind -eq 'tags' }); $global:LASTEXITCODE = $lec
+  if (-not $rows.Count) { return }; $ids = @($rows | ForEach-Object { "$($_.where)" -replace '^tracking ' })
+  [pscustomobject]@{ level = 'WATCH'; what = "$($rows.Count) kit task(s) off the tag rule: $(@($rows | Select-Object -First 5 | ForEach-Object { "$("$($_.where)" -replace '^tracking ') ($($_.why))" }) -join '; ')"; kind = 'TAGS'; who = 'tracker'
+    action = "Dry run, then apply: & $($KitCmd.dev) tracker retag $($ids -join ',') -DryRun; then without -DryRun (a person's own tags stay)."; problem = "$($rows.Count) task(s): a kind / area / product tag missing or doubled, or a wave tag"; next = 'tracker retag <ids> -DryRun' }
+}
 # after tracker create (lib.ps1 New-TrackerTask): kind, product, area of the name Format-KitKeyedName made
 function Set-KitNewTaskTags([string]$Task) { if ($Task -and @($script:KitNameTags).Count) { $null = Set-KitTaskTags $Task $script:KitNameTags -Soft } }
 # a bug: a bug-prefixed name (unkeyed, old titles) or a bug tag (keyed titles carry the kind as a tag), live or in the task index
@@ -490,7 +517,7 @@ function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fal
 # tracker tags <id> <group=value> ... | tracker retag <parent>[,<parent>] [-DryRun]: keyed titles + labels of the trees -> <KEY> <outcome>
 # + tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md); -DryRun: the table only (shown to the owner before an apply)
 function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
-  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind product area wave phase repo env risk decision origin test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
+  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product phase repo env risk decision origin test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
   if (-not $Id) { 'usage: tracker retag <parent>[,<parent>] [-DryRun]'; exit 2 }
   $Out = Join-Path (Get-KitPath cache -Create) "retag-$((Split-KitList $Id)[0] -replace '[^\w.-]', '_').md"
   $dry = $__trDry; $script:__trDry = $false   # the reads run for real; the writes below only without -DryRun
