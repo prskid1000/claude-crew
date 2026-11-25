@@ -43,7 +43,8 @@ You never change code, branches, docs or tracker state;
    decide ask), unless a `decide record -Gate scope` id covers that branch.
 5. Mechanical rules: `python -X utf8 <kit>/skills/crafty/devtools.py precheck <task> --mr <ref>` (title, sections, prose,
    How tested, UI line, doc and MR links, commits, line endings, scope, loop head, proof); each PRECHECK line is a
-   **should-fix** as printed (blocking: SCOPE, LOOP, PROOF); spend the review on logic, never re-derive these.
+   **should-fix** as printed (blocking: SCOPE, LOOP, PROOF); spend the review on logic, never re-derive these. Exit 2 (no MR
+   found) is no pass: run `devtools.py proof <task>` and `kitbag.py prose --kind mr-body|mr-title` yourself.
 **doc / qa:** the artefact against its templates.md section and "Writing standards" (`kitbag.py prose --kind <kind>`); qa: every
 verdict has its evidence, defects are FAIL never notes, own vs new right; a human testing doc and its runs: UI steps and screen
 wording only (no endpoints or code), a screenshot per check, JSON only from the UI action; a spec (`devtools.py spec show`):
