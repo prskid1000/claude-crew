@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L915 status · L1118 tracker · L1437 prior ·
-  L1456 ask bugs · L1641 deploy words · L1682 git-host · L1870 kitlog · L1980 params · L2285 entry-scripts
+  L1456 ask bugs · L1641 deploy words · L1685 git-host · L1873 kitlog · L1983 params · L2288 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1665,8 +1665,11 @@ function Get-KitDeployWordPin($D) {
 }
 # decide check (bossy.ps1): why a found word does not serve (used, or the MRs / commit asked lie outside its pin), else $null;
 # -Commit is the pin itself (a prefix of 7+); an older commit: deploy merge -Commit checks the ancestry
-function Get-KitWordBlock($D, [string[]]$WantMrs, [string]$Commit, [datetime]$Since) {
-  if ($D.usedAt -or (Get-KitUsedWords $Since).ContainsKey("$($D.id)")) { return "$($D.id) already used$(if ($D.usedAt) { " by $($D.usedBy) at $($D.usedAt)" })" }
+function Get-KitWordBlock($D, [string[]]$WantMrs, [string]$Commit, [datetime]$Since, [string]$Agent) {
+  $ub = (Get-KitUsedWords $Since)["$($D.id)"]; if ($D.usedAt -and -not $ub) { $ub = "$($D.usedBy)" }   # used: its deploy agent only (coordinator 2026-11-25)
+  # the caller is that agent only by name: never a placeholder (unknown, guard), and it must be live on the board
+  $own = $Agent -and $Agent -notin 'unknown', 'guard' -and $ub -eq $Agent -and @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { "$($_.agent)" -eq $Agent -and $_.status -ne 'left' }).Count
+  if (($D.usedAt -or $null -ne $ub) -and -not $own) { return "$($D.id) already used$(if ($D.usedAt) { " by $($D.usedBy) at $($D.usedAt)" })" }
   $pn = Get-KitDeployWordPin $D; $po = @($WantMrs | Where-Object { -not (Test-KitDeployPinCovers $pn $_) }); $c = "$Commit".ToLowerInvariant()
   if ($po.Count -or ($c -and $pn.commit -and ($c.Length -lt 7 -or -not ($c.StartsWith($pn.commit, [StringComparison]::Ordinal) -or $pn.commit.StartsWith($c, [StringComparison]::Ordinal))))) { "$($D.id) pinned ($(@(@($pn.commit) + @($pn.mrs) | Where-Object { $_ }) -join ', ')), not $(@(@($po) + @($Commit) | Where-Object { $_ }) -join ', ')" }
 }

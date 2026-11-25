@@ -9,7 +9,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy watch -Env <target>[,..] [-Started <name>=<sha>,..] [-Finished <name>=success|failed,..] [-WaitMinutes <deploy.pipelineWaitMinutes>] [-Json]   one bounded poll loop over the schedule's started pipelines: START (a gate opened) · DONE (verify it) · FAILED (its dependents held) · WAIT; logs actual vs predicted
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated] [-Agent <ids> (laneApk: phones free or leased by them only)]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L17 helpers · L108 intest · L312 deploy · L523 schedule · L760 restart · L844 supervise
+Sections: L17 helpers · L108 intest · L312 deploy · L523 schedule · L764 restart · L848 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -327,7 +327,7 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
   }
   if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <env|deploy branch> [-From <branch>] [-Commit <sha>] -Mr [-Mrs <refs>] [-Decision <id>] (tag deploys: -Push)" }
   if ($Action -eq 'merge') { Invoke-DeployMerge -Repo "$Repo" -To $To -From $From -Commit $Commit -Check $Check -Push:$Push -Mr:$Mr -Mrs $Mrs -Decision $Decision -WaitMinutes $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 8 }) -History $History; return }   # 8 min: one call fits an agent shell (10 min); a re-run resumes the open MR
-  if ($Action -eq 'run') { if (-not $To) { 'usage: deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]'; exit 2 }; Invoke-DeployRun $To "$Repo" @(Split-KitList $Mrs) $Decision; return }
+  if ($Action -eq 'run') { if (-not $To) { 'usage: deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id> -Agent <you>]'; exit 2 }; Invoke-DeployRun $To "$Repo" @(Split-KitList $Mrs) $Decision $Agent; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task -Days $Days -FromMrs @(Split-KitList $Mrs) -Env @(Split-KitList @($Env)) -TimeoutSec $TimeoutSec; return }
   $Mrs = @(Split-KitList $Mrs)
   $dd = Get-KitPath deploys -Create; $pf = Join-Path $dd 'pending.json'; $log = Get-KitPath deploy-log -Create
@@ -616,7 +616,7 @@ function Test-KitDeployGate($Gate, $Dep, [datetimeoffset]$Now) {
   $rem = [math]::Round($span - $el, 1); @{ ok = $rem -le $Gate.lead; text = "$($Dep.name) has ~$rem min left (start at <= $($Gate.lead))" }
 }
 # a producer's migrations in this deploy (owner 2026-11-25: additive = no strict edge): the added lines of its migration files between
-# the deploy branch and the source (or the pin), rollback blocks and undo files skipped; kind breaking (drop / rename / type change /
+# the deploy branch's tree and the source's (or the pin's), rollback blocks and undo files skipped; kind breaking (drop / rename / type change /
 # not null / delete: the old consumer may break; a file it cannot read, not .xml / .yaml / .sql / .json, too) | additive | '' (none, or
 # unknown: note says why). -U0 shows added lines only: a line added inside an old rollback block reads as breaking (the safe side)
 function Get-KitMigrationKind([string]$Checkout, [string]$Branch, [string]$Src) {
@@ -624,10 +624,14 @@ function Get-KitMigrationKind([string]$Checkout, [string]$Branch, [string]$Src) 
   if (-not $Checkout -or -not $Branch -or -not $Src -or -not (Test-Path -LiteralPath $Checkout)) { return & $res '' @() '' '' }   # no checkout here: nothing to read, no note
   $null = Invoke-GitFetch $Checkout 30 @($Branch, $(if ($Src -like 'origin/*') { $Src.Substring(7) }) | Where-Object { $_ })   # a stale clone would miss the batch
   if ($Src -notlike 'origin/*') { $null = git -C $Checkout cat-file -e "$Src^{commit}" 2>&1; if ($LASTEXITCODE) { return & $res '' @() '' "pin $Src not in this checkout" } }
-  $rng = "origin/$Branch...$Src"; $pathRx = [string](Get-KitSetting 'deploy.schedule.migrationPathRx' '(?i)(^|/)(db|migrations?|changelogs?)(/|\.|$)|changelog[^/]*\.(xml|ya?ml|sql|json)$')
+  # the deploy branch's tree vs the source's, not a commit range: a squash-merged deploy keeps an old merge base, and its live
+  # changelogs would read as new (coordinator 2026-11-25); a file identical on the branch is live, only the lines it lacks count
+  $rng = @("origin/$Branch", $Src); $pathRx = [string](Get-KitSetting 'deploy.schedule.migrationPathRx' '(?i)(^|/)(db|migrations?|changelogs?)(/|\.|$)|changelog[^/]*\.(xml|ya?ml|sql|json)$')
   $fs = @(git -C $Checkout -c core.quotepath=off diff --no-renames --name-only --diff-filter=AM $rng 2>$null)
-  if ($LASTEXITCODE) { return & $res '' @() '' "git diff $rng failed" }
-  $fs = @($fs | Where-Object { $_ -match $pathRx -and $_ -notmatch '(^|/)U\d+[_.]' }); if (-not $fs.Count) { return & $res '' @() '' '' }
+  if ($LASTEXITCODE) { return & $res '' @() '' "git diff $($rng -join ' ') failed" }
+  # and changed on the source since the merge base: a hotfix only on the deploy branch is no new migration
+  $src1 = @(git -C $Checkout -c core.quotepath=off diff --no-renames --name-only --diff-filter=AM "origin/$Branch...$Src" 2>$null)
+  $fs = @($fs | Where-Object { $_ -match $pathRx -and $_ -notmatch '(^|/)U\d+[_.]' -and $_ -in $src1 }); if (-not $fs.Count) { return & $res '' @() '' '' }
   if (($unk = @($fs | Where-Object { $_ -notmatch '\.(xml|ya?ml|sql|json)$' })).Count) { return & $res 'breaking' $fs "$($unk[0]) (not read: code)" '' }
   $brk = [string](Get-KitSetting 'deploy.schedule.breakingMigrationRx' '(?i)\b(dropColumn|dropTable|dropView|renameColumn|renameTable|renameView|modifyDataType|addNotNullConstraint|mergeColumns|dropPrimaryKey|dropForeignKeyConstraint)\b|\bDROP\s+(TABLE|COLUMN|VIEW|FOREIGN|CONSTRAINT)\b|\bRENAME\s+(TABLE|COLUMN|TO)\b|\bRENAME\s+\w+\s+TO\b|\bALTER\s+TABLE\b.*\b(DROP|MODIFY|CHANGE)\b|^\s*(MODIFY|CHANGE|RENAME|ALTER\s+COLUMN)\s+\S|^\s*DROP\s+(?!INDEX\b)\S|\bALTER\s+COLUMN\b.*\bTYPE\b|\bSET\s+NOT\s+NULL\b|\bTRUNCATE\b|\bDELETE\s+FROM\b|^\s*<delete\b|^\s*-\s*delete:')
   $inRb = $false; $rbInd = -1; $hit = ''
@@ -763,11 +767,11 @@ function Invoke-DeployWatch([string[]]$Envs, [string[]]$Started, [string[]]$Fini
 # ssh block; none of them = refused
 # deploy run (README "Adapters" deploy-kind deploy): only on a person's word (deploy.trigger); a kind without a deploy verb prints
 # UNSUPPORTED + its plan line (a person deploys, then deploy record); DEPLOY / FAILED per row
-function Invoke-DeployRun([string]$To, [string]$Repo, [Alias('Mr')][string[]]$Mrs, [string]$Decision) {
+function Invoke-DeployRun([string]$To, [string]$Repo, [Alias('Mr')][string[]]$Mrs, [string]$Decision, [string]$Agent) {
   $rows = @(foreach ($r in @(Get-KitValue 'repos' @())) { if (-not $Repo -or $r.name -eq $Repo) { foreach ($d in @($r.deploys | Where-Object { "$($_.target)" -eq $To })) { [pscustomobject]@{ r = $r; d = $d } } } })
   if (-not $rows.Count) { "deploy run: no repos[].deploys[] row with target $To$(if ($Repo) { " in $Repo" })"; exit 2 }
-  # a person's word first (AGENTS.md): checked, not used (deploy merge uses it)
-  $drWord = if ($Decision) { "$(& pwsh -NoProfile -File $KitCmd.orch decide check -Id $Decision -Gate deploy -Item $To 2>&1)" } else { '' }
+  # a person's word first (AGENTS.md): checked, not used; a word the caller used itself (decide check -Use -Agent) still serves its deploy
+  $drWord = if ($Decision) { "$(& pwsh -NoProfile -File $KitCmd.orch decide check -Id $Decision -Gate deploy -Item $To $(if ($Agent) { '-Agent', $Agent }) 2>&1)" } else { '' }
   if ($drWord -notmatch '^WORD ') { "REFUSED deploy run -To ${To}: no person's deploy word (decide record -Gate deploy -Item $To, then -Decision <id>)$(if ($drWord) { ": $drWord" })"; exit 1 }
   # a pinned word: its MRs only; a commit pin deploys through deploy merge -Commit (a run deploys the head)
   $drPin = try { Get-KitDecisionPin $Decision } catch { "REFUSED deploy run -To ${To}: $_"; exit 1 }

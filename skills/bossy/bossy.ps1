@@ -1841,7 +1841,7 @@ function Invoke-Decide {
       }
     }
     'record' {
-      if (-not ($Gate -in $kitGates -and $Item -and $Question -and $Answer -and $Source)) { "usage: decide record -Gate $($kitGates -join '|') -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs | -Commit <sha>] [-Task] [-Supersedes <ids>] [-NoPublish]"; exit 2 }
+      if (-not ($Gate -in $kitGates -and $Item -and $Question -and $Answer -and $Source)) { "usage: decide record -Gate $($kitGates -join '|') -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs | -Commit] [-Task] [-Supersedes <ids>] [-NoPublish]"; exit 2 }
       if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: -By names the person who gave the word, never an agent or the coordinator ($By): omit -By (default owner) or name the person; the coordinator runs it without -Agent"; exit 2 }
       $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
       $now = (Get-KitStamp)
@@ -1856,7 +1856,7 @@ function Invoke-Decide {
       & $pub $resolvedTask ([bool]$Task)
     }
     'check' {
-      if (-not ($Id -or ($Gate -and ($Item -or $Mrs)))) { 'usage: decide check (-Id <id> [-Item <env|task|mr>,..] [-Gate <g>,..] | -Gate <gate> (-Item <env|task> | -Mrs <refs>)) [-Commit <sha>] [-MaxHours 12] [-Use -Agent <id>]   (with -Id a non-gate -Gate such as ask is ignored)'; exit 2 }
+      if (-not ($Id -or ($Gate -and ($Item -or $Mrs)))) { 'usage: decide check (-Id <id> [-Item <env|task|mr>,..] [-Gate <g>,..] | -Gate <gate> (-Item <env|task> | -Mrs <refs>)) [-Commit] [-MaxHours 12] [-Use -Agent <id>]   (with -Id a non-gate -Gate such as ask is ignored)'; exit 2 }
       # -Item a,b: any of them (also a record's MR); -Id with -Gate a,b: the record's gate is one of them (buildy NONE word)
       $wantMrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); $items = @(Split-KitList $Item); $gates = @(Split-KitList $Gate)
       $wantTasks = @($items | ForEach-Object { NormTask $_ } | Where-Object { $_ })
@@ -1872,7 +1872,7 @@ function Invoke-Decide {
           $gateOk -and $itemOk -and $mrOk })
       foreach ($d in $found) {
         if ($d.by -match $crewRx -or $d.source -eq 'rule') { $why += "$($d.id) answered by $($d.by), no person"; continue }
-        if ($wb = Get-KitWordBlock $d $wantMrs $Commit $since) { $why += $wb; continue }
+        if ($wb = Get-KitWordBlock $d $wantMrs $Commit $since $Agent) { $why += $wb; continue }
         if ([datetime]$d.answeredAt -lt $since) { $why += "$($d.id) older than $MaxHours h"; continue }
         if ($Use) {   # under the record's lock: two agents never both use one word
           $df = Join-Path $dir "$($d.id).json"; $usedBy = if ($Agent) { $Agent } else { 'unknown' }

@@ -211,6 +211,13 @@ Expect "decide check: pinned word shows its pin, refuses another commit; used on
 $mw = (Px $O decide record -Gate deploy -Item svc-stage -Question q -Answer 'yes: deploy svc!7, not svc!8' -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
 $dra = Px $O deploy run -To svc-stage -Decision $mw 2>&1 | Out-String; $drb = Px $O deploy run -To svc-stage -Mrs 'svc!8' -Decision $mw 2>&1 | Out-String
 $dsa = Px $O deploy schedule -Env svc-stage -Decision $mw 2>&1 | Out-String
+# a used word serves the agent that used it while live on the board (its own deploy run), nobody else, never 'unknown' (coordinator 2026-11-25)
+$uw = (Px $O decide record -Gate deploy -Item svc-stage -Question q -Answer 'yes' -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'; $null = Px $O decide check -Gate deploy -Id $uw -Item svc-stage -Use -Agent op7
+$bd7 = "$(pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; Get-KitPath board -Create")".Trim(); Set-JsonFile (Join-Path $bd7 'op7.json') @{ agent = 'op7'; status = 'deploying' }   # live on the board
+$ur7 = Px $O deploy run -To svc-stage -Decision $uw -Agent op7 2>&1 | Out-String; $ur8 = Px $O deploy run -To svc-stage -Decision $uw -Agent op8 2>&1 | Out-String
+$uu = (Px $O decide record -Gate deploy -Item svc-stage -Question q -Answer 'yes' -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'; $null = Px $O decide check -Gate deploy -Id $uu -Item svc-stage -Use
+$urU = Px $O deploy run -To svc-stage -Decision $uu -Agent unknown 2>&1 | Out-String
+Expect "deploy run: a used word serves its user only ($(($ur8 -split "`n")[0]))" ($ur7 -notmatch 'REFUSED' -and $ur8 -match "REFUSED deploy run -To svc-stage: no person's deploy word.*$uw already used" -and $urU -match "$uu already used")
 Expect "deploy run / schedule: an MR-pinned word needs -Mrs inside it ($($dra.Trim()) | $($drb.Trim()))" ($dra -match "REFUSED deploy run -To svc-stage: word $mw is pinned \(pass -Mrs" -and $drb -match 'pinned \(not svc!8\)' -and $dsa -match 'is pinned: pass -Mrs')
 Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll,yes,yes,no')
 Expect "deploy.answerWords: an org's own leading words first, whole words only, English still read ($(@($hr) -match '^words:'))" (@($hr) -contains 'words:yes,no,noAll,wait,unclear,yes')

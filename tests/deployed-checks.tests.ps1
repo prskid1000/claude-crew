@@ -205,6 +205,14 @@ Remove-Item "$mg/c/db/changelog/003.sql"; & $mgPut 'db/migrations/0004_x.py' 'op
 $mgC = Invoke-PsTest 'mig-code' ($mgHead + "`n" + @'
 "code:$($a.kind -eq 'breaking' -and $a.hit -match '0004_x.py .not read: code' -and $u.gates[0].kind -eq 'left90')"
 '@) @($migBossy, $mg)
-Expect-Each @(@($mgA) + @($mgB) + @($mgC)) 'deploy schedule edge from migrations: #' @('add', 'brk', 'code')
+# a squash deploy (old merge base): live changelogs (the code one too) are not read again; a hotfix only on the branch
+# adds no line; the new additive file counts
+git -C "$mg/c" checkout -q -B sq origin/staging; git -C "$mg/c" checkout main -- .; git -C "$mg/c" @gq commit -qm squash
+Add-Content "$mg/c/db/changelog/001.xml" '<!-- hotfix only on staging -->'; git -C "$mg/c" @gq commit -qam hotfix; git -C "$mg/c" push -q origin HEAD:staging 2>&1 | Out-Null; git -C "$mg/c" checkout -q main
+& $mgPut 'db/changelog/005.xml' '<changeSet id="5"><createIndex tableName="t" indexName="i"/></changeSet>'
+$mgD = Invoke-PsTest 'mig-squash' ($mgHead + "`n" + @'
+"squash:$($a.kind -eq 'additive' -and 'db/changelog/005.xml' -in $a.files -and 'db/migrations/0004_x.py' -notin $a.files -and $u.gates[0].kind -eq 'left')"
+'@) @($migBossy, $mg)
+Expect-Each @(@($mgA) + @($mgB) + @($mgC) + @($mgD)) 'deploy schedule edge from migrations: #' @('add', 'brk', 'code', 'squash')
 Remove-TestKit $k
 Complete-Tests
