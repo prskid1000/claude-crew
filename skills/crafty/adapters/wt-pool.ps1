@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L184 names · L277 slots · L310 lease · L422 release · L467 lanes · L588 sync · L690 pool · L733 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L317 lease · L429 release · L474 lanes · L595 sync · L697 pool · L740 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -125,6 +125,13 @@ function Resolve-WtRepo($rr) {
     $rr = $hit
   }
   (Resolve-Path $rr).Path
+}
+# wt sync -Mrs (before a merge): the target touched none of this branch's files -> no rebase, no push, no 2nd CI run (rechy-5: 2
+# pipelines per MR); repos[].mergeMethod ff needs the rebase. The skip line, else nothing
+function Get-WtSyncSkip([string]$Dir, [string]$t) {
+  $theirs = @(git -C $Dir diff --name-only "HEAD...origin/$t"); $mine = @(git -C $Dir diff --name-only "origin/$t...HEAD")
+  if ($LASTEXITCODE -or -not $theirs.Count -or "$(Get-RepoConf (("$(git -C $Dir remote get-url origin)".Trim() -replace '\.git$' -split '[/:\\]')[-1]) 'mergeMethod' '')" -eq 'ff' -or @($theirs | Where-Object { $_ -in $mine }).Count) { return }
+  "rebase skipped: origin/$t changed $($theirs.Count) file(s), none of this branch's: merge as is"
 }
 function Get-WtRepoConf($rp) {
   $kc = $KitConf.ConfigFile; if (-not ($kc -and (Test-Path $kc))) { return }

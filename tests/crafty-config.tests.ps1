@@ -171,6 +171,11 @@ git -C $djRepo branch -M main; git -C $djRepo push -q origin main 2>$null; git -
 git -C $djRepo checkout -q main; 'theirs' | Set-Content "$djRepo/m.txt"; Save-GitRepo $djRepo m1; git -C $djRepo push -q origin main 2>$null; git -C $djRepo checkout -q dj; 'main' | Set-Content "$djRepo/.git/claude-target"
 $djHead = git -C $djRepo rev-parse HEAD; $djA = pwsh @np $D wt sync -Dir $djRepo -Mrs '!7' 2>&1 | Out-String; $djSame = (git -C $djRepo rev-parse HEAD) -eq $djHead
 $djB = pwsh @np $D wt sync -Dir $djRepo 2>&1 | Out-String
+git -C $djRepo checkout -q main; 'x' | Set-Content "$djRepo/m2.txt"; Save-GitRepo $djRepo m2; git -C $djRepo push -q origin main 2>$null; git -C $djRepo checkout -q dj
+& $J @{ repos = @(@{ name = 'dj'; mergeMethod = 'ff' }) } $dkl; $djF = pwsh @np $D wt sync -Dir $djRepo -Mrs '!7' 2>&1 | Out-String; Remove-Item $dkl
+git -C $djRepo checkout -q main; 'y' | Set-Content "$djRepo/b.txt"; Save-GitRepo $djRepo m3; git -C $djRepo push -q origin main 2>$null; git -C $djRepo checkout -q dj
+$djO = pwsh @np $D wt sync -Dir $djRepo -Mrs '!7' 2>&1 | Out-String; git -C $djRepo rebase --abort 2>$null
+Expect "wt sync -Mrs still rebases: repos[].mergeMethod ff, or the target touched a branch file ($djF | $djO)" ($djF -match 'rebased onto' -and $djO -match 'REBASE CONFLICT|rebased onto' -and $djO -notmatch 'rebase skipped')
 Expect "wt sync -Mrs: target touched no file of the branch -> rebase skipped, HEAD kept; plain sync rebases ($djA | $djB)" ($djA -match 'rebase skipped: origin/main changed 1 file' -and $djSame -and $djB -match 'rebased onto origin/main')
 # wt commit -ScopeOk <id>: a scope word keyed by a brief item id (not the branch) lets it through (dec-38 / dec-52 cases)
 $soRepo = Join-Path (Kd) 'scope-ok'; New-Item -ItemType Directory -Force "$soRepo/specs", "$soRepo/src" | Out-Null; 'a' | Set-Content "$soRepo/specs/a.cy.js"; Save-GitRepo $soRepo base

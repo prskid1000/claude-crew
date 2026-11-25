@@ -257,7 +257,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   drive; shells: their own section;
 - trends (7 calendar days ending today; usage: `bossy.ps1 budget -Usage` reads the transcripts incrementally, `_paths`
   `usage-cache` + `.cold.json`; `budget.prices` per model; delivery: `.state/outcomes.jsonl`): one tile strip (QA first pass %,
-  came back %, median fix rounds, p50 hours to promoted, output tokens per merged MR, review + fix share, a tile per step outcome: a tap
+  came back %, median fix rounds, p50 hours to promoted (from agent start, first MR; 1 vs 2+ MRs), output tokens per merged MR, review + fix share, a tile per step outcome: a tap
   shows the runs with it); ONE day heatmap, folding row groups: Delivery (MRs per repo, tasks closed, came back, runs
   started: a cell filters the tasks or runs), Tasks by outcome, Work in flight (today), Test checks, Usage, Kit health, Repos
   (a row per repo: branches / worktrees, kept, dirty amber, diverged red); ONE "Per role" heatmap, column groups: Spend (steps,

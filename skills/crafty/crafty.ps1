@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L292 stack · L391 gate · L723 check · L1053 pipes · L1118 guard · L2046 dir · L2056 checkpoint ·
-  L2096 prior · L2135 tracker · L2157 task spec · L2363 scope · L2411 host
+Sections: L25 init · L34 wt · L293 stack · L392 gate · L724 check · L1055 pipes · L1120 guard · L2048 dir · L2058 checkpoint ·
+  L2098 prior · L2137 tracker · L2159 task spec · L2365 scope · L2413 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -149,9 +149,7 @@ switch ($Action) {
     if (git -C $Dir status --porcelain --untracked-files=no) { throw "uncommitted changes in ${Dir}: crafty.ps1 wt commit -Dir $Dir -Message 'wip: <what>' (WIP is fine; never git stash), then wt sync again" }
     G -C $Dir fetch -q origin $t | Out-Null
     $head0 = (G -C $Dir rev-parse HEAD).Trim()
-    # before a merge (-Mrs): the target touched none of this branch's files -> no rebase, no push, no 2nd CI run (rechy-5: 2 per MR)
-    $theirs = @(G -C $Dir diff --name-only "HEAD...origin/$t"); $mine = @(G -C $Dir diff --name-only "origin/$t...HEAD")
-    if ($Mrs -and $theirs.Count -and "$(Get-RepoConf ((G -C $Dir remote get-url origin) -replace '\.git$') 'mergeMethod' '')" -ne 'ff' -and -not @($theirs | Where-Object { $_ -in $mine }).Count) { "rebase skipped: origin/$t changed $($theirs.Count) file(s), none of this branch's: merge as is"; break }
+    if ($Mrs -and ($sk = Get-WtSyncSkip $Dir $t)) { $sk; break }
     git -C $Dir rebase "origin/$t"
     $failed = [bool]$LASTEXITCODE; $why = if ($failed) { Sync-Generated $Dir $t $head0 } else { '' }   # '' (no regenerate) is still a conflict
     if ($why -match '^regenerated ') { $why } elseif ($failed) { $why; "REBASE CONFLICT. $help"; exit 1 }
@@ -638,7 +636,7 @@ while ((Get-Date) -lt $deadline) {
       $reserved = $need   # an OOM near this = failure
       Write-Host "[gate] starting: $($s.Avail) GB available, $($s.Promised) GB promised to $($s.Running) running -> ~$([math]::Round($left,1)) GB left$(if ($heap -gt 0) { "; heap cap $heap GB" }); queued $([int]((Get-Date) - [datetime]$gtk.since).TotalSeconds) s"   # usage.ps1 Step-KitUsageTime: the queue = waiting
       if ($gt = Get-Command Set-GateTemp -ErrorAction SilentlyContinue) { & $gt $Cmd $Dir }
-      # /s + outer quotes: a leading quoted path survives; -Log wraps only what runs (history and ledger keep the command)
+      # /s + outer quotes: a leading quoted path survives; -Log wraps only what runs
       $runCmd = if ($Log) { "($Cmd) > `"$Log`" 2>&1" } else { $Cmd }
       if ($KitIsWindows) { $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/s', '/c', "`"$runCmd`"" -WorkingDirectory $Dir -NoNewWindow -PassThru }
       else {
@@ -678,7 +676,7 @@ try {
   if ($null -ne $c0 -and $null -ne ($cn = Get-GateContainerGB)) { $ctrPeak = [math]::Max($ctrPeak, $cn - $c0) }   # compose up -d: its containers outlive the command
   $peak += $ctrPeak
 } finally {
-  # supervise -AutoFix marks the build it stops; a swept entry is gone (Get-Content printed an error, retro tidy-6)
+  # supervise -AutoFix marks the build it stops; a swept entry is gone (retro tidy-6: Get-Content errored)
   $why = if ($entry -and (Test-Path -LiteralPath $entry)) { try { "$((Get-Content -LiteralPath $entry -Raw | ConvertFrom-Json).reclaimed)" } catch { '' } } else { '' }
   Remove-Item $entry -ErrorAction SilentlyContinue; Write-KitLeaseLog release build "$kind $(Split-Path $Dir -Leaf)" $buildLease $(if ($why) { $why } else { "ended, exit $code" })
 }
@@ -901,7 +899,7 @@ if ($Step -eq 'e2e') {
     }
     foreach ($key in $f, $noExt, ($noExt -replace '/index$', '')) { if ($byImp[$key]) { foreach ($s in $byImp[$key].Keys) { & $add $s "imports $f" } } }
   }
-  # the diff changed specs: those only (a one-spec diff ran a 23 min folder through a map entry, retro tidy-20261123-01); the rest by -Tests
+  # the diff changed specs: those only (retro tidy-20261123-01: a 23 min folder for one spec); the rest by -Tests
   $own = @($why.Keys | Where-Object { $why[$_].Contains('changed') })
   $supp = @($chg | Where-Object { -not $isSpec[$_] -and $_ -match '(?i)(^|/)(cypress|e2e|tests?|__tests__|specs?|fixtures?|support)/' })   # a changed support file / fixture keeps every spec it relates to
   if ($own.Count -and $own.Count -lt $why.Count -and -not $supp.Count) { Write-Host "[check] e2e: the $($own.Count) changed spec(s) only; $($why.Count - $own.Count) related spec(s) left out (name them with -Tests, the whole suite: -AllTests)"; foreach ($s in @($why.Keys | Where-Object { $_ -notin $own })) { $why.Remove($s) } }
@@ -924,7 +922,7 @@ if ($Step -eq 'e2e') {
     foreach ($s in $why.Keys) { $fd = if ($split) { & $fold $s } else { if (-not $groups.Contains('')) { $groups[''] = [Collections.Generic.List[string]]::new() }; '' }; $groups[$fd].Add($s) }
   }
   $envs = [ordered]@{}; if ($recipe.env) { foreach ($p in (Get-KitProps $recipe.env)) { $envs[$p.Name] = "$($p.Value)" } }
-  # the run's lane (-Lane, else the local-env lane holding this branch as a layer): its ports replace lane 1's in cmd + env (Cypress hit lane 1, retro 2026-11-25)
+  # the run's lane (-Lane, else the lane holding this branch as a layer): its ports replace lane 1's (retro 2026-11-25)
   if ($ln = Get-KitBranchLane $Lane "$(git -C $st.dir branch --show-current)") {
     $lnFix = { param([string]$t) $t = [regex]::Replace($t, '\{port:([\w.-]+)\}', { param($m) if ($ln.ports.ContainsKey($m.Groups[1].Value)) { $ln.ports[$m.Groups[1].Value] } else { $m.Value } }); [regex]::Replace($t, '(?<=//[^/\s:''"]+:)\d{2,5}(?!\d)', { param($m) if ($ln.map.ContainsKey($m.Value)) { $ln.map[$m.Value] } else { $m.Value } }) }
     $was = "$cmd $($envs.Values -join ' ')"; $cmd = & $lnFix $cmd; foreach ($ek in @($envs.Keys)) { $envs[$ek] = & $lnFix $envs[$ek] }
@@ -974,7 +972,7 @@ foreach ($s in $steps) {
     # commas reached runners as one name, spaces broke -Dtest
     $tl = @($Tests -split '[,\s]+' | Where-Object { $_ })
     $pyRun = if ($st.stack -eq 'python' -and $cmd -match '^(?<py>.+?)\s+-m\s+(pytest|unittest)\b') { $Matches.py } else { $null }
-    # plain test_*.py scripts (no test cases): run below (the runner found 0 tests, exit 5: retro 1709); a folder with cases: the runner's
+    # plain test_*.py scripts (no test cases): run below (0 tests found = exit 5: retro 1709); a folder with cases: the runner's
     $tcRx = '^\s*(def test_|class \w+\(.*TestCase\)|import (unittest|pytest)|from (unittest|pytest)\b)'
     if ($pyRun) { $tl = @(foreach ($t in $tl) { $td = Join-Path $st.dir $t; $tdf = if (Test-Path -LiteralPath $td -PathType Container) { @(Get-ChildItem -LiteralPath $td -Filter 'test_*.py' -File -Recurse) } else { @() }
         if ($tdf.Count -and -not @($tdf | Where-Object { Select-String -LiteralPath $_.FullName -Pattern $tcRx -Quiet }).Count) { @($tdf | ForEach-Object { [IO.Path]::GetRelativePath($st.dir, $_.FullName) -replace '\\', '/' }) } else { $t } }) }
@@ -989,8 +987,9 @@ foreach ($s in $steps) {
     }
     if ($AllTests -and -not $Tests) { $cmd = $cmd -replace ' --tests\s*(?=\s|$)', '' -replace ' -Dtest=\s', ' ' -replace ' --include\s*(?=\s|$)', '' -replace ' -run ""', '' -replace ' --filter ""', '' }
   }
-  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Invoke-KitJvmTestPrep -ErrorAction SilentlyContinue }   # adapters/container-tests.ps1
-  if ($ct) { $rc = & $ct; if ($rc -and -not $Show) { exit $rc }; $cmd = Add-KitReactorTestFlags $cmd }
+  $ct = if ($s -eq 'test' -and $st.stack -match 'maven|gradle|java|kotlin') { Get-Command Invoke-KitJvmTestPrep -ErrorAction SilentlyContinue }
+  if ($ct) { $rc = & $ct; if ($rc -and -not $Show) { exit $rc } }
+  if ($s -ne 'lint' -and (Get-Command Add-KitReactorTestFlags -ErrorAction SilentlyContinue)) { $cmd = Add-KitReactorTestFlags $cmd }   # compile too
   if ($cmd -match '\{files\}') {
     if (-not $Files -and $Step -eq 'quick' -and ($s -eq 'lint' -or ($s -eq 'compile' -and $st.stack -eq 'python'))) {
       $ext = if ($st.stack -eq 'python') { '\.(py|pyi)$' } else { '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }
@@ -1497,7 +1496,7 @@ $writeRoots = @(@($wsRoot, $script:KitRoot, (Get-KitRuntime), (Split-Path (Get-K
   Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') } | Where-Object { $_ } | Select-Object -Unique)
 function StrayWrite([string]$p, [string]$base) {
   if (-not $p -or $p -match '[$%*?<>|`]|^[A-Za-z]:(?![\\/]|$)|^(nul|-)$|^[\\/]dev[\\/](null|stderr|stdout|tty)$') { return }
-  # Windows "/x" outside Git Bash = the cwd drive's root (2026-11-22: a test's "$empty/one.txt" wrote D:\one.txt); in Git Bash, the Git install dir
+  # Windows "/x" outside Git Bash = the cwd drive's root (2026-11-22: a test wrote D:\one.txt); in Git Bash, the Git install dir
   $driveRel = $IsWindows -and $p -match '^[\\/](?![\\/]|[A-Za-z]([\\/]|$))'
   if ($driveRel -and ($in.tool_name -eq 'Bash' -or -not $base)) { return }
   $p = ($p -replace '^~(?=[\\/]|$)', $uh) -replace '^[\\/]([A-Za-z])(?=[\\/]|$)', '$1:'

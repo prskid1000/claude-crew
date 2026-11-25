@@ -1169,9 +1169,9 @@ function Get-LateMerges($st) {
   if ($i0 -and (-not $t0 -or $i0 -gt $t0)) { $t0 = $i0 }
   if (-not $t0) { return }
   $qaTgt = [string]$(if ($item.target) { $item.target } else { $run.target })
-  $covered = @(Read-KitLog deploy-log ([datetime]::MinValue) | Where-Object { $_.event -eq 'record' -and "$($_.target)" -eq $qaTgt -and [datetimeoffset]$_.at -lt $t0 } | ForEach-Object { @($_.mrs) })   # deployed there before the item ran: tested
+  $covered = @(Read-KitLog deploy-log ([datetime]::MinValue) | Where-Object { $_.event -eq 'record' -and "$($_.target)" -eq $qaTgt -and [datetimeoffset]$_.at -lt $t0 } | ForEach-Object { @($_.mrs) -split '[,\s]+' } | ForEach-Object { "$_" -replace '^.*/(?=[\w.-]+!\d+$)' })   # deployed there before the item ran: tested (repo!n, any group)
   $refs = @(@("$($st.mrs)" -split '[,\s]+') + @((Read-KitTracking).tasks["$($st.id)"].mrs) | Where-Object { "$_" -match '^[\w./-]+!\d+$' } | Select-Object -Unique)
-  foreach ($ref in @($refs | Where-Object { $_ -notin $covered })) { $rp, $iid = "$ref" -split '!', 2; if ($rp -notmatch '/' -and $KitConf.GitlabGroup) { $rp = "$($KitConf.GitlabGroup)/$rp" }
+  foreach ($ref in @($refs | Where-Object { ($_ -replace '^.*/(?=[\w.-]+!\d+$)') -notin $covered })) { $rp, $iid = "$ref" -split '!', 2; if ($rp -notmatch '/' -and $KitConf.GitlabGroup) { $rp = "$($KitConf.GitlabGroup)/$rp" }
     $m = try { Invoke-HostVerb 'mr.get' @{ repo = $rp; n = $iid } } catch { $null }
     $ma = $m.merged_at; if (-not $ma) { continue }
     if ($(if ($ma -is [datetime]) { [datetimeoffset]$ma } else { [datetimeoffset]::Parse("$ma", [Globalization.CultureInfo]::InvariantCulture) }) -gt $t0) { "$ref" } }

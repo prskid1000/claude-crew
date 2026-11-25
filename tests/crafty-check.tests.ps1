@@ -233,6 +233,7 @@ Expect "check -Step test (maven): a missing reactor dep (core) and the module be
   "$rx" -match 'm2:True\|gate:0' -and "$rx" -match 'ownpl:\[\[check\] [^\]]*artefact: core; [^\]]*own -pl / -f, so the tests see the stale local-repo jars[^\]]* / mvn test -pl app\]' -and
   "$rx" -match 'all:\[\[check\] [^\]]*no test filter: their own suites run too / mvn -f ' -and "$rx" -match 'show:\[mvn test\]' -and "$rx" -match 'gradle:\[\./gradlew test\]' -and "$rx" -match 'fresh:\[mvn test\]')
 $cfx = Get-Content (Join-Path $PSScriptRoot '../skills/crafty/crafty.ps1') -Raw
-Expect 'check -Step test: crafty.ps1 adds the reactor flags to the test command' ($cfx -match '\$cmd = Add-KitReactorTestFlags \$cmd')
+Expect 'check: crafty.ps1 adds the reactor flags to every Maven step but lint (compile too: a stale in-repo dep jar broke devy builds)' ($cfx -match "if \(\`$s -ne 'lint' -and \(Get-Command Add-KitReactorTestFlags[^
+]*\{ \`$cmd = Add-KitReactorTestFlags \`$cmd \}" -and $cfx -notmatch 'exit \$rc \}; \$cmd = Add-KitReactorTestFlags')
 Remove-TestKit $k
 Complete-Tests

@@ -87,18 +87,18 @@ function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { if (-not (Within 'out
 # multi-repo tasks (rechy-5: 2 MRs p50 2.7 h vs 1 MR 36 min): an open task's first MR per repo opened more than track.mrSpreadMinutes apart
 # -> one WATCH per task; open times cached per ref (one mr.get each, at most 10 new per sweep: a first sweep stays short)
 function Get-KitMrSpreadFlags {
-  $cf = Join-Path (Get-KitPath cache -Create) 'mr-opened.json'; $op = @{}; if (Test-Path -LiteralPath $cf) { try { $op = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json -AsHashtable } catch { } }
+  $cf = Join-Path (Get-KitPath cache -Create) 'mr-opened.json'; $op = @{}; if (Test-Path -LiteralPath $cf) { try { $op = Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json -AsHashtable } catch { } }; if ($op -isnot [hashtable]) { $op = @{} }   # an empty file reads as null
   if (-not $op.flagged) { $op.flagged = @() }; $lim = [double](Get-KitParam 'track.mrSpreadMinutes'); $new = 0
   foreach ($o in @((Read-KitTracking).tasks.Values | Where-Object { $_ -and -not $_.done -and "$($_.task)" -notin $op.flagged -and @($_.mrs | Where-Object { $_ }).Count -ge 2 })) {
-    $first = @{}
+    $first = @{}; $cut = $false
     foreach ($ref in @($o.mrs | Where-Object { "$_" -match '^[\w./-]+!\d+$' })) { $rp, $n = "$ref" -split '!', 2
-      if (-not $op.ContainsKey("$ref")) { if ($new -ge 10) { continue }; $new++; $m = try { Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject $rp -Raw); n = $n } } catch { $null }; if (-not $m.created_at) { continue }; $op["$ref"] = ConvertTo-KitOutcomeIso $m.created_at }
+      if (-not $op.ContainsKey("$ref")) { if ($new -ge 10) { $cut = $true; continue }; $new++; $m = try { Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject $rp -Raw); n = $n } } catch { $null }; if (-not $m.created_at) { continue }; $op["$ref"] = ConvertTo-KitOutcomeIso $m.created_at }
       $ra = [datetimeoffset]$op["$ref"]; $rn = ($rp -split '/')[-1]; if (-not $first[$rn] -or $ra -lt $first[$rn]) { $first[$rn] = $ra } }
     $at = @($first.Values | Sort-Object)
-    if ($at.Count -ge 2 -and ($sp = [math]::Round(($at[-1] - $at[0]).TotalMinutes)) -gt $lim) { $op.flagged = @(@($op.flagged) + "$($o.task)")
+    if (-not $cut -and $at.Count -ge 2 -and ($sp = [math]::Round(($at[-1] - $at[0]).TotalMinutes)) -gt $lim) { $op.flagged = @(@($op.flagged) + "$($o.task)")
       [pscustomobject]@{ level = 'WATCH'; what = "MR-SPREAD $($o.task): its repos' first MRs opened $sp min apart (over $lim; $(@($first.Keys | Sort-Object) -join ', '))"; action = 'devy opens every MR of a task together and merges each, producers first, once green (crafty ship.md); retro: why the late MR' } }
   }
-  if ($new -or $op.flagged.Count) { Set-Content -LiteralPath $cf ($op | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8 }
+  if ($new -or $op.flagged.Count) { Write-KitAtomic $cf ($op | ConvertTo-Json -Depth 4 -Compress) }
 }
 
 # ---- summary: worst areas, repeat causes, most fix rounds (tidy prep digest, dashboard)
