@@ -78,5 +78,9 @@ Register-KitAdapter 'tracker' 'youtrack' @{
     $q = [uri]::EscapeDataString("$(if ($a.list) { "project: {$($a.list)} " })State: {$($a.status)}")
     @(__TrYt 'GET' "issues?query=$q&fields=idReadable,summary,customFields(name,value(login,name))&`$top=200" $null) | Where-Object { $_.idReadable } | ForEach-Object { [pscustomobject]@{ id = $_.idReadable; name = [string]$_.summary; status = $a.status; assignees = @(__TrYtF $_ Assignee | Where-Object { $_ } | ForEach-Object { __TrWho $_.login $_.name }) } }
   }
+  # tag-prune (task-items.ps1 Invoke-KitTagPrune): the tags the token sees, each counted live (issuesGetter/count, resolved too; -1 = still counting)
+  'tag-prune' = { param($a) $all = @(__TrYt 'GET' 'tags?fields=id,name&$top=500' $null | Where-Object { $_.id })
+    Get-KitTagPruneRows (__TrBase YOUTRACK_URL) @($all.name | Group-Object | ForEach-Object { $_.Group[0] }) @($a.names) { param($t) foreach ($try in 1..5) { $c = Get-KitMember (__TrYt 'POST' 'issuesGetter/count?fields=count' @{ query = "tag: {$t}" } $null) 'count'; if ($null -eq $c) { return $null }; if ([int]$c -ge 0) { return [int]$c }; Start-Sleep 1 }; $null } {
+      param($t) foreach ($ti in @($all | Where-Object { "$($_.name)" -ieq $t } | ForEach-Object id)) { $null = __TrYt 'DELETE' "tags/$ti" $null $null } } }
   'owner' = { param($a) $m = if ($a.name) { @(__TrYt 'GET' "users?query=$([uri]::EscapeDataString($a.name))&fields=login,fullName" $null | Where-Object { $_.fullName -eq $a.name })[0] }; [string]$(if ($m) { $m.login } else { (__TrYt 'GET' 'users/me?fields=login' $null).login }) }
 }

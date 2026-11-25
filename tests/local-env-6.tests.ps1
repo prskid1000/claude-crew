@@ -44,5 +44,14 @@ $prt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); function Get-LaneTar
   $l1 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $tp = Resolve-PokeyTarget ([pscustomobject]$tg) 'local-shop-osprey'; $tg.Remove('local-shop-osprey'); $l2 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $s = Resolve-PokeyTarget $tg 'stage'
   "$($l1.api)|$(@($l1.users.Keys) -join ',')|$($l1.users.base1.lane)|$($l1.created.driver1.at)|$(@((Get-KitProps $tp.users).Name) -join ',')|$(@($l2.users.Keys) -join ',')|$($s.api)|$($null -eq (Resolve-PokeyTarget $tg 'nope'))" }
 Expect "pokey targets: a lane name = the base on the lane's ports with the base's logins + the lane entry's own (own wins, dates kept; members for api); a full entry as is ($prt)" ($prt -eq 'http://127.0.0.1:8280|base1,driver1|1|2026-01-02T03:04:05Z|base1,driver1|base1|https://s|True')
+# envy friction 2026-11-26 (a train swapped the api under a running cypress): a busy holder is waited for past leaseMinutes, up to maxLeaseMinutes
+$tl0 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl0.Start(); $lbPort = $tl0.LocalEndpoint.Port; $tl0.Stop()
+Set-JsonFile (Join-Path $laneKit 'skills/crafty/kit.local.json') @{ localEnv = @{ leaseMinutes = 0; envs = @{ lw = @{ services = @(@{ name = 'api'; start = 'echo api'; port = $lbPort }) } } } }
+$lb = & { . $lkL; $script:busyN = 0; function Test-KitAgentBusy($a) { $script:busyN++; $a -eq 'B1' -and $script:busyN -le 1 }; function Send-LeaseNotice { }
+  Update-State lw { param($x) $x.leases = @{ B1 = @{ services = @('api'); agent = 'B1'; holderPid = $PID; lastUse = (Now) } }; $x.requests = @() }
+  $b1 = @(Wait-Leases lw @('api') @() @()) -join ' '; $script:Preempted = @(); $script:LeaseWait0 = $null; $script:busyN = 0; $script:MaxLeaseMin = 0
+  $b2 = @(Wait-Leases lw @('api') @() @()) -join ' '
+  "$($b1 -match 'B1 on api \(at most \d+ min: a check runs\)')|$($b1 -match 'told B1')|$($b2 -notmatch 'a check runs' -and $b2 -match 'told B1')" }
+Expect "leases: a holder whose check runs is not swapped under at leaseMinutes, waited for up to maxLeaseMinutes, then told ($lb)" ($lb -eq 'True|True|True')
 Remove-TestKit $laneKit
 Complete-Tests

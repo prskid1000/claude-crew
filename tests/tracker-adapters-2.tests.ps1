@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/tracker-adapters-2.tests.ps1: the linear, youtrack and azure tracker adapters' K54 moves and native caps (dependencies, labels,
-statuses, azure checklist), clickup tags prune, the dec-60 kit table through every adapter's description path, on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
+statuses, azure checklist, tags prune), clickup tags prune, the dec-60 kit table through every adapter's description path, on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
 Usage: pwsh -NoProfile -File tests/tracker-adapters-2.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -130,6 +130,13 @@ $pass = $sMg -match 'web!4 \(MERGED\) · api!7 \(MERGED\)' -and $sMg -match 'Def
 Cap azure tag-prune ([ordered]@{ 'GET .*_apis/wit/tags\?api-version=7\.1-preview\.1' = '{"value":[{"name":"old"},{"name":"used"},{"name":"kit-checklist-Items"}]}'
  'POST .*wit/wiql.*CONTAINS ''old''' = '{"workItems":[]}'; 'POST .*wit/wiql.*CONTAINS ''used''' = '{"workItems":[{"id":7}]}'; 'DELETE .*_apis/wit/tags/old\?api-version=7\.1-preview\.1' = '' }) @{ names = @(); lists = @() } {
  param($r, $l) (@($r | ForEach-Object { "$($_.tag)=$($_.result)" }) -join ',') -eq 'old=deleted,used=skipped (in use)' -and @($l -split "`n" -match '^DELETE').Count -eq 1 } 'wit/tags + WIQL counts, only an unused tag deleted'
+# linear / youtrack tags prune (parity next 2026-11-26): the label / tag catalogue, each counted live; a name in two teams = one row, every id
+Cap linear tag-prune ([ordered]@{ 'issueLabels\(first' = '{"data":{"issueLabels":{"nodes":[{"id":"lb-o","name":"old"},{"id":"lb-u","name":"used"},{"id":"lb-g","name":"grp","isGroup":true},{"id":"lb-o2","name":"Old"}]}}}'
+ '(?=.*issueLabel\(id)(?=.*"lb-u")' = '{"data":{"issueLabel":{"issues":{"nodes":[{"id":"i1"}]}}}}'; 'issueLabel\(id' = '{"data":{"issueLabel":{"issues":{"nodes":[]}}}}'; 'issueLabelDelete' = '{"data":{"issueLabelDelete":{"success":true}}}' }) @{ names = @(); lists = @() } {
+ param($r, $l) (@($r | ForEach-Object { "$($_.tag)=$($_.result)" }) -join ',') -eq 'old=deleted,used=skipped (in use)' -and @($l -split "`n" -match 'issueLabelDelete').Count -eq 2 -and $l -notmatch '"lb-g"' } 'issueLabels + per-id issue counts, group labels kept'
+Cap youtrack tag-prune ([ordered]@{ 'GET .*/api/tags\?fields' = '[{"id":"6-1","name":"old"},{"id":"6-2","name":"used"},{"id":"6-3","name":"flaky"}]'
+ 'issuesGetter/count.*tag: \{used\}' = '{"count":3}'; 'issuesGetter/count.*tag: \{flaky\}' = '{}'; 'issuesGetter/count' = '{"count":0}'; 'DELETE .*/api/tags/6-1' = '' }) @{ names = @(); lists = @() } {
+ param($r, $l) (@($r | ForEach-Object { "$($_.tag)=$($_.result)" }) -join ',') -eq 'flaky=skipped (count failed),old=deleted,used=skipped (in use)' -and @($l -split "`n" -match '^DELETE').Count -eq 1 } 'tags + issuesGetter counts, a failed count kept'
 # ---- clickup tags prune (moved from tracker-adapters: file cap; its own Invoke-KitHttp mock)
 . (Join-Path $Kit 'skills/crafty/adapters/tracker-clickup.ps1'); $global:http = [Collections.Generic.List[string]]::new()
 # tags prune (owner 2026-11-25): each space tag counted live (closed, archived too) before its delete; used or uncounted: skipped

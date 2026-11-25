@@ -869,7 +869,7 @@ FAULT_CLASSES = [
     ('decide-wait-timeout', r'^Terminated\b', r'\bdecide\s+wait\b', FAULT_GUARD + 'a shell timeout around decide wait; its default -MaxMinutes 8 fits the tool cap', '2026-11-25'),
     ('shell-timeout', r'^Terminated\b', r'(^|[;&|(]\s*)timeout\s', 'accepted: the caller\'s own shell timeout ended its own script (the limit it chose; crafty SKILL.md: the tool timeout or run_in_background)', ''),
     ('replace-miss', r'^Exception:( miss)?\s*$', r'ReadAllText', 'accepted: the caller\'s scripted replace stopped on its own miss check, nothing written (the Edit tool reports a miss itself)', ''),
-    ('data-shape', r"^(KeyError: |TypeError: Cannot read properties of (undefined|null)|json\.decoder\.JSONDecodeError: Expecting value)", None, 'doc: AGENTS.md "Multi-agent work": code reading JSON checks the exit code and prints its first 200 chars first', '2026-11-25'),
+    ('data-shape', r"^(KeyError: |TypeError: Cannot read properties of (undefined|null)|json\.decoder\.JSONDecodeError: Expecting value|AttributeError: '(str|list|NoneType|int|float|bool)' object has no attribute '(get|keys|items|values)')", None, 'doc: AGENTS.md "Multi-agent work": code reading JSON checks the exit code and prints its first 200 chars first', '2026-11-25'),
     ('board-msg-sender', r'^usage: board msg', FAULT_KIT, 'script: board msg takes the sender from -Session or KIT_AGENT / CLAUDE_AGENT; the SendMessage deny names -Agent', '2026-11-25'),
     ('kit-usage', r'^usage:', FAULT_KIT, '', ''),
     ('kit-verb', r'.', FAULT_KIT, 'accepted: a kit verb refusing by design (calls.jsonl rc; friction: bossy.ps1 learn)', ''),

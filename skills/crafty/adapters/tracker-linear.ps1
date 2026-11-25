@@ -83,5 +83,11 @@ Register-KitAdapter 'tracker' 'linear' @{
     $f = @{ state = @{ name = @{ eqIgnoreCase = $a.status } } }; if ($a.list) { $f.team = @{ key = @{ eq = $a.list } } }
     @((__TrLin 'query($f: IssueFilter) { issues(filter: $f, first: 200) { nodes { identifier title assignee { id name } } } }' @{ f = $f }).issues.nodes) | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = $_.identifier; name = [string]$_.title; status = $a.status; assignees = @($_.assignee | Where-Object { $_ } | ForEach-Object { __TrWho $_.id $_.name }) } }
   }
+  # tag-prune (task-items.ps1 Invoke-KitTagPrune): workspace + team labels (group labels kept), each id counted live by its issues (archived too)
+  'tag-prune' = { param($a) $all = @((__TrLin 'query { issueLabels(first: 250) { nodes { id name isGroup } } }').issueLabels.nodes | Where-Object { $_.id -and -not $_.isGroup })
+    $ids = { param($t) @($all | Where-Object { "$($_.name)" -ieq $t } | ForEach-Object id) }
+    Get-KitTagPruneRows (Get-KitSetting 'tracker.org' 'linear') @($all.name | Group-Object | ForEach-Object { $_.Group[0] }) @($a.names) { param($t) $n = 0
+      foreach ($li in (& $ids $t)) { $il = (__TrLin 'query($id: String!) { issueLabel(id: $id) { issues(first: 1, includeArchived: true) { nodes { id } } } }' @{ id = $li }).issueLabel; if (-not $il) { return $null }; $n += @($il.issues.nodes | Where-Object { $_ }).Count }; $n } {
+      param($t) foreach ($li in (& $ids $t)) { if (-not (__TrLin 'mutation($id: String!) { issueLabelDelete(id: $id) { success } }' @{ id = $li }).issueLabelDelete.success) { throw "issueLabelDelete $t refused" } } } }
   'owner' = { param($a) $u = if ($a.name) { __TrLinUser $a.name }; if ($u) { $u } else { (__TrLin 'query { viewer { id } }').viewer.id } }
 }

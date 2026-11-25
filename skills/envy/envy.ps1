@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db-presets.ps1; tenants.model = adapters/tenant-models.ps1 + tenant-schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L240 state · L287 layer drops · L362 leases · L471 code · L482 migrations ·
-  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L634 shared builds · L765 hooks · L839 marks · L1023 seed ·
-  L1090 processes · L1454 daemon · L1935 cleanup · L2007 verbs
+Sections: L36 config · L240 state · L287 layer drops · L362 leases · L472 code · L483 migrations ·
+  L486 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L635 shared builds · L766 hooks · L840 marks · L1024 seed ·
+  L1091 processes · L1455 daemon · L1936 cleanup · L2008 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -399,42 +399,43 @@ function TrainStall($st, [string]$e) {
   $q = TrainQuietMin $t $e; if ($q -ge $script:TrainStallMin) { "phase '$($t.phase)' quiet $q min (localEnv.trainStallMinutes $($script:TrainStallMin))" }
 }
 function Set-Notice($st, [string]$agent, [string]$text) { if ($st.notices -isnot [hashtable]) { $st.notices = @{} }; $st.notices[$agent] = @{ at = (Now); text = $text } }   # status -Agent shows it
-# a use of the lease (use, status / logs / events / deploy / wait by its agent, client traffic on its services): resets its idle clock
+# a use of the lease (its agent's verbs, client traffic on its services) resets its idle clock
 function Touch-Lease([string]$e, [string]$agent) {
   $st = Read-State $e; $l = $st.leases[$agent]
   if (-not $l -or $l.owner -or ($l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalSeconds -lt 30)) { return }
   Update-State $e { param($x) if ($x.leases[$agent]) { $x.leases[$agent].lastUse = (Now) } }
 }
-# the holders' board inbox (bossy.ps1 board msg) + their status -Agent notice
+# the holders' board inbox + status -Agent notice
 function Send-LeaseNotice([string]$e, [string[]]$keys, [string]$text) {
   $who = @{}
   Update-State $e { param($x) foreach ($k in $keys) { $a = if ($x.leases[$k].agent) { [string]$x.leases[$k].agent } else { ($k -split '/')[0] }; $who[$a] = $true; Set-Notice $x $a $text } }
   foreach ($a in $who.Keys) { $null = Invoke-KitExe 'pwsh' @('-NoProfile', '-NonInteractive', '-File', $KitCmd.orch, 'board', 'msg', '-Agent', "localenv-$e", '-To', $a, '-Text', "[$e] $text") 30 }
   Event $e 'lease-notice' @{ agents = @($who.Keys); text = $text }
 }
-# a train waits for the leases on what it changes at most leaseMinutes (one clock per train); then it tells every holder and goes on
+# a train's lease wait: leaseMinutes (a running check: maxLeaseMinutes), then the holders are told
 $script:Preempted = @(); $script:LeaseWait0 = $null; $script:DoneWord = 'deploy'
 function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[]]$skipAgents) {
-  $said = $null; $held = @(); $w0 = $null   # this call's holders and wait start: one lease-wait event when it ends (supervise lease waits)
+  $said = $null; $held = @(); $w0 = $null
   $logWait = { if ($held.Count) { Event $e 'lease-wait' @{ services = @($services); holders = @($held); min = [math]::Round(((Get-Date) - $w0).TotalMinutes, 1) } } }
   while ($true) {
     $o = @{ who = @() }
     Update-State $e { param($x)
       Prune $x
-      $queued = @($x.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -eq 'queued' } | ForEach-Object agent)   # blocked in envy deploy behind this train: not testing, never waited for
+      $queued = @($x.requests | Where-Object { $_.kind -eq 'deploy' -and $_.status -eq 'queued' } | ForEach-Object agent)   # queued behind this train: not testing
       $o.who = @($x.leases.Keys | Where-Object { $_ -notin $skipAgents -and $_ -notin $script:Preempted -and $_ -notin $queued } | Where-Object { $l = $x.leases[$_]; @($l.services | Where-Object { $_ -in $services }).Count -or @($l.repos | Where-Object { $_ -in $repos }).Count })
-      if ($o.who.Count -and -not $script:LeaseWait0) { $script:LeaseWait0 = Get-Date }   # one clock per train, from the first blocking lease
+      if ($o.who.Count -and -not $script:LeaseWait0) { $script:LeaseWait0 = Get-Date }   # one clock per train
       if ($x.train) { $x.train.waitingFor = @($o.who); $x.train.waitSince = $(if ($script:LeaseWait0) { Get-KitStamp stored $script:LeaseWait0 }) }
     }
     if (-not $o.who.Count) { & $logWait; return }
     $held = @(@($held) + @($o.who) | Select-Object -Unique); if (-not $w0) { $w0 = Get-Date }; $waited = ((Get-Date) - $script:LeaseWait0).TotalMinutes; $on = @(@($services) + @($repos) | Where-Object { $_ }) -join ', '
-    if ($waited -ge $script:LeaseMin) {
+    $busy = $waited -ge $script:LeaseMin -and $waited -lt $script:MaxLeaseMin -and @($o.who | Where-Object { Test-KitAgentBusy ($_ -split '/')[0] }).Count   # a check runs (gate, browser.mjs): no swap under it
+    if ($waited -ge $script:LeaseMin -and -not $busy) {
       Send-LeaseNotice $e $o.who "deploy of $on starting (a train waited $([int]$waited) min, leaseMinutes $($script:LeaseMin)): pause your checks there; resume after 'deploy done'"
       $script:Preempted = @(@($script:Preempted) + @($o.who) | Select-Object -Unique)
       "[$e] told $($o.who -join ', ') after $([int]$waited) min: deploying while their leases stay"
       & $logWait; return
     }
-    $msg = "waiting for lease(s) of $($o.who -join ', ') on $on (at most $($script:LeaseMin) min)"; if ($msg -ne $said) { "[$e] $msg"; $said = $msg }
+    $msg = "waiting for lease(s) of $($o.who -join ', ') on $on (at most $(if ($busy) { "$($script:MaxLeaseMin) min: a check runs" } else { "$($script:LeaseMin) min" }))"; if ($msg -ne $said) { "[$e] $msg"; $said = $msg }
     Start-Sleep 5
   }
 }

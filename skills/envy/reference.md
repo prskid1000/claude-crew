@@ -9,9 +9,9 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
   leases.jsonl kind env-layer).
 - A lease keeps services up while its holder is live (README "Leases") and uses them (its gated check or browser.mjs session
   counts); unused `leaseIdleMinutes`: released. Only an `-Owner` lease ends at a time.
-- A train waits for leases on what it changes up to `leaseMinutes` (30), then tells holders ("deploy of <svc> starting,
-  pause"; board inbox + `status -Agent` NOTICE), deploys, then "deploy done, re-run your checks"; leases stay.
-- A train whose worker is gone (pid + start time) or whose phase and log stay quiet `trainStallMinutes` (45): killed,
+- A train waits for leases on its changes `leaseMinutes` (30; a check runs: `maxLeaseMinutes` 120), tells holders
+  ("deploy of <svc> starting, pause"; inbox, `status -Agent` NOTICE), deploys, then "deploy done, re-run your checks"; leases stay.
+- A train whose worker is gone (pid + start time) or quiet (phase, logs) `trainStallMinutes` (45): killed,
   its requests requeue (supervise ACT TRAIN STALLED).
 - Only leases and holds start (or crash-restart) services, each in a start worker. No holder: stop after the idle grace; at
   once under memory pressure (a start waiting for RAM; a CPU wait is none).
