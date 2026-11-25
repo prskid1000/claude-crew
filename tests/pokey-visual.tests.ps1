@@ -162,17 +162,29 @@ Expect "prepare: the run title is cut to 25 words at creation (finalize -Check l
 $gkept = Join-Path (Kd) 'kept.md'; Set-Content $gkept "# Testing: X`n## Checks`n| C1 | a |`n## shop-staging run 2026-11-05 16:54`nold-a`n## shop-staging run 2026-11-07 09:18`nnew-b`n### Results`nnew-c`n## docs-staging run 2026-11-06 10:20`nold-d"
 $gcp = pwsh -NoProfile -Command "`$a = [Management.Automation.Language.Parser]::ParseFile('$Q', [ref]`$null, [ref]`$null); iex `$a.Find({ param(`$n) `$n.Name -eq 'Copy-QaGuide' }, `$true).Extent.Text; Copy-QaGuide '$gkept' '$gkept.out'; Copy-QaGuide '$gkept.out' '$gkept.one'; (Get-Content '$gkept.out') -join '|'; (Get-Content '$gkept.one') -join '|'"
 Expect "guide copy: head + newest run (its ### parts), older runs named; a one-run doc copied whole ($($gcp -join ' // '))" ($gcp[0] -match '^# Testing: X\|## Checks\|\| C1 \| a \|\|## shop-staging run 2026-11-07 09:18\|new-b\|### Results\|new-c\|\|> Older runs \(2\): ' -and $gcp[0] -notmatch 'old-' -and $gcp[1] -eq $gcp[0])
-# spawnHidden (2026-11-25: a detached browser server's chrome-headless-shell opened a Windows Terminal window): args arrive
-# whole; on Windows the child's own console child opens no window (no new OpenConsole -Embedding)
+# spawnHidden (2026-11-25: a detached browser server's chrome-headless-shell opened a Windows Terminal window): resolves once
+# started, args whole, no console window (no new OpenConsole -Embedding); no PowerShell on PATH -> detached start; a bad exe -> false
 $shOut = Join-Path (Kd) 'sh-args.json'; $shKid = Join-Path (Kd) 'sh-kid.mjs'; $shRun = Join-Path (Kd) 'sh-run.mjs'
-[IO.File]::WriteAllText($shKid, "import { writeFileSync } from 'node:fs'; import { execFileSync } from 'node:child_process'; try { execFileSync('cmd.exe', ['/c', 'ver']) } catch {}; writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)))")
-[IO.File]::WriteAllText($shRun, "const m = await import(process.argv[2]); m.spawnHidden(process.execPath, [process.argv[3], process.argv[4], 'a b', 'q`"x', '[`"--x`",`"y z`"]', 'end\\', '']); await new Promise((r) => setTimeout(r, 3000))")
+[IO.File]::WriteAllText($shKid, "import { writeFileSync } from 'node:fs'; import { execFileSync } from 'node:child_process'; try { execFileSync('cmd.exe', ['/c', 'ver']) } catch {}; writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3))); writeFileSync(process.argv[2] + '.env', JSON.stringify(Object.keys(process.env).filter((k) => k.startsWith('KIT_HID_'))))")
+[IO.File]::WriteAllText($shRun, @'
+const m = await import(process.argv[2]), [, , , kid, out] = process.argv, { dirname } = await import('node:path')
+const bare = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^path$/i.test(k))); bare.PATH = dirname(process.execPath)
+const a = await m.spawnHidden(process.execPath, [kid, out, 'a b', 'q"x', '["--x","y z"]', 'end\\', ''])
+const b = await m.spawnHidden(process.execPath, [kid, out + '.nops', 'x'], bare)
+const c = await m.spawnHidden(process.platform === 'win32' ? 'C:/no/such/tool.exe' : '/no/such/tool', [])
+const d = await m.spawnHidden(process.platform === 'win32' ? `${process.env.SystemRoot}/System32/hostname.exe` : '/bin/true', [])
+const e = await m.spawnHidden('', [])
+console.log(`${a}|${b}|${c}|${d}|${e}`)
+'@)
 $shEmb = { @(if ($IsWindows) { Get-CimInstance Win32_Process -Filter "Name='OpenConsole.exe'" | Where-Object CommandLine -match 'Embedding' | ForEach-Object ProcessId }) }
-$shB = & $shEmb; node $shRun ([Uri](Join-Path $src 'skills/pokey/adapters/engine-playwright.mjs')).AbsoluteUri $shKid $shOut
-for ($shI = 0; $shI -lt 40 -and -not (Test-Path $shOut); $shI++) { Start-Sleep -Milliseconds 250 }; Start-Sleep 1
+$shB = & $shEmb; $shRes = node $shRun ([Uri](Join-Path $src 'skills/pokey/adapters/engine-playwright.mjs')).AbsoluteUri $shKid $shOut 2>&1 | Out-String
+for ($shI = 0; $shI -lt 40 -and -not ((Test-Path $shOut) -and (Test-Path "$shOut.nops")); $shI++) { Start-Sleep -Milliseconds 250 }
 $shGot = Get-Content $shOut -Raw -ErrorAction SilentlyContinue; $shNew = @(& $shEmb | Where-Object { $_ -notin $shB })
-Expect "engine-playwright spawnHidden: args whole, no console window ($shGot; new handoffs $($shNew.Count))" ($shGot -eq '["a b","q\"x","[\"--x\",\"y z\"]","end\\",""]' -and $shNew.Count -eq 0)
-$pop = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') popups --minutes 0 2>&1 | Out-String
-Expect "kitbag popups --minutes 0: a bounded watch, 0 windows ($($pop.Trim()))" ($pop -match 'popups: (0 window\(s\) in 0 min|Windows only)')
+Expect "engine-playwright spawnHidden: resolves true, args whole, no console window; no PowerShell: detached; bad / empty exe: false, no throw; no args ok; KIT_HID_* gone ($($shRes.Trim()); $shGot; handoffs $($shNew.Count))" (
+  $shRes.Trim() -eq 'true|true|false|true|false' -and (Get-Content "$shOut.env" -Raw -ErrorAction SilentlyContinue) -eq '[]' -and $shGot -eq '["a b","q\"x","[\"--x\",\"y z\"]","end\\",""]' -and (Get-Content "$shOut.nops" -Raw -ErrorAction SilentlyContinue) -eq '["x"]' -and $shNew.Count -eq 0)
+$kbP = Join-Path $src 'skills/bossy/kitbag.py'; $pop = & $py -X utf8 $kbP popups --minutes 0 2>&1 | Out-String; $popBad = & $py -X utf8 $kbP popups --minutes x 2>&1 | Out-String; $popBadC = $LASTEXITCODE
+$popK = if ($IsWindows) { "$(& $py -X utf8 $kbP popups --exe (Join-Path $env:SystemRoot 'System32/cmd.exe'))|$(& $py -X utf8 $kbP popups --exe (Join-Path $env:SystemRoot 'System32/notepad.exe'))" } else { 'console|gui' }
+Expect "kitbag popups: --minutes 0 a bounded watch; bad --minutes = usage, exit 2; --exe: cmd.exe console, notepad.exe gui ($($pop.Trim()) / $popBadC / $popK)" (
+  $pop -match 'popups: (0 window\(s\) in 0 min|Windows only)' -and $popBadC -eq 2 -and $popBad -match 'usage' -and $popK -eq 'console|gui')
 Remove-TestKit $k
 Complete-Tests

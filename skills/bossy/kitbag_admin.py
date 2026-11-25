@@ -1066,15 +1066,25 @@ def cmd_faults(a):
     return 0
 
 # ---- popups: name the program behind a console window on the desktop (Windows Terminal's default-terminal handoff)
-def _procs():
-    """{pid: (ppid, exe name)} from one Toolhelp snapshot (no WMI: a 250 ms poll stays cheap)."""
+def _k32():
+    """kernel32 / user32 with argtypes and restype set (64-bit handles and pointers kept whole)."""
     import ctypes
     from ctypes import wintypes as w
+    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32   # arch-ok: cmd_popups calls it on os.name == 'nt' only
+    for fn, args, res in [('CreateToolhelp32Snapshot', [w.DWORD, w.DWORD], w.HANDLE), ('Process32FirstW', [w.HANDLE, ctypes.c_void_p], w.BOOL),
+                          ('Process32NextW', [w.HANDLE, ctypes.c_void_p], w.BOOL), ('CloseHandle', [w.HANDLE], w.BOOL),
+                          ('OpenProcess', [w.DWORD, w.BOOL, w.DWORD], w.HANDLE), ('QueryFullProcessImageNameW', [w.HANDLE, w.DWORD, w.LPWSTR, ctypes.POINTER(w.DWORD)], w.BOOL),
+                          ('FreeConsole', [], w.BOOL), ('AttachConsole', [w.DWORD], w.BOOL), ('GetConsoleWindow', [], w.HWND)]:
+        getattr(k32, fn).argtypes, getattr(k32, fn).restype = args, res
+    u32.IsWindowVisible.argtypes, u32.IsWindowVisible.restype = [w.HWND], w.BOOL
+    return ctypes, w, k32, u32
+
+def _procs():
+    """{pid: (ppid, exe name)} from one Toolhelp snapshot (no WMI: a 250 ms poll stays cheap)."""
+    ctypes, w, k32, _ = _k32()
     class Entry(ctypes.Structure):
         _fields_ = [('size', w.DWORD), ('usage', w.DWORD), ('pid', w.DWORD), ('heap', ctypes.c_size_t), ('module', w.DWORD),
                     ('threads', w.DWORD), ('ppid', w.DWORD), ('prio', ctypes.c_long), ('flags', w.DWORD), ('exe', ctypes.c_wchar * 260)]
-    k32 = ctypes.windll.kernel32   # arch-ok: cmd_popups runs it on os.name == 'nt' only
-    k32.CreateToolhelp32Snapshot.restype = w.HANDLE
     snap, e, out = k32.CreateToolhelp32Snapshot(2, 0), Entry(), {}
     e.size = ctypes.sizeof(Entry)
     more = k32.Process32FirstW(snap, ctypes.byref(e))
@@ -1087,12 +1097,11 @@ def _procs():
     return out
 
 def _exe_path(pid):
-    import ctypes
-    k32 = ctypes.windll.kernel32   # arch-ok: Windows only (cmd_popups)
+    ctypes, w, k32, _ = _k32()
     h = k32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
     if not h:
         return ''
-    buf, n = ctypes.create_unicode_buffer(1024), ctypes.c_ulong(1024)
+    buf, n = ctypes.create_unicode_buffer(1024), w.DWORD(1024)
     ok = k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n))
     k32.CloseHandle(h)
     return buf.value if ok else ''
@@ -1104,33 +1113,48 @@ def _console_app(path, cache={}):
             with open(path, 'rb') as f:
                 head = f.read(4096)
             pe = int.from_bytes(head[0x3C:0x40], 'little')
-            cache[path] = int.from_bytes(head[pe + 0x5C:pe + 0x5E], 'little') == 3
+            cache[path] = head[:2] == b'MZ' and int.from_bytes(head[pe + 0x5C:pe + 0x5E], 'little') == 3
         except (OSError, ValueError):
             cache[path] = False
     return cache[path]
 
 def _visible_console(pid):
     """True when pid's console has a visible window (attach, read, detach); hidden and no-window consoles have none."""
-    import ctypes
-    k32, u32, vis = ctypes.windll.kernel32, ctypes.windll.user32, False   # arch-ok: Windows only (cmd_popups)
-    k32.GetConsoleWindow.restype = ctypes.c_void_p
+    _, _, k32, u32 = _k32()
+    vis = False
     k32.FreeConsole()
     try:
         if k32.AttachConsole(pid) and (hw := k32.GetConsoleWindow()):
-            vis = bool(u32.IsWindowVisible(ctypes.c_void_p(hw)))
+            vis = bool(u32.IsWindowVisible(hw))
     finally:
         k32.FreeConsole()
-        k32.AttachConsole(-1)   # back on the caller's console
+        k32.AttachConsole(0xFFFFFFFF)   # ATTACH_PARENT_PROCESS: back on the caller's console
     return vis
 
+POPUPS_LOG_MB = 1   # popups.log rotates to popups.log.1 past this size
+
 def cmd_popups(a):
-    """popups [--minutes 30]: on each OpenConsole -Embedding (svchost starts it: a new visible console handed to Windows Terminal),
-    log the console programs that got a console of their own (a new conhost child) in the 4 s before, with their parents."""
-    flags, _ = parse_opts(a, ('--minutes',))
+    """popups [--minutes 30] | --exe <path>: on each OpenConsole -Embedding (svchost starts it: a new visible console handed to
+    Windows Terminal), log the console programs that got a console of their own (a new conhost child) in the 4 s before; CULPRIT
+    = the one whose console window is visible. --exe: console | gui for one program."""
+    flags, _ = parse_opts(a, ('--minutes', '--exe'))
+    if flags.get('--exe'):
+        if not osp.isfile(flags['--exe']):
+            print(f"popups: no such file {flags['--exe']}", file=sys.stderr)
+            return 2
+        print('console' if _console_app(flags['--exe']) else 'gui')
+        return 0
+    try:
+        mins = float(flags.get('--minutes') or 30)
+        if not 0 <= mins < float('inf'):   # also nan
+            raise ValueError
+    except ValueError:
+        print('usage: kitbag.py popups [--minutes <n >= 0>] | --exe <path>', file=sys.stderr)
+        return 2
     if os.name != 'nt':
         print('popups: Windows only (the default-terminal handoff); other OSes open no console window for a background child')
         return 0
-    end, log, hits = time.time() + 60 * float(flags.get('--minutes') or 30), osp.join(kit_path('logs', create=True), 'popups.log'), 0
+    end, log, hits = time.time() + 60 * mins, osp.join(kit_path('logs', create=True), 'popups.log'), 0
     seen, born = _procs(), {}
     while time.time() < end:   # bounded by --minutes
         time.sleep(0.25)
@@ -1155,13 +1179,15 @@ def cmd_popups(a):
                 print('\n'.join(rows), flush=True)
             except OSError:   # a console stdout can go stale after the attach probe: the log has it
                 pass
+            if osp.isfile(log) and osp.getsize(log) > POPUPS_LOG_MB << 20:
+                os.replace(log, log + '.1')
             with open(log, 'a', encoding='utf-8') as fh:
                 fh.write('\n'.join(rows) + '\n')
-    print(f'popups: {hits} window(s) in {flags.get("--minutes") or 30} min; log {log}')
+    print(f'popups: {hits} window(s) in {mins:g} min; log {log}')
     return 0
 
 AUDIT_VERBS = {'scan': lambda kit, flags: cmd_scan(kit), 'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags, '--ack-caps' in flags),
   'recover': lambda kit, flags: cmd_recover(kit, '--fix' in flags)}
 COMMANDS = {'cost': cmd_cost, 'release': cmd_release, 'faults': cmd_faults, 'popups': cmd_popups}
 ARGS = {'audit': ({'--fix', '--fill', '--ack-caps'}, {'--kit', '--json'}, False), 'cost': ({'--steps', '--json'}, set(), True),
-  'release': ({'--tag', '--publish'}, set(), False), 'faults': ({'--json'}, {'--n', '--days'}, False), 'popups': (set(), {'--minutes'}, False)}
+  'release': ({'--tag', '--publish'}, set(), False), 'faults': ({'--json'}, {'--n', '--days'}, False), 'popups': (set(), {'--minutes', '--exe'}, False)}

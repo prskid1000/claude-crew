@@ -275,7 +275,7 @@ export async function session({ target, tenant, as } = {}) {
     try { browser = await conn() } catch { browser = await withLock(`chrome-${keyFile(key)}`, async () => {   // one spawn per port
       try { return await conn() } catch {}
       let b; const ep = await adapter('engine-playwright.mjs'), dir = ep.quietProfile(`${PROFILES}/${keyFile(key)}`)
-      ep.spawnHidden(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, ...QUIET_ARGS,
+      await ep.spawnHidden(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, ...QUIET_ARGS,
         ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'])
       for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }
       if (!b) throw new Error(`could not start Chrome on port ${port}`)

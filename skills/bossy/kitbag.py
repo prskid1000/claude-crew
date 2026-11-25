@@ -1216,7 +1216,7 @@ def lint(k, g=None, org_terms=None):
                        r'WindowStyle|NoNewWindow|@\w*hid|--headless|-Verb\s+RunAs'),
               '.py': (r'creationflags\s*=.*(?:DETACHED_PROCESS|CREATE_NEW_CONSOLE)|\bstart_new_session\s*=\s*True', r'CREATE_NO_WINDOW|STARTF_USESHOWWINDOW'),   # arch-ok: flag names
               # node: detached = no console on Windows (windowsHide no help: its console children got windows) -> spawnHidden
-              '.mjs': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'"), '.js': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'")}   # arch-ok: Windows window flags
+              '.mjs': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'|hidden-ok"), '.js': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'|hidden-ok")}   # arch-ok: Windows window flags
     for f in counted:
         ext = osp.splitext(f)[1]
         if ext not in rx_win or f.startswith(GENERATED):

@@ -50,12 +50,15 @@ export function wrapPage(ctx, page) {
 // never a fixed path another local process could guess (0600 on Unix; on Windows the user's kit runtime folder guards it).
 // a background process that outlives its caller. Windows: a detached child has no console, so each console grandchild
 // (chrome-headless-shell) opened a Windows Terminal window (2026-11-25); Start-Process -WindowStyle Hidden gives one to inherit.
-// The launcher pwsh dies with its caller (a detached pwsh never runs): callers poll until the child answers (pwServed, browser.mjs).
+// The launcher dies with its caller (a detached pwsh never runs): it resolves once the launcher exits; no PowerShell -> detached.
 const winArg = (a) => /[\s"]/.test(a) || !a ? `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"` : a
-export function spawnHidden(exe, argv, env = process.env) {
-  if (process.platform !== 'win32') return spawn(exe, argv, { detached: true, stdio: 'ignore', env }).unref()
-  spawn('pwsh', ['-NoProfile', '-NonInteractive', '-Command', 'Start-Process -FilePath $env:KIT_HID_EXE -ArgumentList $env:KIT_HID_ARGS -WindowStyle Hidden'],
-    { stdio: 'ignore', windowsHide: true, env: { ...env, KIT_HID_EXE: exe, KIT_HID_ARGS: argv.map(winArg).join(' ') } }).unref()
+const HID = '$ErrorActionPreference = "Stop"; $p = @{ FilePath = $env:KIT_HID_EXE; WindowStyle = "Hidden" }; if ($env:KIT_HID_ARGS) { $p.ArgumentList = $env:KIT_HID_ARGS }; Remove-Item Env:KIT_HID_EXE, Env:KIT_HID_ARGS -ErrorAction SilentlyContinue; Start-Process @p'
+const started = (c, ok) => new Promise((res) => { c.on('error', () => res(false)); ok(c, res) })
+const viaShell = (sh, exe, argv, env) => started(spawn(sh, ['-NoProfile', '-NonInteractive', '-Command', HID], { stdio: 'ignore', windowsHide: true,
+  env: { ...env, KIT_HID_EXE: exe, KIT_HID_ARGS: argv.map(winArg).join(' ') } }), (c, res) => c.on('exit', (code) => res(code === 0)))
+export async function spawnHidden(exe, argv, env = process.env) {
+  if (process.platform === 'win32') for (const sh of ['pwsh', 'powershell']) if (await viaShell(sh, exe, argv, env)) return true
+  try { return await started(spawn(exe, argv, { detached: true, stdio: 'ignore', env }), (c, res) => c.on('spawn', () => { c.unref(); res(true) })) } catch { return false }   // hidden-ok: the fallback
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const touch = (f) => { try { writeFileSync(f, String(Date.now())) } catch {} }
@@ -66,7 +69,7 @@ export async function pwServed(eng, bo, VIEW, quiet, port, dir) {
   if (!s) {
     await pwType(eng); touch(used); try { unlinkSync(used + '.err') } catch {}   // no Playwright module: its hint now
     const tok = randomBytes(24).toString('hex')   // env, not argv: the process list shows argv
-    spawnHidden(process.execPath, [fileURLToPath(import.meta.url), 'serve', eng, String(port), used, JSON.stringify(eng === 'chromium' ? quiet : [])], { ...process.env, KIT_PW_TOKEN: tok })
+    await spawnHidden(process.execPath, [fileURLToPath(import.meta.url), 'serve', eng, String(port), used, JSON.stringify(eng === 'chromium' ? quiet : [])], { ...process.env, KIT_PW_TOKEN: tok })
     // a racing caller's server may win the port: its token file then names the live one
     for (let i = 0; i < 60 && !s && !err; i++) { await sleep(500); const t2 = readTok(tokF); s = await go(tok) || (t2 && t2 !== tok ? await go(t2) : null); try { err = readFileSync(used + '.err', 'utf8') } catch {} }
     // an older server on a fixed path holds the port: <used> gone, it exits within a minute
