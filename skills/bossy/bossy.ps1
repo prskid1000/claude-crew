@@ -1019,7 +1019,7 @@ switch ($Action) {
       # never backwards (QA may have closed it)
       $now = TaskStatus $o.task
       if ($script:gone[$o.task]) { "DROPPED $($o.task): deleted in the tracker, no longer tracked"; continue }
-      if (Test-TrackerStatus $now 'closed', 'inTest') { $o.done = $true; Save $o -Run; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
+      if (Test-TrackerStatus $now 'closed', 'inTest') { Update-KitSolutionMrs $o.task; $o.done = $true; Save $o -Run; if (-not $Quiet) { "DONE $($o.task): all MRs merged; status '$now' kept (already past promoted)" }; continue }
       $todo = @($o.onMerged)
       for ($q = $todo.Count - 1; $q -ge 0; $q--) { if (Test-TrackerStatus $now $todo[$q]) { $todo = @($todo | Select-Object -Skip ($q + 1)); break } }
       $ciTask = Get-KitCiTask $o.task   # a CI job's task: the job passing again is its test, no testing docs
@@ -1031,7 +1031,7 @@ switch ($Action) {
       if ($kept) { $o.done = $true; Save $o -Run; "KEPT $($o.task): $kept"; continue }
       if ($ciTask) { Set-KitTaskMrItems $o.task; $cj = Close-KitCiTask $o.task $ciTask @($o.mrs)
         if ($cj.state -eq 'wait') { Hold "HOLD $($o.task): $($cj.why)" } elseif ($cj.state -ne 'closed') { if (-not $Quiet) { "ATTENTION $($o.task): $($cj.why)" } } else { $o.done = $true; $o.doneAt = (Get-KitStamp); Save $o -Run; "DONE $($o.task): $($cj.why)"; $script:merged = $true }; continue }
-      $cmts =@(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
+      Update-KitSolutionMrs $o.task; $cmts =@(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
       if ((Test-KitTaskDocLink $o.task) -ne $true -and -not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
         $steps = @(Get-KitWorkflowDirs | ForEach-Object { Get-Item (Join-Path $_.FullName 'journal.jsonl') -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
             foreach ($line in Get-Content $_.FullName) {

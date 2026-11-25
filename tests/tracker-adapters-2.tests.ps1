@@ -107,5 +107,24 @@ $pass = $ms -eq 'key=SHOP-CAT-004,area=cat,product=shop | key=SHOP-CAT-004,produ
 $mW = Join-Path $trRt 'cap.md'; [IO.File]::WriteAllText($mW, "Problem: $((1..195 | ForEach-Object { "w$_" }) -join ' ') https://x.example/1`n`n$mTbl`n")
 $mC = & (Get-Python) -X utf8 (Join-Path $Kit 'skills/bossy/kitbag.py') prose --kind task-description $mW 2>&1 | Out-String
 $pass = $mC -notmatch 'words \(max'; if (-not $pass) { $global:failed++; "  $mC" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) dec-60: the kit table is out of the task-description word cap (197 words + the table)"
+# a fake 429 (ClickUp retag stopped at task 6): the wait reads Retry-After / X-RateLimit-Reset; a CLI write and a REST POST retry it; an id like CU-429 is no rate limit
+$env:KIT_POLL_MS = 200; $rs = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 5   # Wait-KitPoll fake clock
+$rlW = "$(Get-KitRateWait 'Error: 429 Too Many Requests' 7) $(Get-KitRateWait 'HTTP 429 Retry-After: 3' 7) $(Get-KitRateWait "http 429 x-ratelimit-reset $rs" 7) $(Get-KitRateWait "http 429 x-ratelimit-reset $($rs * 1000)" 7) $(Get-KitRateWait 'Error: task CU-429 not found' 7) $(Get-KitRateWait 'unknown field rate_limit' 7)"
+$script:nCall = 0; $cr = Invoke-KitRetry { $script:nCall++; if ($script:nCall -lt 3) { @{ code = 1; err = 'Error: 429 Too Many Requests' } } else { @{ code = 0; out = 'ok' } } } -Connect; $rlC = "$($cr.code)/$script:nCall"
+$script:nCall = 0; $null = Invoke-KitRetry { $script:nCall++; @{ code = 1; err = 'Error: task CU-429 not found' } } -Connect; $rlC += " $script:nCall"
+$tl = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl.Start(); $port = $tl.LocalEndpoint.Port; $tl.Stop()
+$srv = Start-ThreadJob -ArgumentList $port { param($pt) $hl = [Net.HttpListener]::new(); $hl.Prefixes.Add("http://127.0.0.1:$pt/"); $hl.Start(); $hits = 0
+  try { while ($hits -lt 2) { $tk = $hl.GetContextAsync(); if (-not $tk.Wait(20000)) { break }; $c = $tk.Result; $hits++
+      if ($hits -eq 1) { $c.Response.StatusCode = 429; $c.Response.AddHeader('X-RateLimit-Reset', "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 1)") } else { $bd = [Text.Encoding]::UTF8.GetBytes('{"ok":true}'); $c.Response.ContentType = 'application/json'; $c.Response.OutputStream.Write($bd, 0, $bd.Length) }
+      $c.Response.Close() } } finally { Start-Sleep -Milliseconds 500; $hl.Stop() }; $hits }   # the last answer flushes before the stop
+$irmMock = ${function:Invoke-RestMethod}; Remove-Item function:Invoke-RestMethod   # the real cmdlet against the local listener
+Start-Sleep -Milliseconds 300; $hr = Invoke-KitHttp 'POST' "http://127.0.0.1:$port/task/T1/tag/x" @{} @{} 3>$null; $hits = Receive-Job $srv -Wait -AutoRemoveJob; Set-Item function:Invoke-RestMethod $irmMock
+$pass = $rlW -match '^7 3 [56] [56] 0 0$' -and $rlC -eq '0/3 1' -and $hr.ok -eq $true -and $hits -eq 2; if (-not $pass) { $global:failed++; "  $rlW | $rlC | $($hr | ConvertTo-Json -Compress) | $hits" }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) rate limit 429: waits per header; a CLI write retried, CU-429 not; a REST POST retried once"
+# every MR merged (bossy track): the solution comment's '(OPEN)' MRs read MERGED, edited in place; another comment untouched
+$sCm = @([pscustomobject]@{ id = 'c1'; user = 'u'; date = ''; text = 'Started work' }, [pscustomobject]@{ id = 'c2'; user = 'u'; date = ''; text = "**Solution:** grid`n**MRs:** web!4 (OPEN) · api!7 (OPEN) · **Local proof:** ok`n**Deferred:** flag (OPEN)" })
+Register-KitAdapter 'tracker' 'fks' @{ caps = @{ commentEdit = $true }; comments = { $sCm }; 'comment-edit' = { param($a) ($sCm | Where-Object id -eq $a.comment).text = $a.text; 'edited' }; comment = { 'new' }; url = { param($a) $a.id } }
+$__trType = 'fks'; Update-KitSolutionMrs 'T9'; $sMg = "$($sCm[1].text)"
+$pass = $sMg -match 'web!4 \(MERGED\) · api!7 \(MERGED\)' -and $sMg -match 'Deferred:\*\* flag \(OPEN\)' -and $sMg -notmatch 'MRs:.*OPEN' -and $sCm[0].text -eq 'Started work'; if (-not $pass) { $global:failed++; "  $sMg" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) solution comment: MRs (OPEN) -> (MERGED) once every MR merged, the MRs line only, the same comment edited"
 Remove-Item $trRt -Recurse -Force -ErrorAction SilentlyContinue
 exit [int]($global:failed -gt 0)

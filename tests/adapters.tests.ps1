@@ -65,21 +65,6 @@ Expect "tracker retag (dec-60): dry run = counts + table only; apply = plain tit
   $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'Price grid' -and $rv2.name -eq $rv.name -and ([regex]::Matches("$($rv2.description)", 'Old title').Count) -eq 1 -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,shop' -and
   $rtR -match 'DONE LOCAL-90' -and $rtR -match 'DONE LOCAL-91' -and $rtR -notmatch 'RETAGGED' -and $rtRd -match 'DRY RUN: 2 keyed task\(s\), 2 done by an earlier apply' -and $rp -eq 'bug,catalogue|Crash on save (hand)' -and $rc -eq 'bug,catalogue')
 
-# a fake 429 (ClickUp retag stopped at task 6): the wait reads Retry-After / X-RateLimit-Reset; a CLI write and a REST POST retry it
-$rlR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $o = [ordered]@{}; $rs = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 5
-  $o.wait = "$(Get-KitRateWait '429 Too Many Requests' 7) $(Get-KitRateWait 'HTTP 429 Retry-After: 3' 7) $(Get-KitRateWait "429 x-ratelimit-reset $rs" 7) $(Get-KitRateWait "429 x-ratelimit-reset $($rs * 1000)" 7) $(Get-KitRateWait 'exit 1: not found' 7)" -match '^7 3 [56] [56] 0$'
-  $script:nCall = 0; $cr = Invoke-KitRetry { $script:nCall++; if ($script:nCall -lt 3) { @{ code = 1; err = 'Error: 429 Too Many Requests' } } else { @{ code = 0; out = 'ok' } } } -Connect; $o.cliWrite = $cr.code -eq 0 -and $script:nCall -eq 3
-  $script:nCall = 0; $cr = Invoke-KitRetry { $script:nCall++; @{ code = 1; err = 'Error: 404 not found' } } -Connect; $o.noRetry404 = $script:nCall -eq 1
-  $tl = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl.Start(); $port = $tl.LocalEndpoint.Port; $tl.Stop()
-  $srv = Start-ThreadJob -ArgumentList $port { param($pt) $hl = [Net.HttpListener]::new(); $hl.Prefixes.Add("http://127.0.0.1:$pt/"); $hl.Start(); $hits = 0
-    try { while ($hits -lt 2) { $tk = $hl.GetContextAsync(); if (-not $tk.Wait(20000)) { break }; $c = $tk.Result; $hits++
-        if ($hits -eq 1) { $c.Response.StatusCode = 429; $c.Response.AddHeader('X-RateLimit-Reset', "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 1)") } else { $bd = [Text.Encoding]::UTF8.GetBytes('{"ok":true}'); $c.Response.ContentType = 'application/json'; $c.Response.OutputStream.Write($bd, 0, $bd.Length) }
-        $c.Response.Close() } } finally { Start-Sleep -Milliseconds 500; $hl.Stop() }; $hits }   # the last answer flushes before the stop
-  Start-Sleep -Milliseconds 300; $hr = Invoke-KitHttp 'POST' "http://127.0.0.1:$port/task/T1/tag/x" @{} @{} 3>$null; $hits = Receive-Job $srv -Wait -AutoRemoveJob
-  $o.restPost = $hr.ok -eq $true -and $hits -eq 2
-  $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
-Expect-Each $rlR 'rate limit 429: #' @('wait', 'cliWrite', 'noRetry404', 'restPost') -Show 4
-
 # secret store: file round trip (targets.local.json shape kept), names only, env read-only, secret:<name> refs, a fake store,
 # the guard denies the configured store's backing file and keeps the file store's default
 $secR = & { . (Join-Path $k 'skills/crafty/lib.ps1')

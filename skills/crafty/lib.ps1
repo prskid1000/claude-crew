@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L925 status · L1128 tracker · L1450 prior ·
-  L1469 ask bugs · L1654 deploy words · L1698 git-host · L1886 kitlog · L1996 params · L2301 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L925 status · L1128 tracker · L1456 prior ·
+  L1475 ask bugs · L1660 deploy words · L1704 git-host · L1892 kitlog · L2002 params · L2307 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -751,7 +751,7 @@ function Add-KitNetCount([switch]$Retry, [switch]$Check) {
 }
 # 0, or the seconds to wait after a rate limit (429): Retry-After, else X-RateLimit-Reset (epoch s / ms), else $Default; 1-90 s
 function Get-KitRateWait([string]$Text, [int]$Default) {
-  if ($Text -notmatch '(?i)\b429\b|too many requests|rate[ -]?limit(ed)?\b') { return 0 }
+  if ($Text -notmatch '(?i)(?:\bhttp|\bstatus(?: code)?|\bcode|\berror)\W{0,3}429\b|(?<![\w-])429\W{0,3}too many|too many requests|rate limit (?:reached|exceeded)') { return 0 }   # never an id like CU-429
   $s = if ($Text -match '(?i)retry-after\W+(\d+)') { [int]$Matches[1] } elseif ($Text -match '(?i)x-ratelimit-reset\W+(\d{10,13})') { $e = [long]$Matches[1]; if ($e -gt 1e12) { $e = [long]($e / 1000) }; [int]($e - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) + 1 } else { $Default }
   [math]::Min(90, [math]::Max(1, $s))
 }
@@ -915,7 +915,7 @@ function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Header
   if ($null -ne $Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 20 -Compress)); $p.ContentType = 'application/json' }
   for ($rl = 0; ; $rl++) {   # a 429 (any method: refused, never done): wait per its headers, up to 6 times
     $global:KitHttpCode = 0; try { return Invoke-RestMethod @p } catch { $h = $_.Exception.Response.Headers
-      if ([int]$_.Exception.Response.StatusCode -eq 429 -and $rl -lt 6) { Wait-KitPoll (Get-KitRateWait "429$(if ($h.RetryAfter.Delta) { " retry-after $([int]$h.RetryAfter.Delta.TotalSeconds)" })$(try { " x-ratelimit-reset $(@($h.GetValues('X-RateLimit-Reset'))[0])" } catch { '' })" (2 * [math]::Pow(3, $rl))); continue }
+      if ([int]$_.Exception.Response.StatusCode -eq 429 -and $rl -lt 6) { Wait-KitPoll (Get-KitRateWait "http 429$(if ($h.RetryAfter.Delta) { " retry-after $([int]$h.RetryAfter.Delta.TotalSeconds)" })$(try { " x-ratelimit-reset $(@($h.GetValues('X-RateLimit-Reset'))[0])" } catch { '' })" (2 * [math]::Pow(3, $rl))); continue }
       $global:KitHostFailed = $true; $global:KitHttpCode = [int]$_.Exception.Response.StatusCode; $global:KitHostError = "http $Method $($Uri -replace '\?.*'):$($_.Exception.Message) $($_.ErrorDetails.Message)".Trim(); Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; return $null } }
 }
 function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
@@ -1333,6 +1333,12 @@ function Set-TrackerKitComment([string]$Id, [string]$Kind, $Text, [string]$Headi
   & $keep $cid
   if ($old -and (__TrCan commentDelete) -and "$r" -notmatch '^QUEUED') { try { $null = __TrA 'comment-delete' @{ id = $Id; comment = $old.id } } catch { Write-Warning "tracker ($__trType): superseded comment $($old.id) not deleted: $_" } }
   $r
+}
+# every MR merged (bossy track): the solution comment devtools.py finish wrote with '(OPEN)' MRs says MERGED; no such comment: nothing
+function Update-KitSolutionMrs([string]$Id) {
+  $c = @(try { Get-TrackerComments $Id } catch { @() }) | Where-Object { "$($_.text)" -match 'Solution:' -and "$($_.text)" -match 'MRs:[^\r\n]*\(OPEN\)' } | Select-Object -Last 1
+  $nt = [regex]::Replace("$($c.text)", '(?m)^.*MRs:.*$', { param($m) $m.Value -replace '\(OPEN\)', '(MERGED)' })   # the MRs line only
+  if ($c) { try { if ($c.id -and (__TrCan commentEdit)) { Clear-TrackerMemo $Id; $null = __TrA 'comment-edit' @{ id = $Id; comment = "$($c.id)"; text = $nt } } else { $null = Set-TrackerKitComment $Id 'comment-solution' $nt } } catch { Write-Warning "tracker: solution comment of $Id not refreshed: $_" } }
 }
 # $Text may be a scriptblock run under the lock, so a writer never drops another's MRs
 function Set-TrackerHeadComment([string]$Id, [string]$Kind, $Text, [string]$Heading, [scriptblock]$Match) {

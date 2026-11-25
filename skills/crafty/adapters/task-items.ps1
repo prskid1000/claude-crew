@@ -4,7 +4,7 @@
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
 # Sections: L8 items · L98 move · L142 status roles · L298 task text · L315 naming · L319 meta (dec-60, owner 2026-11-25) ·
-#   L486 track lines · L491 task ids · L507 tags · L589 order
+#   L486 track lines · L491 task ids · L507 tags · L590 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -572,7 +572,8 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   "retag: $($rows.Count) keyed task(s): $rtN title(s) to strip · $rmN description(s) to set (kit table) · $rgN tag fix(es) · $($rows.Count - $ok.Count) skipped (problems)"
   [IO.File]::WriteAllLines(($Out -replace '\.md$', '-texts.md'), [string[]]@(foreach ($r in $ok) { "## $($r.id): $($seen[$r.id].name) -> $($r.title)", '### Description now', '````md', "$($seen[$r.id].description)".TrimEnd(), '````', '### After', '````md', $nds[$r.id], '````' }), [Text.UTF8Encoding]::new($false))
   # resumable: <table>.done.json {id: 'title|tags'} after each task; a re-run skips a task done to the same target (a later hand edit stays)
-  $doneF = $Out -replace '\.md$', '.done.json'; $done = @{}; if (Test-Path -LiteralPath $doneF) { (Get-Content -LiteralPath $doneF -Raw | ConvertFrom-Json -AsHashtable).GetEnumerator() | ForEach-Object { $done[$_.Key] = "$($_.Value)" } }
+  $doneF = $Out -replace '\.md$', '.done.json'; $done = @{}
+  if (Test-Path -LiteralPath $doneF) { try { $dj = Get-Content -LiteralPath $doneF -Raw | ConvertFrom-Json -AsHashtable; if ($dj) { foreach ($e in $dj.GetEnumerator()) { $done[$e.Key] = "$($e.Value)" } } } catch { Write-Warning "retag: $doneF unreadable: every task planned again" } }
   $sig = { param($r) "$($r.title)|$(@($r.tags) -join ',')" }; $nDone = @($ok | Where-Object { $done[$_.id] -eq (& $sig $_) }).Count
   $md; if ($dry) { "DRY RUN: $($rows.Count) keyed task(s)$(if ($nDone) { ", $nDone done by an earlier apply (skipped)" }), nothing changed; table: $Out; texts before / after: $($Out -replace '\.md$', '-texts.md')"; return }
   foreach ($r in $ok) {
@@ -580,8 +581,8 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
     try { $tk = $seen[$r.id]; $old = "$($tk.name)"; $od = ("$($tk.description)" -replace "`r`n", "`n").TrimEnd(); $nd = $nds[$r.id]
       if ($nd -cne $od) { $null = Set-TrackerDescription $r.id $nd -Resolved }; if ($r.title -cne $old) { $null = Set-TrackerName $r.id $r.title }   # the kit table first: the rename finds it
       Clear-TrackerMemo $r.id; Write-KitTaskTags $r.id (Get-TrackerTask $r.id) $r   # a fresh read: a description tag line keeps the lines above
+      $done[$r.id] = & $sig $r; Write-KitAtomic $doneF ($done | ConvertTo-Json)
     } catch { "STOPPED at $($r.id): $($_.Exception.Message); rerun the same command: done tasks are skipped"; exit 1 }
-    $done[$r.id] = & $sig $r; Write-KitAtomic $doneF ($done | ConvertTo-Json)
     "RETAGGED $($r.id): $($r.title) · Code $($r.key) · $(@($r.tags) -join ', ')" }
   foreach ($r in @($rows | Where-Object { @($_.problems).Count })) { "SKIPPED $($r.id): $(@($r.problems) -join '; ')" }
   foreach ($p in @($seen.Keys | Where-Object { @($seen[$_].subtasks).Count })) { try { Update-KitParentItems $p } catch { "parent items ${p}: $($_.Exception.Message)" } }   # their Items lines name the new titles
