@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L83 summary · L213 patterns · L250 rules · L328 retro due · L339 tidy · L441 collisions · L451 decisions
+Sections: L14 outcomes · L83 summary · L229 patterns · L266 rules · L344 retro due · L355 tidy · L457 collisions · L467 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -82,8 +82,15 @@ function Get-KitSuperviseFlagsOutcomes([switch]$AutoFix) { if (-not (Within 'out
 
 # ---- summary: worst areas, repeat causes, most fix rounds (tidy prep digest, dashboard)
 function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days'), [datetime]$StatsFrom = [datetime]::MinValue) {   # the page: Get-KitStatsCutoff
-  $since = (Get-Date).AddDays(-$Days); if ($StatsFrom -gt $since) { $since = $StatsFrom }; $last = @{}
-  foreach ($r in @(Read-KitOutcomeRows)) { $w = @($r.seen, $r.at | Where-Object { $_ })[0]; if ($r.task) { if ($w -and [datetime]$w -ge $since) { $last["$($r.task)"] = $r } else { $last.Remove("$($r.task)") } } }
+  $since = (Get-Date).AddDays(-$Days); if ($StatsFrom -gt $since) { $since = $StatsFrom }; $last = @{}; $allRows = @(Read-KitOutcomeRows)
+  foreach ($r in $allRows) { $w = @($r.seen, $r.at | Where-Object { $_ })[0]; if ($r.task) { if ($w -and [datetime]$w -ge $since) { $last["$($r.task)"] = $r } else { $last.Remove("$($r.task)") } } }
+  # status per past day (owner 2026-11-25): the rows replayed to each day's end, the same window rule; a day before the first row or StatsFrom: none
+  $stageDays = @{}; $byAt = @($allRows | Where-Object { $_.task -and $_.at } | Sort-Object { [datetimeoffset]$_.at }); $asOf = @{}; $ri = 0
+  if ($byAt.Count) { foreach ($back in ([math]::Max(2, [int](Get-KitParam 'supervise.statsDays')) - 1)..1) { $dayEnd = [datetimeoffset](Get-Date).Date.AddDays(1 - $back)
+      if ($dayEnd -le [datetimeoffset]$byAt[0].at -or $dayEnd.LocalDateTime -le $StatsFrom) { continue }
+      while ($ri -lt $byAt.Count -and [datetimeoffset]$byAt[$ri].at -lt $dayEnd) { $asOf["$($byAt[$ri].task)"] = $byAt[$ri]; $ri++ }
+      $winFrom = $dayEnd.AddDays(-$Days); if ($StatsFrom -gt $winFrom.LocalDateTime) { $winFrom = [datetimeoffset]$StatsFrom }
+      $stageDays[$dayEnd.AddDays(-1).ToString('yyyy-MM-dd')] = @($asOf.Values | Where-Object { [datetimeoffset]@($_.seen, $_.at | Where-Object { $_ })[0] -ge $winFrom } | ForEach-Object { [pscustomobject]@{ id = "$($_.task)"; stage = "$($_.stage)" } }) } }
   $rows = @($last.Values); foreach ($r in $rows) { $r.area = @("$($r.area)" -split ',' | Where-Object { $_ } | ForEach-Object { Get-KitRepoName $_ } | Sort-Object -Unique) -join ',' }   # rows written before alias names
   $qa = @($rows | Where-Object { [int]$_.qaRuns -gt 0 })
   $rounds = { param($r) [math]::Max(0, [int]$r.localRounds - 1) + [int]$r.reviewFix }
@@ -112,7 +119,7 @@ function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days'), [datet
   $weeks = [int][math]::Ceiling($Days / 7)
   [pscustomobject]@{ days = $Days; n = $rows.Count; qaN = $qa.Count; firstPass = @($qa | Where-Object qaFirstPass).Count; cameBack = @($rows | Where-Object cameBack).Count
     p50Promoted = $(if ($hp.Count) { $hp[[int][math]::Floor(($hp.Count - 1) / 2)] }); areas = $areas; agents = $agents; causes = $causes
-    tasks = $tasks; repos = $repos; kpi = (& $kpi $tasks); weekly = @(for ($w = $weeks - 1; $w -ge 0; $w--) { & $kpi @($tasks | Where-Object week -eq $w) }) }
+    tasks = $tasks; repos = $repos; stageDays = $stageDays; kpi = (& $kpi $tasks); weekly = @(for ($w = $weeks - 1; $w -ge 0; $w--) { & $kpi @($tasks | Where-Object week -eq $w) }) }
 }
 # a test run's QA outcome from the task index: its env runs named <date>[-<time>]-<name>, else its tasks' env runs inside its window
 function Get-KitRunQa($Run, $Ix) {
@@ -181,12 +188,21 @@ function Format-KitDeliveryHtml($S, $UP, $More = @(), [string]$Blocks = '') {
         @{ n = $bk[$kk]; sub = ($rc -join ' · '); mk = "tasks-$kk-day"; cls = $(if ($obCls.ContainsKey($kk)) { $obCls[$kk] } else { 'ws' }); t = "$($ts.Count)"; ft = '#oc-tasks'; fv = @($dk | ForEach-Object { "o$kk$_" })
           title = "$($bk[$kk]): $($ts.Count) task(s) in $(if ($S.days) { $S.days } else { '?' }) days (right column)$(if ($rc.Count) { ", per repo: $($rc -join ', ')" }) · a cell: those whose last change fell on that day"
           v = @($per | ForEach-Object { [double]@($_).Count }); tips = @($per | ForEach-Object { $l = @($_); "$($l.Count) task(s)$(if ($l.Count) { ": $(& $idList @($l | ForEach-Object { "$($_.id) ($(& $repoTx $_))" })) · click: list them" })" }) } })
-    # work in flight (owner 2026-11-24): a row per status, today's column only (no history kept); a cell click lists its tasks
+    # work in flight in Delivery (owner 2026-11-25): a row per status; a past day = its tasks at that day's end (stageDays), today = now;
+    # only today's cell filters the list (it holds today's statuses); a row with today only folds into the group line (Format-KitDayHeat)
+    $sd = if ($S.stageDays -is [Collections.IDictionary]) { $S.stageDays } else { @{} }
     $fRows = @(foreach ($kk in $flight.Keys) { $ids = @($fl | Where-Object b -eq $kk | ForEach-Object id)
-        @{ n = $flight[$kk][0]; mk = "flight-$kk"; cls = $flight[$kk][1]; t = "$($ids.Count)"; ft = '#oc-tasks'; fv = @($dk | ForEach-Object { "st:$kk" }); title = "$($flight[$kk][0]): $($ids.Count) task(s) now (the status is not kept per day: today's column only)"
-          v = @(for ($i = 0; $i -lt $nd; $i++) { if ($i -eq $nd - 1) { [double]$ids.Count } else { $null } }); tips = @(for ($i = 0; $i -lt $nd; $i++) { if ($i -eq $nd - 1) { "$($ids.Count) task(s)$(if ($ids.Count) { ": $(& $idList $ids) · click: list them" })" } else { 'not kept per day' } }) } })
+        $per = @(for ($i = 0; $i -lt $nd; $i++) { if ($i -eq $nd - 1) { , $ids } elseif ($sd.Contains($dk[$i])) { , @(@($sd[$dk[$i]]) | Where-Object { $_ -and (& $stOf "$($_.stage)") -eq $kk } | ForEach-Object id) } else { , $null } })
+        @{ n = $flight[$kk][0]; mk = "flight-$kk"; cls = $flight[$kk][1]; t = "$($ids.Count)"; ft = '#oc-tasks'; fv = @(for ($i = 0; $i -lt $nd; $i++) { if ($i -eq $nd - 1) { "st:$kk" } else { '' } }); title = "$($flight[$kk][0]): $($ids.Count) task(s) now (right column) · a past day: its tasks at the day's end"
+          v = @(for ($i = 0; $i -lt $nd; $i++) { if ($null -eq $per[$i]) { $null } else { [double]@($per[$i]).Count } })
+          tips = @(for ($i = 0; $i -lt $nd; $i++) { $l = @($per[$i] | Where-Object { $_ }); if ($null -eq $per[$i]) { 'no status record' } elseif ($i -eq $nd - 1) { "$($l.Count) task(s) now$(if ($l.Count) { ": $(& $idList $l) · click: list them" })" } else { "$($l.Count) task(s) at the day's end$(if ($l.Count) { ": $(& $idList $l)" })" } }) } })
+    # a group line: its 2-4 most useful facts over the map's days (owner 2026-11-25)
+    $mrTx = @($repoRows | Where-Object { [int]$_.t } | Sort-Object { -[int]$_.t }, n | ForEach-Object { "$($_.n) $($_.t)" })
+    $dlEx = "$($mrs.Count) MRs merged$(if ($mrTx.Count) { " ($($mrTx -join ' · '))" }) · $($sumRows[0].t) tasks closed · $($sumRows[1].t) came back"
+    $obN = { param([string[]]$ks) @($S.tasks | Where-Object { $_.bucket -in $ks }).Count }
+    $obEx = "passed $(& $obN 'r0', 'r1', 'r2', 'r3', 'rna') · came back $(& $obN 'back') · not tested yet $(& $obN 'wait')$(if ($null -ne $S.kpi.first) { " · QA first pass $($S.kpi.first)%" })"
     $grp = { param([string]$g, [string]$hd, $cn, [string]$ex = '') @{ hd = $hd; g = $g; cn = $cn; ex = $ex } }
-    $all = @(& $grp 'mr' 'Delivery' '') + $repoRows + $sumRows + @(& $grp 'out' 'Tasks by outcome' @($S.tasks).Count) + $obRows + @(& $grp 'flight' 'Work in flight · now' $fl.Count) + $fRows + @($More | Where-Object { $_ } | ForEach-Object { & $align $_ })
+    $all = @(& $grp 'mr' 'Delivery' '' (& $e $dlEx)) + $repoRows + $sumRows + $fRows + @(& $grp 'out' 'Tasks by outcome' @($S.tasks).Count (& $e $obEx)) + $obRows + @($More | Where-Object { $_ } | ForEach-Object { & $align $_ })
     & $fold 'dl-days' 'Per day' "$($mrs.Count) MRs$(if ($null -ne $leadAll) { " · lead time p50 $(& $n1 $leadAll) h" })" "$(Format-KitDayHeat $all $dk 'series · day')$(Format-KitLegend "outlined = today · $(Format-KitSplitLegend)" "a cell = that day's value, shaded by the row's peak · the right column: 7 days (sum, or as the row's tooltip says) · a group header folds its rows · a click on a task row's cell or runs started filters the tasks and runs · est. cost and tokens: a tile per type, each shaded by its own 7-day peak; a narrow cell shows the total over a bar · hover a cell for every value and its cost")$(if ($noMr) { "<p class=m>$noMr task(s) without an MR (Tasks by outcome: no MR)</p>" })" -Open -tag h4 -cls 'sub st uc dlr' }
   # the tasks behind a click (a day: closed, came back or its outcome that day; a status); hidden until a filter is set
   $rows = @($S.tasks | ForEach-Object { $t = $_

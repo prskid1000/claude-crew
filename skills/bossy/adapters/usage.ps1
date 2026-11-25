@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L381 context · L729 waste (owner 2026-11-23 · L799 split · L873 budget · L941 handoffs
+Sections: L9 usage · L384 context · L732 waste (owner 2026-11-23 · L802 split · L876 budget · L944 handoffs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -370,7 +370,10 @@ function Format-KitUsageHtml($U) {
   $uRows += @(@{ n = 'Context mix'; mk = 'context-mix-day'; gl = $true; title = 'tokens re-sent in context per day (each call carries what is in context), the bar: its sources (hover a day; bossy.ps1 usage -Context)'; v = @($dy | ForEach-Object { if ($_.cx) { [double](@($_.cx.car | ForEach-Object { [double]$_ }) | Measure-Object -Sum).Sum } else { $null } }); fmt = $tk; t = (& $tk ([double](@($dy | Where-Object cx | ForEach-Object { @($_.cx.car) } | ForEach-Object { [double]$_ }) + 0 | Measure-Object -Sum).Sum)); sb = @($dy | ForEach-Object { if ($_.cx) { Get-KitContextGradient @($_.cx.car) } else { '' } }); tips = @($dy | ForEach-Object { & $cxT $_ }) },
     @{ n = 'Peak context'; mk = 'context-peak-day'; title = 'the largest context of one model call that day; 7 d: the highest'; v = @($dy | ForEach-Object { if ($_.cx) { [double]$_.cx.pk } else { $null } }); fmt = $tk; t = (& $tk ([double](@($dy | Where-Object cx | ForEach-Object { [double]$_.cx.pk }) + 0 | Measure-Object -Maximum).Maximum)); tips = @($dy | ForEach-Object { if ($_.cx) { "$(& $tk $_.cx.pk)$(& $cxR $_)" } else { 'no context record' } }) })
   foreach ($dr in $uRows) { $dr.d = $ud }   # Trends aligns the rows by date
-  $uRows = @(@{ hd = 'Usage'; g = 'usage' }) + $uRows   # its group in the Per day map (the 7-day sums: the right column, once)
+  # its group line (owner 2026-11-25): output tokens (the total is the right column: each number once) and the top role
+  $uOut = [double](@($dy | ForEach-Object { $sp = Get-KitSplitParts $_ 'tokens'; if ($sp.ok) { @($sp.p4 | Where-Object k -eq 'out' | ForEach-Object { [double]$_.v }) } }) + 0 | Measure-Object -Sum).Sum
+  $uEx = @($(if ($uOut) { "output tokens $(& $tk $uOut) in 7 d" }), $(if ($top -and $rAll) { "top: $($top.k) $(& $pct $top.sum $rAll)%" }) | Where-Object { $_ }) -join ' · '
+  $uRows = @(@{ hd = 'Usage'; g = 'usage'; ex = (& $e $uEx) }) + $uRows   # its group in the Per day map (the 7-day sums: the right column, once)
   $nRunning = @($devRuns | Where-Object status -eq 'running').Count
   [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); nRunning = $nRunning; tpm = $tpm
     dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })

@@ -64,7 +64,7 @@ Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; history 
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
 $tileWant = @("<span class=gn title='seconds per sweep, the day&#39;s average; 7 d: average &#183; slowest step now: wave reports 14.2 s'>Sweep time (s)<small>now 34 s</small></span>", "title='2026-01-02 (today) &#183; Sweep time (s): 37'>37</i>", "id=sec-dl-days open>", ">Disk D<small>479.1 GB free &#183; filling 1.7 GB/h &#183; full in 30.2 h</small>",
   'steady (11 min) &#183; Writes GB: what it filled per hour', '>Disk E<small>9 GB free &#183; filling 0.5 GB/h</small>', '<b>1 / 12</b><span>QA seats</span>', '<b>1</b><span>Builds running</span>', '<b>2</b><span>Builds queued</span>', '<b>61<small>%</small></b><span>RAM used</span>',
-  " translate=no>a<small>kept 1</small></span><span class='gs hm dy ws' style='--n:7'", " translate=no>c<small>kept 0</small></span><span class='gs hm dy ws' style='--n:7'",
+  "now: all branches 7 &#183; all worktrees 3 &#183; c 5/0 &#183; a 3/2</span>",   # owner 2026-11-25: rows with today only join the Repos line
   "title='2026-01-01 &#183; agents failed: 2'>2</i>")
 $tileMissing = @($tileWant | Where-Object { -not $tilePage.Contains($_) })
 $staleBoard = Join-Path (TkPath $k board -Create) 'stale-s.json'; @{ session = 'stale-s'; agent = 'Y7'; run = 'r7'; status = 'working'; beat = (Get-Date).AddMinutes(-40).ToString('o'); joined = (Get-Date).AddMinutes(-50).ToString('o') } | ConvertTo-Json | Set-Content $staleBoard -Encoding utf8

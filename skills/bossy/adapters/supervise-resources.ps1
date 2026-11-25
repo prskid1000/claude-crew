@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1046 release · L1092 lines · L1119 cleanup · L1186 launch ·
-  L1303 pause · L1422 heartbeat · L1438 sessions · L1497 ci tasks ·
-  L1562 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1049 release · L1095 lines · L1122 cleanup · L1189 launch ·
+  L1306 pause · L1425 heartbeat · L1441 sessions · L1500 ci tasks ·
+  L1565 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -768,7 +768,10 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   foreach ($dr in @($hRows) + @($rTot)) { $dr.d = $d7 }   # Trends aligns the rows by date
   $UP = Format-KitUsageHtml $st.usage
   # row groups of the Per day map (owner 2026-11-24): test checks, usage, kit health, repos (each its header)
-  $dayMore = @(Get-KitQaDayRows $st.qa) + @($UP.dayRows) + @(@{ hd = 'Kit health'; g = 'kit' }) + @($hRows) + @(Get-KitRepoDayRows $st.repos $st.sync $lv $d7 $rTot)
+  # Kit health's group line (owner 2026-11-25)
+  $fdW = @(for ($i = 0; $i -lt 7; $i++) { if ([int]$fd[$i]) { [pscustomobject]@{ d = $d7[$i]; n = [int]$fd[$i] } } }) | Sort-Object { -$_.n } | Select-Object -First 1
+  $khEx = if ($fdW) { "$(& $s7 $fd) agents failed, most on $($fdW.d) ($($fdW.n))" } else { 'all green: no agent failed' }
+  $dayMore = @(Get-KitQaDayRows $st.qa) + @($UP.dayRows) + @(@{ hd = 'Kit health'; g = 'kit'; ex = (& $e $khEx) }) + @($hRows) + @(Get-KitRepoDayRows $st.repos $st.sync $lv $d7 $rTot)
   # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
   $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
     $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }

@@ -7,8 +7,8 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages); the PARITY next batch flag.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L726 flags · L945 bands ·
-  L1108 shells · L1179 reset · L1220 parity
+Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L732 flags · L957 bands ·
+  L1120 shells · L1191 reset · L1232 parity
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -523,14 +523,20 @@ function Format-KitDayHeat($Rows, [string[]]$Dates, [string]$What, [string]$TotL
           # dd: a direction per day (up / dn / rs = reset / ch = changed, not a number): the cell's colour (CSS .hm.pd)
           if ($r.dd -and "$(@($r.dd)[$i])") { $c = $c -replace '^<i', "<i data-d=$(@($r.dd)[$i])" }
           if ($r.dt -and "$(@($r.dt)[$i])") { $c = $c -replace '^<i', "<i data-t=$(@($r.dt)[$i])" }   # dt: a tone per day (warn amber, act red)
-          if ($r.fv -and $tx) { $c -replace '^<i', "<i tabindex=0 role=button data-ft='$(& $e $r.ft)' data-fv='$(& $e "$(@($r.fv)[$i])")'" } else { $c } })
+          if ($r.fv -and $tx -and "$(@($r.fv)[$i])") { $c -replace '^<i', "<i tabindex=0 role=button data-ft='$(& $e $r.ft)' data-fv='$(& $e "$(@($r.fv)[$i])")'" } else { $c } })
       $busy = [bool]$r.keep -or [bool]@($vs | Where-Object { $null -ne $_ -and [double]$_ -gt 0 }).Count
-      [pscustomobject]@{ busy = $busy; html = "<div class=$(if ($r.gl) { "'gk gl0'" } else { 'gk' })$(if ($r.mk) { " data-mk='$($r.mk -replace '[^\w.:-]', '-')'" })><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })$(if ($r.id) { ' translate=no' })>$(& $e $r.n)$(if ($r.subh) { "<small>$($r.subh)</small>" } elseif ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span><span class='gs hm dy$(if ($r.cls) { " $($r.cls)" })$(if ($r.sk -or $r.sb) { ' sbr' })' $cn role=img aria-label='$(& $e "$($r.n) per day, $nd days")'>$($cells -join '')</span><span class='gc$(if ("$($r.t)" -in '', '0', '—') { ' z' })'>$(& $e "$($r.t)")</span></div>" } })
+      # today-only (owner 2026-11-25: no mostly blank row): data on today alone -> its value in the group line, no grid row, until a 2nd day has data
+      $now = if (-not $r.keep -and $nd -gt 1 -and $null -ne $vs[$nd - 1] -and -not @($vs[0..($nd - 2)] | Where-Object { $null -ne $_ }).Count) { [pscustomobject]@{ tx = $(if ($tx) { "$($r.n) $tx" }) } }   # a 0 today: no grid row, no text
+      [pscustomobject]@{ busy = $busy; n = "$($r.n)"; t = "$($r.t)"; now = $now; html ="<div class=$(if ($r.gl) { "'gk gl0'" } else { 'gk' })$(if ($r.mk) { " data-mk='$($r.mk -replace '[^\w.:-]', '-')'" })><span class=gn$(if ($r.title) { " title='$(& $e $r.title)'" })$(if ($r.id) { ' translate=no' })>$(& $e $r.n)$(if ($r.subh) { "<small>$($r.subh)</small>" } elseif ($r.sub) { "<small>$(& $e $r.sub)</small>" })</span><span class='gs hm dy$(if ($r.cls) { " $($r.cls)" })$(if ($r.sk -or $r.sb) { ' sbr' })' $cn role=img aria-label='$(& $e "$($r.n) per day, $nd days")'>$($cells -join '')</span><span class='gc$(if ("$($r.t)" -in '', '0', '—') { ' z' })'>$(& $e "$($r.t)")</span></div>" } })
   # row groups (owner 2026-11-24: one Per day map): @{ hd = title; g = key; cn = count; ex = summary html } starts a folding group; idle rows fold per group
   $segs = [Collections.Generic.List[object]]::new(); $segs.Add([pscustomobject]@{ hd = $null; rows = [Collections.Generic.List[object]]::new() })
   foreach ($x in $rs) { if ($x.hd) { $segs.Add([pscustomobject]@{ hd = $x.hd; rows = [Collections.Generic.List[object]]::new() }) } else { $segs[-1].rows.Add($x) } }
-  $body = @(foreach ($sg in $segs) { $hr = Format-KitHeatRows $sg.rows 'rows' "$nd days"; if (-not $sg.hd) { $hr; continue }; $h0 = $sg.hd
-      "<div class=rgg data-g='dg-$($h0.g -replace '[^\w-]', '-')'><div class='gk rgh dgh'><button type=button class=rgb aria-expanded=true><span class=gn0>$(& $e $h0.hd)</span>$(if ("$($h0.cn)" -ne '') { "<span class=gcn>$(& $e $h0.cn)</span>" })$(if ($h0.ex) { "<span class=fsm>$($h0.ex)</span>" })</button></div>$hr</div>" })
+  # a group line without its own summary: its first 3 busy rows and totals; today-only rows: "now: <row> <value>" there
+  $body = @(foreach ($sg in $segs) { if (-not $sg.hd) { Format-KitHeatRows $sg.rows 'rows' "$nd days"; continue }; $h0 = $sg.hd
+      $hr = Format-KitHeatRows @($sg.rows | Where-Object { -not $_.now }) 'rows' "$nd days"; $nowTx = @($sg.rows | Where-Object now | ForEach-Object { $_.now.tx } | Where-Object { $_ })
+      $sum = if ($h0.ex) { "$($h0.ex)" } else { & $e (@($sg.rows | Where-Object { $_.busy -and -not $_.now -and "$($_.t)" -notin '', '—' } | Select-Object -First 3 | ForEach-Object { "$($_.n) $($_.t)" }) -join ' · ') }
+      if ($nowTx.Count) { $sum = "$(if ($sum) { "$sum · " })now: $(& $e ($nowTx -join ' · '))" }
+      "<div class=rgg data-g='dg-$($h0.g -replace '[^\w-]', '-')'><div class='gk rgh dgh'><button type=button class=rgb aria-expanded=true><span class=gn0>$(& $e $h0.hd)</span>$(if ("$($h0.cn)" -ne '') { "<span class=gcn>$(& $e $h0.cn)</span>" })$(if ($sum) { "<span class=fsm>$sum</span>" })</button></div>$hr</div>" })
   "<div class='gks w1 dyh'>$head$($body -join '')</div>"
 }
 # shared card parts (owner 2026-11-19: value + label tiles, one labelled stacked bar, an aligned table; never dot-joined text lines)
@@ -852,7 +858,13 @@ function Get-KitPopoverCss {
 # page JS of these cards: the idle-rows fold; links into the kit's own pages (a[data-dw]: run steps, reports) open in an in-page
 # drawer (an iframe: file:// pages too; Esc, the close button or a backdrop click closes it), never navigating away (kitbag.py ui-check: LINK)
 function Get-KitStatsJs {
-  "(function(){var d=document;d.addEventListener('click',function(x){var b=x.target.closest('.gkx');if(!b)return;b.setAttribute('aria-expanded',b.parentNode.classList.toggle('gio'))});" +
+  # idle rows fold, kept per group (its data-g, else its section id) + its place in it (owner 2026-11-25: every fold survives a reload)
+  "(function(){var d=document;function gxk(b){var s=b.parentNode.closest('.rgg[data-g],details[id]'),bs=[].filter.call((s||d).querySelectorAll('.gkx'),function(z){return z.parentNode.closest('.rgg[data-g],details[id]')==s});return'kc-gx-'+(s?s.dataset.g||s.id:'')+'-'+bs.indexOf(b)}" +
+  "function gxs(b,o){b.parentNode.classList.toggle('gio',o);b.setAttribute('aria-expanded',o)}d.querySelectorAll('.gkx').forEach(function(b){try{var v=localStorage.getItem(gxk(b));if(v!==null)gxs(b,v=='1')}catch(e){}});" +
+  "d.addEventListener('click',function(x){var b=x.target.closest('.gkx');if(!b)return;var o=!b.parentNode.classList.contains('gio');gxs(b,o);try{localStorage.setItem(gxk(b),o?'1':'0')}catch(e){}});" +
+  # every other fold (long text, a command; sections: kc-open) the same way, keyed by its holder's id + its summary; keys no longer on the page drop out
+  "function jx(){try{return JSON.parse(localStorage.getItem('kc-dx'))||{}}catch(e){return{}}}function dxs(){var n={};return[].map.call(d.querySelectorAll('details:not(.sec)'),function(s){var p=s.parentElement&&s.parentElement.closest('[id],[data-g]'),m=s.querySelector(':scope>summary'),k=(p?p.id||p.dataset.g:'')+'|'+(m?m.textContent.trim().slice(0,80):'');n[k]=(n[k]||0)+1;return[s,k+'|'+n[k]]})}" +   # the same summary twice in one holder: its count tells them apart
+  "var dx=jx();dxs().forEach(function(z){var s=z[0],k=z[1],m=s.querySelector(':scope>summary');if(k in dx)s.open=dx[k];if(m)m.addEventListener('click',function(){setTimeout(function(){delete s.dataset.fo;var o=jx(),ks={};dxs().forEach(function(y){ks[y[1]]=1});for(var q in o)if(!ks[q])delete o[q];o[k]=s.open;try{localStorage.setItem('kc-dx',JSON.stringify(o))}catch(e){}})})});" +
   # Spend table: a role's button shows its step-type rows (same columns)
   "d.addEventListener('click',function(x){var b=x.target.closest('.spx');if(!b)return;b.setAttribute('aria-expanded',b.closest('tbody').classList.toggle('op'))});" +
   "var dw=d.createElement('dialog');dw.className='drw';dw.setAttribute('aria-label','Linked page');dw.innerHTML='<div class=dwh><b></b><button type=button class=ib aria-label=`"Close (Esc)`" title=`"Close (Esc)`">&#10005;</button></div><iframe title=`"Linked page`"></iframe>';d.body.appendChild(dw);var fr=dw.querySelector('iframe');" +

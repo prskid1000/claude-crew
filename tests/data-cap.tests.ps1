@@ -201,7 +201,7 @@ $fo = & { . $supBossy 6>$null; $n = Get-Date; $lv = @(@{ at = $n.AddDays(-1).ToS
   $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ live = $lv; disks = @(@{ drive = 'C:'; free = 48.2; rate = 0; total = 100 }); now = [pscustomobject]@{ disks = @(@{ drive = 'C:'; free = 48.2; rate = 0 }) }
       repos = @{ at = $n.Date.AddMinutes(5).ToString('o'); repos = @(@{ repo = 'web'; branches = 3; worktrees = 2; kept = 1 }) }; writes = @{ at = $n.ToString('o'); days = @(@{ d = $n.Date.ToString('o'); m = 2.5; k = 1; h = @(, @(1, 0.5)) }) } } })
   $h -match "id=sec-writes><summary><h4>[^<]*</h4>(<span class=cnt>[^<]*</span>)?<span class=fsm>$([regex]::Escape('2.5 GB written in 7 days (kit 1 GB, 40%) &#183; free now C: 48.2 GB'))</span>"
-  $h -match "<span class=gn0>Repos</span><span class=gcn>1</span><span class=fsm>3 branches &#183; 2 worktrees &#183; 1 kept &#183; as of 00:05</span>"
+  $h -match "<span class=gn0>Repos</span><span class=gcn>1</span><span class=fsm>3 branches &#183; 2 worktrees &#183; 1 kept &#183; as of 00:05 (·|&#183;) now: web 3/2</span>"
   $h -notmatch 'sec-disk-free' -and $h -match "<span class='gc fr lo' title='[^']*'>48\.2<small>▼2\.3</small></span>"
   $h.IndexOf("<details class='sec top' id=sec-internals>") -lt $h.IndexOf("id=sec-trends open>") }
 Expect "page: disk free / writes / repos folded closed with a header summary; Trends inside the closed Kit internals ($fo)" ("$fo" -eq 'True True True True')
