@@ -40,9 +40,9 @@ $kbr = & { . $lkL; function Get-MigTool { 'liquibase' }; function Get-RepoConf($
 Expect "train merge: an include-only changelog master conflict and a repos[].appendOnly file keep both sides and commit; code or a non-include line: refused, merge untouched ($kbr)" ($kbr -eq 'True|True|False|True|False|True|False|del:False|True')
 # envfix-phone 2026-11-25: ui login / user create on a lane name: the base target on the lane's ports + the lane entry's own logins
 $prt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); function Get-LaneTarget($c, $n) { if ($n -eq 'local-shop-osprey') { [pscustomobject]@{ api = 'http://127.0.0.1:8280'; users = [pscustomobject]@{ base1 = @{} } } } }
-  $tg = [ordered]@{ 'local-shop' = [ordered]@{ api = 'http://127.0.0.1:8080' }; 'local-shop-osprey' = [ordered]@{ users = [ordered]@{ driver1 = @{} } }; 'stage' = [ordered]@{ api = 'https://s'; users = [ordered]@{ a = @{} } } }
-  $l1 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $tg.Remove('local-shop-osprey'); $l2 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $s = Resolve-PokeyTarget $tg 'stage'
-  "$($l1.api)|$(@($l1.users.Keys) -join ',')|$(@($l2.users.Keys) -join ',')|$($s.api)|$($null -eq (Resolve-PokeyTarget $tg 'nope'))" }
-Expect "pokey targets: a lane name = the base on the lane's ports with the lane entry's own logins (none: the base's, as a dict); a full entry as is ($prt)" ($prt -eq 'http://127.0.0.1:8280|driver1|base1|https://s|True')
+  $tg = [ordered]@{ 'local-shop' = [ordered]@{ api = 'http://127.0.0.1:8080' }; 'local-shop-osprey' = [ordered]@{ users = [ordered]@{ driver1 = @{}; base1 = @{ lane = 1 } }; created = [ordered]@{ driver1 = @{ at = '2026-01-02T03:04:05Z' } } }; 'stage' = [ordered]@{ api = 'https://s'; users = [ordered]@{ a = @{} } } }
+  $l1 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $tp = Resolve-PokeyTarget ([pscustomobject]$tg) 'local-shop-osprey'; $tg.Remove('local-shop-osprey'); $l2 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $s = Resolve-PokeyTarget $tg 'stage'
+  "$($l1.api)|$(@($l1.users.Keys) -join ',')|$($l1.users.base1.lane)|$($l1.created.driver1.at)|$(@((Get-KitProps $tp.users).Name) -join ',')|$(@($l2.users.Keys) -join ',')|$($s.api)|$($null -eq (Resolve-PokeyTarget $tg 'nope'))" }
+Expect "pokey targets: a lane name = the base on the lane's ports with the base's logins + the lane entry's own (own wins, dates kept; members for api); a full entry as is ($prt)" ($prt -eq 'http://127.0.0.1:8280|base1,driver1|1|2026-01-02T03:04:05Z|base1,driver1|base1|https://s|True')
 Remove-TestKit $laneKit
 Complete-Tests

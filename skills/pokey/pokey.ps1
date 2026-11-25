@@ -19,8 +19,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L30 lanes · L44 report · L161 seat · L310 api · L582 users · L714 login surfaces (parity.json login) · L747 finalize ·
-  L1298 results · L1333 retest · L1390 prepare
+Sections: L30 lanes · L44 report · L161 seat · L310 api · L585 users · L717 login surfaces (parity.json login) · L750 finalize ·
+  L1301 results · L1336 retest · L1393 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -348,20 +348,23 @@ function Get-LaneTarget($cfg, [string]$name) {
   foreach ($g in @($lanes | Where-Object { $_.lane -eq 1 })) {
     $one = @((Get-KitProps $g.ports) | Where-Object { $urls -match ":$($_.Value)(?!\d)" }); $lk = @($lanes | Where-Object { $_.group -eq $g.group -and $_.lane -eq $k })[0]
     if (-not $one.Count -or -not $lk) { continue }
-    $t = $base | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $kd = if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { @{ DateKind = 'String' } } else { @{} }; $t = $base | ConvertTo-Json -Depth 10 | ConvertFrom-Json @kd
     foreach ($f in 'web', 'api') { if ((Get-KitMember $t $f)) { foreach ($p in $one) { Set-KitMember $t $f ([regex]::Replace([string](Get-KitMember $t $f), ":$($p.Value)(?!\d)", ":$((Get-KitMember $lk.ports ($p.Name)))")) } } }
     return $t
   }
   $null
 }
 # a target by name (api, ui login, user): an entry with its own URLs as is; a lane name (<target>-<bird> / <target><k>) = the base
-# target on that lane's ports, plus the users / created of a lane entry holding only logins (a lane DB has its own; envfix-phone)
+# target on that lane's ports with the base's logins plus a logins-only lane entry's own (envfix-phone, envfix-local)
 function Resolve-PokeyTarget($targets, [string]$Name) {
   $own = Get-KitMember $targets $Name; if ($own -and ((Get-KitMember $own 'api') -or (Get-KitMember $own 'web'))) { return $own }
   $lt = Get-LaneTarget ([pscustomobject]@{ targets = $targets }) $Name; if (-not $lt) { return $own }
-  if ($own) { foreach ($lk in 'users', 'created', 'defaultUser', 'defaultTenant') { if ($null -ne (Get-KitMember $own $lk)) { Set-KitProp $lt $lk (Get-KitMember $own $lk) } } }
-  if ($targets -is [Collections.IDictionary]) { foreach ($lk in 'users', 'created') { $v = Get-KitMember $lt $lk; if ($v -isnot [Collections.IDictionary]) { $d = [ordered]@{}; foreach ($p in @(Get-KitProps $v)) { $d[$p.Name] = $p.Value }; Set-KitProp $lt $lk $d } } }   # user / ui login read .Keys
-  $lt
+  $kd = if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { @{ DateKind = 'String' } } else { @{} }
+  $lt = $lt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable @kd; if ($own) { foreach ($lk in 'defaultUser', 'defaultTenant') { if ($null -ne (Get-KitMember $own $lk)) { $lt[$lk] = Get-KitMember $own $lk } } }
+  # users / created: the base's (a lane DB is a copy of the same seed) + the lane entry's own, which win on a clash
+  foreach ($lk in 'users', 'created') { $mg = [ordered]@{}; foreach ($src in @($lt[$lk], $(if ($own) { Get-KitMember $own $lk }))) { if ($src -is [Collections.IDictionary]) { foreach ($sk in @($src.Keys)) { $mg[$sk] = $src[$sk] } } elseif ($null -ne $src) { foreach ($p in @(Get-KitProps $src)) { $mg[$p.Name] = $p.Value } } }; $lt[$lk] = $mg }
+  # user / ui login read .Keys (hashtable targets); api reads members
+  if ($targets -is [Collections.IDictionary]) { $lt } else { $lt | ConvertTo-Json -Depth 20 | ConvertFrom-Json @kd }
 }
 # the user when -As is not given: target defaultUser, kit api.defaultUser, the target's only user; several and none chosen = $null
 function Resolve-ApiUser($t) {
