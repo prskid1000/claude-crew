@@ -68,6 +68,16 @@ git -C "$r/repo" push -q origin main~1:refs/heads/deploy/st-20260101-121212 2>$n
 Set-Content "$hostLog.open" '[{"iid":8,"source_branch":"deploy/st-20260101-121212","target_branch":"staging","state":"opened"}]'; $o6s = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -WaitMinutes 1 2>&1 | Out-String
 Expect "deploy merge -Mr: an open deploy MR lacking origin/main = stale, refused ($($o6s.Trim()))" ($o6s -match 'lacks origin/main \(stale\)' -and $o6s -notmatch 'merged deploy MR')
 Remove-Item "$hostLog.open"
+# -Commit <sha>: one main-line commit deploys (no hand-pushed pin branch); unknown or off-main commits refused
+'d' | Set-Content "$r/repo/d.txt"; git -C "$r/repo" add -A; git -C "$r/repo" commit -q -m 'feat: d'; git -C "$r/repo" push -q origin main 2>$null
+$pinSha = "$(git -C "$r/repo" rev-parse main~1)".Trim(); $offSha = "$(git -C "$r/repo" commit-tree 'HEAD^{tree}' -m side)".Trim()
+Get-ChildItem "$r/wt" -Directory -Filter 'deploymerge-*' -ErrorAction SilentlyContinue | ForEach-Object { git -C "$r/repo" worktree remove --force $_.FullName 2>$null }
+Remove-Item "$hostLog.merged", $hostLog -ErrorAction SilentlyContinue
+$pinOut = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Commit $pinSha.Substring(0, 10) -WaitMinutes 1 2>&1 | Out-String; $pinLog = if (Test-Path $hostLog) { Get-Content $hostLog -Raw } else { '' }
+$pinBad = foreach ($bad in 'feedc0de', $offSha) { "$(pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Commit $bad 2>&1) rc=$LASTEXITCODE" }
+git -C "$r/origin.git" merge-base --is-ancestor main deploy/st; $pinHasHead = -not $LASTEXITCODE; git -C "$r/origin.git" merge-base --is-ancestor $pinSha deploy/st; $pinHasPin = -not $LASTEXITCODE
+Expect "deploy merge -Commit: deploy/st holds the pinned commit, not the newer main head, body names it; unknown / off-main sha exit 2 ($($pinOut.Trim()) | $($pinBad -join ' | '))" ($pinOut -match 'pinned: ' -and $pinOut -match 'merged deploy MR' -and $pinHasPin -and -not $pinHasHead -and $pinLog -match "Pinned commit: $pinSha" -and
+  $pinBad[0] -match 'no such commit.*rc=2' -and $pinBad[1] -match 'is not on origin/main.*rc=2')
 Remove-Item Env:DM_HOST_LOG
 $o3 = pwsh @np $O deploy merge -To staging 2>&1 | Out-String
 Expect "deploy merge without -Repo: a clear error, no binding crash ($($o3.Trim()))" ($o3 -match 'deploy merge: -Repo missing' -and $o3 -notmatch 'Cannot bind')

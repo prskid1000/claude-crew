@@ -5,7 +5,7 @@ Copy a section, fill the `<...>` parts; which step fills which: the using skill'
 ## Writing standards (every artefact the kit reads or writes)
 Rules: AGENTS.md "Writing"; every limit is a ceiling. `skills/bossy/kitbag.py prose --kind <kind> <file>` measures a text (exit 1 =
 findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
-`pokey.ps1 finalize`) run it, print findings, never truncate; fix a finding by rewriting. Listed `##` sections: always, in
+`pokey.ps1 finalize`) run it, print findings, never truncate; fix by rewriting. Listed `##` sections: always, in
 order, never empty or bare "none": `n/a — <why>` (prose; `devtools.py doc` / `finish` refuse a doc without).
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
 `<Section>:` that section (`_` for a space) · `prose:` without table rows (cells: their own kind) and image lines. Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
@@ -15,7 +15,7 @@ Banned everywhere: greetings, thanks · "I hope" · "please note" · "it is wort
 "in conclusion" · "basically" · "simply" · "actually" · "really" · "very" · "successfully" · "feel free" · "let me know" ·
 "happy to" · "great job" · "as an AI" · task recap · restating template words.
 Markdown: commands, paths, class names, config keys and ids in `backticks` (monospace; nothing else is guessed); labels
-`**Label:**`; links `[text](url)`; a blank line between blocks; a tracker showing plain text: its adapter drops the markup.
+`**Label:**`; links `[text](url)`; a blank line between blocks; plain-text trackers: the adapter drops markup.
 
 | Kind | Purpose | Format (sections in order) | Limits | Required facts |
 |---|---|---|---|---|
@@ -39,7 +39,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | commit | commit message ("MR spec") | `commitFormat` subject; blank line; body bullets | first:72ch 12l 100ch | conv |
 | merge-commit | a merge commit (deploy merge, target into a branch) | subject naming both branches; blank line; why | 12l 100ch | — |
 | task-name | tracker task name (`tracker create`: `naming make title`) | `<KEY> <outcome>`; kind, product, area, wave: tags (`naming tags`); DUP-WORDS | 1l 100ch | — |
-| task-description | tracker task text (`tracker create -Spec`) | Problem, Goal, Items, Acceptance, Links | 200w each:6b | link |
+| task-description | tracker task text (`tracker create -Spec`; <= 170w: `finish` adds links) | Problem, Goal, Items, Acceptance, Links | 200w each:6b | link |
 | comment-solution | solution comment on a task | "Comment spec" | 8l 120w | — |
 | comment-status | a status change note ("Comment spec") | `<status> — <why> · <link>` | 2l 40w | link |
 | comment-deploy | a deploy record (+ the batched ask under `deploy.trigger` ask) | env, MRs (merge order), who said deploy, result | 8l 120w | link |
@@ -83,7 +83,7 @@ Rendered, never hand-written: `bossy.ps1 recover` (crash) or, at a budget HANDOF
 Open: worktrees, leases, pending decisions, Notes). The next agent joins with the same id + `-Resume` (TAKEOVER), leases
 each branch again (`crafty.ps1 wt lease -Branch <b>`: the slot that has it) + `wt status`, reads the task and its MRs;
 files changing under it: stop, report.
-`<run>.resume.md`: per area, done (skipped) / missing (run) steps, MRs, tracker, doc.
+`<run>.resume.md`: per area, done (skip) / missing (run) steps, MRs, tracker, doc.
 
 ## Test cases (goals file, AI doc, human doc)
 devy writes ONE spec per task (crafty step 4), never the three docs: `devtools.py cases add <task> <spec.json>` (merged by id),
@@ -114,7 +114,7 @@ One spec renders the MR title (`mrTitleFormat`), body (Summary, Changes, How tes
 (`commitFormat` subject + change bullets + trailers): `devtools.py mr <wt> --spec mr.json`, `crafty.ps1 wt commit -Dir <wt>
 -Spec mr.json`; `devtools.py render mr-title|mr-body|commit mr.json` reads it first. Local env row: the loop checkpoint
 (`checkpoint -Step loop -Evidence`) unless `localEnv`; testing doc lines: `devtools.py finish` (`builtin:testingDocs`: merge refuses without).
-Limits (`devtools.py mr` refuses over them): body 260 words, **max 3 bullets per section** (`changes` 3; `risks` 1, +
+Limits (`devtools.py mr` refuses more): body 260 words, **max 3 bullets per section** (`changes` 3; `risks` 1, +
 `limits` + `afterDeploy`; Links 9), Summary 40 words; title 90 chars; commit subject 72 chars, lines 100 chars.
 ```json
 { "task": "<id>", "type": "feat|fix|refactor", "scope": "", "change": "<subject>", "code": "<item code>", "repo": "", "summary": "<one-line goal and outcome>",

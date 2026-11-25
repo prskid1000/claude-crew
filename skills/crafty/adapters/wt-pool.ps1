@@ -9,10 +9,47 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L144 names · L237 slots · L270 lease · L381 release · L412 lanes · L517 sync · L619 pool · L662 sweep
+Sections: L15 worktrees · L184 names · L277 slots · L310 lease · L421 release · L452 lanes · L557 sync · L659 pool · L702 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
+# crafty.ps1 wt sync (its token cap), inside Invoke-Wt: repos[].regenerate: generated-only rebase conflict -> target's copy + run commands, rebase done, last commit amended + pushed;
+# returns 'regenerated ...' or the refusal reason (a failing command: back to the plain conflict)
+function Sync-Generated($d, $t, $head0) {
+  $gen = @(Get-RepoConf ("$(git -C $d remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1] 'regenerate' @())
+  if (-not $gen.Count) { return '' }
+  $taken = @(); $gd = GitDir $d; $last = ''
+  while ((Test-Path "$gd/rebase-merge") -or (Test-Path "$gd/rebase-apply")) {
+    $u = @(git -C $d -c core.quotepath=false diff --name-only --diff-filter=U)
+    $other = @($u | Where-Object { $f = $_; -not ($gen | Where-Object { $f -like $_.path }) })
+    $sig = "$(git -C $d rev-parse -q --verify REBASE_HEAD)|$($u -join '|')"   # same commit, same files: no progress
+    if ($sig -eq $last) { $other = $u }
+    if (-not $u.Count -or $other.Count) { return "not only generated files conflict ($($other -join ', '))$(if ($taken) { "; took the target's $($taken -join ', '): after the rebase run repos[].regenerate run" })" }
+    $last = $sig
+    foreach ($f in $u) {   # rebase: ours = target; none = target deleted it
+      git -C $d checkout -q --ours -- $f 2>$null
+      if ($LASTEXITCODE) { git -C $d rm -q -- $f 2>$null } else { git -C $d add -- $f }
+    }
+    $taken = @($taken + $u | Select-Object -Unique)
+    git -C $d diff --cached --quiet
+    $step = if ($LASTEXITCODE) { 'continue' } else { 'skip' }   # only generated changes
+    $null = git -C $d -c core.editor=true rebase "--$step" 2>&1
+  }
+  if (-not $taken.Count) { return 'the rebase stopped without a conflict' }
+  $mr = if ($Mrs) { ($Mrs -split '[!/#]')[-1] } else { try { "$(@(Get-MergedMrs $d (G -C $d rev-parse --abbrev-ref HEAD).Trim() $t 'opened' | ForEach-Object iid)[0])" } catch { '' } }
+  $runs = @($gen | Where-Object { $p = $_.path; $taken | Where-Object { $_ -like $p } } | ForEach-Object { @($_.run) } | Select-Object -Unique | Where-Object { $mr -or $_ -notmatch '\{mr\}' })   # {mr}: only once the MR exists
+  foreach ($c in $runs) {
+    $tok = Split-KitCommand $c @{ mr = $mr; target = $t }
+    $r = Invoke-KitExe $tok[0] @($tok | Select-Object -Skip 1) 900 -Cwd $d
+    if ($r.code) { git -C $d reset -q --hard $head0; $null = git -C $d rebase "origin/$t" 2>&1; return "regenerate failed (exit $($r.code)): $c`n$("$($r.err)$($r.out)".Trim() -split "`n" | Select-Object -Last 5)" }
+  }
+  $own = (G -C $d rev-list --count "origin/$t..HEAD").Trim() -ne '0'   # none: every commit only changed generated files
+  git -C $d add -A -- @($taken); git -C $d diff --cached --quiet
+  if ($LASTEXITCODE) { if ($own) { G -C $d commit -q --amend --no-edit | Out-Null } else { G -C $d commit -q -m "chore: regenerate $($taken -join ', ')" | Out-Null; $own = $true } }
+  $br = (G -C $d rev-parse --abbrev-ref HEAD).Trim(); git -C $d rev-parse -q --verify "refs/remotes/origin/$br" *> $null
+  $pushed = if (-not $LASTEXITCODE -and $br -ne $t -and $own) { G -C $d push -q --force-with-lease origin "HEAD:refs/heads/$br" | Out-Null; "; pushed ${br}: run devtools.py merge again" } else { '' }
+  "regenerated $($taken -join ', ') (target's copy + $($runs.Count) command(s)$(if (-not $mr) { ', no MR yet: {mr} commands skipped' }))$pushed"
+}
 # { param($path) -> 'a board agent' | 'a running process' | $null }: a live row's claims + the worktrees its agent checkpointed
 # since it joined (a kitty's own worktree went after its push), or a process (editor, build, shell) in the folder
 function Get-KitWtHeldTest {
@@ -107,6 +144,9 @@ function Copy-HookDirs($path, $sources, [string]$hooksDir = '.husky') {
 function Get-WtDepSource($rp, $tg) {
   $rc = Get-WtRepoConf $rp; if (-not $rc) { return }
   $cand = @(if ($rc.linkFromByTarget -and (Get-KitMember $rc.linkFromByTarget $tg)) { (Get-KitMember $rc.linkFromByTarget $tg) } elseif ($rc.linkFrom -and $tg -eq $rc.target) { $rc.linkFrom }) | Where-Object { $_ } | ForEach-Object { "$_" }
+  if (-not $cand.Count -and $tg -and $tg -ne $rc.target) {   # a feature-branch target: the worktree (lease) on that branch has its deps, the main checkout another branch's
+    $cand = @(git -C $rp worktree list --porcelain 2>$null | ForEach-Object { if ($_ -match '^worktree (.+)$') { $wtAt = $Matches[1] } elseif ($_ -eq "branch refs/heads/$tg") { $wtAt } } | Select-Object -First 1)
+  }
   foreach ($c in $cand) { if (-not (Test-Path $c)) { throw "kit.local.json dep source $c ($(Split-Path $rp -Leaf), target $tg) is missing: create it (git worktree add --detach <path> origin/$tg + frozen-lockfile install) or fix kit.local.json" } }
   $cand
 }

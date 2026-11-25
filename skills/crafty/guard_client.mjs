@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L90 warm · L109 context
+// Sections: L25 crash · L50 plain · L90 warm · L115 context
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
@@ -88,10 +88,16 @@ function plain(start) {
 }
 
 // ---- warm: ask the guard_server.ps1 pipe; busy, absent or odd -> the plain path
+// a config key as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, a kit.local.json pin, else the registry default (no browser.mjs import: hot path)
+function kitParam(key) {
+  const env = +process.env['KIT_PARAM_' + key.replace(/\W/g, '_').toUpperCase()], json = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return {} } }
+  const pin = key.split('.').reduce((o, k) => o?.[k], json(join(here, 'kit.local.json')))
+  return env || (typeof pin === 'number' ? pin : +(/default=([\d.]+)/.exec(json(join(kit, 'skills', 'bossy', 'params.registry.json')).params?.[key] || '') || [])[1] || 0)
+}
 function ask(tries) {
   let buf = '', done = false
   const c = net.connect(pipe)
-  const fail = (noServer) => { if (done) return; done = true; c.destroy(); if (tries > 0) setTimeout(() => ask(tries - 1), 40); else plain(noServer) }   // busy or between two calls: retry
+  const fail = (noServer) => { if (done) return; done = true; c.destroy(); if (tries > 0) setTimeout(() => ask(tries - 1), kitParam('guard.clientRetryMs')); else plain(noServer) }   // busy or between two calls: retry
   c.setTimeout(3000, () => { if (!done) { done = true; c.destroy(); plain(false) } })   // a slow server: this call the plain way (hook timeout 10 s)
   c.on('error', (e) => fail(e.code === 'ENOENT'))   // still no server after the retries: start one
   c.on('connect', () => c.write(JSON.stringify({ env, input }) + '\n'))

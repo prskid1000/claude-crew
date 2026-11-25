@@ -131,5 +131,12 @@ Invoke-Pipes -Repo shop -Branch staging -Sha bbb -MaxMinutes 1   # the older run
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
 $pu = @(pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') pipes -Branch staging 2>&1) -join ' '
 Expect "pipes -Repo -Branch: the branch's newest pipeline, its failed job and error; -Branch without -Repo = usage ($pb | $pu)" ("$pb" -match '"done":true' -and "$pb" -match '"mr":"branch:shop@staging","status":"failed","job":"deploy-stg","error":"ERROR: rollout timed out"' -and "$pb" -match 'CALL ci\.runs shop staging' -and $pu -match '-Branch needs -Repo')
+# a failed host call says why on stderr (devtools.py mr printed "MR not created: null", retro 2026-11-25)
+$hfPs = Join-Path (Kd) 'hf.ps1'; Set-Content $hfPs "[Console]::Error.WriteLine('409 branch already has an MR'); exit 3"
+$hlPs = Join-Path (Kd) 'hl.ps1'; Set-Content $hlPs "'[{`"iid`":1}]'"
+& $J @{ gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.create' = "`"$pwshExe`" -NoProfile -File `"$hfPs`""; 'mr.list' = "`"$pwshExe`" -NoProfile -File `"$hlPs`"" } } } $kl
+$hf = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') host mr.create '{"repo":"shop","source":"f/x","target":"main","title":"t","body":"b"}' 2>&1 | Out-String
+$hl1 = "$(pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') host mr.list '{"repo":"shop","state":"opened"}' 2>$null)".Trim()
+Expect "host: a failed call prints null plus the host's own error; a one-MR list stays a list ($($hf.Trim()) | $hl1)" ($hf -match '(?m)^null' -and $hf -match 'host mr\.create failed: mr\.create exit 3: .*409 branch already has an MR' -and $hl1 -match '^\[\{"iid":1\}\]$')
 Remove-TestKit $k
 Complete-Tests

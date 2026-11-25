@@ -6,7 +6,7 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L249 session · L301 actions · L400 ui checks · L407 evidence
+// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L250 session · L302 actions · L401 ui checks · L408 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -190,9 +190,9 @@ async function sweep(browser, key, agent = '') {   // agent: its tabs go now (bo
   for (const p of await browser.pages()) {
     const id = await tabId(p).catch(() => ''), h = reg[id]
     if (!h && p.url() === 'about:blank') continue
-    const mine = agent && h && h.agent === agent
-    if (h && !mine && !((h.pid && !alive(h.pid)) || (h.agent && leftBoard(h.agent)))) h.seen = now   // live holder
-    if (mine || now - (h ? h.seen || h.at : reg[`?${id}`] || now) > GRACE_MS) { await p.close().catch(() => {}); closed++; if (h) leaseLog(mine ? 'release' : 'reclaim', key, h, mine ? process.env.KIT_LEASE_REASON : `reclaim: no live holder for ${GRACE_MS / 60000} min`); continue }
+    const mine = agent && h && h.agent === agent, dead = h && h.pid && !alive(h.pid)   // a crashed caller: its tab goes now, no 5 min tab wait
+    if (h && !mine && !(dead || (h.agent && leftBoard(h.agent)))) h.seen = now   // live holder
+    if (mine || dead || now - (h ? h.seen || h.at : reg[`?${id}`] || now) > GRACE_MS) { await p.close().catch(() => {}); closed++; if (h) leaseLog(mine ? 'release' : 'reclaim', key, h, mine ? process.env.KIT_LEASE_REASON : `reclaim: no live holder for ${GRACE_MS / 60000} min`); continue }
     live++
     keep[h ? id : `?${id}`] = h || reg[`?${id}`] || now
   }
@@ -239,8 +239,9 @@ const openDone = new Set()
 export function releaseOnExit(done) {
   if (!openDone.hooked) {
     openDone.hooked = true; let bye
-    const end = (sig, err) => bye ??= (async () => { if (!sig) console.error(err); await Promise.race([Promise.all([...openDone].map((d) => d().catch(() => {}))), sleep(5000)]); process.exit(sig ? 130 : 1) })()
-    for (const ev of ['uncaughtException', 'unhandledRejection', 'SIGINT', 'SIGTERM', 'SIGBREAK']) process.once(ev, (e) => process.listenerCount(ev) || end(ev[0] === 'S', e))
+    const end = (code, err) => bye ??= (async () => { if (code === 1 && err) console.error(err); await Promise.race([Promise.all([...openDone].map((d) => d().catch(() => {}))), sleep(5000)]); process.exit(code) })()
+    for (const ev of ['uncaughtException', 'unhandledRejection', 'SIGINT', 'SIGTERM', 'SIGBREAK']) process.once(ev, (e) => process.listenerCount(ev) || end(ev[0] === 'S' ? 130 : 1, e))
+    process.on('beforeExit', () => openDone.size && end(process.exitCode ?? 0))   // a script that ends without s.done(): its tabs close too
   }
   openDone.add(done)
   return () => openDone.delete(done)

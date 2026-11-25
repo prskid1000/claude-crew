@@ -1,10 +1,11 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 """Liquibase plugin: `devtools.py lbcheck <master.xml> [since]`, the Liquibase sanity check `crafty.ps1 check -Step migrations` runs
-for a repo without its own `repos[].migrations.check`. Loaded by devtools.py from skills/crafty/adapters/."""
+for a repo without its own `repos[].migrations.check`. Loaded by devtools.py from skills/crafty/adapters/.
+Sections: L8 lbcheck · L105 keepboth"""
 import os, re, sys
 import xml.etree.ElementTree as ET
 
-# --- Liquibase XML changes
+# ---- lbcheck: Liquibase XML changes
 NON_CHANGE = {'preConditions', 'rollback', 'comment', 'validCheckSum', 'property'}
 
 
@@ -101,7 +102,27 @@ when since is 0; prints issues + 'ISSUES <n>', exit 1 if n."""
     print('\n'.join(issues + [f'ISSUES {len(issues)}']))
     return 1 if issues else 0
 
+# ---- keepboth: append-only rebase conflicts (any repo; a changelog master is the common case)
+def keepboth(paths):
+    """Resolve conflict blocks as OURS then THEIRS; append-only files only (changelog includes, route/nav lists, i18n keys,
+    DI registrations, barrel exports, requirements.txt), never real code. A plugin verb (devtools.py token cap): devtools.py keepboth <file> [...]."""
+    left = 0
+
+    pat = re.compile(r'<<<<<<< [^\r\n]*\r?\n(.*?)(?:\|\|\|\|\|\|\| [^\r\n]*\r?\n.*?)?=======\r?\n(.*?)>>>>>>> [^\r\n]*(?:\r?\n|\Z)', re.S)   # last block may end the file
+    for path in paths:
+        text = open(path, encoding='utf-8', newline='').read()
+        n = len(pat.findall(text))
+        text = pat.sub(lambda m: m.group(1) + m.group(2), text)
+        open(path, 'w', encoding='utf-8', newline='').write(text)
+        print(path, 'resolved', n, 'block(s)')
+        if re.search(r'^(<<<<<<<|>>>>>>>) ', text, re.M):   # a block the pattern missed
+            print(path, 'STILL HAS CONFLICT MARKERS: resolve by hand', file=sys.stderr)
+            left += 1
+    return 1 if left else 0
+
+
 def register(dt):
     global _DT
     _DT = dt
     dt.VERBS['lbcheck'] = lbcheck
+    dt.VERBS['keepboth'] = keepboth

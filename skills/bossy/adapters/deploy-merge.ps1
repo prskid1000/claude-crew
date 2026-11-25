@@ -4,11 +4,11 @@
 # Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env> pushed, reused per env; MR per deploy.mergeMethod, merged on
 # green), or tags it (deploys[].tag, {n} = the deployed head's sha7; -Push pushes the tag). A deploy branch itself is never pushed to. Owner
 # 2026-11-24: no date or counter in a ref (the time is in the tag message and the commit); old deploy/<env>-<n> branches still resume.
-# Sections: L8 merge · L105 mr
+# Sections: L8 merge · L115 mr
 # ---- merge: tag or trunk, the merge in a worktree
 function Invoke-DeployMerge {
 param(
-  [Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$To, [string]$From,
+  [Parameter(Mandatory)][string]$Repo, [Parameter(Mandatory)][string]$To, [string]$From, [string]$Commit,
   [string]$Check, [switch]$Push, [switch]$Mr, [string[]]$Mrs = @(), [string]$Decision, [int]$WaitMinutes = 8, [int]$History = 300
 )
 $ErrorActionPreference = 'Stop'
@@ -29,15 +29,24 @@ if (-not $From) {
   if (-not $From) { "deploy merge: no source branch: pass -From <branch> or set repos[].target (origin/HEAD unknown); nothing merged"; exit 2 }   # no vendor default
   "source branch: $From"
 }
+$src = "origin/$From"; $pin = ''
+if ($Commit) {   # -Commit: deploy one main-line commit, never a hand-pushed pin branch (retro 2026-11-25)
+  git -C $Repo fetch -q origin $From
+  $pin = "$(git -C $Repo rev-parse -q --verify "$Commit^{commit}" 2>$null)".Trim()
+  if (-not $pin) { "deploy merge -Commit ${Commit}: no such commit in $Repo (fetch it first); nothing merged"; exit 2 }
+  git -C $Repo merge-base --is-ancestor $pin "origin/$From"
+  if ($LASTEXITCODE) { "deploy merge -Commit $Commit is not on origin/${From}: only a commit of the source branch deploys; nothing merged"; exit 2 }
+  $src = $pin; "pinned: $($pin.Substring(0, 8)) of $From"
+}
 if ($dep.tag) {
   git -C $Repo fetch -q origin $From
   if ($LASTEXITCODE) { "fetch origin $From FAILED (exit ${LASTEXITCODE}: offline or wrong -From): no tag"; exit 1 }   # a stale origin/<From> would ship old code
   if ("$($dep.tag)".Contains('{date}')) { Write-Warning "deploys[].tag $($dep.tag): {date} is retired (no date in a ref name): use {n}; it gives the sha7 now" }
-  $sha7 = "$(git -C $Repo rev-parse --short=7 "origin/$From" 2>$null)".Trim(); $tag = ([string]$dep.tag).Replace('{n}', $sha7).Replace('{date}', $sha7)   # the same head twice: the same tag
+  $sha7 = "$(git -C $Repo rev-parse --short=7 $src 2>$null)".Trim(); $tag = ([string]$dep.tag).Replace('{n}', $sha7).Replace('{date}', $sha7)   # the same head twice: the same tag
   $had = "$(git -C $Repo rev-parse -q --verify "refs/tags/$tag^{commit}" 2>$null)".Trim()
   if (-not $had -and "$(git -C $Repo ls-remote --tags origin "refs/tags/$tag" 2>$null)".Trim()) { git -C $Repo fetch -q origin "refs/tags/${tag}:refs/tags/$tag" 2>$null; $had = "$(git -C $Repo rev-parse -q --verify "refs/tags/$tag^{commit}" 2>$null)".Trim() }
-  if ($had -and $had -ne "$(git -C $Repo rev-parse "origin/$From")".Trim()) { "tag $tag exists on another commit: nothing tagged"; exit 1 }
-  if (-not $had) { git -C $Repo tag -a $tag "origin/$From" -m "deploy $To $(Get-KitStamp)"; if ($LASTEXITCODE) { "tag $tag FAILED"; exit 1 } }
+  if ($had -and $had -ne "$(git -C $Repo rev-parse $src)".Trim()) { "tag $tag exists on another commit: nothing tagged"; exit 1 }
+  if (-not $had) { git -C $Repo tag -a $tag $src -m "deploy $To $(Get-KitStamp)"; if ($LASTEXITCODE) { "tag $tag FAILED"; exit 1 } }
   if (-not $Push) { "tagged ${tag}: git -C $Repo push origin $tag"; exit 0 }
   git -C $Repo push origin $tag; if ($LASTEXITCODE) { "push of $tag FAILED"; exit 1 }; "pushed $tag"; exit 0
 }
@@ -63,8 +72,9 @@ if ($Mr) {   # host project + adapter from the origin URL (else repos[].name and
 }
 if ($open) {
   $iid = "$($open.iid)"; $br = "$($open.source_branch)"; $made = $null
-  git -C $Repo fetch -q origin $From $br 2>$null; git -C $Repo merge-base --is-ancestor "origin/$From" "origin/$br" 2>$null
-  if ($LASTEXITCODE) { "deploy MR !$iid ($br) is open but lacks origin/$From (stale): close it, then run this again; nothing merged"; exit 1 }
+  git -C $Repo fetch -q origin $From $br 2>$null; git -C $Repo merge-base --is-ancestor $src "origin/$br" 2>$null
+  if ($LASTEXITCODE) { "deploy MR !$iid ($br) is open but lacks $(if ($pin) { "the pinned $($pin.Substring(0, 8))" } else { "origin/$From" }) (stale): close it, then run this again; nothing merged"; exit 1 }
+  if ($pin -and "$(git -C $Repo merge-base "origin/$br" "origin/$From")".Trim() -ne $pin) { "deploy MR !$iid ($br) is open with $From commits past the pinned $($pin.Substring(0, 8)): close it, then run this again; nothing merged"; exit 1 }
   $url = if ($open.web_url) { $open.web_url } else { Invoke-HostVerb 'mr.url' ($ha + @{ n = $iid }) }
   "deploy MR: $url ($br -> $To; resumed: open from an earlier run)"
 } else {
@@ -79,10 +89,10 @@ if (-not $wt) { throw "crafty.ps1 wt new failed: $out" }
 git -C $wt fetch -q origin $From $To
 if ($LASTEXITCODE) { "fetch origin $From $To FAILED (exit ${LASTEXITCODE}: wrong -From/-To or offline); worktree kept: $wt"; exit 1 }
 git -C $wt reset -q --hard "origin/$To"   # a reused branch restarts at $To
-$ahead = "$(git -C $wt rev-list --count "origin/$To..origin/$From")".Trim()
-if ($LASTEXITCODE -or $ahead -notmatch '^\d+$') { "rev-list origin/$To..origin/$From FAILED: '$ahead'; worktree left at $wt"; exit 1 }  # [int]'' is 0
-if ([int]$ahead -eq 0) { & $KitCmd.dev wt remove -Dir $wt -Force | Out-Null; git -C $Repo branch -D $br 2>$null | Out-Null; "nothing to merge: origin/$To has all of origin/$From (worktree removed)"; exit 0 }
-$mo = git -C $wt merge --no-ff --no-commit "origin/$From" 2>&1; $mrc = $LASTEXITCODE
+$ahead = "$(git -C $wt rev-list --count "origin/$To..$src")".Trim()
+if ($LASTEXITCODE -or $ahead -notmatch '^\d+$') { "rev-list origin/$To..$src FAILED: '$ahead'; worktree left at $wt"; exit 1 }  # [int]'' is 0
+if ([int]$ahead -eq 0) { & $KitCmd.dev wt remove -Dir $wt -Force | Out-Null; git -C $Repo branch -D $br 2>$null | Out-Null; "nothing to merge: origin/$To has all of $src (worktree removed)"; exit 0 }
+$mo = git -C $wt merge --no-ff --no-commit $src 2>&1; $mrc = $LASTEXITCODE
 $mo | Select-Object -Last 3
 $conf = @(git -C $wt diff --name-only --diff-filter=U)
 if ($mrc -and -not $conf.Count) { "merge FAILED (not a conflict) in $wt"; exit 1 }
@@ -90,8 +100,8 @@ $left = @()
 foreach ($f in $conf) {
   $theirs = git -C $wt rev-parse "origin/${To}:$f" 2>$null
   $known = $false
-  $fromHas = $null -ne (git -C $wt rev-parse -q --verify "origin/${From}:$f" 2>$null)  # modify/delete: no --theirs
-  if ($theirs -and $fromHas) { foreach ($c in @(git -C $wt rev-list -n $History "origin/$From" -- $f)) { if ((git -C $wt rev-parse "${c}:$f" 2>$null) -eq $theirs) { $known = $true; break } } }
+  $fromHas = $null -ne (git -C $wt rev-parse -q --verify "${src}:$f" 2>$null)  # modify/delete: no --theirs
+  if ($theirs -and $fromHas) { foreach ($c in @(git -C $wt rev-list -n $History $src -- $f)) { if ((git -C $wt rev-parse "${c}:$f" 2>$null) -eq $theirs) { $known = $true; break } } }
   if ($known) { git -C $wt checkout --theirs -- $f; git -C $wt add -- $f; "auto: $f (deploy copy = an older $From version -> took $From)" }
   else { $left += $f }
 }
@@ -112,7 +122,7 @@ if ($LASTEXITCODE) { "push of $br FAILED (exit $LASTEXITCODE): no deploy MR; wor
 $refs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
 $trk = Read-KitTracking; $taskIds = @($trk.tasks.Keys | Where-Object { @(@($trk.tasks[$_].mrs) | Where-Object { $_ -in $refs }).Count } | Sort-Object)
 $mrw = [string]$(if ("$(Get-KitMember $script:KitVocab.mrWord $script:HostType)") { Get-KitMember $script:KitVocab.mrWord $script:HostType } else { 'MR' })   # vocab.json mrWord: PR off GitLab
-$body = "Deploy ${mrw}: $From into $To (bossy.ps1 deploy merge; $dmmText).`n`n- Env: $envName`n- ${mrw}s: $(if ($refs.Count) { $refs -join ', ' } else { 'none given' })`n- Tasks: $(if ($taskIds.Count) { $taskIds -join ', ' } else { 'none tracked' })`n- Deploy decision: $(if ($Decision) { $Decision } else { 'none given (deploy.trigger rule)' })`n- Commits from ${From}: $ahead"
+$body = "Deploy ${mrw}: $From into $To (bossy.ps1 deploy merge; $dmmText).`n`n- Env: $envName`n- ${mrw}s: $(if ($refs.Count) { $refs -join ', ' } else { 'none given' })`n- Tasks: $(if ($taskIds.Count) { $taskIds -join ', ' } else { 'none tracked' })`n- Deploy decision: $(if ($Decision) { $Decision } else { 'none given (deploy.trigger rule)' })`n- Commits from ${From}: $ahead$(if ($pin) { "`n- Pinned commit: $pin" })"
 $made = Invoke-HostVerb 'mr.create' ($ha + @{ source = $br; target = $To; title = ($ct.Replace('{from}', $From).Replace('{to}', $To).Replace('{env}', $envName) -replace '\bmerge (?=\S+ into)', '') + " ($envName)"; body = $body; method = $dmm })
 $iid = "$($made.iid)"; if (-not $iid) { "deploy MR create FAILED for $br -> $To (host $hostType, repo $hostRepo): open it by hand ($dmmText); worktree kept: $wt"; exit 1 }
 $url = if ($made.web_url) { $made.web_url } else { Invoke-HostVerb 'mr.url' ($ha + @{ n = $iid }) }

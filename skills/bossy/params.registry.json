@@ -186,6 +186,8 @@
   "check.importProbeSec": "config default=90 unit=s",
   "check.printLines": "config default=60 unit=lines",
   "guard.readMaxLines": "config default=600 unit=lines",
+  "guard.clientRetryMs": "config default=40 unit=ms",
+  "guard.serverIdleMinutes": "config default=30 unit=min",
   "guard.readMaxKB": "config default=32 unit=KB",
   "guard.sqlMaxRows": "config default=200 unit=rows",
   "api.loginHoldMinutes": "config default=30 unit=min",

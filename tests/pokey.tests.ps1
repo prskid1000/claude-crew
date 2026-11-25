@@ -233,7 +233,7 @@ console.log('ninth:' + (got.every(Boolean) && tabs.length === 8 && max === 8))
 const e = await openTab(browser, K, { agent: 'A', waitMs: 1200 }).catch((x) => x.message)
 console.log('fails:' + /all 8 tabs of k\|t\|a stayed busy for 1 s/.test(e))
 const f = `${kitPath('sessions')}/tabs-k__t__a.json`, reg = JSON.parse(readFileSync(f, 'utf8'))
-reg[tabs[1].__tid].pid = 999999; reg[tabs[2].__tid].agent = 'Z'; reg[tabs[1].__tid].at = reg[tabs[2].__tid].at = reg[tabs[1].__tid].seen = reg[tabs[2].__tid].seen = 0; reg[tabs[3].__tid].pid = 999999; writeFileSync(f, JSON.stringify(reg))
+reg[tabs[1].__tid].pid = 999999; reg[tabs[2].__tid].agent = reg[tabs[3].__tid].agent = 'Z'; reg[tabs[2].__tid].at = reg[tabs[2].__tid].seen = 0; writeFileSync(f, JSON.stringify(reg))   // dead pid: closed at once; left agent: after the grace
 mkdirSync(kitPath('board'), { recursive: true }); writeFileSync(`${kitPath('board')}/z.json`, JSON.stringify({ agent: 'Z', status: 'left' }))
 const dead = tabs[1], left = tabs[2], grace = tabs[3], t = await openTab(browser, K, { agent: 'A', waitMs: 1200 }).catch(() => null)
 console.log('orphans:' + (!!t && !tabs.includes(dead) && !tabs.includes(left) && tabs.includes(grace) && tabs.length === 7))

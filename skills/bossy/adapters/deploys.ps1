@@ -310,15 +310,15 @@ function Format-KitInTestSummary([int]$Total, [int]$FromKit, [int]$FromLists, [i
 # ---- deploy: plan, request, record
 function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'request', 'record', 'merge', 'intest', 'restart', 'run')][string]$Action = 'plan',
     [string]$Env, [string[]]$Mrs = @(), [string]$Run, [string]$Note, [string]$By = 'owner', [switch]$Json, [string]$Offline, [int]$Days = 14,
-    [string]$Repo, [string]$To, [string]$From, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
+    [string]$Repo, [string]$To, [string]$From, [string]$Commit, [string]$Check, [switch]$Push, [switch]$Mr, [string]$Decision, [int]$WaitMinutes = 45, [int]$History = 300,
     [string]$Service, [int]$RecheckSeconds = 120, [switch]$Ungated, [string]$Agent,
     [switch]$Apply, [switch]$Quiet, [Alias('Item')][string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = (Get-KitParam 'deploy.deployedTimeoutSec'))
   if ($Action -eq 'restart') {
     if (-not $Env) { 'usage: deploy restart -Env <target>[,<target>..] [-Service <a,b>] [-WaitMinutes 20] [-Ungated] [-Agent <ids>]'; exit 2 }
     Invoke-DeployRestart @(Split-KitList @($Env)) $Service $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 20 }) $RecheckSeconds -Ungated:$Ungated -Agent $Agent; return
   }
-  if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <env|deploy branch> [-From <branch>] -Mr [-Mrs <refs>] [-Decision <id>] (tag deploys: -Push)" }
-  if ($Action -eq 'merge') { Invoke-DeployMerge -Repo $Repo -To $To -From $From -Check $Check -Push:$Push -Mr:$Mr -Mrs $Mrs -Decision $Decision -WaitMinutes $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 8 }) -History $History; return }   # 8 min: one call fits an agent shell (10 min); a re-run resumes the open MR
+  if ($Action -eq 'merge' -and (-not $Repo -or -not $To)) { throw "deploy merge: -$(if (-not $Repo) { 'Repo' } else { 'To' }) missing. Usage: bossy.ps1 deploy merge -Repo <checkout> -To <env|deploy branch> [-From <branch>] [-Commit <sha>] -Mr [-Mrs <refs>] [-Decision <id>] (tag deploys: -Push)" }
+  if ($Action -eq 'merge') { Invoke-DeployMerge -Repo $Repo -To $To -From $From -Commit $Commit -Check $Check -Push:$Push -Mr:$Mr -Mrs $Mrs -Decision $Decision -WaitMinutes $(if ($PSBoundParameters.ContainsKey('WaitMinutes')) { $WaitMinutes } else { 8 }) -History $History; return }   # 8 min: one call fits an agent shell (10 min); a re-run resumes the open MR
   if ($Action -eq 'run') { if (-not $To) { 'usage: deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]'; exit 2 }; Invoke-DeployRun $To $Repo @(Split-KitList $Mrs) $Decision; return }
   if ($Action -eq 'intest') { Invoke-MarkInTest -Apply:$Apply -Quiet:$Quiet -Task $Task -Days $Days -FromMrs @(Split-KitList $Mrs) -Env @(Split-KitList @($Env)) -TimeoutSec $TimeoutSec; return }
   $Mrs = @(Split-KitList $Mrs)

@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L315 stack · L414 gate · L746 check · L1069 pipes · L1134 guard · L2062 dir · L2072 checkpoint ·
-  L2112 prior · L2151 tracker · L2173 task spec · L2379 scope · L2427 host
+Sections: L25 init · L34 wt · L289 stack · L388 gate · L720 check · L1043 pipes · L1108 guard · L2036 dir · L2046 checkpoint ·
+  L2086 prior · L2125 tracker · L2147 task spec · L2353 scope · L2401 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -57,44 +57,8 @@ function Resolve-Wt($d) {
   }
   $d
 }
+function Test-WtRebasing($d) { $g = GitDir $d; (Test-Path -LiteralPath "$g/rebase-merge") -or (Test-Path -LiteralPath "$g/rebase-apply") }
 function GitDir($d) { $g = (git -C $d rev-parse --git-dir).Trim(); if (-not [IO.Path]::IsPathRooted($g)) { $g = Join-Path $d $g }; $g }
-# repos[].regenerate: generated-only rebase conflict -> target's copy + run commands, rebase done, last commit amended + pushed;
-# returns 'regenerated ...' or the refusal reason (a failing command: back to the plain conflict)
-function Sync-Generated($d, $t, $head0) {
-  $gen = @(Get-RepoConf ("$(git -C $d remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1] 'regenerate' @())
-  if (-not $gen.Count) { return '' }
-  $taken = @(); $gd = GitDir $d; $last = ''
-  while ((Test-Path "$gd/rebase-merge") -or (Test-Path "$gd/rebase-apply")) {
-    $u = @(git -C $d -c core.quotepath=false diff --name-only --diff-filter=U)
-    $other = @($u | Where-Object { $f = $_; -not ($gen | Where-Object { $f -like $_.path }) })
-    $sig = "$(git -C $d rev-parse -q --verify REBASE_HEAD)|$($u -join '|')"   # same commit, same files: no progress
-    if ($sig -eq $last) { $other = $u }
-    if (-not $u.Count -or $other.Count) { return "not only generated files conflict ($($other -join ', '))$(if ($taken) { "; took the target's $($taken -join ', '): after the rebase run repos[].regenerate run" })" }
-    $last = $sig
-    foreach ($f in $u) {   # rebase: ours = target; none = target deleted it
-      git -C $d checkout -q --ours -- $f 2>$null
-      if ($LASTEXITCODE) { git -C $d rm -q -- $f 2>$null } else { git -C $d add -- $f }
-    }
-    $taken = @($taken + $u | Select-Object -Unique)
-    git -C $d diff --cached --quiet
-    $step = if ($LASTEXITCODE) { 'continue' } else { 'skip' }   # only generated changes
-    $null = git -C $d -c core.editor=true rebase "--$step" 2>&1
-  }
-  if (-not $taken.Count) { return 'the rebase stopped without a conflict' }
-  $mr = if ($Mrs) { ($Mrs -split '[!/#]')[-1] } else { try { "$(@(Get-MergedMrs $d (G -C $d rev-parse --abbrev-ref HEAD).Trim() $t 'opened' | ForEach-Object iid)[0])" } catch { '' } }
-  $runs = @($gen | Where-Object { $p = $_.path; $taken | Where-Object { $_ -like $p } } | ForEach-Object { @($_.run) } | Select-Object -Unique | Where-Object { $mr -or $_ -notmatch '\{mr\}' })   # {mr}: only once the MR exists
-  foreach ($c in $runs) {
-    $tok = Split-KitCommand $c @{ mr = $mr; target = $t }
-    $r = Invoke-KitExe $tok[0] @($tok | Select-Object -Skip 1) 900 -Cwd $d
-    if ($r.code) { git -C $d reset -q --hard $head0; $null = git -C $d rebase "origin/$t" 2>&1; return "regenerate failed (exit $($r.code)): $c`n$("$($r.err)$($r.out)".Trim() -split "`n" | Select-Object -Last 5)" }
-  }
-  $own = (G -C $d rev-list --count "origin/$t..HEAD").Trim() -ne '0'   # none: every commit only changed generated files
-  git -C $d add -A -- @($taken); git -C $d diff --cached --quiet
-  if ($LASTEXITCODE) { if ($own) { G -C $d commit -q --amend --no-edit | Out-Null } else { G -C $d commit -q -m "chore: regenerate $($taken -join ', ')" | Out-Null; $own = $true } }
-  $br = (G -C $d rev-parse --abbrev-ref HEAD).Trim(); git -C $d rev-parse -q --verify "refs/remotes/origin/$br" *> $null
-  $pushed = if (-not $LASTEXITCODE -and $br -ne $t -and $own) { G -C $d push -q --force-with-lease origin "HEAD:refs/heads/$br" | Out-Null; "; pushed ${br}: run devtools.py merge again" } else { '' }
-  "regenerated $($taken -join ', ') (target's copy + $($runs.Count) command(s)$(if (-not $mr) { ', no MR yet: {mr} commands skipped' }))$pushed"
-}
 function Meta($d, $k, $v) { $f = Join-Path (GitDir $d) "claude-$k"; if ($PSBoundParameters.ContainsKey('v')) { Write-KitAtomic $f "$v`n" } elseif (Test-Path $f) { Get-Content $f } }
 function DepHash($pkgJson) {
   try { $p = Get-Content $pkgJson -Raw | ConvertFrom-Json } catch { return '' }
@@ -112,7 +76,7 @@ function Exclude-Links($path, $links) {
 # deps from the target's source (repos[].linkFromByTarget / linkFrom, else the checkout), linkPaths, hooks; another source relinks
 function Set-WtDeps($path, $rp, $tg, $from) {
   $rc = Get-WtRepoConf $rp; $from = @($from | Where-Object { $_ })
-  if (-not $from.Count -and ($from = @(Get-WtDepSource $rp $tg)).Count) { "linking dependencies from $($from -join ', ') (kit.local.json, target $tg)" }
+  if (-not $from.Count -and ($from = @(Get-WtDepSource $rp $tg)).Count) { "linking dependencies from $($from -join ', ') (target $tg)" }
   $srcs = @(if ($from.Count) { $from | ForEach-Object { (Resolve-Path $_).Path } } else { $rp }); $src = $srcs[0]   # a list: the first is the source of record
   $was = "$(Meta $path 'linksrc')".Trim(); $kept = @()
   $srcKey = $srcs -join ";"
@@ -155,7 +119,7 @@ switch ($Action) {
     }
     if ($tk) { Update-KitTaskIndex $tk { param($x) if ($x.prior) { $x.prior.claimed = @(@($x.prior.claimed) + $Branch | Where-Object { $_ } | Select-Object -Unique) } } }
     $depFrom = @($LinkFrom | Where-Object { $_ })   # before the checkout: a missing source fails first
-    if (-not $depFrom.Count -and ($depFrom = @(Get-WtDepSource $Repo $Target)).Count) { "linking dependencies from $($depFrom -join ', ') (kit.local.json, target $Target)" }
+    if (-not $depFrom.Count -and ($depFrom = @(Get-WtDepSource $Repo $Target)).Count) { "linking dependencies from $($depFrom -join ', ') (target $Target)" }
     Add-WtRoot $Root
     G -C $Repo fetch -q origin $Target | Out-Null
     $remoteBranch = git -C $Repo ls-remote --heads origin "refs/heads/$Branch"   # bare name would suffix-match
@@ -174,16 +138,25 @@ switch ($Action) {
   'sync' {
     $Dir = Resolve-Wt $Dir
     $t = Meta $Dir 'target'; if (-not $t) { throw "no target for ${Dir}: git -C $Dir rebase origin/<target>" }
+    $help = "Append-only files: $(Split-Path (Get-Python) -Leaf) $($KitCmd.devtools) keepboth <file>; real code by hand. Then git add, wt sync -Dir $Dir again (continues it; never wt commit mid-rebase), crafty.ps1 check."
+    if (Test-WtRebasing $Dir) {   # a resumed conflict: finish it, never commit on its detached HEAD
+      $open = @(git -C $Dir diff --name-only --diff-filter=U); git -C $Dir diff --quiet
+      if ($open.Count -or $LASTEXITCODE) { [Console]::Error.WriteLine("wt sync refused: a rebase is in progress; $(if ($open.Count) { "unresolved: $($open -join ', ')" } else { 'unstaged edits' }). $help Or git rebase --abort."); exit 1 }
+      $null = git -C $Dir -c core.editor=true rebase --continue 2>&1
+      if ($LASTEXITCODE) { [Console]::Error.WriteLine("REBASE CONFLICT (next commit). $help"); exit 1 }
+      "resumed rebase finished on $((git -C $Dir rev-parse --abbrev-ref HEAD).Trim())"
+    }
     if (git -C $Dir status --porcelain --untracked-files=no) { throw "uncommitted changes in ${Dir}: crafty.ps1 wt commit -Dir $Dir -Message 'wip: <what>' (WIP is fine; never git stash), then wt sync again" }
     G -C $Dir fetch -q origin $t | Out-Null
     $head0 = (G -C $Dir rev-parse HEAD).Trim()
     git -C $Dir rebase "origin/$t"
-    $why = if ($LASTEXITCODE) { Sync-Generated $Dir $t $head0 } else { '' }
-    if ($why -match '^regenerated ') { $why } elseif ($why) { $why; "REBASE CONFLICT. Append-only files (changelog masters, nav/i18n lists): $(Split-Path (Get-Python) -Leaf) $($KitCmd.devtools) keepboth <file>; real code: resolve by hand. Then git add + git -C $Dir rebase --continue, and re-run crafty.ps1 check."; exit 1 }
+    $failed = [bool]$LASTEXITCODE; $why = if ($failed) { Sync-Generated $Dir $t $head0 } else { '' }   # '' (no regenerate) is still a conflict
+    if ($why -match '^regenerated ') { $why } elseif ($failed) { $why; "REBASE CONFLICT. $help"; exit 1 }
     "rebased onto origin/$t"
   }
   'commit' {
     $Dir = Resolve-Wt $Dir
+    if (Test-WtRebasing $Dir) { [Console]::Error.WriteLine("commit refused: a rebase is in progress (detached HEAD): git add the files, then wt sync -Dir $Dir"); exit 1 }
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
     if ($Spec) {   # commitFormat subject + change bullets; python prints UTF-8, stdout only
       if ($Message) { throw 'commit: -Spec or -Message / -MessageFile, not both' }
@@ -218,7 +191,8 @@ switch ($Action) {
     if (($area = @(Meta $Dir 'scope' | Where-Object { $_ })).Count) {   # the branch's diff and this commit stay in the brief area
       $at = Meta $Dir 'target'; $br = (git -C $Dir rev-parse --abbrev-ref HEAD).Trim()
       $out = @(Get-KitScopeOutside @(@(if ($at) { git -C $Dir -c core.quotepath=false diff --name-only "origin/$at...HEAD" }) + @(git -C $Dir -c core.quotepath=false diff --cached --name-only) | Select-Object -Unique) $area)
-      if ($out.Count -and "$(pwsh -NoProfile -File $KitCmd.orch decide check $(if ($ScopeOk) { '-Id', $ScopeOk }) -Gate scope -Item $br -MaxHours 720)" -notmatch '^WORD ') {
+      # -ScopeOk <id>: that word, keyed by the branch or an item id (dec-52)
+      if ($out.Count -and "$(pwsh -NoProfile -File $KitCmd.orch decide check $(if ($ScopeOk) { '-Id', $ScopeOk } else { '-Item', $br }) -Gate scope -MaxHours 720)" -notmatch '^WORD ') {
         [Console]::Error.WriteLine("commit refused: $($out.Count) file(s) outside the area ($($area -join ', ')): $(($out | Select-Object -First 12) -join ', '). Revert them (a product bug in a test-only area: pin today's behaviour, decide ask); an owner-approved exception: bossy.ps1 decide record -Gate scope -Item $br ..., then -ScopeOk <id>"); exit 1
       }
     }
@@ -2441,8 +2415,9 @@ function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}
   $a = if ($ArgJson -match '^\s*[{@]') { $(if ($ArgJson -like '@*') { Get-Content -LiteralPath $ArgJson.Substring(1) -Raw -Encoding utf8 } else { $ArgJson }) | ConvertFrom-Json -AsHashtable }
   else { ConvertFrom-MrRef (@($ArgJson) + @($MrRef)) }   # a bare MR ref: 17 usage errors in one retro
   if ($null -eq $a) { Stop-KitVerb "host: '$((@($ArgJson) + @($MrRef) | Where-Object { $_ }) -join ' ')' is no JSON and no MR ref. Usage: host <verb> '<args JSON>' | host <verb> <iid | [group/]repo!iid | MR URL | repo iid>" }
-  $global:KitHostFailed = $false; $r = @(Invoke-HostVerb $Verb $a -NoMemo | Where-Object { $null -ne $_ })   # a failed call = null (unknown)
-  if (-not $r.Count -and $global:KitHostFailed) { 'null' } elseif ($Verb -in 'mr.list', 'ci.runs', 'ci.jobs') { ConvertTo-Json -InputObject $r -Depth 8 -Compress }
+  $global:KitHostFailed = $false; $global:KitHostError = ''; $r = @(Invoke-HostVerb $Verb $a -NoMemo | Where-Object { $null -ne $_ })   # a failed call = null (unknown)
+  # a failed call: null plus the host's reason on stderr
+  if (-not $r.Count -and $global:KitHostFailed) { 'null'; if ($global:KitHostError) { [Console]::Error.WriteLine("host $Verb failed: $global:KitHostError") } } elseif ($Verb -in 'mr.list', 'ci.runs', 'ci.jobs') { ConvertTo-Json -InputObject $r -Depth 8 -Compress }
   elseif ($r.Count -eq 1 -and $r[0] -is [string]) { $r[0] } else { ConvertTo-Json -InputObject $(if ($r.Count) { $r[0] } else { $null }) -Depth 8 -Compress }
 }
 

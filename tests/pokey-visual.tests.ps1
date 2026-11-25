@@ -19,6 +19,9 @@ if ($IsWindows) {
 } else { 'SKIP annotate (Windows only)' }
 # ---- ui-checks
 if ($bk) {
+  # retro 2026-11-25: a script ending without s.done() leaked its tab (moved here for the params.tests.ps1 cap)
+  $relf = Join-Path (Kd) 'released-end.txt'; $null = NodeT exitend "const fs = await import('node:fs'), f = process.argv[2]; m.releaseOnExit(async () => fs.appendFileSync(f, 'c')); process.exitCode = 3" $relf; $relc = $LASTEXITCODE
+  Expect "browser.mjs: a script ending without s.done() still runs it (tabs closed), its exit code kept ($relc)" ($relc -eq 3 -and (Get-Content $relf -Raw) -eq 'c')
   # 2026-11-21: a relative shots/ path from a kit folder wrote <kit>/skills/shots
   $res = NodeT evpath ("const { join } = await import('node:path'), t = (f) => { try { return m.checkName(f) } catch (e) { return /inside the kit/.test(e.message) ? 'refused' : e.message } }, rt = m.kitPath('runtime', { create: true })`n" +
     "process.chdir(join(m.KIT, 'skills')); const a = t('shots/F1-T1_01_x.jpeg'); process.chdir(rt); const b = t('qa/F1/shots/F1-T1_01_x.jpeg')`n" +

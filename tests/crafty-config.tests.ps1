@@ -155,5 +155,21 @@ $csNo = pwsh @np $D wt commit -Dir $csr -Message 'fix: no repo prefix here' -Pro
 $null = pwsh @np $D wt commit -Dir $csr -Message 'web/ui: with the repo prefix' 2>&1; $csOk = $LASTEXITCODE; $csLog = "$(git -C $csr log -1 --format=%s)"
 & $J @{ repos = @(@{ name = 'cs-repo'; commitStyle = '([' }) } $dkl; 'c2' | Set-Content "$csr/c2.txt"; $csBad = pwsh @np $D wt commit -Dir $csr -Message 'web/ui: a bad regex now' 2>&1 | Out-String; $csBadc = $LASTEXITCODE; Remove-Item $dkl
 Expect "wt commit: repos[].commitStyle refuses a miss even with -ProseOk, a match commits, a bad regex is named ($csNoc $csOk $csBadc)" ($csNoc -eq 1 -and $csNo -match 'misses repos\[\]\.commitStyle' -and $csOk -eq 0 -and $csLog -eq 'web/ui: with the repo prefix' -and $csBadc -eq 1 -and $csBad -match 'is no valid regex')
+# wt sync, a real-code conflict (no repos[].regenerate): refused mid-rebase (sync and commit), resolved + added -> continued on the branch (retro 2026-11-25)
+$rcBare = Join-Path (Kd) 'rc.git'; $rcRepo = Join-Path (Kd) 'rc'; git init -q --bare $rcBare; git clone -q $rcBare $rcRepo 2>$null; 'a' | Set-Content "$rcRepo/a.txt"; Save-GitRepo $rcRepo base
+git -C $rcRepo branch -M main; git -C $rcRepo push -q origin main 2>$null; git -C $rcRepo checkout -q -b rc; 'mine' | Set-Content "$rcRepo/c.txt"; Save-GitRepo $rcRepo rc1
+git -C $rcRepo checkout -q main; 'theirs' | Set-Content "$rcRepo/c.txt"; Save-GitRepo $rcRepo rc0; git -C $rcRepo push -q origin main 2>$null; git -C $rcRepo checkout -q rc; 'main' | Set-Content "$rcRepo/.git/claude-target"
+$rcs = foreach ($rcStep in 'conflict', 'open', 'commit', 'resolved') {
+  if ($rcStep -eq 'resolved') { 'both' | Set-Content "$rcRepo/c.txt"; git -C $rcRepo add c.txt }
+  $rcOut = if ($rcStep -eq 'commit') { pwsh @np $D wt commit -Dir $rcRepo -Message 'wip: x' 2>&1 } else { pwsh @np $D wt sync -Dir $rcRepo 2>&1 }
+  "$rcOut rc=$LASTEXITCODE br=$(git -C $rcRepo branch --show-current)" }
+Expect "wt sync: a conflict exits 1 (no 'rebased onto'); resumed unresolved and wt commit refused; resolved: continued on the branch ($($rcs -join ' | '))" ($rcs[0] -match 'REBASE CONFLICT.*rc=1' -and $rcs[0] -notmatch 'rebased onto' -and
+  $rcs[1] -match 'rebase is in progress.*unresolved: c\.txt.*rc=1' -and $rcs[2] -match 'commit refused: a rebase is in progress.*rc=1' -and $rcs[3] -match 'resumed rebase finished on rc.*rc=0 br=rc$' -and (Get-Content "$rcRepo/c.txt") -eq 'both')
+# wt commit -ScopeOk <id>: a scope word keyed by a brief item id (not the branch) lets it through (dec-38 / dec-52 cases)
+$soRepo = Join-Path (Kd) 'scope-ok'; New-Item -ItemType Directory -Force "$soRepo/specs", "$soRepo/src" | Out-Null; 'a' | Set-Content "$soRepo/specs/a.cy.js"; Save-GitRepo $soRepo base
+git -C $soRepo checkout -q -b b2; Set-Content "$soRepo/.git/claude-scope" 'specs/**'; 'z' | Set-Content "$soRepo/src/Four.java"; $null = pwsh @np $D wt commit -Dir $soRepo -Message 'fix: four' 2>&1; $soCodes = "$LASTEXITCODE"
+$soId = "$(pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') decide record -Gate scope -Item 'G7-account' -Question 'src in a spec area?' -Answer yes -Source chat 2>&1)" -replace '(?s)^.*RECORDED (\S+).*$', '$1'
+$null = pwsh @np $D wt commit -Dir $soRepo -Message 'fix: four' -ScopeOk $soId 2>&1; $soCodes += "/$LASTEXITCODE"
+Expect "wt commit -ScopeOk: an item-keyed scope word lets the commit through, none refuses ($soCodes)" ($soCodes -eq '1/0' -and (git -C $soRepo log -1 --format=%s) -eq 'fix: four')
 Remove-TestKit $k
 Complete-Tests

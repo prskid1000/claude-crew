@@ -899,14 +899,14 @@ function Invoke-KitCommand([string]$Kind, $Commands, [string]$Verb, [hashtable]$
   $line = [string]$(if ($Commands) { (Get-KitMember $Commands $Verb) }); if (-not $line) { Write-Warning "$Kind (command): no commands.$Verb in kit.local.json"; return $null }
   $t = Split-KitCommand $line $a
   $r = Invoke-KitRetry { Invoke-KitNetExe $t[0] @($t | Select-Object -Skip 1) } -Connect:($Verb -match 'create|merge|comment|attach|publish')
-  if ($r.code) { $global:KitHostFailed = $true; Write-Warning "$Kind (command) $Verb failed (exit $($r.code)): $($r.err)"; return $null }
+  if ($r.code) { $global:KitHostFailed = $true; $global:KitHostError = "$Verb exit $($r.code): $($r.err)"; Write-Warning "$Kind (command) $Verb failed (exit $($r.code)): $($r.err)"; return $null }
   $o = "$($r.out)".Trim(); if ($o -match '^[\[{]') { try { return ($o | ConvertFrom-Json) } catch {} }; $o
 }
 function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) {
   $p = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = (Get-KitNetTimeout) }
   if ($Method -eq 'GET') { $p.MaximumRetryCount = 2; $p.RetryIntervalSec = 3 }
   if ($null -ne $Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 20 -Compress)); $p.ContentType = 'application/json' }
-  $global:KitHttpCode = 0; try { Invoke-RestMethod @p } catch { $global:KitHostFailed = $true; $global:KitHttpCode = [int]$_.Exception.Response.StatusCode; Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; $null }
+  $global:KitHttpCode = 0; try { Invoke-RestMethod @p } catch { $global:KitHostFailed = $true; $global:KitHttpCode = [int]$_.Exception.Response.StatusCode; $global:KitHostError = "http $Method $($Uri -replace '\?.*'):$($_.Exception.Message) $($_.ErrorDetails.Message)".Trim(); Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; $null }
 }
 function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   $t = [Environment]::GetEnvironmentVariable($Env); if (-not $t) { return @{} }
@@ -1674,7 +1674,7 @@ function __Cli([string]$Exe, [string]$Path, [string]$Method = 'GET', [hashtable]
   else { foreach ($k in $Fields.Keys) { $a += @('-f', "$k=$($Fields[$k])") } }
   try { $r = Invoke-KitRetry { Invoke-KitNetExe $Exe $a } -Connect:($Method -ne 'GET') } finally { if ($f) { Remove-Item $f -Force -ErrorAction SilentlyContinue } }
   if ($Res) { return $r }
-  if ($r.code) { $global:KitHostFailed = $true; if ($r.timedOut -or (Test-KitTransient $r.err)) { Write-Warning "githost: $Exe api $Path failed on the network: $($r.err)" }; return $null }
+  if ($r.code) { $global:KitHostFailed = $true; $global:KitHostError = "$Exe api ${Path}: exit $($r.code): $("$($r.err) $($r.out)".Trim())"; if ($r.timedOut -or (Test-KitTransient $r.err)) { Write-Warning "githost: $Exe api $Path failed on the network: $($r.err)" }; return $null }
   if ($Path -match '/(trace|logs)$') { return $r.out }
   __HostJson $r.out
 }

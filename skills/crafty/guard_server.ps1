@@ -26,12 +26,14 @@ if (-not $loaded) {   # a half-loaded crafty.ps1 would answer every call with an
   exit 1
 }
 if ($mk) { Remove-Item -LiteralPath $mk -ErrorAction SilentlyContinue }   # loaded: an old mark goes
+$ps = [powershell]::Create(); $ps.Runspace = $rs; $idleMin = @($ps.AddScript("Get-KitParam 'guard.serverIdleMinutes'").Invoke())[0]; $ps.Dispose()   # crafty.ps1 loaded: its Get-KitParam
+if (-not ($idleMin -gt 0)) { $idleMin = 30 }   # an unread key never makes a 0 min server (a restart per call)
 $env0 = @{}; foreach ($v in Get-ChildItem env:) { $env0[$v.Name] = $v.Value }
 if ($IsWindows -and [IO.File]::Exists("\\.\pipe\$Pipe")) { exit 1 }   # two cold calls started two: the later one goes
 while ($true) {
   $srv = try { [IO.Pipes.NamedPipeServerStream]::new($Pipe, 'InOut', 1, 'Byte', 'Asynchronous') } catch { exit 1 }
   try {
-    if (-not $srv.WaitForConnectionAsync().Wait([TimeSpan]::FromMinutes(30))) { exit 0 }
+    if (-not $srv.WaitForConnectionAsync().Wait([TimeSpan]::FromMinutes($idleMin))) { exit 0 }
     $rd = [IO.StreamReader]::new($srv, [Text.UTF8Encoding]::new($false)); $wr = [IO.StreamWriter]::new($srv, [Text.UTF8Encoding]::new($false)); $wr.AutoFlush = $true
     $line = $rd.ReadLine(); $stale = (& $stamp) -ne $s0 -or $line -eq '{"stop":true}'   # stop: tests, kitty
     if ($stale -or -not $line) { $wr.WriteLine('{"reload":true}'); if ($stale) { exit 0 }; continue }

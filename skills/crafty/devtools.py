@@ -18,14 +18,14 @@
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
  mr / merge [--scope "<glob>,.."] [--scope-ok <decision id>]: a diff outside the area (--scope, else the wt lease / new -Scope record)
-  is refused naming the files (merge: the host's diff); --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
+  is refused naming the files (merge: the host's diff; a --scope dropping a recorded glob too); --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
  python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"] [--no-docs "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
   whose AI testing doc has no local reproduction; --override passes, logged); --no-docs: an area with no human-facing change
   (brief kind foundation) passes the testing-docs gate, logged
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]] [--dry-run]
-  publish a document (reports.type); prints its URL/path; --key: the same doc every time (.state/published), a dated round each
-  (same text: none; human doc: earlier rounds no env run tested show as one "Replaced drafts (not tested): <dates>" line)
+  publish a document (reports.type), prints its URL/path; --key: one doc (.state/published), a dated round each (same text:
+  none; human doc: untested earlier rounds = one "Replaced drafts (not tested): <dates>" line)
   --run <cells.json> [--run-id <id>] (pokey finalize, key <task>:testing-doc): each human doc row's Result / Evidence from its
   checks (id, `case`, a screen starting with the row id) over every run (newest PASS / FAIL decides, envs named) + a dated
   "<env> run" section (same --run-id: replaced)
@@ -34,16 +34,16 @@
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
  python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
-Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck: liquibase.py; findings: module_audit.py).
+Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck, keepboth: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L394 process · L605 git host · L678 scope · L770 MR · L985 merge · L1316 docs ·
-  L1553 publish · L2104 render · L2714 spec · L3259 plugins · L3273 keepboth · L3292 selftest · L4041 CLI
+Sections: L55 config · L110 run · L198 tracker · L394 process · L605 git host · L678 scope · L776 MR · L992 merge · L1325 docs ·
+  L1562 publish · L2121 render · L2731 spec · L3276 plugins · L3290 selftest · L4039 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
-Windows: run from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs are resolved with shutil.which.
+Windows: from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs: shutil.which.
 """
 import contextlib, difflib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
 KIT_DIR = os.path.dirname(os.path.dirname(KIT))   # the kit (.claude)
@@ -699,6 +699,12 @@ def _json_or_none(line):
         return None
 
 
+def scope_dropped(given, recorded):
+    """The recorded area's globs (the STEP's) a given --scope leaves out."""
+    want = [g.strip() for g in given.split(',') if g.strip()]
+    return [g for g in recorded() if g not in want] if want else []
+
+
 def scope_of(worktree, given='', mr='', log=None, branch=''):
     """Area globs: --scope (comma list), else the worktree's wt lease / new -Scope record when the worktree is on `branch` (a pool
     slot re-leased to another area holds that area's record), else the MR's last scope-log area (a deferred merge: bossy.ps1
@@ -919,7 +925,8 @@ def mr_create(worktree, title, body_md, tgt=None, check=False):
         if url:
             print(f'[mr] an open MR from {src} already exists (a previous call opened it): {url} - update its description if needed', file=sys.stderr)
     if not url:
-        raise SystemExit(f'MR not created: {str(m)[:500]}')
+        why = str(m.get('raw') if isinstance(m, dict) and 'raw' in m else m).strip()   # the host's error (stderr), not null
+        raise SystemExit(f'MR not created: {why[-500:] or "no host output"}')
     mr_labels(host, proj, m if isinstance(m, dict) and (m.get('iid') or m.get('number')) else {'iid': (re.search(r'(\d+)/?$', url) or [0, ''])[1]}, src, title, body_md)
     scope_note(url, globs, src)
     return url
@@ -1243,6 +1250,8 @@ def _auto_merge(worktree, iid, max_wait):
     if m.get('state') != 'opened':
         return f'!{iid} is {m.get("state")}, not open\nNOT_MERGED'
     ref = f'{proj.rsplit("/", 1)[-1]}!{iid}'
+    if gone := scope_dropped(SCOPE, lambda: scope_of(worktree, '', ref, branch=m.get('source_branch') or '')):   # hand-cut (MR 6826)
+        return f'!{iid}: --scope drops {", ".join(gone)} of the STEP\'s area: pass it unchanged or none\nNOT_MERGED'
     if globs := scope_of(worktree, SCOPE, ref, branch=m.get('source_branch') or ''):   # the host's diff, not the worktree's: what merges is checked
         ch = H('mr.changes')
         ch = ch if isinstance(ch, dict) else {}
@@ -1594,6 +1603,14 @@ def _pub_update(key, **fields):
         _pub_write(key, {**_pub_read(key), 'key': key, **fields, 'updated': time.strftime('%Y-%m-%d %H:%M')})
 
 
+def _at_time(step):
+    """`at` as an instant (text order put +05:30 after newer Z); bad = oldest."""
+    try:
+        return datetime.fromisoformat(str(step.get('at', '')).replace('Z', '+00:00')).astimezone()
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def local_pass(task):
     """The newest `crafty.ps1 checkpoint -Step loop -Item <task>` evidence across agents: (True|False|None, evidence); an item
     sharing a tracked MR with the task counts too (one loop for a shared MR's items, retro 1124)."""
@@ -1607,7 +1624,7 @@ def local_pass(task):
         except (OSError, ValueError):
             continue
         for s in steps:
-            if str(s.get('step', '')).lower() == 'loop' and ids & set(re.split(r'[\s,;]+', str(s.get('item', '')))) and (not last or s.get('at', '') >= last.get('at', '')):
+            if str(s.get('step', '')).lower() == 'loop' and ids & set(re.split(r'[\s,;]+', str(s.get('item', '')))) and (not last or _at_time(s) >= _at_time(last)):
                 last = s
     if not last:
         return None, ''
@@ -3270,25 +3287,6 @@ def load_plugins(folder=os.path.join(KIT, 'adapters')):
 load_plugins()
 
 
-# ---- keepboth: append-only rebase conflicts
-def keepboth(paths):
-    """Resolve conflict blocks as OURS then THEIRS; append-only files only (changelog includes, route/nav lists, i18n keys,
-    DI registrations, barrel exports, requirements.txt), never real code."""
-    left = 0
-
-    pat = re.compile(r'<<<<<<< [^\r\n]*\r?\n(.*?)(?:\|\|\|\|\|\|\| [^\r\n]*\r?\n.*?)?=======\r?\n(.*?)>>>>>>> [^\r\n]*(?:\r?\n|\Z)', re.S)   # last block may end the file
-    for path in paths:
-        text = open(path, encoding='utf-8', newline='').read()
-        n = len(pat.findall(text))
-        text = pat.sub(lambda m: m.group(1) + m.group(2), text)
-        open(path, 'w', encoding='utf-8', newline='').write(text)
-        print(path, 'resolved', n, 'block(s)')
-        if re.search(r'^(<<<<<<<|>>>>>>>) ', text, re.M):   # a block the pattern missed
-            print(path, 'STILL HAS CONFLICT MARKERS: resolve by hand', file=sys.stderr)
-            left += 1
-    return 1 if left else 0
-
-
 # ---- selftest: offline checks
 def selftest():
     """Offline checks (missing body file refused; mergeAfter finds producers, warns on an unmatched repo name; merge_word).
@@ -3353,7 +3351,7 @@ def selftest():
     wo = {'name': 'v2', 'agents': [{'id': 'A', 'task': 't1'}, {'id': 'B', 'task': 't2', 'dependsOn': ['A']}, {'id': 'C', 'task': 't3'}, {'id': 'D', 'task': 't4'}, {'id': 'E', 'task': 't4'}],
           'contracts': [{'producer': 'B', 'consumers': 'C, D'}]}
     ot = order_tasks(wo); cy = wave_order({'agents': [{'id': 'X', 'dependsOn': ['Y']}, {'id': 'Y', 'dependsOn': ['X']}, {'id': 'Z'}]})[0]
-    expect('wave order: A then B (dependsOn) then C (contract consumer); D / E share t4 (skipped); labels "<name> wave <n>" (naming on: tracker order makes them wave-<n>); a cycle is its own row',
+    expect('wave order: A, B (dependsOn), C (consumer); D / E share t4 (skipped); labels "<name> wave <n>" (naming: wave-<n>); a cycle: own row',
            wave_order(wo)[0] == [(1, ['A', 'E']), (2, ['B']), (3, ['C', 'D'])] and [(t['task'], t['wave'], t['waitsOn']) for t in ot['tasks']] == [('t1', 'v2 wave 1', []), ('t2', 'v2 wave 2', ['t1']), ('t3', 'v2 wave 3', ['t2'])]
            and cy == [(1, ['Z']), ('cycle', ['X', 'Y'])] and '| 2 | B | t2 | A |' in render_wave_brief(wo) and 'b.order.json' in wave_files({**wo, 'mandate': ['m']}, 'b.md'))
     agent_env = {n: os.environ.pop(n, None) for n in ('CLAUDE_AGENT', 'KIT_AGENT')}
@@ -3385,7 +3383,7 @@ def selftest():
            isinstance(own_gone, dict) and own_gone['checks'][0]['by'] == 'CC' and 'S4 (DD)' in str(own_plain) and 'S2 (BB)' in str(own_live))
     fc = {'checks': [{'id': 'T1'}], 'qualities': [{'id': 'Q1'}], 'cases': [{'id': 'A1', 'check': 'T1', 'result': 'NOT_TESTED_LOCAL'}, {'id': 'A2', 'steps': 'open Help', 'expected': 'Help shows', 'result': 'NOT_TESTED_LOCAL: stub'},
                                               {'id': 'A3', 'result': 'PASS'}, {'id': 'A4', 'check': 'Q1', 'result': 'NOT_TESTED_LOCAL'}, {'id': 'A5', 'steps': 'POST /api/x', 'result': 'NOT_TESTED_LOCAL'}]}
-    expect('finish: a NOT_TESTED_LOCAL case no check / quality carries gets a human check (free T id; its steps, an API case noUi); carried or PASS: none',
+    expect('finish: an uncarried NOT_TESTED_LOCAL case gets a human check (free T id, its steps, API case noUi); carried or PASS: none',
            cases_fill_checks(fc) == ['A2 -> T3', 'A5 -> T4'] and fc['cases'][1]['check'] == 'T3' and fc['checks'][1]['steps'] == 'open Help' and fc['checks'][2].get('noUi')
            and not [g for g in cases_gaps(fc) if g.startswith('check ')] and not cases_fill_checks(fc))
 
@@ -3763,7 +3761,7 @@ def _publish_selftest(expect, refused):
         u2 = publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'h2.md'), doc.replace('| T1 |', '| T2 |')))
         publish('T9:testing-doc', 'X', os.path.join(tmp, 'h2.md'))
         body = open(u2, encoding='utf-8').read()
-        expect('human doc round 2: same doc, newest on top, the untested round 1 only a "Replaced drafts (not tested)" date; an identical republish adds no round',
+        expect('human doc round 2: same doc, newest on top, untested round 1 a "Replaced drafts (not tested)" date; identical republish: no round',
                u1 == u2 and body.index('| T2 |') < body.index(f'Replaced drafts (not tested): {time.strftime("%Y-%m-%d")}') and '| T1 |' not in body
                and '## Round' not in body and len(_pub_read('T9:testing-doc')['rounds']) == 2 and _pub_read('T9:testing-doc')['url'] == u1)
         ix = state_read(os.path.join(kp('tasks'), 'T9.json')) or {}
@@ -3790,7 +3788,7 @@ def _publish_selftest(expect, refused):
         nm = _table_rows(nh, {'T1': {'result': 'PASS (V1, V2)', 'evidence': '**V1** PASS: ![V1: a](https://img/a.png)<br>**V2** PASS: ![V2: b](https://img/b.png) [Resp](https://f/v2)'}})[1]
         expect('human doc (UI form): checks sharing a row keep their labels in Screenshot; Extra evidence holds no bare label',
                '| **V1** PASS: ![V1: a](https://img/a.png)<br>**V2** PASS: ![V2: b](https://img/b.png) | **V2** PASS: [Resp](https://f/v2) |' in nm)
-        expect('API_WORDS: endpoint calls and API tools caught; screen wording (a DELETE / ARCHIVE button, a page showing HTTP 404, a webhook endpoint field, Send request) passes',
+        expect('API_WORDS: endpoint calls and API tools caught; screen wording (DELETE button, HTTP 404 page, webhook field, Send request) passes',
                all(API_WORDS.search(x) for x in ('GET /orders', 'Send a POST request', 'call the API', 'curl -X', 'open /api/x', 'in Postman'))
                and not any(API_WORDS.search(x) for x in ('Click DELETE / ARCHIVE', 'Page shows HTTP 404', 'Enter the webhook endpoint URL', 'Click Send request')))
         refused('testing-doc: a row naming an endpoint -> refused (human checks run from the UI)', lambda: publish('T9:testing-doc', 'X', w(os.path.join(tmp, 'hapi.md'),
@@ -3832,12 +3830,12 @@ def _publish_selftest(expect, refused):
             publish('T9:testing-doc', 'X', rep, label='stg', run=vr, run_id='R1-Q1')
             u4 = publish('T9:testing-doc', 'X', rep, label='stg', run=dict(vr, V2=dict(vr['V2'], result='FAIL')), run_id='R1-Q1')
         hb4 = open(u4, encoding='utf-8').read()
-        expect('markdown: run checks V1 (screen "T3 ...") + V2 (case T3) fill row T3 (FAIL > PASS, ids named, each evidence); the same --run-id replaces its section',
+        expect('markdown: checks V1 (screen "T3 ...") + V2 (case T3) fill row T3 (FAIL > PASS, ids, evidence); same --run-id replaces',
                u4 == u1 and '| T3 | 1. Open the list. | Newest first. | FAIL (V1, V2) | **V1** PASS: ![V1: list](https://img/v1.png)<br>**V2** FAIL: `GET /l -> 200` [l](https://f/l) |' in hb4
                and hb4.count('## stg run ') == 3)
         with contextlib.redirect_stderr(io.StringIO()):
             hb5 = open(publish('T9:testing-doc', 'X', rep, label='local', run={'L1': {'result': 'PASS', 'evidence': 'x', 'screen': 'App only'}}, run_id='R2-Q1'), encoding='utf-8').read()
-        expect('a later run that covers other rows (a local run of the app part) keeps each row from the newest run covering it; both sections kept',
+        expect('a later run on other rows: each row from the newest run covering it; both sections kept',
                '| FAIL (V1, V2) |' in hb5 and hb5.count('## stg run ') == 3 and hb5.count('## local run ') == 1)
         with contextlib.redirect_stderr(io.StringIO()):
             publish('T9:testing-doc', 'X', rep, label='stg', run=vr, run_id='R1-Q1')
@@ -3847,7 +3845,7 @@ def _publish_selftest(expect, refused):
                and hb6.count('## stg run ') == 3 and hb6.count('## local run ') == 2)
         rt = '| # | Steps | Result | Evidence |\n|---|---|---|---|\n| T1 | a | | |\n'
         rc = lambda *rs: _runs_cells(rt, [{'label': e, 'cells': c} for e, c in rs])['T1']['result']
-        expect('_runs_cells: a later FAIL overrides a PASS (env named); a later PASS after a FAIL decides; PASS on two envs joins them; one run as is',
+        expect('_runs_cells: later FAIL beats PASS (env named), later PASS after FAIL decides, two envs join; one run as is',
                rc(('stg', {'T1': {'result': 'PASS'}}), ('local', {'A1': {'result': 'FAIL', 'case': 'T1'}})) == 'FAIL (local A1) · stg: pass (T1)'
                and rc(('stg', {'T1': {'result': 'FAIL'}}), ('stg', {'T1': {'result': 'PASS'}}), ('local', {'T1': {'result': 'PENDING'}})) == 'PASS (stg T1) · stg: fail (T1) · local: pending (T1)'
                and rc(('stg', {'V1': {'result': 'PASS', 'case': 'T1'}, 'V2': {'result': 'PASS', 'case': 'T1'}}), ('local', {'A1': {'result': 'PASS', 'case': 'T1'}})) == 'PASS (stg V1, V2 + local A1)'
@@ -3936,7 +3934,7 @@ def _publish_selftest(expect, refused):
         jb = {'err': 'Team not authorized', 'ECODE': 'OAUTH_027'}
         expect('a JSON error body (no id) is a failed read with its reason, retried as an auth error',
                view_failed('X1', jb) == 'tracker view X1 failed (Team not authorized)' and AUTH_FAIL.search(view_why(jb)) and not view_failed('X1', {'id': 'X1'}))
-        expect('_merge_val (K32): nested dicts per key, a type clash keeps the first, a prefix of an earlier value still appends, a repeat adds nothing',
+        expect('_merge_val (K32): nested dicts per key, type clash keeps the first, a prefix still appends, a repeat adds nothing',
                _merge_val({'a': {'x': 1}}, {'a': {'y': 2}}, 'B') == {'a': {'x': 1, 'y': 2}} and _merge_val(['a'], 'b', 'B') == ['a'] and _merge_val('a', ['b'], 'B') == 'a'
                and _merge_val('A; B: xy', 'x', 'B') == 'A; B: xy; B: x' and _merge_val('A; B: x', 'x', 'B') == 'A; B: x')
         rm0 = g['refresh_mr_docs']; calls.clear(); st['s'] = 'in progress'   # K33
@@ -3963,7 +3961,7 @@ def _publish_selftest(expect, refused):
         mb['b'] = mb['b'].replace('\n', '\r\n'); n3 = followups([fx('trim y'), fx('z')], 'https://h/g/r/-/merge_requests/5')
         u5, u55 = 'https://h/g/r/-/merge_requests/5', 'https://h/g/r/-/merge_requests/55'
         expect('followups: per MR, a finding naming /55 is not /5; one naming no MR goes to each', [len(of_mr([{'mr': u55}, {'mr': '-'}], u, [u5, u55])) for u in (u5, u55)] == [1, 2])
-        expect('followups: a "## Follow-ups" section above the footer, one bullet per finding, a repeat (same file + problem) kept once, CRLF body too',
+        expect('followups: "## Follow-ups" above the footer, a bullet per finding, a repeat (file + problem) once, CRLF too',
                len(n1) == 2 and len(n2) == 1 and n3 == ['nit: `a.ts:3`: z'] and mb['b'].count('## Follow-ups') == 1 and mb['b'].count('- ') == 4 and mb['b'].index('trim y') < mb['b'].index(FOOTER))
         g.update(remote=saved['remote'], _run=saved['_run'], _host=saved['_host'])
         seen = []
@@ -4055,7 +4053,7 @@ def _cli():
     use = [ln for ln in __doc__.splitlines() if re.match(rf'\s+python -X utf8 devtools\.py {re.escape(cmd)}\b', ln)] if cmd else []
     if cmd == 'mr':   # the caps: guessed ones cost refusals (tidy-6)
         use += [f'  {lim}' for lim in (prose_limits('mr-title'), prose_limits('mr-body')) if lim]
-    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'docgaps': 0, 'relayout': 1, 'evidence': 1, 'keepboth': 1, 'selftest': 0}
+    ARITY = {'comment': 2, 'finish': 3, 'mr': 3, 'followups': 2, 'merge': 2, 'doc': 2, 'docgaps': 0, 'relayout': 1, 'evidence': 1, 'selftest': 0}
     FLAGS, opt = {}, {}
     CHECK = cmd == 'mr' and '--check' in a   # the body gates before the push (retro 2026-11-22: 9 mr-body refusals after it)
     DRY = cmd == 'doc' and '--dry-run' in a   # pokey finalize -Check (tidy-6)
@@ -4126,8 +4124,6 @@ def _cli():
         res = auto_merge(a[1], a[2])
         print(res)
         sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # 1 = refused, conflict or wait
-    elif cmd == 'keepboth':
-        sys.exit(keepboth(a[1:]))
     elif cmd == 'selftest':
         sys.exit(selftest())
     elif cmd == 'doc' and DRY:   # the adapter and the title as received
