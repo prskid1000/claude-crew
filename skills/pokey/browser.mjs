@@ -401,7 +401,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
 
 // ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui-checks.mjs)
 // matrix(s, fn, { parallel }): fn per qa.matrix variant (adapters/ui-checks.mjs matrix)
-export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {}, parallel } = {}) => (await adapter('ui-checks.mjs')).matrix(s, fn, m, { parallel })
+export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {}, ...o } = {}) => (await adapter('ui-checks.mjs')).matrix(s, fn, m, o)
 // layoutIssues(page, { scope, ignore }), contrast(page, sel, { min }), hitTest(page, [sel | { text }])
 // testerScreen(s, fn, { mobile }): fn at qa.testerViewport (web 1366x768, mobile 390x844)
 export const [layoutIssues, contrast, hitTest, testerScreen] = ['layoutIssues', 'contrast', 'hitTest', 'testerScreen'].map((n) => async (...a) => (await adapter('ui-checks.mjs'))[n](...a))

@@ -138,6 +138,9 @@ const mx = { viewports: ['800x600', '1024x700', '390x844'], fontScales: [1, 2, 3
 let t = Date.now(); const par = await m.matrix(s, work, { matrix: { ...mx, locales: ['de-DE'] }, parallel: 4 }), parMs = Date.now() - t
 t = Date.now(); const ser = await m.matrix(s, work, { matrix: mx }), serMs = Date.now() - t
 console.log(`par:${par.length === 9 && par.every((x) => x.result.seen === 'T' && x.result.l === 'de-DE' && x.variant.endsWith('_de-de')) && par.map((x) => x.result.w).join() === ser.map((x) => x.result.w).join() && ser[1].result.seen !== 'T'}`)
+// coordinator 2026-11-25: a context stayed open under load; a hung variant times out, FAILs, and its context still closes
+const to = await m.matrix(s, async (v) => { if (v.tag.startsWith('390')) await new Promise(() => {}); return { result: 'PASS' } }, { matrix: { viewports: ['800x600', '390x844'] }, parallel: 2, variantSec: 2 })
+console.log(`timeout:${to[0].result.result === 'PASS' && /timed out after 2 s/.test(to[1].result.error)}`)
 console.log(`clean:${s.browser.browserContexts().length === 1}`); console.log(`busy:${busy}`); await s.done(); console.log(`unbusy:${!existsSync(bf)}`)
 // async: a sync spawn blocks this process's web server (a 60 s stall per CDP call)
 const cli = (env, ...a) => new Promise((r) => execFile(process.execPath, [m.KIT + '/skills/pokey/matrix.mjs', '--case', 'A1', '--script', dir + '/case.mjs', '--out', dir + '/mx', '--path', '/', ...a], { encoding: 'utf8', env: { ...process.env, ...env } }, (e, stdout, stderr) => r({ status: e ? e.code : 0, stdout, stderr })))
@@ -149,7 +152,7 @@ console.log(`reduced:${red.status === 1 && /^FAIL A1 390x844 /m.test(red.stdout)
 console.log(`speed:${parMs < serMs * 0.75} ${serMs} ${parMs}`); await m.killSession(cp); srv.close(); process.exit(0)
 '@ $wp (Kd)
   if ("$res" -match 'nochrome') { 'SKIP matrix parallel (no Chrome or Edge)' } else {
-    Expect-Each $res 'browser.mjs matrix: parallel = a context per variant (own viewport, locale, storage; the login copied), closed after; matrix.mjs CLI (a case calling hitTest, openNav): per-variant results + the Matrix line, a recorded reduced set, exit 1 on a FAIL; a session marks its agent busy #' 'par', 'clean', 'busy', 'unbusy', 'cli', 'reduced'
+    Expect-Each $res 'browser.mjs matrix: parallel = a context per variant (own viewport, locale, storage; the login copied), closed after (a hung variant: timed out, FAIL, closed too); matrix.mjs CLI (a case calling hitTest, openNav): per-variant results + the Matrix line, a recorded reduced set, exit 1 on a FAIL; a session marks its agent busy #' 'par', 'timeout', 'clean', 'busy', 'unbusy', 'cli', 'reduced'
     $sp = "$(@($res) -match '^speed:')"; Expect "matrix: 9 variants of 1.5 s, 4 at once (3 waves + ~1 s context and load each) vs one after another ($sp ms)" ($sp -match '^speed:True ') }
 }
 # prepare (moved from qa-config: its cap): the run title is cut to 25 words

@@ -20,7 +20,7 @@ const out = resolve(arg('out')), fn = (await import(pathToFileURL(resolve(arg('s
 mkdirSync(out, { recursive: true })
 const s = await b.session({ target: arg('target') || undefined, tenant: arg('tenant') || undefined, as: arg('as') || undefined })
 let rows
-try { if (arg('path')) await b.go(s.page, arg('path')); rows = await ui.matrix(s, (v) => fn({ ...v, b, ui, out, case: arg('case') }), sc.matrix, { parallel: Number(arg('parallel')) || cfg.matrixRun?.parallel || 4 }) } finally { await s.done() }
+try { if (arg('path')) await b.go(s.page, arg('path')); rows = await ui.matrix(s, (v) => fn({ ...v, b, ui, out, case: arg('case') }), sc.matrix, { parallel: Number(arg('parallel')) || cfg.matrixRun?.parallel || 4, variantSec: Number(cfg.matrixRun?.variantSec) || 300 }) } finally { await s.done() }
 const line = ui.matrixLine(rows, sc), fails = rows.filter((x) => !ui.passed(x.result))
 writeFileSync(join(out, `${arg('case')}-matrix.json`), JSON.stringify({ case: arg('case'), scope: sc.scope, reason: sc.reason || '', ms: Date.now() - t0, rows, line }, null, 1))
 for (const x of rows) console.log(`${ui.passed(x.result) ? 'PASS' : 'FAIL'} ${arg('case')} ${x.variant} ${x.ms ?? ''} ms ${JSON.stringify(x.result).slice(0, 160)}`)

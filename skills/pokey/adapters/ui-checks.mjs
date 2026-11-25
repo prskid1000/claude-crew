@@ -96,15 +96,17 @@ async function seedOf(s) {
   const items = async (isLocalStorage) => (o ? (await cdp.send('DOMStorage.getDOMStorageItems', { storageId: { securityOrigin: o, isLocalStorage } }).catch(() => ({ entries: [] }))).entries : [])
   try { await cdp.send('DOMStorage.enable').catch(() => {}); return { cookies: (await cdp.send('Network.getAllCookies')).cookies, st: { o, l: await items(true), ss: await items(false) } } } finally { await cdp.detach().catch(() => {}) }
 }
-async function variantPage(s, v, seed) {
+// hold.close is set the moment the context exists: a later throw, timeout or exit still closes it (one retry: a busy CDP drops a close)
+const closer = (ctx, tab) => async () => { await tab?.().catch(() => {}); for (let i = 0; i < 2; i++) { try { await ctx.close(); return } catch { await new Promise((r) => setTimeout(r, 1000)) } } }
+async function variantPage(s, v, seed, hold) {
   const vp = v.viewport && dims(v.viewport), scheme = /^(light|dark)$/i.test(v.theme || '') ? v.theme.toLowerCase() : null, url = s.page.url()
-  let page, close
+  let page
   if (s.page.__pw) {
     const ctx = await s.browser.newContext({ ...(vp && { viewport: vp }), ...(v.locale && { locale: v.locale }), ...(scheme && { colorScheme: scheme }), storageState: await s.page.context().storageState() })
-    page = (await import('./engine-playwright.mjs')).wrapPage(ctx, await ctx.newPage()); close = () => ctx.close()
+    hold.close = closer(ctx); page = (await import('./engine-playwright.mjs')).wrapPage(ctx, await ctx.newPage())
   } else {
     const b = await import('../browser.mjs'), ctx = await s.browser.createBrowserContext(), { cookies, st } = seed
-    page = await b.openTab(s.browser, s.key, { agent: s.page.__qa?.agent, ctx }); close = async () => { await b.closeTab(page, s.key); await ctx.close().catch(() => {}) }
+    hold.close = closer(ctx); page = await b.openTab(s.browser, s.key, { agent: s.page.__qa?.agent, ctx }); hold.close = closer(ctx, () => b.closeTab(page, s.key))
     if (vp) await page.setViewport({ ...(s.page.viewport() || {}), ...vp })
     if (cookies.length) await page.setCookie(...cookies.map(({ name, value, domain, path, expires, httpOnly, secure, sameSite }) => ({ name, value, domain, path, expires, httpOnly, secure, sameSite })))
     if (st) await page.evaluateOnNewDocument((st) => { if (location.origin === st.o && !sessionStorage.getItem('qa-seeded')) { for (const [k, x] of st.l) localStorage.setItem(k, x); for (const [k, x] of st.ss) sessionStorage.setItem(k, x); sessionStorage.setItem('qa-seeded', '1') } }, st)
@@ -113,23 +115,30 @@ async function variantPage(s, v, seed) {
   }
   page.__qa = s.page.__qa
   if (/^https?:/.test(url)) await page.goto(url, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => {})
-  return { page, close }
+  return page
 }
 // browser.mjs matrix(): fn per variant (m = qa.matrix); parallel <= 1: on s.page in turn, its viewport restored after; parallel n:
 // n variants at once, each in its own context (fn gets its page: use v.page, never s.page); a throw is that variant's FAIL
-export async function matrix(s, fn, m, { parallel = 1 } = {}) {
+// variantSec (qa.matrixRun.variantSec, 300): a variant still running then is a FAIL and its context closes
+export async function matrix(s, fn, m, { parallel = 1, variantSec = 300 } = {}) {
   const vs = variants(m), out = new Array(vs.length), v0 = s.page.viewport?.(), own = vs.some((v) => v.locale || /^(light|dark)$/i.test(v.theme || ''))
   if (own && !s.browser) throw new Error('matrix: a locale or light / dark theme variant needs a context of its own: pass a browser.mjs session')
   if (parallel <= 1 && !own || !s.browser) {   // s.page in turn; a locale / scheme: contexts, one at a time at least
     try { for (const [i, v] of vs.entries()) { if (v.viewport) await s.page.setViewport({ ...(v0 || {}), ...dims(v.viewport) }); out[i] = { variant: v.tag, result: await fn({ ...v, page: s.page }) } } } finally { if (v0) await s.page.setViewport(v0) }
     return out
   }
-  let next = 0; const seed = await seedOf(s)
+  let next = 0; const seed = await seedOf(s), open = new Set(), b = await import('../browser.mjs')
+  const bye = b.releaseOnExit(async () => { await Promise.all([...open].map((h) => h.close?.())) })   // a crash or signal: open contexts close too
   const work = async () => { for (let i; (i = next++) < vs.length;) {
-    const v = vs[i], t0 = Date.now(); let ctx = null
-    try { ctx = await variantPage(s, v, seed); out[i] = { variant: v.tag, result: await fn({ ...v, page: ctx.page }) } } catch (e) { out[i] = { variant: v.tag, result: { result: 'FAIL', error: String(e.message || e).slice(0, 300) } } } finally { await ctx?.close().catch(() => {}) }
+    const v = vs[i], t0 = Date.now(), hold = {}; let timer
+    open.add(hold)
+    try {
+      const run = (async () => fn({ ...v, page: await variantPage(s, v, seed, hold) }))()
+      run.catch(() => {})   // a timed-out run may still throw: never unhandled
+      out[i] = { variant: v.tag, result: await Promise.race([run, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`variant timed out after ${variantSec} s (qa.matrixRun.variantSec)`)), variantSec * 1000) })]) }
+    } catch (e) { out[i] = { variant: v.tag, result: { result: 'FAIL', error: String(e.message || e).slice(0, 300) } } } finally { clearTimeout(timer); await hold.close?.(); open.delete(hold) }
     out[i].ms = Date.now() - t0 } }
-  await Promise.all(Array.from({ length: Math.min(parallel, vs.length) }, work))
+  try { await Promise.all(Array.from({ length: Math.min(parallel, vs.length) }, work)) } finally { bye() }
   return out
 }
 export const qaCfg = async () => { const b = await import('../browser.mjs'), { readFileSync } = await import('node:fs'); try { return JSON.parse(readFileSync(b.localFile('skills/crafty/kit.local.json'), 'utf8')).qa || {} } catch { return {} } }
