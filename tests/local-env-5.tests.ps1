@@ -16,6 +16,9 @@ $api = @{ name = 'api'; repo = 'r'; dir = 'api'; port = 41051; artifact = 'targe
 # owner 2026-11-19: each release gets classpath.txt + java.args (-cp artifact;libraries); the repo's own module jars copied into
 # <release>/lib, Maven local repository jars referenced; {javaArgs} = that release's argfile; a later build never changes it
 $ud = Kd; $wtd = Join-Path $ud 'wt'
+# train log lines carry the clock (rechy-5: lane time was not measurable from the train log)
+$tph = & { $e = 't'; $Train = 'ab12'; function Update-State { }; Invoke-Expression ([Management.Automation.Language.Parser]::ParseFile($L5, [ref]$null, [ref]$null).Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Phase' }, $true).Extent.Text); Phase 'merging and building' }   # a daemon-only function
+Expect "train phase line starts with HH:mm:ss ($tph)" ($tph -match '^\d\d:\d\d:\d\d \[t\] train ab12 : merging and building$')
 $tj = & { . $L5; function RepoOf { 'r' }; function EnvRepos { @{ r = [pscustomobject]@{ wt = $wtd } } }; function EnvServices { [pscustomobject]$api }; $sep = [IO.Path]::PathSeparator
   $tgt = Join-Path $wtd 'api/target'; $cpf = Join-Path $tgt 'classpath.txt'
   $repoJar = Join-Path $ud 'm2/org/x/1.0/x-1.0.jar'; $modJar = Join-Path $wtd 'lib/m1/target/m1-1.jar'

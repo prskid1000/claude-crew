@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck, keepboth: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L394 process · L605 git host · L678 scope · L776 MR · L992 merge · L1325 docs ·
-  L1562 publish · L2121 render · L2731 spec · L3276 plugins · L3290 selftest · L4039 CLI
+Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L996 merge · L1329 docs ·
+  L1566 publish · L2125 render · L2735 spec · L3280 plugins · L3294 selftest · L4043 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs: shutil.which.
@@ -597,8 +597,12 @@ def finish(tid, guide, solution_md, status='review', ai=None):
                 raise
             print(f'[finish] {tid}: status kept: {str(e).split("SKIPPED:", 1)[1].strip().splitlines()[0]}', file=sys.stderr)
     tid = tid[len(TAG):] if TAG and tid.startswith(TAG) else tid   # tracking keys carry no tag
-    tr = ((read_tracking().get('tasks') or {}).get(tid) or {})
-    if tr and not tr.get('done'):   # merged MRs waited on these links: promote now, not a supervise sweep later
+    track_now(tid)   # merged MRs waited on these links
+
+
+def track_now(tid):
+    """bossy.ps1 track run -Task for an open tracked task: promoted now (all merged, docs linked), not on a supervise sweep."""
+    if tid and not (((read_tracking().get('tasks') or {}).get(tid) or {'done': 1}).get('done')):
         print(_run([PWSH, '-NoProfile', '-NonInteractive', '-File', os.path.join(KIT_DIR, 'skills', 'bossy', 'bossy.ps1'), 'track', 'run', '-Task', tid], write=True, sec=180), file=sys.stderr)
 
 
@@ -4123,6 +4127,8 @@ def _cli():
     elif cmd == 'merge':          # merge now / arm merge-when-green; waits <= 90 s
         res = auto_merge(a[1], a[2])
         print(res)
+        if merge_word(res) == 'MERGED':   # the task's last MR: promoted at once (rechy-5: merge -> promoted p90 156 min)
+            track_now(_mr_task({}, remote(a[1])[1], str(a[2]).rsplit('!', 1)[-1].lstrip('#')))
         sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # 1 = refused, conflict or wait
     elif cmd == 'selftest':
         sys.exit(selftest())

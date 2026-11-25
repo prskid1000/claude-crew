@@ -19,11 +19,13 @@ $put = { param($Name, $File, $Obj) $d = TkPath $k $Name -Create; Set-Content (Jo
 & $put tasks 't2.json' @{ task = 't2'; parent = 't1'; spec = @{ kind = 'Bug' }; track = @{ mrs = @('api!3'); created = '2026-11-02T10:00:00+00:00'; done = $true; doneAt = '2026-11-02T11:00:00+00:00' }; envRuns = @(); updated = (Get-Date).ToString('o') }
 & $put waves 'wf_1.json' @{ run = 'wf_1'; at = (Get-Date).ToString('o'); agents = @{ A1 = @{ done = @('t1'); localRounds = 3; fixedRound = $true; deferred = @(@{ id = 't1:x'; kind = 'code'; reason = 'local loop refused: lane busy behind another lease holder' }) }
     A2 = @{ done = @('t2'); localRounds = 1; fixedRound = $false; deferred = @(@{ id = 't2:x'; kind = 'code'; reason = 'local loop refused: lane busy behind another holder lease' }) } } }
-& $put launches 'self-buildy-r1.json' @{ run = 'r1'; script = 'buildy.js'; spent = 1000; argsRaw = '{"tasks":["t1","t2"]}' }
+& $put launches 'self-buildy-r1.json' @{ run = 'r1'; script = 'buildy.js'; at = '2026-11-01T08:00:00+00:00'; spent = 1000; argsRaw = '{"tasks":["t1","t2"]}' }
 $n1 = pwsh @np $fx 'Update-KitOutcomes -All'; $n2 = pwsh @np $fx 'Update-KitOutcomes'
 $rows = @(Get-Content (TkPath $k outcomes) | ConvertFrom-Json); $r1 = $rows | Where-Object task -eq 't1'
 Expect 'outcomes: one row per task, a second sweep with no change writes none' ("$n1" -eq '2' -and "$n2" -eq '0' -and $rows.Count -eq 2)
-Expect 'outcomes: first pass, came back, rounds, a [Bug] under it, spend split, hours' (-not $r1.qaFirstPass -and $r1.cameBack -and $r1.stage -eq 'passed' -and $r1.localRounds -eq 3 -and $r1.reviewFix -eq 1 -and $r1.bugs -eq 1 -and $r1.spend -eq 500 -and $r1.hPromoted -eq 4 -and $r1.area -eq 'api,web')
+Expect 'outcomes: first pass, came back, rounds, a [Bug] under it, spend split, hours' (-not $r1.qaFirstPass -and $r1.cameBack -and $r1.stage -eq 'passed' -and $r1.localRounds -eq 3 -and $r1.reviewFix -eq 1 -and $r1.bugs -eq 1 -and $r1.spend -eq 500 -and $r1.hPromoted -eq 4 -and $r1.hStart -eq 6 -and $r1.area -eq 'api,web')
+$kp = pwsh @np $fx '$q = (Get-KitOutcomeStats).kpi; "$($q.start)|$($q.one)|$($q.multi)"'
+Expect "outcomes KPIs (dec-61): agent start -> promoted p50, first MR -> promoted for 1-MR and multi-MR tasks ($kp)" ("$kp" -eq '6|1|4')
 $lines = pwsh @np $fx 'Get-KitOutcomeLines' | Out-String
 Expect 'outcomes summary: totals, worst area, agent rounds, a repeat cause' ($lines -match 'QA first pass 0/1, came back 1' -and $lines -match 'area api: 2 task\(s\)' -and $lines -match 'agent A1: 3 fix round' -and $lines -match 'cause 2x: local loop refused')
 & $put tasks 't3.json' @{ task = 't3'; spec = @{ kind = 'Feature' }; track = @{ mrs = @('cs!4'); created = '2026-11-02T10:00:00+00:00' }; envRuns = @(); updated = (Get-Date).ToString('o') }   # a repo with no QA'd task: the "other" bar

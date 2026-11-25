@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
 Sections: L30 lanes · L44 report · L161 seat · L310 api · L573 users · L705 login surfaces (parity.json login) · L738 finalize ·
-  L1284 results · L1319 retest · L1376 prepare
+  L1289 results · L1324 retest · L1381 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1160,13 +1160,18 @@ function Set-FailedTesting($rec, $st) {
   }
   if ($null -ne $ok) { $rec.failedTesting = $true } else { $rec.keptOpen = 'the tracker refused the failedTesting status (see warning)' }
 }
-# the task's MRs (run item + track) merged after this run started (folder stamp yyyy-MM-dd-HHmmss): a newer fix round the run never tested
+# the task's MRs (run item + track) merged after this item started and not deployed to its target before then: a newer fix round it never tested
 function Get-LateMerges($st) {
   # N3 run ids carry no time: run.json started; the legacy folder stamp yyyy-MM-dd-HHmmss for one version
   $t0 = if ((Split-Path $RunDir -Leaf) -match '^(\d{4}-\d{2}-\d{2}-\d{6})') { [datetimeoffset][datetime]::ParseExact($Matches[1], 'yyyy-MM-dd-HHmmss', $null) } elseif ($rs = try { (Read-KitText (Join-Path $RunDir 'run.json') | ConvertFrom-Json).started } catch { $null }) { [datetimeoffset]$rs }
+  # the item's own start (owner 2026-11-25: a retest added hours later kept a passing task failed): its stamp, else its first evidence file
+  $i0 = if ($item.added) { [datetimeoffset]$item.added } else { @(Get-ChildItem -LiteralPath (Join-Path $RunDir "$Code/evidence") -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object { [datetimeoffset]$_.LastWriteTime } | Sort-Object)[0] }
+  if ($i0 -and (-not $t0 -or $i0 -gt $t0)) { $t0 = $i0 }
   if (-not $t0) { return }
+  $qaTgt = [string]$(if ($item.target) { $item.target } else { $run.target })
+  $covered = @(Read-KitLog deploy-log ([datetime]::MinValue) | Where-Object { $_.event -eq 'record' -and "$($_.target)" -eq $qaTgt -and [datetimeoffset]$_.at -lt $t0 } | ForEach-Object { @($_.mrs) })   # deployed there before the item ran: tested
   $refs = @(@("$($st.mrs)" -split '[,\s]+') + @((Read-KitTracking).tasks["$($st.id)"].mrs) | Where-Object { "$_" -match '^[\w./-]+!\d+$' } | Select-Object -Unique)
-  foreach ($ref in $refs) { $rp, $iid = "$ref" -split '!', 2; if ($rp -notmatch '/' -and $KitConf.GitlabGroup) { $rp = "$($KitConf.GitlabGroup)/$rp" }
+  foreach ($ref in @($refs | Where-Object { $_ -notin $covered })) { $rp, $iid = "$ref" -split '!', 2; if ($rp -notmatch '/' -and $KitConf.GitlabGroup) { $rp = "$($KitConf.GitlabGroup)/$rp" }
     $m = try { Invoke-HostVerb 'mr.get' @{ repo = $rp; n = $iid } } catch { $null }
     $ma = $m.merged_at; if (-not $ma) { continue }
     if ($(if ($ma -is [datetime]) { [datetimeoffset]$ma } else { [datetimeoffset]::Parse("$ma", [Globalization.CultureInfo]::InvariantCulture) }) -gt $t0) { "$ref" } }
@@ -1351,7 +1356,7 @@ if ($old.Count) {   # reused code: archive the earlier round
 }
 $r = Get-Content "$RunDir/run.json" -Raw | ConvertFrom-Json
 $items = @($r.items | Where-Object { $_.code -ne $Code })
-$items += [pscustomobject]@{ code = $Code; lane = $Lane; title = $Title; guideFile = $gf; retest = $true; only = @($Only); subtasks = @([pscustomobject]@{ id = $Task; name = $t.name; mrs = $Mrs }) }
+$items += [pscustomobject]@{ code = $Code; lane = $Lane; title = $Title; guideFile = $gf; retest = $true; added = (Get-KitStamp); only = @($Only); subtasks = @([pscustomobject]@{ id = $Task; name = $t.name; mrs = $Mrs }) }
 $r.items = $items
 Write-KitAtomic "$RunDir/run.json" ($r | ConvertTo-Json -Depth 8)
 "added $Code (retest of $Task, checks $($Only -join ', ')) to $RunDir/run.json - launch: Workflow testy { runDir: '$($RunDir -replace '\\', '\\')', only: ['$Code'], instance: 'w<next>' }"

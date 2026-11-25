@@ -153,6 +153,7 @@ if ($IsWindows) {
   try { $env:PATH = "$shimDir;$oldPath"; $gpR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); & (Get-Python) -c 'import sys; print(sys.argv[1])' $tq 2>&1 | Out-String } } finally { $env:PATH = $oldPath }
   Expect "Get-Python: the real python.exe behind a .bat shim keeps an arg with a quote and ( ) ($gpR)" ("$gpR".Trim() -eq $tq)
 }
+<<<<<<< HEAD
 # ---- proof (owner 2026-11-25: 48% came back, ui goals proven by API / stubs): adapters/proof.py gates finish, mr, wt commit
 Copy-Item (Join-Path $src 'skills/crafty/adapters/proof.py') (Join-Path $k 'skills/crafty/adapters')
 $pfSelf = & $py -X utf8 $DT proof selftest 2>&1 | Out-String
@@ -186,5 +187,12 @@ $aiHits = @(git -C $src grep -n -i -E $aiRx -- '*.md' '*.js' '*.mjs' ':!.codex' 
 $aiHits = @($aiHits | Where-Object { "$_" -notmatch 'never (rerun|N reruns)' })
 $aiSelf = @("LLM-driven checks: 5+ runs in fresh sessions", "never rerun a model N times") | Where-Object { $_ -match "(?i)$aiRx" -and $_ -notmatch 'never (rerun|N reruns)' }
 Expect "no kit text tells an agent to rerun an AI flow N times (grep exit $aiCode, $($aiHits.Count): $($aiHits | Select-Object -First 2))" ($aiCode -le 1 -and $aiHits.Count -eq 0 -and @($aiSelf).Count -eq 1 -and $pfSelf -match 'PASS proof: a goal per channel')
+=======
+# ---- promote on merge: MERGED runs track run for the MR's open task at once; SCHEDULED and a done task do not
+$pmPy = Join-Path (Kd) 'promote-merge.py'
+[IO.File]::WriteAllText($pmPy, "import sys; sys.path.insert(0, sys.argv[1]); import devtools as d`nruns = []`nd._run = lambda c, **kw: runs.append(c[-1]) or ''`nd.remote = lambda w: ('gitlab', 'grp/api')`nd.read_tracking = lambda: {'tasks': {'T1': {'mrs': ['api!7']}, 'T2': {'mrs': ['api!8'], 'done': True}}}`nfor iid, word in (('7', 'MERGED'), ('8', 'MERGED'), ('9', 'SCHEDULED')):`n    d.auto_merge = lambda w, i, word=word: 'x\n' + word`n    sys.argv = ['devtools.py', 'merge', '.', iid]`n    try: d._cli()`n    except SystemExit: pass`nprint('RUNS', runs)`n")
+$pmOut = & $py -X utf8 $pmPy (Split-Path $DT) 2>&1 | Out-String
+Expect "devtools.py merge MERGED: track run -Task of the open task only ($(($pmOut -split "`n" | Select-String 'RUNS') -join ''))" ($pmOut -match "RUNS \['T1'\]")
+>>>>>>> c2271d03 (perf(flow): promote on merge, skip 2nd CI run, lead-time tiles)
 Remove-TestKit $k
 Complete-Tests

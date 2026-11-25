@@ -109,5 +109,14 @@ Expect "report md: a null upload map renders file names ($($qm.Trim().Length) ch
 $lnT = "import { laneTarget } from '$((Join-Path $src 'skills/pokey/adapters/web-login.mjs').Replace('\', '/') -replace '^', 'file:///')'`nconst tg = { loc: { web: 'http://localhost:4200', api: 'http://localhost:8443/api', users: { u: 1 } } }`nconst ln = [{ env: 'ab-falcon', group: 'ab', lane: 1, ports: { web: 4200, api: 8443 } }, { env: 'ab-kestrel', group: 'ab', lane: 2, ports: { web: 4300, api: 8543 } }]`nconst a = laneTarget('loc-kestrel', tg, ln), b = laneTarget('loc2', tg, ln)`nconsole.log([a.web, a.api, a.users.u, b.web, laneTarget('loc-falcon', tg, ln) === tg.loc, laneTarget('nope-kestrel', tg, ln), tg.loc.web].join('|'))"
 Set-Content "$(Kd)/lane.mjs" $lnT; $lno = node "$(Kd)/lane.mjs" 2>&1 | Out-String
 Expect "browser laneTarget: lane URLs, base login; lane 1 = base; unknown base = null; base unchanged ($lno)" ($lno.Trim() -eq 'http://localhost:4300|http://localhost:8543/api|1|http://localhost:4300|true||http://localhost:4200')
+# browser.mjs pick / matrix (moved from pokey.tests.ps1: its token cap)
+if ($bk) {
+  $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
+    "console.log(/has 0 match\(es\), no index 0/.test(await e(pg([]))), /has no box/.test(await e(pg([{ scrollIntoView: async () => {}, boundingBox: async () => null }]))))")
+  Expect 'browser.mjs pick: bad nth / hidden element errors' ("$res" -eq 'true true')
+  $res = NodeT matrix ("const vs = [], s = { page: { viewport: () => ({ width: 9, height: 9 }), setViewport: async (v) => vs.push(v.width) } }, o = (v, f) => ({ matrix: { viewports: v, fontScales: f } })`n" +
+    "const r = await m.matrix(s, async (v) => v.tag, o(['1280x720', '1920x1080'], [2])); console.log(r.map((x) => x.result).join(), vs.join(), await m.matrix(s, 0, o(['1280'])).catch((e) => /<width>x<height>/.test(e.message)))")
+  Expect 'browser.mjs matrix: each qa.matrix variant, viewport restored; a bad viewport names its fix' ("$res" -eq '1280x720_f2,1920x1080_f2 1280,1920,9 true')
+}
 Remove-TestKit $k
 Complete-Tests

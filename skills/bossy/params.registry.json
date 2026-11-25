@@ -65,6 +65,7 @@
   "deploy.opsyBeatMinutes": "config default=60 unit=min",
   "track.lagMinutes": "config default=60 unit=min",
   "track.lagRecheckMinutes": "config default=30 unit=min",
+  "track.mrSpreadMinutes": "config default=30 unit=min",
   "deploy.mergePollSec": "config default=30 unit=s",
   "deploy.mergeSettleSec": "config default=3 unit=s",
   "deploy.pipelineWaitMinutes": "config default=40 unit=min",

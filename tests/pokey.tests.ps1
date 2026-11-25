@@ -206,12 +206,6 @@ $klBase | Set-Content $kl
 # browser.mjs: mocks, then local fixture servers
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
-  $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
-    "console.log(/has 0 match\(es\), no index 0/.test(await e(pg([]))), /has no box/.test(await e(pg([{ scrollIntoView: async () => {}, boundingBox: async () => null }]))))")
-  Expect 'browser.mjs pick: bad nth / hidden element errors' ("$res" -eq 'true true')
-  $res = NodeT matrix ("const vs = [], s = { page: { viewport: () => ({ width: 9, height: 9 }), setViewport: async (v) => vs.push(v.width) } }, o = (v, f) => ({ matrix: { viewports: v, fontScales: f } })`n" +
-    "const r = await m.matrix(s, async (v) => v.tag, o(['1280x720', '1920x1080'], [2])); console.log(r.map((x) => x.result).join(), vs.join(), await m.matrix(s, 0, o(['1280'])).catch((e) => /<width>x<height>/.test(e.message)))")
-  Expect 'browser.mjs matrix: each qa.matrix variant, viewport restored; a bad viewport names its fix' ("$res" -eq '1280x720_f2,1920x1080_f2 1280,1920,9 true')
   $env:KIT_BROWSER_PORT_BASE = 30000
   $res = NodeT base "const u = [], pg = (web) => ({ __qa: { t: { web } }, goto: async (x) => u.push(x), on() {}, off() {}, waitForNetworkIdle: async () => {} })`nawait m.go(pg('a'), '/x'); await m.go(pg('b'), '/y'); console.log(u + '' === 'a/x,b/y', (await m.sessionPort('pb', 't', 'a')) >= 30000)"
   Remove-Item Env:KIT_BROWSER_PORT_BASE
@@ -266,10 +260,12 @@ Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-
 $ff = @(@('C1', 'PASS'), @('C2', 'FAIL')); foreach ($x in 'C', 'O') { New-Task "P$x" 'Ask' $null 'in test'; New-Task "S$x" 'Sub' "P$x" 'in test' }
 $cr = New-Run 'CR' @(@{ code = 'CR1'; task = 'PC'; checks = $ff }, @{ code = 'CO1'; task = 'PO'; checks = @(, @('C1', 'PASS')) }); $null = Fin $cr 'CR1'; $null = Fin $cr 'CO1'
 Expect "failedTesting: the in-test subtask follows its parent; a pass keeps a parent with an open subtask in test ($((Rec $cr 'CO1').keptOpen))" ((Task 'PC').status -eq 'failed testing' -and (Task 'SC').status -eq 'failed testing' -and (Task 'PO').status -eq 'in test' -and (Rec $cr 'CO1').ownPassed)
-$mg = Join-Path (Kd) 'mrget.ps1'; Set-Content $mg 'param($n) ''{"state":"merged","merged_at":"'' + $(if ($n -eq 5) { ''2026-01-03'' } else { ''2025-12-30'' }) + ''T12:00:00Z"}'''
+$mg = Join-Path (Kd) 'mrget.ps1'; Set-Content $mg 'param($n) ''{"state":"merged","merged_at":"'' + $(if ($n -in 5, 7) { ''2026-01-03'' } else { ''2025-12-30'' }) + ''T12:00:00Z"}'''
 & $J (@{ gitHost = 'git.example'; gitHostType = 'command'; gitHostApi = @{ commands = @{ 'mr.get' = "pwsh -NoProfile -File `"$mg`" {n}" } } } + ($klBase | ConvertFrom-Json -AsHashtable)) $kl
-foreach ($lt in @(@('LT', 'api!5'), @('OK', 'api!6'))) { New-Task "T$($lt[0])" 't' $null 'in test'; $ld = New-Run "2026-01-01-100000-$($lt[0])" @(@{ code = "$($lt[0])1"; task = "T$($lt[0])"; checks = $ff }); $rj = Read-Json "$ld/run.json"; $rj.items[0].subtasks[0] | Add-Member mrs $lt[1]; & $J $rj "$ld/run.json"; $null = Fin $ld "$($lt[0])1"; Set-Variable "fin$($lt[0])" (Rec $ld "$($lt[0])1") }
+Set-Content "$k/.state/deploys.jsonl" '{"at":"2026-01-02T00:00:00Z","event":"record","target":"t","mrs":["api!7"]}'
+foreach ($lt in @(@('LT', 'api!5'), @('OK', 'api!6'), @('RT', 'api!5', '2026-01-04T00:00:00Z'), @('DP', 'api!7', '2026-01-02T12:00:00Z'))) { New-Task "T$($lt[0])" 't' $null 'in test'; $ld = New-Run "2026-01-01-100000-$($lt[0])" @(@{ code = "$($lt[0])1"; task = "T$($lt[0])"; checks = $ff }); $rj = Read-Json "$ld/run.json"; $rj.items[0].subtasks[0] | Add-Member mrs $lt[1]; if ($lt[2]) { $rj.items[0] | Add-Member added $lt[2] }; & $J $rj "$ld/run.json"; $null = Fin $ld "$($lt[0])1"; Set-Variable "fin$($lt[0])" (Rec $ld "$($lt[0])1") }
 Expect "late QA result: status kept, the comment says why; an older merge applies it ($($finLT.keptOpen))" (-not $finLT.failedTesting -and $finLT.keptOpen -match 'api!5 merged after this run started' -and (Task 'TLT').status -eq 'in test' -and @((Task 'TLT').comments | Where-Object { $_.text -match 'Status unchanged: api!5' }).Count -eq 1 -and $finOK.failedTesting)
+Expect 'late merge: a retest added after the merge, or an MR deployed to the target before the item ran, decides now' ($finRT.failedTesting -and $finDP.failedTesting)
 $klBase | Set-Content $kl
 Remove-Item Env:KIT_TRACKER_TYPE, Env:KIT_REPORT_TYPE
 Remove-TestKit $k

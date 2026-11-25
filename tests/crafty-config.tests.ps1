@@ -165,6 +165,13 @@ $rcs = foreach ($rcStep in 'conflict', 'open', 'commit', 'resolved') {
   "$rcOut rc=$LASTEXITCODE br=$(git -C $rcRepo branch --show-current)" }
 Expect "wt sync: a conflict exits 1 (no 'rebased onto'); resumed unresolved and wt commit refused; resolved: continued on the branch ($($rcs -join ' | '))" ($rcs[0] -match 'REBASE CONFLICT.*rc=1' -and $rcs[0] -notmatch 'rebased onto' -and
   $rcs[1] -match 'rebase is in progress.*unresolved: c\.txt.*rc=1' -and $rcs[2] -match 'commit refused: a rebase is in progress.*rc=1' -and $rcs[3] -match 'resumed rebase finished on rc.*rc=0 br=rc$' -and (Get-Content "$rcRepo/c.txt") -eq 'both')
+# wt sync before a merge (-Mrs): the target changed only other files -> no rebase (no push, no 2nd CI run); without -Mrs it rebases
+$djBare = Join-Path (Kd) 'dj.git'; $djRepo = Join-Path (Kd) 'dj'; git init -q --bare $djBare; git clone -q $djBare $djRepo 2>$null; 'a' | Set-Content "$djRepo/a.txt"; Save-GitRepo $djRepo base
+git -C $djRepo branch -M main; git -C $djRepo push -q origin main 2>$null; git -C $djRepo checkout -q -b dj; 'mine' | Set-Content "$djRepo/b.txt"; Save-GitRepo $djRepo dj1
+git -C $djRepo checkout -q main; 'theirs' | Set-Content "$djRepo/m.txt"; Save-GitRepo $djRepo m1; git -C $djRepo push -q origin main 2>$null; git -C $djRepo checkout -q dj; 'main' | Set-Content "$djRepo/.git/claude-target"
+$djHead = git -C $djRepo rev-parse HEAD; $djA = pwsh @np $D wt sync -Dir $djRepo -Mrs '!7' 2>&1 | Out-String; $djSame = (git -C $djRepo rev-parse HEAD) -eq $djHead
+$djB = pwsh @np $D wt sync -Dir $djRepo 2>&1 | Out-String
+Expect "wt sync -Mrs: target touched no file of the branch -> rebase skipped, HEAD kept; plain sync rebases ($djA | $djB)" ($djA -match 'rebase skipped: origin/main changed 1 file' -and $djSame -and $djB -match 'rebased onto origin/main')
 # wt commit -ScopeOk <id>: a scope word keyed by a brief item id (not the branch) lets it through (dec-38 / dec-52 cases)
 $soRepo = Join-Path (Kd) 'scope-ok'; New-Item -ItemType Directory -Force "$soRepo/specs", "$soRepo/src" | Out-Null; 'a' | Set-Content "$soRepo/specs/a.cy.js"; Save-GitRepo $soRepo base
 git -C $soRepo checkout -q -b b2; Set-Content "$soRepo/.git/claude-scope" 'specs/**'; 'z' | Set-Content "$soRepo/src/Four.java"; $null = pwsh @np $D wt commit -Dir $soRepo -Message 'fix: four' 2>&1; $soCodes = "$LASTEXITCODE"

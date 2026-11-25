@@ -149,6 +149,9 @@ switch ($Action) {
     if (git -C $Dir status --porcelain --untracked-files=no) { throw "uncommitted changes in ${Dir}: crafty.ps1 wt commit -Dir $Dir -Message 'wip: <what>' (WIP is fine; never git stash), then wt sync again" }
     G -C $Dir fetch -q origin $t | Out-Null
     $head0 = (G -C $Dir rev-parse HEAD).Trim()
+    # before a merge (-Mrs): the target touched none of this branch's files -> no rebase, no push, no 2nd CI run (rechy-5: 2 per MR)
+    $theirs = @(G -C $Dir diff --name-only "HEAD...origin/$t"); $mine = @(G -C $Dir diff --name-only "origin/$t...HEAD")
+    if ($Mrs -and $theirs.Count -and "$(Get-RepoConf ((G -C $Dir remote get-url origin) -replace '\.git$') 'mergeMethod' '')" -ne 'ff' -and -not @($theirs | Where-Object { $_ -in $mine }).Count) { "rebase skipped: origin/$t changed $($theirs.Count) file(s), none of this branch's: merge as is"; break }
     git -C $Dir rebase "origin/$t"
     $failed = [bool]$LASTEXITCODE; $why = if ($failed) { Sync-Generated $Dir $t $head0 } else { '' }   # '' (no regenerate) is still a conflict
     if ($why -match '^regenerated ') { $why } elseif ($failed) { $why; "REBASE CONFLICT. $help"; exit 1 }

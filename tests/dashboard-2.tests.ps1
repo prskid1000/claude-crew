@@ -46,7 +46,7 @@ $rgm = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }
   "$(@($wc.tx) -join ',') $($mh -match "<b style='grid-column:span 2'>Spend</b><b data-g0 style='grid-column:span 3'>Waste</b>") $($mh -match '<b data-g0>Fixable') $($mh -match "<i data-g0 data-t=warn [^>]*title='devy &#183; fixable: reread: re-read a\.ps1 3x[^']*w1'>1</i><i data-t=act ") $($mh -match '>devy<small>2 agents</small>')" }
 Expect "role map: group headers span their columns, later groups open with a gap, waste counts per tag toned with the list in the tooltip, agents on the name line ($rgm)" ($rgm -eq '1,1, True True True True')
 $dgf = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; Format-KitDayHeat @(@{ hd = 'G'; g = 'g1'; cn = 2 }, @{ n = 'a'; v = @(1) }, @{ n = 'b'; v = @(0) }) @('2026-01-01') 'k' }
-Expect 'day heat groups: a header folds its rows, an idle row in the group''s own fold' ($dgf -match "(?s)<div class=rgg data-g='dg-g1'><div class='gk rgh dgh'><button type=button class=rgb aria-expanded=true><span class=gn0>G</span><span class=gcn>2</span></button></div><div class=gk>.*?>a<.*<button type=button class=gkx aria-expanded=false>1 idle rows (·|&#183;) no data in 1 days</button><div class=gki>.*>b<.*</div></div></div>$")
+Expect 'day heat groups: a header folds its rows, an idle row in the group''s own fold' ($dgf -match "(?s)<div class=rgg data-g='dg-g1'><div class='gk rgh dgh'><button type=button class=rgb aria-expanded=true><span class=gn0>G</span><span class=gcn>2</span></button></div><div class=gk>.*?>a<.*<button type=button class=gkx data-k='rows' aria-expanded=false>1 idle rows (·|&#183;) no data in 1 days</button><div class=gki>.*>b<.*</div></div></div>$")
 # owner 2026-11-25: a group line without its own summary lists its busy rows; a today-only row is no grid row, its value joins the line
 $dgn = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; Format-KitDayHeat @(@{ hd = 'G'; g = 'g2' }, @{ n = 'a'; v = @(1, 2); t = '3' }, @{ n = 'fresh'; v = @($null, 4); t = '4' }, @{ n = 'zero'; v = @($null, 0) }) @('2026-01-01', '2026-01-02') 'k' }
 Expect "day heat: a group line summarises its rows, today-only rows fold into it (a 0: dropped), never a mostly blank row" ($dgn -match "<span class=gn0>G</span><span class=fsm>a 3 (·|&#183;) now: fresh 4</span>" -and $dgn -notmatch '>fresh<|>zero<')
@@ -61,8 +61,9 @@ Expect "outcomes replay: each past day's statuses at its end, none before the fi
 if (Use-BrowserKit) {
   $pgK = Join-Path (Kd) 'keep.html'
   & { . $O; $n = Get-Date; $h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ days = @(@{ day = $n.ToString('yyyy-MM-dd'); failed = 0 }) } })
-    $lx = "$("<details class=lx><summary>a long text</summary><div class=lf>the rest</div></details>" * 2)<div class=gks><button type=button class=gkx aria-expanded=false>1 idle rows</button><div class=gki><div class=gk>x</div></div></div>"
-    $h.Replace('<footer>', "<div id=keepx>$lx</div><footer>") } | Set-Content $pgK -Encoding utf8
+    $e = { param($t) [Net.WebUtility]::HtmlEncode("$t") }; $fd = { param($w) "<div class=gks>$(Format-KitHeatRows @(@{ busy = $false; html = '<div class=gk>x</div>' }) $w)</div>" }   # keyed by its row name: a fold added above keeps it
+    $lx = "$("<details class=lx><summary>a long text</summary><div class=lf>the rest</div></details>" * 2)$(& $fd 'rows')"
+    $h.Replace('<footer>', "<div id=keepx>$lx</div><footer>") | Set-Content $pgK -Encoding utf8; $h.Replace('<footer>', "<div id=keepx>$(& $fd 'kinds')$lx</div><footer>") | Set-Content "$pgK.2.html" -Encoding utf8 }
   $kj = @'
 import puppeteer from 'puppeteer-core'
 import { pathToFileURL } from 'node:url'
@@ -75,12 +76,20 @@ try {
   await p.evaluate(() => { document.querySelector('#sec-internals').open = true })
   await p.evaluate(() => ['#sec-trends>summary', '[data-g=dg-kit] .rgb', '#keepx .gkx', '#keepx details.lx>summary'].forEach((s) => document.querySelector(s).click()))   // DOM clicks: a sticky header covers no target
   await new Promise((r) => setTimeout(r, 300)); o.clicked = await st(); await p.reload(); o.after = await st()
+  await p.goto(pathToFileURL(file + '.2.html').href); o.shift = await p.evaluate(() => [...document.querySelectorAll('#keepx .gkx')].map((x) => x.dataset.k + ':' + x.parentNode.classList.contains('gio')).join(','))
 } finally { await b.close() }
 console.log(JSON.stringify(o))
 '@
   Push-Location (Join-Path $k 'skills/pokey'); try { $raw = @(& node --input-type=module -e $kj (([uri](Join-Path $k 'skills/pokey/browser.mjs')).AbsoluteUri) $pgK 2>&1); $kr = try { $raw[-1] | ConvertFrom-Json } catch { [pscustomobject]@{ after = "$raw" } } } finally { Pop-Location }
   Expect "folds kept across a reload: section, group, idle rows, long text (a twin summary keeps its own state) ($($kr.before) -> $($kr.clicked) -> $($kr.after))" ($kr.before -eq 'true,false,false,false,false' -and $kr.clicked -eq 'false,true,true,true,false' -and $kr.after -eq $kr.clicked)
+  Expect "an idle-row fold keeps its state when a fold above it comes (key: section + row name) ($($kr.shift))" ($kr.shift -eq 'kinds:false,rows:true')
 }
+# MR-SPREAD (outcomes sweep, lead-time dashboard): an open task's first MRs per repo opened 95 min apart -> one WATCH, then cached
+# (no host call, no second WATCH); a fix MR in the same repo and a 10 min spread do not count
+$msp = & { . $O; $global:msc = 0; function Read-KitTracking { @{ tasks = @{ T1 = @{ task = 'T1'; mrs = @('api!1', 'web!2', 'api!3') }; T2 = @{ task = 'T2'; mrs = @('api!4', 'web!5') } } } }
+  function Get-HostProject($r, [switch]$Raw) { $r }; function Invoke-HostVerb($v, $p) { $global:msc++; @{ created_at = @{ '1' = '2026-01-01T10:00:00Z'; '2' = '2026-01-01T11:35:00Z'; '3' = '2026-01-01T15:00:00Z'; '4' = '2026-01-01T10:00:00Z'; '5' = '2026-01-01T10:10:00Z' }["$($p.n)"] } }
+  $w1 = @(Get-KitMrSpreadFlags | ForEach-Object what); $c1 = $global:msc; $w2 = @(Get-KitMrSpreadFlags).Count; "$($w1 -join ';')|$c1|$w2|$global:msc" }
+Expect "MR-SPREAD: one WATCH per task whose repos' first MRs opened over track.mrSpreadMinutes apart, cached ($msp)" ($msp -match '^MR-SPREAD T1: its repos'' first MRs opened 95 min apart \(over 30; api, web\)\|5\|0\|5$')
 # hour head (ui-check 900 px clipped 2-cell labels): labels span 3 cells and end before "now" (cols 21-24)
 $hh = & { . $O; Format-KitHourHead ([datetime]'2026-01-01T06:00'); '|'; Format-KitHourHead ([datetime]'2026-01-01T01:00') -Clock }
 $hw = "<b style='grid-column:1/span 3'>06</b><b style='grid-column:7/span 3'>12</b><b style='grid-column:13/span 3'>18</b><b class=nw style='grid-column:21/span 4'>now</b> | <b style='grid-column:6/span 3'>06</b><b style='grid-column:12/span 3'>12</b><b style='grid-column:18/span 3'>18</b>"

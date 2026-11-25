@@ -493,7 +493,7 @@ function Test-KitHeatBusy($Hours, [scriptblock]$Busy = { param($c) [double]@($c)
 # rows with data in the last 12 h show; the rest fold into one "N idle rows" line (a tap shows them); $Rows: @{ html; busy }
 function Format-KitHeatRows($Rows, [string]$What = 'rows', [string]$Span = '12 h') {
   $rs = @($Rows | Where-Object { $_ }); $on = @($rs | Where-Object busy); $off = @($rs | Where-Object { -not $_.busy })
-  (@($on | ForEach-Object html) -join '') + $(if ($off.Count) { "<button type=button class=gkx aria-expanded=false>$($off.Count) idle $(& $e $What) · no data in $Span</button><div class=gki>$(@($off | ForEach-Object html) -join '')</div>" }) }
+  (@($on | ForEach-Object html) -join '') + $(if ($off.Count) { "<button type=button class=gkx data-k='$(& $e $What)' aria-expanded=false>$($off.Count) idle $(& $e $What) · no data in $Span</button><div class=gki>$(@($off | ForEach-Object html) -join '')</div>" }) }
 # the fold count of a heatmap card: busy rows of all
 function Get-KitHeatCount($Rows) { $rs = @($Rows | Where-Object { $_ }); "$(@($rs | Where-Object busy).Count) of $($rs.Count) busy" }
 # THE day heatmap (owner 2026-11-19: a time series = the shared heatmap): rows = series, columns = $Dates (yyyy-MM-dd, the last = today,
@@ -858,8 +858,8 @@ function Get-KitPopoverCss {
 # page JS of these cards: the idle-rows fold; links into the kit's own pages (a[data-dw]: run steps, reports) open in an in-page
 # drawer (an iframe: file:// pages too; Esc, the close button or a backdrop click closes it), never navigating away (kitbag.py ui-check: LINK)
 function Get-KitStatsJs {
-  # idle rows fold, kept per group (its data-g, else its section id) + its place in it (owner 2026-11-25: every fold survives a reload)
-  "(function(){var d=document;function gxk(b){var s=b.parentNode.closest('.rgg[data-g],details[id]'),bs=[].filter.call((s||d).querySelectorAll('.gkx'),function(z){return z.parentNode.closest('.rgg[data-g],details[id]')==s});return'kc-gx-'+(s?s.dataset.g||s.id:'')+'-'+bs.indexOf(b)}" +
+  # idle rows fold, kept per group (its data-g, else its section id) + its row name (data-k; a place shifts when a fold above comes or goes) (owner 2026-11-25: every fold survives a reload)
+  "(function(){var d=document;function gxk(b){var s=b.parentNode.closest('.rgg[data-g],details[id]'),bs=[].filter.call((s||d).querySelectorAll('.gkx'),function(z){return z.parentNode.closest('.rgg[data-g],details[id]')==s});return'kc-gx-'+(s?s.dataset.g||s.id:'')+'-'+(b.dataset.k||bs.indexOf(b))}" +
   "function gxs(b,o){b.parentNode.classList.toggle('gio',o);b.setAttribute('aria-expanded',o)}d.querySelectorAll('.gkx').forEach(function(b){try{var v=localStorage.getItem(gxk(b));if(v!==null)gxs(b,v=='1')}catch(e){}});" +
   "d.addEventListener('click',function(x){var b=x.target.closest('.gkx');if(!b)return;var o=!b.parentNode.classList.contains('gio');gxs(b,o);try{localStorage.setItem(gxk(b),o?'1':'0')}catch(e){}});" +
   # every other fold (long text, a command; sections: kc-open) the same way, keyed by its holder's id + its summary; keys no longer on the page drop out

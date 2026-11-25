@@ -1487,7 +1487,7 @@ $ErrorActionPreference = 'Stop'
 # ==== train worker
 function Phase([string]$p, [string[]]$blockServices = @(), [string[]]$blockRepos = @()) {
   Update-State $e { param($x) if ($x.train) { if ($x.train.phase -ne $p) { $x.train.phaseAt = (Now) }; $x.train.phase = $p; $x.train.blockServices = @($blockServices); $x.train.blockRepos = @($blockRepos); $x.train.waitingFor = @() } }
-  "[$e] train $Train : $p"
+  "$(Get-Date -Format 'HH:mm:ss') [$e] train $Train : $p"
 }
 function Key($l) { "$($l.branch)@$($l.sha)" }
 
@@ -1771,7 +1771,7 @@ function Record-Train {
   if ($script:Preempted.Count) { Send-LeaseNotice $e $script:Preempted "$script:DoneWord done$(if ($changed.Count) { " (release $newN)" }): re-run your checks; your lease continues" }
   Event $e 'release' @{ n = $(if ($changed.Count) { $newN } else { $null }); train = $Train; changed = $changed; results = $results; notes = @($notes) }
   $notes | ForEach-Object { "[$e] $_" }
-  "[$e] train $Train done: $(if ($changed.Count) { "release $newN ($($changed -join ', '))" } else { 'no new release' })"
+  "$(Get-Date -Format 'HH:mm:ss') [$e] train $Train done: $(if ($changed.Count) { "release $newN ($($changed -join ', '))" } else { 'no new release' })"
 }
 
 $script:SayLog = LogFile $e 'loop'

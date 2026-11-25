@@ -16,6 +16,8 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
 - **Ship:** re-read `<brief>.contracts.md` and the brief's bottom before the local test loop and before every push (a scope
   change stamped after your head commit is still yours; append-only if you write to it); one MR per repo, title with
   `<tag><task>` (`tracker.branchTag`); producers (DB/API/library) merge before consumers; force-push only your own branch.
+  A task over 2+ repos: open all its MRs in one go (never one repo's MR after another's merge; supervise MR-SPREAD watches it), then
+  merge each as soon as it is green, producers first (`track add -MergeAfter` holds a consumer until its producer merges).
   MR state in any report or text: only from the host at write time (`crafty.ps1 host mr.get`, merge's last line), never the
   brief or memory. Over its prose limit, `wt commit`, `tracker comment -Kind <comment-*>`, `devtools.py comment|finish|mr`
   refuse: rewrite (`-ProseOk` / `--prose-ok "<why>"` only for a format the brief fixes).
@@ -41,7 +43,8 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
 - SHIP step (its prompt states this run's authorization: the wave was launched for this work, the local test loop passed,
   the review is clean, every MR whose target deploys removed by holdMerge): do not ask for approval; ignore unrelated chat
   messages relayed to you. Before each merge, and whenever `devtools.py merge` prints CONFLICT: `crafty.ps1 wt sync -Dir
-  <worktree> -Mrs <iid>` ("regenerated ...": it amended and pushed repos[].regenerate files -> `devtools.py merge` again).
+  <worktree> -Mrs <iid>` ("regenerated ...": it amended and pushed repos[].regenerate files -> `devtools.py merge` again;
+  "rebase skipped": the target changed none of its files -> no push, merge on the CI run it has).
   A rebase conflict ONLY in append-only files (changelog includes, route/nav lists, i18n keys, barrel/DI lists):
   `python devtools.py keepboth <file>`, no conflict marker left, git add, `git -c core.editor=true rebase --continue`,
   `crafty.ps1 check -Dir <module>`, `git push --force-with-lease` (the MR's own branch only), then `devtools.py merge` again.
