@@ -5,7 +5,7 @@ cases_cmd (`cases result ... viewport=<WxH> hit=PASS|FAIL`; `cases add` warns), 
 crafty.ps1 wt commit runs `proof --branch <b> --impact` (refuses a non-WIP commit on a task branch without the map).
 Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844);
 qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack).
-Sections: L13 gaps · L151 wraps · L218 matrix scope · L314 verb"""
+Sections: L13 gaps · L151 wraps · L218 matrix scope · L316 verb"""
 import json, os, re, sys
 
 DT = None
@@ -218,7 +218,8 @@ def wrap_fill(orig):
 # ---- matrix scope: the qa.matrix variants a diff needs (qa.matrixRun); ui-checks.mjs matrix --task runs the recorded set
 MX_RUN = {'parallel': 4, 'full': [r'\.(css|scss|sass|less|styl|pcss)$', r'(^|/)(layouts?|styles?|themes?|tokens?)(/|\.|$)', r'tailwind\.config',
                                   r'\.(svg|png|jpe?g|webp|gif|woff2?|ttf)$'],
-          'newScreen': [r'\.(html|vue|svelte|jsx|tsx)$', r'(^|/)(pages?|screens?|views?|routes?)(/|\.|$)'], 'reduced': {'viewports': ['web', 'mobile'], 'locales': 1}}
+          'newScreen': [r'\.(html|vue|svelte|jsx|tsx)$', r'(^|/)(pages?|screens?|views?|routes?)(/|\.|$)'], 'reduced': {'viewports': ['web', 'mobile'], 'locales': 1},
+          'tests': [r'\.(spec|test|e2e|cy)\.[^/]+$', r'(^|/)(cypress|e2e|__tests__|__mocks__|tests?|spec)/', r'Tests?\.(java|kt|cs)$', r'(^|/)test_[^/]*\.py$', r'_test\.(py|go)$']}
 AXES = ('viewports', 'fontScales', 'themes', 'locales')
 MX_LINE = re.compile(r'(?im)\bMatrix:(.*)$')
 
@@ -230,7 +231,7 @@ def mx_run():
 
 def matrix_scope(files):
     """files [(git status A|M|D, path)] -> {scope, reason, matrix}: full when a path matches qa.matrixRun.full (layout, style,
-    assets) or an added one .newScreen, or no diff was read; else reduced: .reduced viewports (testerViewport names or WxH) and
+    assets) or an added one .newScreen, or no diff was read (test files, .tests, never count); else reduced: .reduced viewports (testerViewport names or WxH) and
     the first .reduced.locales of qa.matrix.locales."""
     run, full = mx_run(), DT.cfg('qa.matrix', None) or {}
     def rx(k):
@@ -239,12 +240,13 @@ def matrix_scope(files):
         except re.error as e:
             raise SystemExit(f'kit.local.json qa.matrixRun.{k}: a pattern is no regex ({e}): fix it')
     hit = lambda pats, fs: next((p for _, p in fs if any(x.search(p) for x in pats)), '')
-    paths = [(str(s), str(p).replace('\\', '/')) for s, p in files]
+    tests = rx('tests')   # a spec beside a layout component is no layout change
+    paths = [(str(s), q) for s, p in files if not any(x.search(q := str(p).replace('\\', '/')) for x in tests)]
     why = (f'{h} is layout / style' if (h := hit(rx('full'), paths)) else '') or (f'{h} is a new screen' if (h := hit(rx('newScreen'), [f for f in paths if f[0].startswith('A')])) else '')
-    if why or not paths:
+    if why or not files:
         return {'scope': 'full', 'reason': why or 'no diff read', 'matrix': {k: list(full.get(k) or []) for k in AXES}}
     red, tv = run.get('reduced') or {}, viewports()
-    return {'scope': 'reduced', 'reason': f'{len(paths)} file(s), no layout / style or new screen',
+    return {'scope': 'reduced', 'reason': f'{len(paths)} file(s), no layout / style or new screen' + (f' ({len(files) - len(paths)} test file(s) not counted)' if len(files) > len(paths) else ''),
             'matrix': {'viewports': list(dict.fromkeys(tv.get(v, v) for v in red.get('viewports') or [])), 'locales': list(full.get('locales') or [])[:int(red.get('locales', 1) or 0)]}}
 
 
@@ -422,6 +424,12 @@ def selftest():
            and sc(('M', 'src/app/menu/menu.component.html'), ('M', 'src/i18n/en.json')) == {'scope': 'reduced', 'reason': '2 file(s), no layout / style or new screen',
                                                                                               'matrix': {'viewports': ['1366x768', '390x844'], 'locales': ['en-GB']}}
            and sc(('M', 'a.css'))['matrix']['fontScales'] == [1, 1.5, 2])
+        nav = 'shopapp/web-ui/src/app/layout/components/navbar/vertical/style-1/navigation-search'   # 2026-11-25: its spec made a menu change full
+        tst = [(f'M', p) for p in (nav + '.spec.ts', 'web/cypress/e2e/menu.cy.ts', 'api/src/test/java/x/MenuTest.java', 'svc/tests/test_menu.py', 'web/src/menu.test.tsx')]
+        ex('matrix scope: test files never count (*.spec.ts, *.test.*, cypress/**, *Test.java, test_*.py); a layout source still does; only tests = reduced',
+           sc(('M', 'web/src/app/menu/menu.config.ts'), *tst) == {'scope': 'reduced', 'reason': '1 file(s), no layout / style or new screen (5 test file(s) not counted)',
+                                                                    'matrix': {'viewports': ['1366x768', '390x844'], 'locales': ['en-GB']}}
+           and sc(('M', nav + '.component.ts'), *tst)['scope'] == 'full' and sc(*tst)['scope'] == 'reduced')
         conf['qa.matrixRun'] = {'full': ['('], 'reduced': {'viewports': ['web'], 'locales': 0}}
         try:
             sc(('M', 'x.ts'))
