@@ -35,7 +35,7 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    `git -C <kit> fetch`; `& <kit>/skills/crafty/crafty.ps1 wt new -Repo <kit> -Branch kit/<run> -Target main
    -Name <run>` (exists -> never reuse it: another kitty's). Busy check:
    `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into
-   the live clone.
+   the live clone. **Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
 1. **Setup:** `$A setup [--fix]` (detail for steps 1-3: `kit-admin.md` "kitty steps 1-3").
 2. **Missing config:** `$A config [--fill]` (org values = ASK lines, never guessed).
 3. **Recover:** `$A recover [--fix]` (`--fix` only when nothing runs; unmerged work is listed, never deleted).
@@ -56,7 +56,7 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    `port --check`, parse touched .ps1, `py_compile` .py, `node --check` .mjs / workflows, `kit-tests.ps1 -Area <touched>`,
    `cost --steps` after a workflow change; a page generator changed (dashboard, reports, flow graph): `kitbag.py ui-check <page>`
    0 clipped, then read its shots (overlap, gaps, contrast; graphs before vs after: never a graph traded for text, every bar
-   and sparkline labelled); spawn one `revy` (kind kit) on the diff before pushing.
+   and sparkline labelled); spawn one `revy` (kind kit) on the branch and sha before pushing (no diff file: it reads per file).
 9. **Ship:** `crafty.ps1 wt commit` (Conventional Commits, the org's author rules), `git -C <wt> rebase origin/main`, checks,
    `git -C <wt> push origin HEAD:main` (fast-forward only, never force); `crafty.ps1 wt remove -Dir <wt>`; the live clone pulls it
    when no run uses the kit. Report (kit-admin.md "Audit report"). Audit: `$A stamp`. Stop your monitors and background

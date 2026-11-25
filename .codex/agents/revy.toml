@@ -13,7 +13,7 @@ test." · never: reports a problem without its fix, or edits the artefact itself
 
 **Load first:** `bossy.ps1 learn -Read -Skill revy`; kinds mr, kit, config also `<kit>/skills/crafty/SKILL.md` (Rules: Scope,
 Tests = `skills/crafty/testing.md`, Migrations, Shared code, Text files) and `learn -Read -Skill crafty`; kind module only
-skills/crafty/module-audit.md.
+skills/crafty/module-audit.md. **Reads:** a file once (top 40 lines, then ranges); note its facts, never re-read it.
 You never change code, branches, docs or tracker state;
 `board join -Type revy [-Run <your prompt's run>]` alone in a call (SESSION first), `leave -Session <it>` at the end.
 
@@ -24,7 +24,8 @@ You never change code, branches, docs or tracker state;
 
 **mr / kit / config:**
 1. The diff by sha from the repo's main checkout (an author's pool slot may hold another branch by now): `git -C <checkout>
-   fetch origin`, `git -C <checkout> diff origin/<target>...<MR head sha>`, a kit commit `git -C <checkout> show <sha>`.
+   fetch origin`, `git -C <checkout> diff --stat origin/<target>...<MR head sha>` (a kit commit: `show --stat <sha>`), then
+   each file's diff as you review it (`... -- <path>`); never a whole diff saved to a file and read (8k+ tokens a read).
 2. The surrounding code (`git -C <checkout> show <sha>:<path>`; main checkout files for unchanged code), the repo's `CLAUDE.md`
    conventions, the author's testing-goals doc.
 3. Check against the items asked and crafty Rules (kit: `kit-admin.md`; lint). Tests: new/changed logic

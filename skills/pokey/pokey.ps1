@@ -1379,15 +1379,20 @@ function Get-QaGuideDocUrl([string]$Description, $Track, $Spec) {
 }
 
 # ---- prepare: a test-only run from a job (lead.md L1 Selection): run.json, lead-notes.md skeleton, Left out; -RunDir: print it
-# kept testing doc -> the run's guide: its head + the newest "## <env> run <date>" section, older runs only named (owner 2026-11-22:
-# a 1494-line guide of earlier runs filled testers' context)
+# kept testing doc -> the run's guide: its head + the newest "## <env> run <date>" / "## Round <n> — <date>" section without its
+# "### Evidence index", older runs only named (owner 2026-11-22: a 1494-line guide filled testers' context; 2026-11-25: one run's
+# 76 evidence links + a Round section = 8k tokens per tester read)
 function Copy-QaGuide([string]$Kept, [string]$Dest) {
-  $gl = @(Get-Content -LiteralPath $Kept -Encoding utf8); $rx = '^## (?!#).*\brun (\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)'
+  $gl = @(Get-Content -LiteralPath $Kept -Encoding utf8); $rx = '^## (?!#).*\b(?:run|round \d+\W+)\s*(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?)'
   $runs = @(for ($i = 0; $i -lt $gl.Count; $i++) { if ($gl[$i] -match $rx) { [pscustomobject]@{ at = $i; key = $Matches[1] } } })
-  if ($runs.Count -le 1) { Copy-Item -LiteralPath $Kept $Dest; return }
+  if (-not $runs.Count) { Copy-Item -LiteralPath $Kept $Dest; return }
   $nw = @($runs | Sort-Object key -Descending)[0]; $end = $gl.Count
   for ($i = $nw.at + 1; $i -lt $gl.Count; $i++) { if ($gl[$i] -match '^## (?!#)') { $end = $i; break } }
-  $body = @(if ($runs[0].at) { $gl[0..($runs[0].at - 1)] }) + @($gl[$nw.at..($end - 1)]) + @('', "> Older runs ($($runs.Count - 1)): $Kept (read a range when a retest needs one)")
+  $sec = @($gl[$nw.at..($end - 1)]); $ev = @(for ($i = 0; $i -lt $sec.Count; $i++) { if ($sec[$i] -match '^###\s+Evidence index') { $i } })[0]; $evN = 0
+  if ($null -ne $ev) { $evEnd = $sec.Count; for ($i = $ev + 1; $i -lt $sec.Count; $i++) { if ($sec[$i] -match '^#{2,3} ') { $evEnd = $i; break } }; $evN = @($sec[$ev..($evEnd - 1)] | Where-Object { $_ -match '^\|\s*\[' }).Count
+    $sec = @(if ($ev) { $sec[0..($ev - 1)] }) + @(if ($evEnd -lt $sec.Count) { $sec[$evEnd..($sec.Count - 1)] }) }
+  $older = $runs.Count - 1; $cut = @(if ($older) { "older runs ($older)" }; if ($evN) { "the newest run's evidence index ($evN files)" }) -join ' and '
+  $body = @(if ($runs[0].at) { $gl[0..($runs[0].at - 1)] }) + $sec + @(if ($cut) { '', "> Not copied: $cut. In $Kept (read a range when a retest needs one)" })
   Set-Content -LiteralPath $Dest -Encoding utf8 ($body -join "`n")
 }
 # deploy rows -> not live / local parts: an MR with no build on the target (NO-TARGET) next to a live one runs on the local env

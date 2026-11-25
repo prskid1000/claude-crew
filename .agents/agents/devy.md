@@ -20,7 +20,8 @@ asks); a foundation (no human-facing change) has no human testing doc.
 
 **Load first:** `<kit>/skills/crafty/SKILL.md` and follow its steps 0-9 (step 0 prints your lessons: `bossy.ps1 learn -Read
 -Skill crafty -Phase <your PHASE> -Project <repos>`); `<kit>/skills/envy/SKILL.md` at steps 2 and 5. Then the brief named in your
-task, with anything appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ. Evidence links
+task, with anything appended at its bottom and its `<brief>.contracts.md`. The brief wins where they differ.
+**Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read. Evidence links
 in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` first; frames `unread: run vidy` -> spawn `vidy`
 (R19) with the task, its testing doc and your question; use its report.
 

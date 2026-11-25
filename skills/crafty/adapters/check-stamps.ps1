@@ -61,7 +61,8 @@ function Exit-KitCiRuns {   # in crafty.ps1 check: its $Step, $Tests, $AllTests,
 # a gated run's log -> what an agent reads (owner 2026-11-22: 60 agents pasted whole build / test logs): a short log whole; else the
 # failure lines (+ the next 2 lines each) up to check.printLines, the last 10 lines (the summary), the log path
 function Write-KitRunDigest([string]$Path, [int]$Code) {
-  $ls = @(try { Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop } catch { })
+  # each line cut to 200 chars like the first failures: a 60-line digest of long stack / bundle lines pasted 3-4k tokens (supervise ACT 2026-11-25)
+  $ls = @(try { Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop } catch { }) | ForEach-Object { if ("$_".Length -gt 200) { "$_".Substring(0, 200) + ' …' } else { "$_" } }; $ls = @($ls)
   $cap = [int](Get-KitParam 'check.printLines')
   if ($ls.Count -le $cap) { foreach ($l in $ls) { Write-Host $l }; if ($Code) { foreach ($l in @(Get-KitRunFailures $ls)) { Write-Host $l } }; return }
   $tail = 10; $keep = [Collections.Generic.SortedSet[int]]::new()
