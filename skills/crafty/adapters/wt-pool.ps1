@@ -563,7 +563,7 @@ function Invoke-LaneResync([switch]$DryRun) {
           elseif (@(git -C $d status --porcelain --untracked-files=no 2>$null).Count) { "kept [$e] ${rl}: uncommitted edits in $d (a sync never discards them)"; $row.kept = 'uncommitted edits' }
           elseif ($DryRun) { "plan [$e] ${rl}: origin/$($r.target) + $($ly.Count) layer(s)$(if ($pre.Count) { "; drop $($pre -join ', ')" })" }
           else { $snap = if ($rs) { $rs.layers | ConvertTo-Json -Depth 6 }   # Sync-Repo writes each kept layer's sha: put back on a conflict
-            $res = try { Sync-Repo $e $r $ly -NoFetch 6>$null } catch { @{ err = "$($_.Exception.Message)" } }
+            $res = try { Sync-Repo $e $r $ly -NoFetch -KeepRunning 6>$null } catch { @{ err = "$($_.Exception.Message)" } }
             $bad = @($res.dropped | Where-Object { "$($_.why)" -like 'conflicts*' -or "$($_.why)" -like '*gone*' })
             if ($res.err -or $bad.Count) { git -C $d reset -q --hard $old 2>$null | Out-Null; if ($rs) { $rs.layers = @($(if ($snap) { $snap | ConvertFrom-Json -AsHashtable })) }; $row.kept = 'conflict'
               "kept [$e] ${rl}: $(if ($res.err) { $res.err } else { "layer $(@($bad.layer.branch) -join ', ') $(@($bad.why)[0])" }) (left as it was)" }

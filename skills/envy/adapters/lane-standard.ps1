@@ -1,9 +1,9 @@
 #Requires -Version 7
-# Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (Get-Doctor: the doctor verb, its rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Resolve-SvcDir, Get-LaneWorktreeRows).
+# Usage: dot-sourced by envy.ps1 from adapters/. Exit codes: none (Get-Doctor: the doctor verb, its rows; lane worktrees: Ensure-Worktree, Sync-DepLinks, Stop-TreeHolders, Restart-TreeStopped, Resolve-SvcDir, Get-LaneWorktreeRows).
 # lane-standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird" / "nn", no older lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
 # (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs under the kit, off the system drive, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
-# Sections: L7 lane standard · L56 lane worktrees · L126 doctor
+# Sections: L7 lane standard · L56 lane worktrees · L144 doctor
 # ---- lane standard: doctor rows, port clashes, env aliases
 function Get-LanePathArgs([string]$Text) {
   @([regex]::Matches($Text, '(?i)(path\.data|path\.logs|datadir|data[-_]dir|log[-_]dir|log-error|defaults-file)[= ]\s*"?([^\s"]+)') | ForEach-Object { [pscustomobject]@{ key = $_.Groups[1].Value.ToLower(); path = $_.Groups[2].Value.Replace('\', '/').TrimEnd('/') } })
@@ -54,6 +54,24 @@ function Test-PortClash {
 # an old lane id (shop, shop2; laneIds nn: shop-kestrel too) -> today's id (bird: <product>-<bird>, nn: lane-<nn>), with a warning
 function Resolve-EnvAlias([string]$n) { if ($n -and $script:EnvAlias.ContainsKey($n) -and -not (Get-KitMember $script:LE.envs $n)) { Write-Warning "old lane id '$n': use $($script:EnvAlias[$n]) (accepted for now)"; $script:EnvAlias[$n] } else { $n } }
 # ---- lane worktrees: a lane repo's worktree and its dependency links (moved from envy.ps1 at its cap)
+# a service running from the env worktree holds its files open (git reset cannot unlink them on Windows): stopped before a train's sync, restarted after
+$script:TreeStopped = [Collections.Generic.HashSet[string]]::new()
+function Stop-TreeHolders([string]$e, $r) {
+  $st = Read-State $e
+  foreach ($s in EnvServices $e | Where-Object { $_.repo -and -not $_.artifact -and (Managed $_) -and (RepoOf $e $_) -eq $r.name }) {
+    $x = $st.services[$s.name]; if (-not ($x.status -eq 'up' -or (Owned $x))) { continue }
+    Write-Host "[$e] $($s.name) runs from $($r.wt): stopped for the sync, restarts with the release"
+    Stop-Svc $e $s 'sync: frees the env worktree'; $null = $script:TreeStopped.Add($s.name)
+  }
+}
+function Restart-TreeStopped([string]$e, [string[]]$NewRepos = @(), [int]$NewRelease = 0, [string[]]$Keep = @()) {   # -Keep: repos whose switch-over starts them
+  foreach ($n in @($script:TreeStopped)) {
+    $s = Svc $e $n; $x = (Read-State $e).services[$n]; if ((RepoOf $e $s) -in $Keep -and -not $s.hot) { continue }; $null = $script:TreeStopped.Remove($n)
+    if ($x.status -eq 'up' -or (Owned $x)) { continue }
+    $rel = if ($NewRelease -and (RepoOf $e $s) -in $NewRepos) { $NewRelease } else { [int]$x.release }
+    try { Start-Svc $e $s $rel $null } catch { "[$e] $n did not come back after the sync: $("$_".Split("`n")[0]) (starts at its next lease)" }
+  }
+}
 function Ensure-Worktree([string]$e, $r) {
   $co = $r.cfg.checkout; if ($r.wt -eq (Get-KitLaneWorktree $e $co -Old) -and -not (Test-Path "$($r.wt)/.git")) { $r.wt = Get-KitLaneWorktree $e $co -New }   # lanes -Migrate moved it since EnvRepos
   if ((Test-Path "$($r.wt)/.git") -and $r.wt -eq (Get-KitLaneWorktree $e $co -Old)) {   # old names: moved once the lane is idle (a service may run from it)

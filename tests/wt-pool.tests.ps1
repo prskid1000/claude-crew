@@ -188,5 +188,22 @@ $on = Invoke-PsTest owner-name @'
 "$(Get-KitBuildOwner 'falcon-app' 'app' 'D:\w\falcon-app')|$(Get-KitBuildOwner 'kestrel-app' 'app' 'D:\w\kestrel-app')|$(Get-KitBuildOwner 'lane-shop-kestrel-app' 'app' 'D:\w\lane-shop-kestrel-app')"
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'))
 Expect "gate owner: a leased slot's build is its agent's, a free slot keeps its name, a lane worktree reads lane shop·Kestrel ($(@($on) -join ' '))" ((@($on) -join ' ') -eq 'J1|kestrel|lane shop·Kestrel')
+# ENV-FIX 2026-11-25: a service running from the env worktree held a tracked file open; git reset could not unlink it, every train crashed
+Remove-TestKit $k; $k = New-TestKit tree; $ted = New-Item -ItemType Directory -Force (Join-Path $k 'skills/envy/adapters'); Copy-Item (Join-Path $src 'skills/envy/envy.ps1') (Split-Path $ted)
+Copy-Item @((Join-Path $src 'skills/envy/adapters/shared-builds.ps1'), (Join-Path $src 'skills/envy/adapters/lane-standard.ps1')) $ted; $TL = Join-Path $k 'skills/envy/envy.ps1'
+$tg = Kd; git init -q -b main "$tg/o"; Set-Content "$tg/o/f.txt" v1; git -C "$tg/o" add .; git -C "$tg/o" -c user.name=t -c user.email=t@t commit -qm init; git clone -q "$tg/o" "$tg/c" 2>$null
+& $J @{ repos = @(@{ name = 'r'; checkout = "$tg/c"; target = 'main' }); localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'py'; repo = 'r'; start = 'x' }, @{ name = 'jar'; repo = 'r'; start = 'x'; artifact = 'app.jar' }, @{ name = 'idle'; repo = 'r'; start = 'x' }) } } } } (Join-Path $k 'skills/crafty/kit.local.json') 8
+$th = & { . $TL; function Sync-DepLinks { }; $script:thStop = @(); $script:thStart = @()
+  function Stop-Svc([string]$se, $ss) { $script:thStop += $ss.name; Update-State $se { param($z) $z.services[$ss.name].status = 'down' } }
+  function Start-Svc([string]$se, $ss, [int]$rel) { $script:thStart += "$($ss.name)@$rel" }
+  Update-State t { param($x) $x.services = @{ py = @{ status = 'up'; release = 4 }; jar = @{ status = 'up'; release = 4 }; idle = @{ status = 'down'; release = 4 } } }
+  $rr = [pscustomobject]@{ name = 'r'; wt = "$tg/c"; target = 'main'; cfg = [pscustomobject]@{ checkout = "$tg/c" } }
+  $null = Sync-Repo t $rr @() -NoFetch -KeepRunning; $kept = $script:thStop.Count
+  $null = Sync-Repo t $rr @() -NoFetch; $held = @($script:TreeStopped) -join ','
+  Restart-TreeStopped t -Keep @('r'); $kept += $script:thStart.Count; Restart-TreeStopped t @('r') 5; Restart-TreeStopped t @('r') 5
+  "$kept|$($script:thStop -join ',')|$held|$($script:thStart -join ',')|$($script:TreeStopped.Count)" }
+Expect "sync: a service running from the env worktree (no artifact) stops before the reset, none with -KeepRunning (lanes -Sync); -Keep leaves it to the switch-over; the train restarts it once on the new release ($th)" ($th -eq '0|py|py|py@5|0')
+$tsw = (Get-Content $TL -Raw) -match 'TreeStopped\.Contains\(\$_\.name\) -or \(\$_\.artifact' -and (Get-Content $TL -Raw) -match 'Restart-TreeStopped \$e \$changed \$newN' -and (Get-Content $TL -Raw) -match 'Restart-TreeStopped \$e -Keep' -and [regex]::Matches((Get-Content $TL -Raw), 'kept the running release \(\$err\)"\);[^\n]{0,160}Sync-Repo \$e \S+ @\(\$cur\[\$rn\]\) -NoFetch; continue').Count -eq 2
+Expect "train: services the sync stopped join the switch-over; the rest restart before the smoke checks (a failed build puts the tree back first), in Record-Train and after a crash ($tsw)" $tsw
 Remove-TestKit $k
 Complete-Tests

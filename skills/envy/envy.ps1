@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L471 code · L482 migrations ·
-  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L632 shared builds · L771 hooks · L845 marks · L1029 seed ·
-  L1096 processes · L1460 daemon · L1932 cleanup · L2004 verbs
+  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L633 shared builds · L772 hooks · L846 marks · L1030 seed ·
+  L1097 processes · L1461 daemon · L1936 cleanup · L2008 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -596,11 +596,12 @@ function Get-MergedWhy([string]$d, [string]$branch, [string]$sha, [string]$targe
   $mr = try { @(Get-MergedMrs $d $branch $target | Where-Object { $_.sha -and ($_.sha -eq $sha -or $(git -C $d cat-file -e "$($_.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { git -C $d fetch -q origin $_.sha 2>$null }; git -C $d merge-base --is-ancestor $sha $_.sha 2>$null; $LASTEXITCODE -eq 0) -or (Test-KitRebasedCopy $d $sha $_.sha)) })[0] } catch { $null }
   if ($mr) { "merged into $target (MR $($mr.iid))" }
 }
-function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]$Base) {   # -Base: a target commit (restore), else origin/<target>
+function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]$Base, [switch]$KeepRunning) {   # -Base: a target commit (restore), else origin/<target>; -KeepRunning: no train restarts them (lane resync)
   Ensure-Worktree $e $r
   Sync-DepLinks $e $r
   $d = $r.wt
   if (-not (Test-LaneWorktree $d)) { throw "[$e] $d is not its own git worktree: not reset (envy.ps1 doctor -Env $e -Fix)" }
+  if (-not $KeepRunning) { Stop-TreeHolders $e $r }
   $dirty = @(git -C $d status --porcelain --untracked-files=no)
   if ($dirty.Count) { Write-Host "[$e] $d had $($dirty.Count) uncommitted edits: discarded (the env worktree is never edited by hand)"; G $d reset -q --hard HEAD | Out-Null }
   if (-not $NoFetch) { G $d fetch -q origin $r.target | Out-Null }
@@ -1559,7 +1560,7 @@ function Run-Train {
       $kept = @($base) + @($cands)
       $null = Sync-Repo $e $r $kept -NoFetch
       $err = Build-Repo $e $rn
-      if ($err) { $notes.Add("$rn still does not build after removing culprits: kept the running release ($err)"); foreach ($l in $kept | Where-Object { & $isNew $_ }) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : $err" } } }; continue }
+      if ($err) { $notes.Add("$rn still does not build after removing culprits: kept the running release ($err)"); foreach ($l in $kept | Where-Object { & $isNew $_ }) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : $err" } } }; $null = Sync-Repo $e $r @($cur[$rn]) -NoFetch; continue }
     }
     $newLayers[$rn] = @($kept | Where-Object { & $isNew $_ })
     $artifacts += (Stage-Artifacts $e $rn $tag)
@@ -1574,16 +1575,17 @@ function Run-Train {
     $null = Sync-Repo $e $envRepos[$rn] $keep -NoFetch
     if ($rn -in $skippedRepos) { $repoOut[$rn].layers = $keep; $newLayers[$rn] = @($newLayers[$rn] | Where-Object { $_.request -notin $failed }); continue }   # skipped (inputs unchanged): fewer layers, still no build
     $err = Build-Repo $e $rn
-    if ($err) { $null = $ok.Remove($rn); $repoOut.Remove($rn); foreach ($s in @($artifacts.Keys | Where-Object { (RepoOf $e (Svc $e $_)) -eq $rn })) { $artifacts.Remove($s) }; $notes.Add("$rn : rebuild without the failed requests failed, kept the running release ($err)"); continue }
+    if ($err) { $null = $ok.Remove($rn); $repoOut.Remove($rn); foreach ($s in @($artifacts.Keys | Where-Object { (RepoOf $e (Svc $e $_)) -eq $rn })) { $artifacts.Remove($s) }; $notes.Add("$rn : rebuild without the failed requests failed, kept the running release ($err)"); $null = Sync-Repo $e $envRepos[$rn] @($cur[$rn]) -NoFetch; continue }
     $repoOut[$rn].layers = $keep; $newLayers[$rn] = @($newLayers[$rn] | Where-Object { $_.request -notin $failed })
     foreach ($kv in (Stage-Artifacts $e $rn $tag).GetEnumerator()) { $artifacts[$kv.Key] = $kv.Value; $noSwitch = @($noSwitch | Where-Object { $_ -ne $kv.Key }) }
   }
 
+  Restart-TreeStopped $e -Keep @($ok | Where-Object { $_ -notin $skippedRepos })   # the sync stopped them, no switch-over starts them: back before smoke checks
   $st2 = Read-State $e
   # up services switch over; a down one a lease needs starts on the new release here too (verified now, rolled back on failure,
   # never left live unchecked for the loop's next start); a down one nobody needs starts on it at its next lease
   $wanted = @(@($st2.leases.Values) + @($st2.holds.Values) | ForEach-Object { Closure $e @($_.services | Where-Object { $_ }) } | Select-Object -Unique)
-  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and $_.name -notin $noSwitch -and (Managed $_) -and -not ($_.hot -and -not $_.artifact) -and ($st2.services[$_.name].status -eq 'up' -or ($_.artifact -and $_.name -in $wanted)) })
+  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and $_.name -notin $noSwitch -and (Managed $_) -and -not ($_.hot -and -not $_.artifact) -and ($st2.services[$_.name].status -eq 'up' -or $script:TreeStopped.Contains($_.name) -or ($_.artifact -and $_.name -in $wanted)) })
   $verifyDown = @($switch | Where-Object { $st2.services[$_.name].status -ne 'up' } | ForEach-Object name)
   $switchNames = @($switch | Where-Object { $_.name -notin $verifyDown } | ForEach-Object name)   # leases wait only for what runs
   $block = @(@($switchNames) + @(Dependents $e $switchNames) | Select-Object -Unique)
@@ -1714,7 +1716,7 @@ function Run-Restore($st, $req) {
     if ($err) { & $refuse "the code of mark $($m.name) does not build in $rn : $err"; return }
     $artifacts += (Stage-Artifacts $e $rn $tag)
   }
-  $stop = @(EnvServices $e | Where-Object { $_.repo -and (Managed $_) -and (Healthy $e $_) }); [array]::Reverse($stop)   # dependents first
+  $stop = @(EnvServices $e | Where-Object { $_.repo -and (Managed $_) -and ((Healthy $e $_) -or $script:TreeStopped.Contains($_.name)) }); [array]::Reverse($stop)   # dependents first
   Phase "restore to $($m.name): stopping $(@($stop.name) -join ', ')" $all @($envRepos.Keys)
   foreach ($s in $stop) { Stop-Svc $e $s "restore to $($m.name)" }
   Phase "restore to $($m.name): $(@($plan.steps).Count + @($plan.drops).Count + @($plan.renames).Count) structure step(s), $($plan.statements) row change(s)" $all @($envRepos.Keys)
@@ -1737,6 +1739,7 @@ function Run-Restore($st, $req) {
 
 function Record-Train {
   $changed = @($repoOut.Keys)
+  Restart-TreeStopped $e $changed $newN
   Update-State $e { param($x)
     if ($changed.Count) {
       foreach ($rn in $changed) {
@@ -1770,6 +1773,7 @@ if ($Train) {
   try { Run-Train *>&1 | Tee-Object -FilePath (LogFile $e 'train') -Append }
   catch {
     $why = "$_"; "[$e] train $Train crashed: $why $($_.ScriptStackTrace)" | Add-Content (LogFile $e 'train')
+    try { Restart-TreeStopped $e *>&1 | Add-Content (LogFile $e 'train') } catch {}   # never left stopped by the sync
     if ($script:Preempted.Count) { Send-LeaseNotice $e $script:Preempted 'deploy ended without a release (train crashed): resume your checks; your lease continues' }
     Update-State $e { param($x) foreach ($r in $x.requests) { if ($r.status -eq 'in-train' -and $r.id -in @($x.train.requests)) { $r.status = 'done'; $r.result = @{ outcome = 'error'; message = "train crashed: $why" } } }; $x.train = $null }
   }

@@ -107,7 +107,7 @@ $lc = & { . $lkL; $global:lcCalls = @(); function Test-DbTemp { $true }; functio
 Expect "lanes: the loop's db chores (watchdog, pool, mark expiry) rest while the lane's DB is down; a failed one is said once a minute, the tick goes on ($lc)" ($lc -eq '0|0|temp,pool,marks|db pool: resized;marks: mysql: ERROR 2003|0')
 $lvd = & { $src = Get-Content -LiteralPath $lkL -Raw
   $vd1 = @'
-($st2.services[$_.name].status -eq 'up' -or ($_.artifact -and $_.name -in $wanted))
+($st2.services[$_.name].status -eq 'up' -or $script:TreeStopped.Contains($_.name) -or ($_.artifact -and $_.name -in $wanted))
 '@
   $vd2 = @'
 $switchNames = @($switch | Where-Object { $_.name -notin $verifyDown }
