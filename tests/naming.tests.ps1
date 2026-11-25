@@ -63,10 +63,10 @@ Expect "rename: dry-run rows G3 -> SHOP-CAT-001, G5 -> SHOP-ORD-001, G4 -> SHOP-
   $rn.out -match '\| G4 \| t-3 \|.*\| SHOP-CAT-002 \|' -and $rn.out -match 'unknown AREA BAD' -and $rn.out -match 'DRY RUN' -and $rn.out -match 'naming seed SHOP-CAT 2' -and
   $rn.out -match '\| G9 \| t-5 \|.*\| SHOP-PAY-003 \| Payments refunds \(was G9\) \| no kind tag, no area tag, no product tag \| feature, payments, shop \| — \| — \|')
 # ---- tags: one vocabulary; an exclusive group keeps one value; -value drops one; off-vocabulary refused
-$tg1 = Kb naming tags key=SHOP-CAT-004 kind=Bug wave=2 --have 'wave: v2 wave 1,urgent'; $tg2 = Kb naming tags env=needs-deploy decision=-needs-owner --have 'on-stg,needs-owner,bug'; $tg3 = Kb naming tags risk=nope
+$tg1 = Kb naming tags key=SHOP-CAT-004 kind=Bug wave=2 --have 'wave: v2 wave 1,urgent'; $tg2 = Kb naming tags env=needs-deploy origin=qa-found --have 'on-stg,needs-owner,bug'; $tg3 = Kb naming tags risk=nope
 $tj1 = $tg1.out | ConvertFrom-Json; $tj2 = $tg2.out | ConvertFrom-Json
-Expect "tags (owner 2026-11-25): kind, area, product, own last; a wave tag retired (the old label goes); env one value, decision value dropped; unknown value exit 1 ($($tj1.tags -join ',') | $($tj2.tags -join ','))" (($tj1.tags -join ',') -eq 'bug,catalogue,shop,urgent' -and
-  ($tj1.remove -join ',') -eq 'wave: v2 wave 1' -and ($tj2.tags -join ',') -eq 'bug,needs-deploy' -and ($tj2.remove -join ',') -eq 'on-stg,needs-owner' -and $tg3.code -eq 1 -and $tg3.out -match 'not in the vocabulary')
+Expect "tags (owner 2026-11-25): kind, area, product, own last; a wave tag retired (the old label goes); state tags (env, decision, origin) never set, old ones go; unknown value exit 1 ($($tj1.tags -join ',') | $($tj2.tags -join ','))" (($tj1.tags -join ',') -eq 'bug,catalogue,shop,urgent' -and
+  ($tj1.remove -join ',') -eq 'wave: v2 wave 1' -and ($tj2.tags -join ',') -eq 'bug' -and ($tj2.remove -join ',') -eq 'on-stg,needs-owner' -and $tg3.code -eq 1 -and $tg3.out -match 'not in the vocabulary')
 # review: a re-run keeps a bug; a repo word equal to an AREA code is a repo tag; a person's label stays
 Set-JsonFile "$wd/plan2.json" @{ items = @(@{ id = 't-9'; title = 'SHOP-CAT-007 crash on save'; tags = @('bug', 'shop') }) }; $rn2 = Kb naming rename --plan "$wd/plan2.json" --json
 $tg4 = Kb naming tags key=SHOP-CAT-004 repo=cat-svc --have 'team=core'; $tg5 = Kb naming tags 'wave=1,2'
@@ -127,7 +127,7 @@ Expect "keyed task: MR title, commit subject, doc title (v per changed round), b
   @($tBr)[0] -match '^fix/SHOP-CAT-010-local-\d+-crash-on-save$' -and "$tBr" -match 'REFUSED .*no kit key')
 Expect "tracker: render previews <P>-<A>-000, create allocates; a bug under it takes the parent's key; update keeps it; tags kind product area ($($tDry.name) | $($tNew.name) | $($tBug.name) | $($tUpd.name) | $($tNewV.tags) | $($tBug.tags))" (
   $tDry.name -eq 'Catalogue blocks' -and $tNew.name -eq 'Catalogue blocks' -and $tBug.name -eq 'Crash on save' -and $tUpd.name -eq 'Catalogue blocks and nav' -and $tNewV.description -cmatch '\| SHOP-CAT-009 \|\n\| Product \| shop \|\n\| Children \| 1 \|\n\n<!-- /kit:meta -->$' -and
-  $tBug.description -cmatch '\| Code \| SHOP-CAT-010 \|' -and $tBug.description.Contains("| Parent | $($tNew.id) |") -and ($tNewV.tags -join ',') -eq 'feature,shop' -and ($tBug.tags -join ',') -eq 'bug,catalogue,qa-found')
+  $tBug.description -cmatch '\| Code \| SHOP-CAT-010 \|' -and $tBug.description.Contains("| Parent | $($tNew.id) |") -and ($tNewV.tags -join ',') -eq 'feature,shop' -and ($tBug.tags -join ',') -eq 'bug,catalogue')
 # owner 2026-11-24: a wave's area subtask is keyed from its parent; a rename never drops a key or type (SHOP-AGT-001 vanished by hand)
 $env:KIT_TRACKER_TYPE = 'none'
 $tSub = pwsh -NoProfile -File $D tracker create -Spec (@{ kind = 'Feature'; title = '[Feature] Shop Catalogue fix wave — grid page (web)'; parent = $tNew.id; newTask = 'wave area'; list = 'L1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'grid' }); acceptance = @('a'); links = @('https://x.example/1') } | ConvertTo-Json -Compress -Depth 5) 2>$null | ConvertFrom-Json

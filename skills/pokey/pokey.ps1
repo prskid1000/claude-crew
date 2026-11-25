@@ -1102,7 +1102,7 @@ function Add-NewDefects($st, [object[]]$defects) {
     $pAsk = "$(if ($ask.name) { $ask.name } else { $title })" -replace '^\s*\[[^\]]*\]\s*', ''
     $prod = (@(@($pn | Where-Object { $_ -match ' [—-] ' }) + $pAsk)[0] -split ' [—-] ', 2)[0].Trim()
     $first = [regex]::Match($mdAll, '(?m)^### \S+ — (.+?)(?: \(flaky\))?\r?$').Groups[1].Value
-    $name = "$(Get-KitKindPrefix 'bug') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })$(if ($mdAll -match '\(flaky\)') { ' [flaky]' })"
+    $name = "$(Get-KitKindPrefix 'bug') $prod — $(if ($first) { $first } else { 'new defects' })$(if ($n -gt 1) { " (+$($n - 1) more)" })"   # flaky: each defect's '(flaky)' in the body, never the title (dec-keep-kit)
     $head = "QA run **$title** on ``$(if ($item.target) { $item.target } else { $run.target })`` ($Date) found defects outside the tested tasks' changes.`n`n- **Results report:** $(Format-KitMdLink $docUrl)$(if ($guideUrl) { "`n- **Tester guide** (check ids refer to it): $(Format-KitMdLink $guideUrl)" })"
     $bt = if ($s.id) { Clear-TrackerMemo $s.id; try { Get-TrackerTask $s.id } catch { $null } }; $cur = [string]$bt.name
     # replace an older finalize's own text

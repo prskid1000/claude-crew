@@ -10,9 +10,9 @@
   python -X utf8 skills/bossy/kitbag.py naming scan [--json]                       # live names (tasks, docs, board, launches) vs the standard
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
-  python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug env=- ...   # JSON {tags, add, remove}
+  python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug level=sub ...   # JSON {tags, add, remove}
 Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `Cart held in the browser` (dec-60: key, area, product in the description's kit table; kind, area, product: tags)
- · tag `on-staging` (lowercase kebab, from the TAG_GROUPS vocabulary) · desc `ask catalogue create-only prompt`
+ · tag `website` (lowercase kebab, from the TAG_GROUPS vocabulary) · desc `ask catalogue create-only prompt`
  · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-ask` · agent `devy-ask-prompts` (no topic: `devy-4`) · area `ask-prompts`
    (what it covers; a tie `-2`) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
  · branch `feat/SHOP-CAT-004-public-catalogue` · mr `feat(web): <summary> [SHOP-CAT-004]` · case `SHOP-CAT-004-TC03` · id `dec-close-parent`.
@@ -23,7 +23,7 @@ PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the `kit:` line (an old title prefix still reads).
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags);
-one kind, one broad area (naming.tags.areaMap) and one product tag first (scan, WATCH TAGS; fix: tracker retag); no wave tag.
+one kind, one broad area (naming.tags.areaMap) and one product tag first (scan, WATCH TAGS; fix: tracker retag); no wave or kit state tag (env, decision, origin).
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
 Sections: L33 model · L112 no repeats · L216 tags
 """
@@ -221,13 +221,13 @@ TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, broad 
     'wave': (True, r'wave-\d+'),                                            # RETIRED (owner 2026-11-25: no numbers): any wave= clears; old wave-N tags go
     'phase': (True, ('spec', 'build', 'review', 'qa')),                     # by hand: tracker tags <id> phase=qa
     'repo': (False, None),                                                  # by hand / brief repos: api-code -> api
-    'env': (True, r'needs-deploy|on-[a-z0-9]+(?:-[a-z0-9]+)*'),           # promoted: needs-deploy · in test: on-<env> · closed: cleared
+    'env': (True, r'needs-deploy|on-[a-z0-9]+(?:-[a-z0-9]+)*'),           # RETIRED: the status and deploys.jsonl say it
     'risk': (False, ('migration', 'security', 'breaking', 'feature-flag-off')),   # by hand / brief
-    'decision': (True, ('needs-owner', 'blocked')),                         # blocked status / decide ask; work or an answer clears it
-    'origin': (True, ('qa-found', 'tester-report', 'retro')),               # a QA run's bug: qa-found; others by hand
+    'decision': (True, ('needs-owner', 'blocked')),                         # RETIRED: the Decisions checklist and decisions.jsonl say it
+    'origin': (True, ('qa-found', 'tester-report', 'retro')),               # RETIRED: the QA run record says it
     'test': (False, ('ui', 'api', 'mobile')),                               # by hand / testing doc
 }
-RETIRED = ('wave',)   # owner 2026-11-25: no numbers
+RETIRED = ('wave', 'env', 'decision', 'origin')   # owner 2026-11-25: no numbers; dec-keep-kit: no kit state tags (known, so a retag removes them)
 LEVEL_DROP = {'parent': 'area', 'sub': 'product'}   # the group a parent / a subtask never carries
 KIND_TAG = {'feat': 'feature', 'fix': 'bug', 'refactor': 'chore', 'perf': 'chore'}
 
@@ -255,7 +255,7 @@ def tag_groups(cfg):
 
 
 def tag_value(group, value, cfg):
-    """A part as its tag: product / area code -> its name, feat -> feature, 2 -> wave-2, staging -> on-staging, api-code -> api."""
+    """A part as its tag: product / area code -> its name, feat -> feature, 2 -> wave-2, api-code -> api."""
     v = str(value or '').strip()
     if group == 'area':   # owner 2026-11-25: a broad module tag reused across tasks (naming.tags.areaMap), else the area's name
         v = area_map(cfg).get(v.upper(), cfg['areas'].get(v.upper(), v))
@@ -268,8 +268,6 @@ def tag_value(group, value, cfg):
     elif group == 'repo':
         rm = (cfg.get('tags') or {}).get('repo')
         v = rm.get(v, v) if isinstance(rm, dict) and v in rm else re.split(r'[-_.]', v.replace('\\', '/').rsplit('/', 1)[-1])[0]
-    elif group == 'env' and v and v != 'needs-deploy' and not v.startswith('on-'):
-        v = f'on-{v}'
     return slugify(v, 6)
 
 
@@ -298,7 +296,8 @@ def tags(parts, have=(), cfg=None):
         p.setdefault('product', km[1]); p.setdefault('area', km[2])
     if 'type' in p:
         p.setdefault('kind', p.pop('type'))
-    p.pop('wave', None)   # retired group: never set
+    for g in RETIRED:   # retired groups: never set
+        p.pop(g, None)
     lvl = str(p.pop('level', '') or '')   # owner 2026-11-25: a parent: kind + product · a subtask: kind + area (its parent says the product) · alone: all three
     if lvl in LEVEL_DROP:
         p[LEVEL_DROP[lvl]] = '-'
@@ -312,7 +311,7 @@ def tags(parts, have=(), cfg=None):
         one, vals = groups[g]
         xs = [x.strip() for x in str(raw).split(',') if x.strip() and x.strip() != '-']
         new = [tag_value(g, x, cfg) for x in xs if not x.startswith('-')]
-        drop = {tag_value(g, x[1:], cfg) for x in xs if x.startswith('-')}   # -needs-owner: that value only
+        drop = {tag_value(g, x[1:], cfg) for x in xs if x.startswith('-')}   # -urgent: that value only
         bad += [f'{g} tag {t!r}: {w or "not in the vocabulary"}' for t in new if (w := name_problem('tag', t, cfg) if g != 'repo' else '') or not tag_known(g, t, cfg, vals)]   # a repo word may equal an AREA code
         bad += [f'{g}: one value at a time ({", ".join(new)})'] if one and len(new) > 1 else []
         bad += [f'{g}=: an empty value (clear the group with {g}=-)'] if not str(raw).strip() else []
@@ -417,6 +416,7 @@ def plan_rows(plan, cfg):
         was = re.search(r'\s*(\(was [^)]*\))\s*$', rest)   # an earlier rename's old code stays searchable
         rest = rest[:was.start()] if was else rest
         outcome = it.get('outcome') or re.sub(r'^\s*v\d+\s+', '', re.sub(REPO_LIST, '', rest)).strip()
+        outcome = re.sub(r'\s*\[flaky\]$', '', outcome)   # dec-keep-kit: a state marker; the QA body says which defect is flaky
         live = it.get('tags') or []   # a keyed title without [Type]: its live kind tag (a re-run never flips a bug)
         lk = next((str(h).capitalize() for h in live if str(h).lower() in ('bug', 'chore', 'spike', 'feature', 'docs', 'test')), '')
         ty = it.get('type') or (km and km[4]) or (re.match(rf'\s*\[({"|".join(TITLE_TYPES)})\]', old) or [None, lk or 'Feature'])[1]

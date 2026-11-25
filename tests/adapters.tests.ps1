@@ -25,7 +25,7 @@ $capR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
 Expect-Each $capR 'caps: #' @('declOff', 'verb', 'noVerb', 'unsupported', 'cfgOff', 'cmd', 'attachFallback', 'clickup') -Show 9
 
 # tags parity (owner 2026-11-24): every tracker has verb labels (add + remove) or the description fallback, every git host mr.labels or
-# the body line; the fallback writes / reads a Tags line; status promoted -> needs-deploy, closed clears it; tracker retag dry run + apply
+# the body line; the fallback writes / reads a Tags line; no kit state tags (dec-keep-kit); tracker retag dry run + apply + resume
 Set-JsonFile (Join-Path $k 'skills/crafty/kit.local.json') @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue' } } }
 $tagR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   foreach ($af in 'tracker-clickup', 'tracker-jira', 'tracker-azure', 'tracker-linear', 'tracker-youtrack', 'github', 'gitlab', 'gitea', 'bitbucket', 'azure-devops') { . (Join-Path $k "skills/crafty/adapters/$af.ps1") }
@@ -39,7 +39,8 @@ $tagR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   Register-KitAdapter 'tracker' 'fkt' @{ caps = @{ labels = $false }; view = { param($a) $mem[$a.id] }; describe = { param($a) $mem[$a.id].description = $a.text; 'ok' }; url = { param($a) $a.id } }
   $__trType = 'fkt'; $null = Set-KitTaskTags T1 @('key=SHOP-CAT-004', 'kind=Bug', 'wave=3')
   $o.fallbackLine = $mem.T1.description -match '\*\*Tags:\*\* bug, catalogue, shop(\r?\n|$)' -and ((Get-KitTaskTags T1) -join ',') -eq 'bug,catalogue,shop'
-  $null = Set-KitTaskTags T1 @('env=needs-deploy'); $null = Set-KitTaskTags T1 @('env=-'); $o.exclusive = ((Get-KitTaskTags T1) -join ',') -eq 'bug,catalogue,shop'
+  $null = Set-KitTaskTags T1 @('env=needs-deploy', 'decision=needs-owner', 'origin=qa-found'); $o.noState = ((Get-KitTaskTags T1) -join ',') -eq 'bug,catalogue,shop'
+  $mem.T1.description = $mem.T1.description -replace 'shop', 'shop, needs-deploy, on-stg, qa-found, urgent'; $null = Set-KitTaskTags T1 @('kind=Bug'); $o.stateGone = ((Get-KitTaskTags T1) -join ',') -eq 'bug,catalogue,shop,urgent'
   $o.bugByTag = (Test-KitBugTask $mem.T1) -and -not (Test-KitBugName $mem.T1.name)
   $o.bugGaps = -not @(Get-KitTaskTextGaps $mem.T1.name 'free text' -Subtask -Bug:(Test-KitBugTask $mem.T1)).Count   # a keyed bug: no template gaps
   $null = Format-KitKeyedName '[ui] fix button' 'SHOP-CAT-004'; $o.oddKind = ($script:KitNameTags -join ',') -eq 'key=SHOP-CAT-004,kind=Feature'
@@ -47,20 +48,37 @@ $tagR = & { . (Join-Path $k 'skills/crafty/lib.ps1')
   $__trType = 'fkl'; function Test-KitNamingOn { $false }; $null = Set-KitTaskOrder T1 @() 'v2 wave 2'; $o.namingOffWave = ($lab -join ',') -eq 'Wave: v2 wave 2'; $__trType = 'fkt'
   $o.names = -not @((Get-KitTaskTags T1) | Where-Object { $null = & (Get-Python) -X utf8 $KitCmd.kitbag naming check tag $_ 2>&1; $LASTEXITCODE }).Count
   $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
-Expect-Each $tagR 'tags parity: #' @('trackers', 'trackerNative', 'trackerRemove', 'trackerFallback', 'hostNative', 'fallbackLine', 'exclusive', 'bugByTag', 'bugGaps', 'oddKind', 'namingOffWave', 'names') -Show 12
+Expect-Each $tagR 'tags parity: #' @('trackers', 'trackerNative', 'trackerRemove', 'trackerFallback', 'hostNative', 'fallbackLine', 'noState', 'stateGone', 'bugByTag', 'bugGaps', 'oddKind', 'namingOffWave', 'names') -Show 12
 $env:KIT_TRACKER_TYPE = 'none'; $Dc = Join-Path $k 'skills/crafty/crafty.ps1'; $tnd = TkPath $k tracker-none -Create
 Set-JsonFile (Join-Path $tnd 'LOCAL-90.json') @{ id = 'LOCAL-90'; name = 'SHOP-CAT-001 [Feature] Catalogue: price grid'; status = 'open'; parent = $null; list = 'L'; assignees = @(); description = 'd'; comments = @(); tags = @('wave: shop v2 wave 2') }
-Set-JsonFile (Join-Path $tnd 'LOCAL-91.json') @{ id = 'LOCAL-91'; name = 'SHOP-CAT-002 [Bug] Catalogue: crash on save'; status = 'open'; parent = 'LOCAL-90'; list = 'L'; assignees = @(); description = 'd'; comments = @() }
+Set-JsonFile (Join-Path $tnd 'LOCAL-91.json') @{ id = 'LOCAL-91'; name = 'SHOP-CAT-002 [Bug] Catalogue: crash on save [flaky]'; status = 'open'; parent = 'LOCAL-90'; list = 'L'; assignees = @(); description = 'd'; comments = @() }
 $rtD = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 -DryRun 2>&1 | Out-String; $rt0 = (Get-Content (Join-Path $tnd 'LOCAL-90.json') -Raw | ConvertFrom-Json).name; $rt0d = (Get-Content (Join-Path $tnd 'LOCAL-91.json') -Raw | ConvertFrom-Json) | ForEach-Object { "$($_.description)|$($_.tags)" }   # the dry run wrote nothing
 $rtA = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 2>&1 | Out-String; $rv = pwsh -NoProfile -File $Dc tracker view LOCAL-90 2>$null | ConvertFrom-Json
-$null = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 2>&1; $rv2 = pwsh -NoProfile -File $Dc tracker view LOCAL-90 2>$null | ConvertFrom-Json   # a re-run plans from the old title, writes it once
-$rpo = pwsh -NoProfile -File $Dc tracker status LOCAL-91 promoted 2>&1 | Out-String; $rp = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','
+$j91 = Join-Path $tnd 'LOCAL-91.json'; $h91 = Get-Content $j91 -Raw | ConvertFrom-Json; $h91.name = 'Crash on save (hand)'; Set-JsonFile $j91 $h91   # a person renames it after the apply
+$rtR = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 2>&1 | Out-String; $rv2 = pwsh -NoProfile -File $Dc tracker view LOCAL-90 2>$null | ConvertFrom-Json; $rtRd = pwsh -NoProfile -File $Dc tracker retag LOCAL-90 -DryRun 2>&1 | Out-String
+$null = pwsh -NoProfile -File $Dc tracker status LOCAL-91 promoted 2>&1; $rp = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json); $rp = "$($rp.tags -join ',')|$($rp.name)"
 $null = pwsh -NoProfile -File $Dc tracker status LOCAL-91 closed 2>&1; $rc = (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).tags -join ','; Remove-Item Env:KIT_TRACKER_TYPE
-Expect "tracker retag (dec-60): dry run = counts + table only; apply = plain title, kit table + tags, the old wave label gone; promoted -> needs-deploy, closed clears ($($rv.name) | $($rv.tags -join ',') | $rp | $rc | $rpo)" (
-  $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \| SHOP-CAT-002 \| Crash on save \| no kind tag, no area tag \| bug, catalogue \|' -and $rtD -match 'DRY RUN: 2 keyed' -and $rt0 -like '*`[Feature`]*' -and
+Expect "tracker retag (dec-60): dry run = counts + table only; apply = plain title, kit table + tags, the old wave label and [flaky] gone; a re-run skips done tasks (a hand rename stays); no state tags on promoted / closed ($($rv.name) | $($rv.tags -join ',') | $rp | $rc | $rtR)" (
+  $rtD -match '\| LOCAL-91 \| SHOP-CAT-002 \[Bug\] Catalogue: crash on save \[flaky\] \| SHOP-CAT-002 \| Crash on save \| no kind tag, no area tag \| bug, catalogue \|' -and $rtD -match 'DRY RUN: 2 keyed task\(s\), nothing' -and $rt0 -like '*`[Feature`]*' -and
   $rtD -match 'retag: 2 keyed task\(s\): 2 title\(s\) to strip · 2 description\(s\) to set \(kit table\) · 2 tag fix\(es\)' -and "$($rv.description)" -cmatch '\| Code \| SHOP-CAT-001 \|\n\| Product \| shop \|\n\| Children \| 1 \|\n\n<!-- /kit:meta -->$' -and $rt0d -eq 'd|' -and
   (pwsh -NoProfile -File $Dc tracker view LOCAL-91 2>$null | ConvertFrom-Json).description -cmatch '\| Code \| SHOP-CAT-002 \|\n\| Area \| catalogue \|\n\| Parent \| LOCAL-90 \|' -and
-  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'Price grid' -and $rv2.name -eq $rv.name -and ([regex]::Matches("$($rv2.description)", 'Old title').Count) -eq 1 -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,shop' -and $rp -eq 'bug,catalogue,needs-deploy' -and $rc -eq 'bug,catalogue')
+  $rtA -match 'RETAGGED LOCAL-91' -and $rv.name -eq 'Price grid' -and $rv2.name -eq $rv.name -and ([regex]::Matches("$($rv2.description)", 'Old title').Count) -eq 1 -and "$($rv.description)".Contains('**Old title:** SHOP-CAT-001 [Feature] Catalogue: price grid') -and ($rv.tags -join ',') -eq 'feature,shop' -and
+  $rtR -match 'DONE LOCAL-90' -and $rtR -match 'DONE LOCAL-91' -and $rtR -notmatch 'RETAGGED' -and $rtRd -match 'DRY RUN: 2 keyed task\(s\), 2 done by an earlier apply' -and $rp -eq 'bug,catalogue|Crash on save (hand)' -and $rc -eq 'bug,catalogue')
+
+# a fake 429 (ClickUp retag stopped at task 6): the wait reads Retry-After / X-RateLimit-Reset; a CLI write and a REST POST retry it
+$rlR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); $o = [ordered]@{}; $rs = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 5
+  $o.wait = "$(Get-KitRateWait '429 Too Many Requests' 7) $(Get-KitRateWait 'HTTP 429 Retry-After: 3' 7) $(Get-KitRateWait "429 x-ratelimit-reset $rs" 7) $(Get-KitRateWait "429 x-ratelimit-reset $($rs * 1000)" 7) $(Get-KitRateWait 'exit 1: not found' 7)" -match '^7 3 [56] [56] 0$'
+  $script:nCall = 0; $cr = Invoke-KitRetry { $script:nCall++; if ($script:nCall -lt 3) { @{ code = 1; err = 'Error: 429 Too Many Requests' } } else { @{ code = 0; out = 'ok' } } } -Connect; $o.cliWrite = $cr.code -eq 0 -and $script:nCall -eq 3
+  $script:nCall = 0; $cr = Invoke-KitRetry { $script:nCall++; @{ code = 1; err = 'Error: 404 not found' } } -Connect; $o.noRetry404 = $script:nCall -eq 1
+  $tl = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl.Start(); $port = $tl.LocalEndpoint.Port; $tl.Stop()
+  $srv = Start-ThreadJob -ArgumentList $port { param($pt) $hl = [Net.HttpListener]::new(); $hl.Prefixes.Add("http://127.0.0.1:$pt/"); $hl.Start(); $hits = 0
+    try { while ($hits -lt 2) { $tk = $hl.GetContextAsync(); if (-not $tk.Wait(20000)) { break }; $c = $tk.Result; $hits++
+        if ($hits -eq 1) { $c.Response.StatusCode = 429; $c.Response.AddHeader('X-RateLimit-Reset', "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 1)") } else { $bd = [Text.Encoding]::UTF8.GetBytes('{"ok":true}'); $c.Response.ContentType = 'application/json'; $c.Response.OutputStream.Write($bd, 0, $bd.Length) }
+        $c.Response.Close() } } finally { Start-Sleep -Milliseconds 500; $hl.Stop() }; $hits }   # the last answer flushes before the stop
+  Start-Sleep -Milliseconds 300; $hr = Invoke-KitHttp 'POST' "http://127.0.0.1:$port/task/T1/tag/x" @{} @{} 3>$null; $hits = Receive-Job $srv -Wait -AutoRemoveJob
+  $o.restPost = $hr.ok -eq $true -and $hits -eq 2
+  $o.GetEnumerator() | ForEach-Object { "$($_.Key):$([bool]$_.Value)" } }
+Expect-Each $rlR 'rate limit 429: #' @('wait', 'cliWrite', 'noRetry404', 'restPost') -Show 4
 
 # secret store: file round trip (targets.local.json shape kept), names only, env read-only, secret:<name> refs, a fake store,
 # the guard denies the configured store's backing file and keeps the file store's default

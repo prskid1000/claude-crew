@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L915 status · L1118 tracker · L1440 prior ·
-  L1459 ask bugs · L1644 deploy words · L1688 git-host · L1876 kitlog · L1986 params · L2291 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L925 status · L1128 tracker · L1450 prior ·
+  L1469 ask bugs · L1654 deploy words · L1698 git-host · L1886 kitlog · L1996 params · L2301 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -749,11 +749,18 @@ function Add-KitNetCount([switch]$Retry, [switch]$Check) {
   } catch {} finally { Close-KitLockFile $lk "$f.lock" }
   $ok
 }
+# 0, or the seconds to wait after a rate limit (429): Retry-After, else X-RateLimit-Reset (epoch s / ms), else $Default; 1-90 s
+function Get-KitRateWait([string]$Text, [int]$Default) {
+  if ($Text -notmatch '(?i)\b429\b|too many requests|rate[ -]?limit(ed)?\b') { return 0 }
+  $s = if ($Text -match '(?i)retry-after\W+(\d+)') { [int]$Matches[1] } elseif ($Text -match '(?i)x-ratelimit-reset\W+(\d{10,13})') { $e = [long]$Matches[1]; if ($e -gt 1e12) { $e = [long]($e / 1000) }; [int]($e - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) + 1 } else { $Default }
+  [math]::Min(90, [math]::Max(1, $s))
+}
 function Wait-KitPoll([int]$Seconds) { Start-Sleep -Milliseconds $(if ($env:KIT_POLL_MS) { [int]$env:KIT_POLL_MS } else { 1000 * $Seconds }) }   # KIT_POLL_MS: the tests' fake clock
 function Invoke-KitRetry([scriptblock]$Call, [int]$Tries = $(if ($env:KIT_NET_TRIES) { [int]$env:KIT_NET_TRIES } else { 3 }), [switch]$Connect) {
-  $delay = 2
+  $delay = 2; $rl = 0
   for ($i = 1; ; $i++) {
     $r = & $Call
+    if ($r.code -and $rl -lt 6 -and ($w = Get-KitRateWait "$($r.err) $($r.out)" $delay)) { $rl++; $i--; Wait-KitPoll $w; $delay = [math]::Min(60, $delay * 3); continue }   # a 429 was refused, never done: writes retry too
     if ($r.code -eq 0 -or $i -ge $Tries -or -not (($r.timedOut -and -not $Connect) -or (Test-KitTransient "$($r.err) $($r.out)" -Connect:$Connect))) { return $r }
     if ($r.timedOut -and -not (Add-KitNetCount -Retry -Check)) { $r.err = "$($r.err) (hang retry budget spent: 10% of the calls of the last 10 min)".Trim(); return $r }
     Start-Sleep -Seconds $delay; $delay *= 3
@@ -906,7 +913,10 @@ function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Header
   $p = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = (Get-KitNetTimeout) }
   if ($Method -eq 'GET') { $p.MaximumRetryCount = 2; $p.RetryIntervalSec = 3 }
   if ($null -ne $Body) { $p.Body = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 20 -Compress)); $p.ContentType = 'application/json' }
-  $global:KitHttpCode = 0; try { Invoke-RestMethod @p } catch { $global:KitHostFailed = $true; $global:KitHttpCode = [int]$_.Exception.Response.StatusCode; $global:KitHostError = "http $Method $($Uri -replace '\?.*'):$($_.Exception.Message) $($_.ErrorDetails.Message)".Trim(); Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; $null }
+  for ($rl = 0; ; $rl++) {   # a 429 (any method: refused, never done): wait per its headers, up to 6 times
+    $global:KitHttpCode = 0; try { return Invoke-RestMethod @p } catch { $h = $_.Exception.Response.Headers
+      if ([int]$_.Exception.Response.StatusCode -eq 429 -and $rl -lt 6) { Wait-KitPoll (Get-KitRateWait "429$(if ($h.RetryAfter.Delta) { " retry-after $([int]$h.RetryAfter.Delta.TotalSeconds)" })$(try { " x-ratelimit-reset $(@($h.GetValues('X-RateLimit-Reset'))[0])" } catch { '' })" (2 * [math]::Pow(3, $rl))); continue }
+      $global:KitHostFailed = $true; $global:KitHttpCode = [int]$_.Exception.Response.StatusCode; $global:KitHostError = "http $Method $($Uri -replace '\?.*'):$($_.Exception.Message) $($_.ErrorDetails.Message)".Trim(); Write-Warning "http $Method $($Uri -replace '\?.*') failed: $($_.Exception.Message)"; return $null } }
 }
 function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   $t = [Environment]::GetEnvironmentVariable($Env); if (-not $t) { return @{} }
@@ -1504,7 +1514,7 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
       if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask 'ask bug: duplicate check unavailable' }
       elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid) -and (Test-KitBugCollector $b2) -and (Test-KitSameArea $b2 $Ask)) { return & $put $b2 }   # naming: never another area's collector
         New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask "ask bug: the related task $rid is closed or not a QA collector" } else { throw } }
-    if ($t.id) { $null = Set-KitTaskTags $t.id @('origin=qa-found') -Soft; [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
+    if ($t.id) { [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
   }
 }
 # gate before work (wt lease / new, devtools.py mr / finish / doc): -Override is logged

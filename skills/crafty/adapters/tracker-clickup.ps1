@@ -2,8 +2,9 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # tracker-clickup: ClickUp as the kit tracker through the clickup CLI (tracker.type clickup; tracker.list = the list id of
 # new tasks; tracker.statuses = the list's status names; tracker.workspace = the workspace id for a list move, else the CLI's
-# config). Dot-sourced by lib.ps1 before the tracker type is resolved.
-# Sections: L7 helpers · L21 tracker
+# config). Dot-sourced by lib.ps1 before the tracker type is resolved. HTTP 429 (100 calls / min): lib.ps1 Invoke-KitRetry (CLI)
+# and Invoke-KitHttp (REST) wait it out per Retry-After / X-RateLimit-Reset, writes too: the same for every tracker adapter.
+# Sections: L8 helpers · L22 tracker
 # ---- helpers: member ids, the stored token
 function __TrClickupMemberId([string]$Who) {
   if (-not $Who) { return $null }

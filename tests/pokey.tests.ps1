@@ -255,7 +255,7 @@ process.exit(0)
 New-Task 'PF' 'Ask F'; New-Task 'TF' 'Task F' 'PF'; $fk = New-Run 'FK' @(@{ code = 'K1'; task = 'TF'; checks = , @('X1', 'FAIL', 'new') })
 $rk = Read-Json "$fk/K1/results.json"; $rk.checks[0] | Add-Member flaky $true; & $J $rk "$fk/K1/results.json"
 $null = Fin $fk 'K1'
-Expect 'finalize: flaky new defect -> [Bug] task, tagged flaky' (@(Bugs | Where-Object { $_.parent -eq 'PF' -and $_.name -match '\[flaky\]' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
+Expect 'finalize: flaky new defect -> [Bug] task, flaky in its body, never the title (dec-keep-kit)' (@(Bugs | Where-Object { $_.parent -eq 'PF' -and $_.name -notmatch 'flaky' -and $_.description -match '### X1 — s \(flaky\)' }).Count -eq 1)
 # owner 2026-11-19: subtasks follow the parent's failedTesting; a pass never closes a parent with an open subtask; a late MR: kept
 $ff = @(@('C1', 'PASS'), @('C2', 'FAIL')); foreach ($x in 'C', 'O') { New-Task "P$x" 'Ask' $null 'in test'; New-Task "S$x" 'Sub' "P$x" 'in test' }
 $cr = New-Run 'CR' @(@{ code = 'CR1'; task = 'PC'; checks = $ff }, @{ code = 'CO1'; task = 'PO'; checks = @(, @('C1', 'PASS')) }); $null = Fin $cr 'CR1'; $null = Fin $cr 'CO1'

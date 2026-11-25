@@ -497,7 +497,7 @@ function Publish-KitDecisions([string]$Task, [string]$Link) {
   if (-not $Link) { $Link = "$((Read-KitState (Get-KitTaskFile $Task)).decisions.link)" }
   $items = @(Format-KitDecisionItems $rows $Link $Task)
   $null = Test-KitProse -Kind decisions -Text (@($items.text) -join "`n")   # warnings only: the records are the facts
-  $r = Set-KitTaskChecklist $Task 'Decisions' $items; $null = Set-KitTaskTags $Task @("decision=$(if (@($items | Where-Object { -not $_.done }).Count) { 'needs-owner' } else { '-needs-owner' })") -Soft
+  $r = Set-KitTaskChecklist $Task 'Decisions' $items
   Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-KitStamp) } }
   "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
 }

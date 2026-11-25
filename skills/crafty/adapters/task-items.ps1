@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L98 move · L142 status roles · L301 task text · L318 naming · L322 meta (dec-60, owner 2026-11-25) ·
-#   L490 track lines · L495 task ids · L511 tags · L587 order
+# Sections: L8 items · L98 move · L142 status roles · L298 task text · L315 naming · L319 meta (dec-60, owner 2026-11-25) ·
+#   L486 track lines · L491 task ids · L507 tags · L589 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -260,9 +260,6 @@ function Complete-KitStatusWrite([string]$Id, [string]$Status, $R, $Was, [string
     if ($Status -in 'promoted', 'inTest', 'closed' -and (Read-KitState $tf).statusOwner) { Update-KitTaskIndex $Id { param($x) $x.Remove('statusOwner') } }
     elseif ($ag -and $Status -in 'inProgress', 'review' -and ($Back -or -not (Read-KitState $tf).statusOwner)) { Update-KitTaskIndex $Id { param($x) $x.statusOwner = $ag } } } catch { Write-Warning "tracker: round owner of $Id not kept: $_" }
   if ($Was.parent) { $null = Sync-TrackerParent $Id (Resolve-TrackerStatus $Status) -ParentId "$($Was.parent)" -Reopen:(Test-TrackerStatus "$($Was.status)" 'closed') }
-  # env tags follow the status (kitbag.py TAG_GROUPS): promoted waits for a deploy; in test: deploys.ps1 sets on-<env>; closed: no env / decision
-  $tg = switch ($Status) { 'promoted' { @('env=needs-deploy') } 'closed' { @('env=-', 'decision=-') } { $_ -in 'inProgress', 'failedTesting', 'failedReview' } { @('env=-') } }
-  if ($tg) { $null = Set-KitTaskTags $Id $tg -Soft }
 }
 # the status a parent should have: the least advanced of its open subtasks, back too (a child's new fix round);
 # a closed parent opens again for a new child or a reopened one (-Reopen); '' = leave it
@@ -429,8 +426,7 @@ function Get-KitKeptName([string]$Task, $Spec, [string]$Rendered, [string]$Key) 
   if (-not $Live -or "$($Spec.title)".Trim()) { $Rendered } else { $Live }
 }
 # tracker create -Key: the keyed defect record with the name the kit gave it (a re-run renames only while the task still has it)
-function Save-KitKeyedTask([string]$File, [string]$Key, [string]$Id) { Write-KitState $File ([ordered]@{ key = $Key; id = $Id; name = "$((Get-TrackerTask $Id).name)" })
-  if ($Key -match '^qa-') { $null = Set-KitTaskTags $Id @('origin=qa-found') -Soft } }   # a QA run's defect
+function Save-KitKeyedTask([string]$File, [string]$Key, [string]$Id) { Write-KitState $File ([ordered]@{ key = $Key; id = $Id; name = "$((Get-TrackerTask $Id).name)" }) }
 # a re-run: renamed while it holds that name; an older record without one only learns the live name (never renamed blind)
 function Update-KitKeyedTask([string]$File, $Old, [string]$Live, [string]$Name, [string]$Key) {
   if ($Old.name -and $Live -ceq "$($Old.name)") { $null = Set-TrackerName $Old.id $Name }
@@ -556,7 +552,7 @@ function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fal
 # tracker tags <id> <group=value> ... | tracker retag <parent>[,<parent>] [-DryRun]: the backfill (dec-60) of keyed tasks of the trees: plain
 # title, the kit table, tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md), then the parents' Items; -DryRun: counts + table
 function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
-  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product phase repo env risk decision origin test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
+  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product phase repo risk test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
   if (-not $Id) { 'usage: tracker retag <parent>[,<parent>] [-DryRun]'; exit 2 }
   $Out = Join-Path (Get-KitPath cache -Create) "retag-$((Split-KitList $Id)[0] -replace '[^\w.-]', '_').md"
   $dry = $__trDry; $script:__trDry = $false   # the reads run for real; the writes below only without -DryRun
@@ -575,11 +571,17 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   $rmN = @($ok | Where-Object { $nds[$_.id] -cne ("$($seen[$_.id].description)" -replace "`r`n", "`n").TrimEnd() }).Count; $rgN = @($ok | Where-Object { @($_.add).Count + @($_.remove).Count }).Count
   "retag: $($rows.Count) keyed task(s): $rtN title(s) to strip · $rmN description(s) to set (kit table) · $rgN tag fix(es) · $($rows.Count - $ok.Count) skipped (problems)"
   [IO.File]::WriteAllLines(($Out -replace '\.md$', '-texts.md'), [string[]]@(foreach ($r in $ok) { "## $($r.id): $($seen[$r.id].name) -> $($r.title)", '### Description now', '````md', "$($seen[$r.id].description)".TrimEnd(), '````', '### After', '````md', $nds[$r.id], '````' }), [Text.UTF8Encoding]::new($false))
-  $md; if ($dry) { "DRY RUN: $($rows.Count) keyed task(s), nothing changed; table: $Out; texts before / after: $($Out -replace '\.md$', '-texts.md')"; return }
+  # resumable: <table>.done.json {id: 'title|tags'} after each task; a re-run skips a task done to the same target (a later hand edit stays)
+  $doneF = $Out -replace '\.md$', '.done.json'; $done = @{}; if (Test-Path -LiteralPath $doneF) { (Get-Content -LiteralPath $doneF -Raw | ConvertFrom-Json -AsHashtable).GetEnumerator() | ForEach-Object { $done[$_.Key] = "$($_.Value)" } }
+  $sig = { param($r) "$($r.title)|$(@($r.tags) -join ',')" }; $nDone = @($ok | Where-Object { $done[$_.id] -eq (& $sig $_) }).Count
+  $md; if ($dry) { "DRY RUN: $($rows.Count) keyed task(s)$(if ($nDone) { ", $nDone done by an earlier apply (skipped)" }), nothing changed; table: $Out; texts before / after: $($Out -replace '\.md$', '-texts.md')"; return }
   foreach ($r in $ok) {
-    $tk = $seen[$r.id]; $old = "$($tk.name)"; $od = ("$($tk.description)" -replace "`r`n", "`n").TrimEnd(); $nd = $nds[$r.id]
-    if ($nd -cne $od) { $null = Set-TrackerDescription $r.id $nd -Resolved }; if ($r.title -cne $old) { $null = Set-TrackerName $r.id $r.title }   # the kit table first: the rename finds it
-    Clear-TrackerMemo $r.id; Write-KitTaskTags $r.id (Get-TrackerTask $r.id) $r   # a fresh read: a description tag line keeps the lines above
+    if ($done[$r.id] -eq (& $sig $r)) { "DONE $($r.id): an earlier apply"; continue }
+    try { $tk = $seen[$r.id]; $old = "$($tk.name)"; $od = ("$($tk.description)" -replace "`r`n", "`n").TrimEnd(); $nd = $nds[$r.id]
+      if ($nd -cne $od) { $null = Set-TrackerDescription $r.id $nd -Resolved }; if ($r.title -cne $old) { $null = Set-TrackerName $r.id $r.title }   # the kit table first: the rename finds it
+      Clear-TrackerMemo $r.id; Write-KitTaskTags $r.id (Get-TrackerTask $r.id) $r   # a fresh read: a description tag line keeps the lines above
+    } catch { "STOPPED at $($r.id): $($_.Exception.Message); rerun the same command: done tasks are skipped"; exit 1 }
+    $done[$r.id] = & $sig $r; Write-KitAtomic $doneF ($done | ConvertTo-Json)
     "RETAGGED $($r.id): $($r.title) · Code $($r.key) · $(@($r.tags) -join ', ')" }
   foreach ($r in @($rows | Where-Object { @($_.problems).Count })) { "SKIPPED $($r.id): $(@($r.problems) -join '; ')" }
   foreach ($p in @($seen.Keys | Where-Object { @($seen[$_].subtasks).Count })) { try { Update-KitParentItems $p } catch { "parent items ${p}: $($_.Exception.Message)" } }   # their Items lines name the new titles
