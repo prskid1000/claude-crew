@@ -6,7 +6,7 @@ export const meta = {
   { title: 'Spike', detail: 'one rechy answers args.openQuestions in the brief before any devy' },
   { title: 'Build', detail: 'a devy per area: worktree, code, testing goals, local loop, MRs, testing docs' },
   { title: 'Decide', detail: 'items paused for an owner decision or ENV-FIX resume after the answer' },
-  { title: 'Review', detail: 'a revy per devy (+ datay on migrations) + CI pipelines' },
+  { title: 'Review', detail: 'a revy per devy (+ datay on migrations) while the CI pipelines run' },
   { title: 'Fix', detail: 'a fix round (local tests again); a re-review holds only on blocking (one more round, then a decide ask; rest -> MR Follow-ups); merge in order, tracker task' },
   { title: 'Deploy', detail: 'merged work joins the deploy batch (bossy.ps1 deploy); a person says deploy <env>, never asked' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy makes lessons)' },
@@ -501,13 +501,13 @@ const results = await pipeline(
    return { id: a.id, report: r, findings: [], blocked: `local test ${lt.status}${lt.status === 'FAIL' ? ' after the stronger fix round' : ''}: ${why}` }
   }
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }
-  const [rv, mv] = await reviews(a, r)
+  // review and CI together (owner 2026-11-25: a task under budget.taskMinutes): one fix round takes both
+  const [[rv, mv], ciFails] = await Promise.all([reviews(a, r), ciGate(a, r)])
   if (!rv) return { id: a.id, report: r, findings: [BLOCK(r.mrs, 'The review agent returned nothing: unreviewed, not merged.', REREVIEW)], reviewFailed: true }
   if (a.migrations && !mv) return { id: a.id, report: r, findings: [BLOCK(r.mrs, 'The migration review (datay) returned nothing: unreviewed, not merged.', 'Re-run datay kind migration on these MRs, then merge.')], reviewFailed: true }
   const findings = [...(rv.findings || []), ...((mv && mv.findings) || [])]
   let x = { id: a.id, report: r, findings }
-  let blocking = findings.filter(mustFix)
-  if (!blocking.length) blocking = await ciGate(a, r)
+  const blocking = [...findings.filter(mustFix), ...ciFails]
   if (blocking.length) {
    if (!(await gate('Fix'))) return halt(x)
    say(a, `${blocking.length} blocking finding(s) / failed pipeline(s) -> fix round`)

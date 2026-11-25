@@ -23,9 +23,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L467 load · L960 lint ·
-  L1382 README graph · L1500 lint command · L1813 audit · L1961 registry · L2021 tools · L2109 parity · L2715 arch lint ·
-  L3034 prose · L3217 sections · L3349 budget · L3367 migrate · L3515 plugins · L3572 state lint · L3760 main
+Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L987 lint ·
+  L1409 README graph · L1527 lint command · L1840 audit · L1988 registry · L2048 tools · L2136 parity · L2742 arch lint ·
+  L3061 prose · L3244 sections · L3376 budget · L3394 migrate · L3542 plugins · L3599 state lint · L3787 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -421,8 +421,28 @@ def kitlog(stream, event='', fields=None, who=None):
     except Exception:
         pass
 
-def audited(script, argv, cli):
-    """Runs a CLI (cli() -> exit code) between its call lines (stream calls): start with masked arguments, end with rc and ms."""
+def clock_of(script, argv, task_of=None):
+    """crafty adapters/task-items.ps1 Get-KitClockPhase (task clock): a verb in crafty/vocab.json clockPhases -> {phase, task?}; the
+    task: a worktree argument's branch, a branch argument (task_of) or a tracked task id argument; a dry run (--check, --dry-run): none."""
+    m = (load_json(osp.join(KIT_DIR, 'skills', 'crafty', 'vocab.json'))[0] or {}).get('clockPhases') or {}
+    ph = argv and not {'--check', '--dry-run'} & set(argv) and (m.get(f'{script} {" ".join(argv[:2])}') or m.get(f'{script} {argv[0]}'))
+    if not ph:
+        return None
+    for x in argv[1:]:
+        t = ''
+        if task_of and len(x) > 3 and osp.isdir(x):
+            t = task_of(subprocess.run(['git', '-C', x, 'branch', '--show-current'], capture_output=True, text=True, timeout=20).stdout.strip())
+        elif re.fullmatch(r'[\w.-]+', x) and osp.isfile(task_file(x)):
+            t = x
+        elif task_of and re.search(r'[/-]', x) and not x.startswith('-'):
+            t = task_of(x)
+        if t:
+            return {'phase': ph, 'task': t}
+    return {'phase': ph}
+
+def audited(script, argv, cli, task_of=None):
+    """Runs a CLI (cli() -> exit code) between its call lines (stream calls): start with masked arguments, end with rc and ms;
+    a task clock verb also between its clock rows (clock_of)."""
     sub = 2 if argv[1:2] and re.match(r'^[a-z][\w-]*$', argv[1]) else 1
     _CALL.update(script=script, verb=' '.join(argv[:sub]), who=kit_who(argv))
     out, hide = [], False
@@ -430,6 +450,11 @@ def audited(script, argv, cli):
         out.append('[redacted]' if hide else mask(re.sub(r'\s+', ' ', x))[:120])
         hide = x.startswith('-') and bool(re.search(LOG['secretKey'], x))
     kitlog('calls', 'start', {'pid': os.getpid(), 'args': ' '.join(out)[:500]})
+    clk = None
+    with contextlib.suppress(Exception):   # a clock failure never fails the verb
+        clk = clock_of(script, [x for x in argv if isinstance(x, str)], task_of)
+    if clk:
+        kitlog('clock', 'start', clk)
     t0, rc, err = time.time(), 1, None
     real_err, said = sys.stderr, []
 
@@ -461,6 +486,8 @@ def audited(script, argv, cli):
         if rc and not err:
             ls = [x.strip() for x in ''.join(said).splitlines() if x.strip()]
             err = next((x for x in ls if 'error:' in x), ls[0] if ls else None)   # argparse: usage first, the why after
+        if clk:
+            kitlog('clock', 'end', {**clk, 'rc': rc})
         kitlog('calls', 'end', {'pid': os.getpid(), 'rc': rc, 'ms': int((time.time() - t0) * 1000), **({'error': err[:300]} if err else {})})
     return rc
 

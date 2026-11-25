@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck, keepboth: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L996 merge · L1329 docs ·
-  L1566 publish · L2126 render · L2736 spec · L3281 plugins · L3295 selftest · L4044 CLI
+  L1566 publish · L2126 render · L2736 spec · L3280 plugins · L3294 selftest · L4043 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs: shutil.which.
@@ -3262,9 +3262,8 @@ def render_cmd(a):
     if a[0] == 'wave-brief' and (draft := [t for t in load_spec(a[1]).get('specs') or [] if not spec_rec(t).get('ready')]):   # Spec before build
         why = lambda t: f'retired: {r["retired"].get("reason")}' if (r := spec_rec(t)).get('retired') else 'not ready (devtools.py spec questions <task>)'
         raise SystemExit(f'wave-brief refused: spec of {"; ".join(f"{t} {why(t)}" for t in draft)}. Nothing was written.')
-    if a[0] == 'wave-brief' and (num := [x['id'] for x in load_spec(a[1]).get('agents') or [] if re.match(r'^area-[A-Za-z]{2,6}(?:-\d+)?$', str(x.get('id') or ''))]):
-        raise SystemExit(f'wave-brief refused: numbered area ids {", ".join(num)}: name each by what it covers (<feature>-<topic>: ask-prompts, '
-                         'web-orders), or leave the id to the renderer (agents[].area words). Nothing was written.')
+    if a[0] == 'wave-brief' and (gaps := globals().get('area_gaps', lambda s: [])(load_spec(a[1]))):   # adapters/precheck.py: area ids, the split
+        raise SystemExit('wave-brief refused:\n' + '\n'.join(f'- {g}' for g in gaps) + '\nNothing was written.')
     txt = spec_text(a[1], a[0], add=con).rstrip('\n') + '\n'
     if len(a) > 2:   # an out file: written, its path printed
         extra = wave_files(load_spec(a[1]), a[2]) if a[0] == 'wave-brief' else {}
@@ -4173,4 +4172,4 @@ def _cli():
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
-    sys.exit(audited('devtools.py', sys.argv[1:], _cli))
+    sys.exit(audited('devtools.py', sys.argv[1:], _cli, task_of_branch))   # task_of: the task clock's worktree -> task

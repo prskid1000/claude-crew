@@ -226,14 +226,14 @@ Each sweep, the script (no model tokens) rewrites `<runtime>/logs/supervise-repo
 Each number appears once, in the order the owner acts on (owner 2026-11-13). Every section and sub-section is a `<details>` whose
 summary reads `<title> (<count>)` (count 0: the summary line only); open by default flags, runs, machine and resources,
 trends; shells with none and kit internals folded; the page keeps each one the owner toggles (localStorage `kc-open`). Tables show 10
-rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; the header holds
-jump links and the ACT / WATCH counts; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
+rows, then "Show all (N)" (kept); the filter (`/`) searches every section, opens the matches, says "No match"; times read `HH:mm · <age>` in local time (zone in the footer); on a phone a row is a card
 of two fields a line, low-value columns hidden; tone-coloured text is mixed toward the foreground (WCAG AA in both themes):
 - every heatmap: one renderer, a number in each cell, now / today outlined; hours (24 clock hours) or days (`Format-KitDayHeat`:
   rows = series, columns = days, a total); rows from config + data only; rows with no data in the window fold ("N idle rows");
   each widget names its metric (`data-mk`, once per page); kit pages open in an in-page drawer, web links in a new tab;
 - flags (owner 2026-11-19): one table, ACT first (level, kind, who, problem, next step, age), a repeat one row with its count,
   auto-fixes and notes one folded row, the 24 h flags heatmap behind a header toggle; promotion holds folded under it;
+- task clock: each task's elapsed vs `budget.taskMinutes`, phase now;
 - split cells (owner 2026-11-20): every token count and $ is a row of small muted tiles, one per type (output, fresh in, cache
   write, cache read; a $ each at the model's per-type price) + the total, every duration model / tools / waiting + elapsed
   (transcript gaps; a tool's kind from its command; the gate's printed queue time = waiting); the cell's width picks the form
@@ -506,6 +506,7 @@ flowchart LR
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_storage_ps1["storage.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_supervise_resources_ps1["supervise-resources.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_supervise_stats_ps1["supervise-stats.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_task_clock_ps1["task-clock.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_task_rollup_ps1["task-rollup.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_track_rebuild_ps1["track-rebuild.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_usage_ps1["usage.ps1"]

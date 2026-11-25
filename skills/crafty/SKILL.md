@@ -34,9 +34,9 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $O board join -Type <role> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
 & $D wt lease -Repo <repo> -Task <task> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
-#   2. INVESTIGATE, be sure, THEN edit (testing.md "Impact map"): logic, history, tests (disabled too), callers across repos,
-#      screens / record types / states, the tester's path; a bug: REPRODUCE it locally (envy "Debug locally"; cases `repro`;
-#      fixed on the deployed branch -> stop, report); `cases add` the map (wt commit refuses code without it)
+#   2. INVESTIGATE (time-boxed), THEN edit (testing.md "Impact map"): logic, history, tests (disabled
+#      too), callers across repos, screens / record types / states, the tester's path; a bug: REPRODUCE it locally (envy "Debug
+#      locally"; cases `repro`; fixed on the deployed branch -> stop, report); `cases add` the map (wt commit refuses code without it)
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
 #   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code), UI-driven:
 #      devtools.py cases add <task> cases.json; automated tests (`testing.md`); each loop round: cases result / round, then

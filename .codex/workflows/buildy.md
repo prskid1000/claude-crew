@@ -21,7 +21,7 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
    - Before each new devy round (build, fix, decide resume): `& <kit>/skills/bossy/bossy.ps1 budget -Run '<run>' -Json`; spent >= stopAt x cap -> no new one starts (running ones finish), the rest -> `next`.
    - A devy returning `handoff`: a fresh devy continues from that resume brief (at most 3 times).
 3. **Decide** -- items paused for an owner decision or ENV-FIX resume after the answer
-4. **Review** -- a revy per devy (+ datay on migrations) + CI pipelines
+4. **Review** -- a revy per devy (+ datay on migrations) while the CI pipelines run
    - Not reviewed, not merged (the coordinator decides) when the local test is BLOCKED, FAIL beyond env gaps, or NONE in a code area (kind not doc / spike / repro) without an owner word.
    - NONE needs `localTest.decisionId` = `dec-<words>` (older: `dec-<n>`, `dec-<nnnn>`, `d-<14 digits>-<suffix>`) and `& <kit>/skills/bossy/bossy.ps1 decide check -Id <id> -Gate 'merge,scope,other' -Item '<area>,<task>,<branch>,<items>,<repo>!<iid>' -MaxHours 720` printing `WORD ` (any other output: held).
    - One revy per area, plus datay on an area with `migrations`; an empty review blocks the merge.

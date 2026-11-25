@@ -4,7 +4,7 @@
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
 # Sections: L8 items · L98 move · L142 status roles · L298 task text · L315 naming · L319 meta (dec-60, owner 2026-11-25) ·
-#   L486 track lines · L491 task ids · L507 tags · L601 order
+#   L486 track lines · L491 task ids · L518 tags · L612 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -503,6 +503,17 @@ function Save-TrackerKey($Task) {   # a keyed task read: key -> native id, once 
   if (-not $ky -or -not $Task.id -or "$($Task.id)" -ceq $ky -or $script:KitKeyIds[$ky] -eq "$($Task.id)") { return }
   $f = Join-Path (Get-KitPath cache -Create) 'task-keys.json'; $script:KitKeyIds[$ky] = "$($Task.id)"
   try { Invoke-KitLocked $f { $m = Read-KitState $f; if (-not $m) { $m = @{} }; if ($m[$ky] -ne "$($Task.id)") { $m[$ky] = "$($Task.id)"; Write-KitState $f $m } } } catch { Write-KitLog calls task-keys @{ key = $ky; error = "$_" } }
+}
+# task clock (lib.ps1 Invoke-KitVerb, bossy adapters/task-clock.ps1): a verb in vocab.json clockPhases -> @{ phase; task } ('<verb>:<-Step>'
+# first); the task: -Task, -Branch or the worktree's branch (Get-KitTaskTagRx); none: the reader links the row to its agent's task
+function Get-KitClockPhase([string]$Script, [string]$Verb, [Collections.IDictionary]$Named = @{}) {
+  $map = $script:KitVocab.clockPhases; if (-not $map) { return $null }
+  $key = "$Script $Verb"; $step = "$($Named.Step)".ToLower(); $ph = if ($step) { Get-KitMember $map "$($key):$step" }; if (-not $ph) { $ph = Get-KitMember $map $key }
+  if (-not $ph) { return $null }
+  $tk = "$($Named.Task)"; $br = "$($Named.Branch)"; $dir = "$(@($Named.Dir, $Named.Worktree) | Where-Object { $_ } | Select-Object -First 1)"
+  if (-not $tk -and -not $br -and $dir -and (Test-Path -LiteralPath $dir)) { $br = "$(git -C $dir branch --show-current 2>$null)".Trim() }
+  if (-not $tk -and $br -and ($rx = Get-KitTaskTagRx) -and $br -match $rx) { $tk = if ($Matches.id) { $Matches.id } else { $Matches[0] } }
+  $o = @{ phase = "$ph" }; if ($tk) { $o.task = $tk }; $o
 }
 # ---- tags: kitbag.py naming tags (vocabulary, exclusive groups; owner 2026-11-24) on the tracker: native when the adapter can (caps
 # labels: verb labels {id; add; remove}, view .tags), else a <!-- kit:tags --> "**Tags:** a, b" description line; naming off: none

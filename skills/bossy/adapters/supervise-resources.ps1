@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1049 release · L1095 lines · L1122 cleanup · L1189 launch ·
-  L1306 pause · L1425 heartbeat · L1441 sessions · L1500 ci tasks ·
-  L1565 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1050 release · L1096 lines · L1123 cleanup · L1190 launch ·
+  L1307 pause · L1426 heartbeat · L1442 sessions · L1501 ci tasks ·
+  L1566 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -925,6 +925,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $popJs = Get-KitPopoverJs
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)){ $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$(ConvertTo-KitLabelCase $UP.pages[$pk])</main><script>$popJs</script></body></html>" } }
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra '<button type=button class=ga data-tg=fl-hist aria-expanded=false>24 h history</button>') +
+    $(if (Get-Command Format-KitTaskClockHtml -ErrorAction SilentlyContinue) { try { Format-KitTaskClockHtml $at } catch { } }) +   # adapters/task-clock.ps1
     (& $section 'runs' 'Runs' "$(if ($UP.nRunning) { "$($UP.nRunning) running · " })$(if ($UP.runsN) { $UP.runsN } else { 'none ended in 7 days' })" "<p class=fclr hidden>Runs: <b></b> <button type=button>Clear</button></p>$runsH" -Open) +   # a Trends day click filters the runs
     (& $section 'machine' 'Machine and resources' '' $machineHtml -Open) + (& $section 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open) +
     (& $section 'internals' 'Kit internals' '' ((& $fold 'trends' 'Trends' '' $trends -Open -cls sub) + $setHtml)) +

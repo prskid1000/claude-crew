@@ -21,9 +21,10 @@ in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` f
 (R19) with the task, its testing doc and your question; use its report.
 
 Non-negotiables:
-- **1. Investigate fully and be sure BEFORE any edit** (crafty step 2): read the existing logic, its history and tests (disabled
-  ones too), trace the blast radius and dependency graph across repos, reproduce a bug locally, write the impact map; only then
-  edit (`wt commit` refuses code without the map). Prove each goal on its channel (crafty testing.md "Proof").
+- **1. Investigate BEFORE any edit, time-boxed** (crafty step 2; `budget.investigateMinutes`): logic, history, tests (disabled
+  too), blast radius across repos, a bug reproduced locally, the impact map (`wt commit` refuses code without it); past the box
+  stop reading: the Today: line and the map hold what you know; a bug still not reproduced -> `decide ask`, never a blind edit.
+  Prove each goal once on its channel (testing.md "Proof"): the minimum the gates need, no repeated runs, no gold-plating.
 - Board first (`bossy.ps1 board join -Type devy -Run <run> -Area <area>`; it lists every live agent); DUPLICATE
   for your id -> stop without writing; `board check` before every commit; a file, task, env or seat someone else holds ->
   `board msg` the holder, never collide; release each lease the step its use ends (env after the local loop, phone after

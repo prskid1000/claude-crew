@@ -9,7 +9,7 @@ changed: a UI line, never "not a UI change") · DOCS (each required process doc 
 Links bullet naming an MR / PR has its URL or ref) · COMMITS (commit prose: commitStyle subject, caps; no wip subject) · EOL (a file
 whose diff is mostly line endings) · SCOPE (files outside the area globs) · LOOP (a local loop PASS whose head is the MR head, or only
 docs changed since) · PROOF (devtools.py proof <task> gaps).
-Sections: L21 rules · L161 context · L251 verb · L282 selftest"""
+Sections: L21 rules · L161 context · L251 verb · L282 selftest · L319 areas"""
 import contextlib, io, json, os, re, subprocess, sys
 
 DT = None
@@ -316,7 +316,36 @@ def selftest():
     return 0 if all(res) else 1
 
 
+# ---- areas: devtools.py render wave-brief refuses a brief's area ids and a split whose areas should be one (tests/task-clock.tests.ps1)
+def area_gaps(s):
+    """A numbered area-<AREA>[-n] id (owner 2026-11-24: ids say what they cover). The split (owner 2026-11-25: each MR costs pipelines
+    and builds; split only into disjoint files that run in parallel, else one item and one MR per repo per task): two areas sharing a
+    file glob (repos shared or unnamed; a glob named in `overlaps` = a listed one-line hook), or one waiting on another in the same
+    repo and task (never parallel)."""
+    from fnmatch import fnmatch
+    ags, ov = s.get('agents') or [], set(re.findall(r'[^\s,;`]+', str(s.get('overlaps') or '')))
+    num = [str(x.get('id')) for x in ags if re.match(r'^area-[A-Za-z]{2,6}(?:-\d+)?$', str(x.get('id') or ''))]
+    if num:
+        return [f'numbered area ids {", ".join(num)}: name each by what it covers (<feature>-<topic>: ask-prompts, web-orders), or leave the id to the renderer (agents[].area words)']
+    repos = lambda x: {r.strip().lower() for r in re.split(r'[,;\s]+', str(x.get('repos') or '')) if r.strip()}
+    near = lambda x, y: not repos(x) or not repos(y) or bool(repos(x) & repos(y))
+    stem = lambda g: re.split(r'[*?\[]', g.replace('\\', '/'), 1)[0]
+    lit = lambda g: stem(g) == g   # a file, no wildcard
+    hit = lambda g, h: g == h or (fnmatch(h, g) if lit(h) else fnmatch(g, h) if lit(g) else
+                                  bool(stem(g) and stem(h) and (stem(g).startswith(stem(h)) or stem(h).startswith(stem(g)))))
+    out = []
+    for i, x in enumerate(ags):
+        for y in ags[i + 1:]:
+            if near(x, y) and (sh := sorted({g for g in x.get('paths') or [] for h in y.get('paths') or [] if hit(g, h) and g not in ov and h not in ov})):
+                out.append(f'areas {x.get("id")} and {y.get("id")} share {", ".join(sh)}: one area (one item, one MR per repo per task), or the one-line hook\'s glob in overlaps')
+            for p, c in ((x, y), (y, x)):
+                if p.get('id') in (c.get('dependsOn') or []) and (c.get('task') or s.get('task')) == (p.get('task') or s.get('task')) and repos(p) & repos(c):
+                    out.append(f'area {c.get("id")} waits on {p.get("id")} in {", ".join(sorted(repos(p) & repos(c)))} for one task: never parallel, one area')
+    return out
+
+
 def register(dt):
     global DT
     DT = dt
     dt.VERBS['precheck'] = precheck_cmd
+    dt.area_gaps = area_gaps

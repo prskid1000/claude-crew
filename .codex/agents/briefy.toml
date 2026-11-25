@@ -47,8 +47,11 @@ Non-negotiables:
 2. **Impact check** per item (read-only): callers of each changed API, method or table (grep, `git log -S`), settings and
    feature switches that change the path, live data shapes (read-only SQL), open MRs on the same files; a bug gets a fresh
    repro plan. Each finding -> the item's row or Overlaps.
-3. **Areas:** group by disjoint screens / packages / files, not item count; one file in two areas -> one owner plus an Overlaps
-   line; producers get `dependsOn` consumers wait on; migration ranges never overlap. Each area's `id` says what it covers
+3. **Areas** (owner 2026-11-25: each MR costs pipelines and builds; the 30-min task goal comes from parallel work and fewer
+   waits, never from more MRs): split a task only into parts with disjoint files that truly run in parallel; else one item, one
+   MR per repo per task. Group by disjoint screens / packages / files, not item count; a shared one-line hook -> one owner plus
+   its glob in `overlaps`; producers get `dependsOn` consumers wait on (render refuses shared globs and a same-repo, same-task
+   sequence); migration ranges never overlap. Each area's `id` says what it covers
    (<= 12 chars: `ask-prompts`; render refuses `area-<AREA>-<n>`; none: from `area`). Each area's `paths`: repo-relative globs
    (`wt commit`, `devtools.py mr / merge` refuse other files): the full file set the fix touches, from the impact check
    (mappers, DTOs, serializers, unit tests, api-tests); a test- or spec-only area gets only its test / spec globs; an area

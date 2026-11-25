@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L96 state · L177 config · L258 OS · L461 leases · L903 status · L1115 tracker · L1443 prior ·
-  L1462 ask bugs · L1647 deploy words · L1691 git-host · L1879 kitlog · L1989 params · L2294 entry-scripts
+  L1462 ask bugs · L1647 deploy words · L1691 git-host · L1879 kitlog · L1990 params · L2295 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1946,7 +1946,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $script:KitScript = if ($src) { Split-Path $src -Leaf } else { '' }; $sub = "$($Tokens[0])" -match '^[a-z][\w-]*$'; $script:KitVerb = (($Fn -replace '^Invoke-', '') + $(if ($sub) { " $($Tokens[0])" })).ToLower()
   # calls stream: start, then end with rc (0, 1 crash, 2 bad parameters, 'exit') and ms
   $script:KitLogOn = $Fn -notmatch '^Invoke-Guard|^Invoke-Shells$'; $sw = [Diagnostics.Stopwatch]::StartNew(); $script:KitRc = 'exit'   # guards: denials only; shells: none
-  $end = { param([string]$EndWhy) if (-not $EndWhy) { $EndWhy = $script:KitWhy }; if ($script:KitLogOn) { $script:KitLogOn = $false; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($EndWhy) { @{ error = $EndWhy } } else { @{} })) } }   # rc 2 feeds tidy digest "Script errors"
+  $end = { param([string]$EndWhy) if (-not $EndWhy) { $EndWhy = $script:KitWhy }; if ($script:KitLogOn) { $script:KitLogOn = $false; if ($script:KitClock) { Write-KitLog clock end ($script:KitClock + @{ rc = $script:KitRc }); $script:KitClock = $null }; Write-KitLog calls end (@{ pid = $PID; rc = $script:KitRc; ms = $sw.ElapsedMilliseconds } + $(if ($EndWhy) { @{ error = $EndWhy } } else { @{} })) } }   # rc 2 feeds tidy digest "Script errors"
   # bad parameters: exit 2 with the usage line, never a prompt
   $usage = { param([string]$why, [bool]$missing)
     # decide show: the set's read verb
@@ -1955,7 +1955,8 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
     $script:KitRc = 2; & $end $why; [Console]::Error.WriteLine($why); exit 2 }
   # a crash exits 1, never 0: a statement error alone lets `pwsh -File` exit 0
   $run = { param([object[]]$pa, [hashtable]$nm)
-    $script:KitWho = Get-KitWho $nm; if ($script:KitLogOn) { Write-KitLog calls start @{ pid = $PID; args = (ConvertTo-KitArgs @($Tokens | Select-Object -Skip ([int]$sub))) } }
+    $script:KitWho = Get-KitWho $nm; if ($script:KitLogOn) { Write-KitLog calls start @{ pid = $PID; args = (ConvertTo-KitArgs @($Tokens | Select-Object -Skip ([int]$sub))) }
+      $script:KitClock = try { Get-KitClockPhase $script:KitScript $script:KitVerb $nm } catch { $null }; if ($script:KitClock) { Write-KitLog clock start $script:KitClock } }   # bossy adapters/task-clock.ps1
     try { try { & $Fn @pa @nm; $script:KitRc = 0 } catch {
     if ($_.Exception -is [Management.Automation.ParameterBindingException] -and $_.InvocationInfo.MyCommand.Name -eq $Fn) { & $usage "$($Fn -replace '^Invoke-', ''): $($_.Exception.Message)" ($_.Exception.ErrorId -eq 'MissingMandatoryParameter') }
     $script:KitRc = 1; Write-KitLog calls error @{ error = "$_ $($_.InvocationInfo.PositionMessage -replace '\s+', ' ')" }; & $end

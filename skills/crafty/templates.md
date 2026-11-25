@@ -57,6 +57,8 @@ repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?
 contracts: [{ name, type, producer, consumers, order, compatible }], openQuestions: [{ question, blocks, answers }], mandate, mode,
 holdMerge?, wave? }`.
 Layout: the renderer (`**Specs:**` links each task's spec); `name` titles it, `run` the /buildy run.
+Split (owner 2026-11-25): areas only for disjoint files that run in parallel, else one item and one MR per repo per task; render
+refuses two areas sharing a glob (unless `overlaps` names it) and a same-repo `dependsOn` chain on one task.
 
 ## Spec
 Rendered, never hand-written: `devtools.py spec write <task|subject> <spec.json>` (`spec --help`; sections per kind:
