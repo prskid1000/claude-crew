@@ -108,7 +108,7 @@ function Get-DeployedByAncestry([Alias('Mr')][string[]]$Mrs, $Repos, [string[]]$
 # ---- intest: promoted tasks live on a test env -> inTest
 # the probe's seconds: what -BudgetSec leaves, never under one -TimeoutSec round (a 15 s floor cut every probe once the tracker
 # lookups had used the 50 s default: -TimeoutSec 240 ignored, 18 tasks unmoved 2026-11-25); no budget: 10 x -TimeoutSec (K31)
-function Get-KitInTestProbeSec([int]$BudgetSec, [int]$TimeoutSec, [datetime]$Start) { if ($BudgetSec -gt 0) { [math]::Max($TimeoutSec + 10.0, $BudgetSec - ((Get-Date) - $Start).TotalSeconds) } else { 10.0 * $TimeoutSec } }
+function Get-KitInTestProbeSec([int]$BudgetSec, [Alias('TimeoutSeconds')][int]$TimeoutSec, [datetime]$Start) { if ($BudgetSec -gt 0) { [math]::Max($TimeoutSec + 10.0, $BudgetSec - ((Get-Date) - $Start).TotalSeconds) } else { 10.0 * $TimeoutSec } }
 # deployed promoted tasks -> inTest
 function Invoke-MarkInTest {
 param([switch]$Apply, [switch]$Quiet, [Alias('Item')][string[]]$Task = @(), [Alias('TimeoutSeconds')][int]$TimeoutSec = 100, [int]$Days = 14, [string[]]$FromMrs = @(), [Alias('BudgetSeconds')][int]$BudgetSec = -1, [string[]]$Env = @())   # not $Mrs: pwsh names ignore case ($mrs below)
