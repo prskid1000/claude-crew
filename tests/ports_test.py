@@ -75,6 +75,20 @@ ok_hooks = all('D:/w/.claude/skills/' in c and '"' not in c for c in cmds + agc)
     and agx['kit-health']['SessionStart'][1]['command'].startswith('nohup ') and base64.b64decode(pt.hook_cmd(pt.GUARD, "C:/a b'c/.claude").split()[-1]).decode('utf-16-le') == "& 'C:/a b''c/.claude/skills/crafty/crafty.ps1' guard" \
     and not re.search(r'["&]', pt.hook_cmd(pt.GUARD, "C:/a b'c/.claude")) and not re.search(r'["&]', pt.detached(pt.hook_cmd(pt.CLEANUP, 'C:/a b/.claude'), True))
 print(f'ports-hooks:{ok_hooks}')
+# the kit's own copy (relative kit): found from any cwd under the workspace, exit codes kept; outside it: exit 2 (fail-closed)
+import subprocess
+rk = tmp / 'rw' / '.claude' / 'skills'; (rk / 'bossy').mkdir(parents=True); (rk / 'crafty').mkdir(parents=True); (tmp / 'rw' / 'a' / 'b').mkdir(parents=True); (tmp / 'out').mkdir()
+(rk / 'bossy' / 'bossy.ps1').write_text('param([switch]$IfDue, [switch]$Quiet, [Parameter(ValueFromRemainingArguments)]$Rest)\n"bossy $Rest $IfDue $Quiet"\ngit nonexist 2>$null\n', encoding='utf-8')   # a leaked native exit code: still 0, as -File
+(rk / 'crafty' / 'crafty.ps1').write_text('"crafty $args " + [Console]::In.ReadToEnd()\nexit 2\n', encoding='utf-8')
+(rk / 'crafty' / 'guard_client.mjs').write_text("import { readFileSync } from 'node:fs'\nprocess.stdout.write('node ' + readFileSync(0, 'utf8')); process.exit(2)\n", encoding='utf-8')
+hrun = lambda cmd, cwd: subprocess.run(cmd, shell=True, cwd=cwd, input='{"x":1}', capture_output=True, text=True, timeout=60)
+deep = tmp / 'rw' / 'a' / 'b'
+r1, r2, r3 = hrun(pt.hook_cmd(pt.CLEANUP, '.claude'), deep), hrun(pt.hook_cmd(pt.GUARD, '.claude'), deep), hrun(pt.node_hook_cmd(pt.GUARD_NODE, '.claude'), tmp / 'rw' / '.claude')
+r4 = hrun(pt.found_cmd('.claude-zz/skills/crafty/crafty.ps1 guard'), tmp / 'out')   # tmp may sit under a real kit: a name none has
+ok_rel = r1.stdout.strip() == 'bossy cleanup True True' and r1.returncode == 0 and (r2.returncode, r2.stdout.strip()) == (2, 'crafty guard {"x":1}') \
+    and (r3.returncode, r3.stdout.strip()) == (2, 'node {"x":1}') and r4.returncode == 2 and 'not found' in r4.stderr \
+    and all('"' not in c for c in (pt.hook_cmd(pt.GUARD, '.claude'), pt.node_hook_cmd(pt.GUARD_NODE, '.claude')))
+print(f'ports-hooks-cwd:{ok_rel}' + ('' if ok_rel else f' {[(r.returncode, r.stdout[-120:], r.stderr[-160:]) for r in (r1, r2, r3, r4)]}'))
 # workspace: skill links, org rules (agy always-on, split under 24 KB; Codex AGENTS.override.md), nothing org-only in the kit
 kit2 = tmp / 'ws2' / '.claude'; ws2 = kit2.parent
 for p2, txt in (('skills/s1/SKILL.md', 'x'), ('AGENTS.md', 'shared'), ('GEMINI.md', 'g'), ('rules/org.local.md', 'r' * 30 + '\n' + ('line\n' * 6000)), ('rules/pub.md', 'p')):
@@ -289,8 +303,8 @@ reg = json.loads(kp.texts[kt.PARITY_JSON]); reg['harness']['hooks']['Stop bossy.
 kp.texts[kt.PARITY_JSON] = json.dumps(reg); p5 = [x for x in par(kp, man) if 'Stop' in x]
 kq = kt.load(kt.KIT_DIR); ln = 'skills/crafty/adapters/tracker-linear.ps1'   # a verb renamed while a nested @{ status = } stays
 kq.texts[ln] = kq.texts[ln].replace("'status' = {", "'status-x' = {", 1); p6 = par(kq, man)
-for rel, end in (('.codex/config.toml', "'''"), ('.agents/hooks.json', '"')):   # the plain health hook gone, health -Flow -Fetch kept
-    kq.texts[rel] = kt.ktext(kq, rel).replace('bossy.ps1 health' + end, 'bossy.ps1 healthz' + end)
+for rel in ('.codex/config.toml', '.agents/hooks.json'):   # the plain health hook gone, health -Flow -Fetch kept
+    kq.texts[rel] = kt.ktext(kq, rel).replace(pt.hook_cmd(pt.HEALTH, '.claude'), pt.hook_cmd(('bossy/bossy.ps1', 'healthz', 15), '.claude'))
 p7 = [x for x in par(kq, man) if x.startswith('hook SessionStart bossy.ps1 health:')]
 kc = kt.load(kt.KIT_DIR); tl = 'skills/crafty/adapters/tracker-local.ps1'   # cells from code: an undeclared adapter, a stub verb, a new called verb
 kc.texts[tl] += "\nRegister-KitAdapter 'tracker' 'fakey' @{ 'view' = { 'x' }; 'url' = { param($a) throw 'UNSUPPORTED tracker/fakey/url' } }\nfunction Get-Frob { __TrA 'frobnicate' @{} }\n"

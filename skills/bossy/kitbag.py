@@ -24,10 +24,10 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L467 load · L960 lint ·
-  L1382 README graph · L1500 lint command · L1782 audit · L1930 registry · L1990 tools · L2078 parity · L2679 arch lint ·
-  L2952 prose · L3135 sections · L3267 budget · L3285 migrate · L3433 plugins · L3490 state lint · L3678 main
+  L1382 README graph · L1500 lint command · L1782 audit · L1930 registry · L1990 tools · L2078 parity · L2684 arch lint ·
+  L2957 prose · L3140 sections · L3272 budget · L3290 migrate · L3438 plugins · L3495 state lint · L3683 main
 """
-import ast, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
+import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
 from collections import defaultdict, deque
 from pathlib import Path
@@ -2324,7 +2324,12 @@ def _port_hooks(k):
     except ValueError:
         agy = {}
     ag = [(ev, json.dumps(h)) for g in agy.values() if isinstance(g, dict) for ev, hs in g.items() if isinstance(hs, list) for h in hs]
-    return {'codex': cx, 'antigravity': ag}
+    def plain(t):   # an -EncodedCommand hook (kitbag_ports found_cmd): its pwsh text, so the script + verb match
+        for m in re.finditer(r'-EncodedCommand ([A-Za-z0-9+/=]+)', t):
+            with contextlib.suppress(ValueError, UnicodeDecodeError):
+                t += '\n' + base64.b64decode(m.group(1)).decode('utf-16-le')
+        return t
+    return {'codex': [(e, plain(t)) for e, t in cx], 'antigravity': [(e, plain(t)) for e, t in ag]}
 
 def harness_matrix(k, bad=None):
     """[(feature, {claude, codex, antigravity: port | fallback | gap | MISSING, note})]: every Claude Code hook (settings.json),

@@ -12,6 +12,7 @@ Expect 'ports: a quote and a backslash stay valid TOML / YAML, LF only' ($res -c
 Expect 'ports: port_deploy keeps user files, removes only stale generated ports' ($res -contains 'ports-deploy:True')
 Expect 'ports.targets unset or unknown: off, no workspace copies (owner 2026-11-22)' ($res -contains 'ports-default-off:True')
 Expect 'ports: hooks absolute, no double quotes (agy cmd /c); Codex cleanup + health -Flow async, KIT_TOOL; agy both detached, hidden' ($res -contains 'ports-hooks:True')
+Expect "ports: the kit's own hook copy finds .claude/skills from any cwd under the workspace, keeps exit codes and stdin; none found: exit 2 ($($res -match '^ports-hooks-cwd:'))" ($res -contains 'ports-hooks-cwd:True')
 Expect 'ports: the Codex guard hook matches shell, apply_patch and MCP SQL tools (parity: guard on MCP SQL), no other MCP tool' ($res -contains 'ports-codex-mcp:True')
 Expect 'ports: Codex and agy reads / MCP calls run guard_client.mjs (agy: view_file, call_mcp_tool, mcp_*); agy run_command keeps crafty.ps1 guard; a spaced path pipes stdin through pwsh' ($res -contains 'ports-guard-reads:True')
 Expect 'ports: agy agents get their tools by agy name (+ call_mcp_tool); one with no agy name leaves the list unset' ($res -contains 'ports-agy-tools:True')
