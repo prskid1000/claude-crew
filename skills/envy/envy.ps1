@@ -2190,7 +2190,7 @@ switch ($Action) {
     if ($Json) { @(EnvNames | ForEach-Object { $ec = Get-EnvCfg $_; $pm = [ordered]@{}; foreach ($s in EnvServices $_ | Where-Object port) { $pm[$s.name] = [int]$s.port }; [pscustomobject]@{ env = $_; group = $ec.group; lane = $ec.lane; ports = [pscustomobject]$pm } }) | ConvertTo-Json -Depth 4 -AsArray; return }
     foreach ($n in EnvNames) {
       $ln = @(LaneNames $n); "$n$(if ($ln.Count -gt 1) { " (lane $((Get-EnvCfg $n).lane) of $($ln[0]); -Env $($ln[0]) picks one)" })$(if ((Get-EnvCfg $n).description) { " - $((Get-EnvCfg $n).description)" })"
-      foreach ($s in EnvServices $n) { '  {0,-14} {1,-28}{2}{5}{3}{4}' -f $s.name, $(if ($s.repo) { "$($s.repo)/$($s.dir)" } else { 'external' }), $(if ($s.port) { "  :$($s.port)" }), $(if ($s.dependsOn) { "  needs $(@($s.dependsOn) -join ',')" }), $(if ($s.hot) { '  hot' } elseif ($s.static) { '  static (built files)' } elseif ($s.artifact) { '  runs from artifact' }), $(if ($s.debugPort) { "  debug :$($s.debugPort)" }) }
+      foreach ($s in EnvServices $n) { '  {0,-14} {1,-28}{2}{5}{3}{4}' -f $s.name, $(if ($s.repo) { "$($s.repo)/$($s.dir)" } else { 'external' }), $(if ($s.port) { "  :$($s.port)" }), $(if ($s.dependsOn) { "  needs $(@($s.dependsOn) -join ',')" }), ("$(if ($s.hot) { '  hot' } elseif ($s.static) { '  static (built files)' } elseif ($s.artifact) { '  runs from artifact' })" + "$(if ($s.aiStack) { '  AI path (aiStack)' })"), $(if ($s.debugPort) { "  debug :$($s.debugPort)" }) }
       if ((Get-EnvCfg $n).tasks) { "  tasks: $((Get-KitProps (Get-EnvCfg $n).tasks).Name -join ', ')" }
     }
   }

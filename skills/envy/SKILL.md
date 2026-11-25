@@ -92,7 +92,8 @@ $L = '<kit>/skills/envy/envy.ps1'
 
 ## Unblock yourself (we own the local env: a local check never ends NOT_TESTED, a local loop never BLOCKED for an env reason)
 - Data: the env API (baseline first, verify by id); config / flags / env vars: `<kit>/.state/localenv/<env>.env` or the app's
-  settings API; services: `deploy`, `use`, `logs`, `events`; not deployed: `deploy` the branch; phone-only: a lane with the
+  settings API; services: `deploy`, `use`, `logs`, `events`; an AI path: lease its `aiStack` service (`envs` lists it; its
+  chain comes along); not deployed: `deploy` the branch; phone-only: a lane with the
   local-env APK; a missing integration: wire it locally or point it at a stub or the test env's service; env-file lines and stubs
   you add go in the lease note and are removed before you release.
 - Coordinator-only (`up`, `restart`, `down`, `refresh`, `drop`, shared DB repair): ENV-FIX `bossy.ps1 decide ask -Kind envfix

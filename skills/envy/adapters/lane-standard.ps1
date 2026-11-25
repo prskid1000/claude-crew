@@ -178,11 +178,15 @@ function Get-Doctor([string]$e, [switch]$Fix) {
     if ($foreign.Count) { & $add 'WARN' "$($s.name): port $($s.port) held by pid $($foreign -join ','), which the env did not start: a restart there fails" }
     if ($s.health -and -not (Healthy $e $s)) { & $add 'WARN' "$($s.name): $($s.health) does not answer (< 500) while the port is up" }
   }
+  # a lane worktree not made yet (a service of a newly added repo): its start or deploy makes it, so its scripts only WARN
+  $unmade = @(try { @((EnvRepos $e).Values | Where-Object { -not (Test-Path -LiteralPath "$($_.wt)/.git") } | ForEach-Object { [IO.Path]::GetFullPath($_.wt).TrimEnd('\', '/') }) } catch { @() })
   foreach ($k in $cmds.Keys) {
     foreach ($m in [regex]::Matches("$($cmds[$k])", '"([^"]+\.(?:ps1|py|sh|cmd|bat|mjs|js|exe))"|(?<![\w"''])((?:[A-Za-z]:[\\/]|/)[^\s"'']+\.(?:ps1|py|sh|cmd|bat|mjs|js|exe))(?=[\s"'']|$)')) {
       $path = @($m.Groups[1].Value, $m.Groups[2].Value | Where-Object { $_ })[0]
       if ($path -match '[{}]' -or -not [IO.Path]::IsPathRooted($path)) { continue }
-      if (-not (Test-Path -LiteralPath $path)) { & $add 'FAIL' "${k}: script $path does not exist" }
+      $full = [IO.Path]::GetFullPath($path); $inUnmade = @($unmade | Where-Object { $full.StartsWith("$_\", 'OrdinalIgnoreCase') -or $full.StartsWith("$_/", 'OrdinalIgnoreCase') }).Count
+      if ($inUnmade -and -not (Test-Path -LiteralPath $path)) { & $add 'WARN' "${k}: script $path is in a lane worktree not made yet (the first start or deploy makes it; checked again then)" }
+      elseif (-not (Test-Path -LiteralPath $path)) { & $add 'FAIL' "${k}: script $path does not exist" }
     }
   }
   @($r)

@@ -61,17 +61,15 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)
   merge by `name`.
-- `services[].target`: a branch other than the repo's `target`; a second target of one repo in an env (an old UI next to the
-  new one) gets its own lane worktree and branch `lane/<product>-<bird>-<target>`, keyed `<repo>@<target>`.
+- `services[].target`: a branch other than the repo's `target`; a second target of one repo in an env gets its own lane worktree and branch `lane/<product>-<bird>-<target>`, keyed `<repo>@<target>`.
 - `envy.ps1 doctor` checks hook scripts, env file, ports, JAVA_HOME, builds, health, `db.expect`, `services[].requiredEnv`
   (set per lane; `NAME=value` pins it), dependency sources, lane worktrees (`-Fix` remakes one); `deploy` stops on its FAIL lines.
-- Service logs move to `.prev` past `logMaxMB` (100; per service too).
+- Logs move to `.prev` past `logMaxMB` (100; per service too).
+- Companion services (model runner, MCP server): one each, `{port:<svc>}` in `env`, `dependsOn` top-down (`use -Services
+  <top>` brings the chain); jobs reaching shared systems off (`:9`); no session-opening `health`. `aiStack`: AI path (testing.md "Proof").
 - Example (`kit.local.json`):
 ```json
 { "localEnv": {
-  "_readme": "Local envs (local-env skill): the dev flow tests every change here before merge. Secrets: <kit>/.state/localenv/<env>.env",
-  "maxLeaseMinutes": 120,
-  "idle": { "minMinutes": 15, "maxMinutes": 60 },
   "envs": { "shop": {
    "description": "API + web of the shop",
    "services": [

@@ -38,7 +38,8 @@ Each check carries `channel`: `ui` (a person sees it on a screen) · `api` · `j
   viewport=1366x768 hit=PASS`. API JSON, a stub or NOT_TESTED_LOCAL proves no ui goal; not runnable locally: `preverify` = the
   staging run's evidence link, or `waiver` = the owner's decision id.
 - **ai:** a deterministic guard in code (validates the output or plan: create-only plans, a cancel needs a reason, ids owned),
-  its unit test in `guard`, plus ONE local run PASS; never rerun a model N times to judge it.
+  its unit test in `guard`, plus ONE local run PASS; never rerun a model N times to judge it. `qa.aiWaiver` (the owner's
+  decision id) waives that run while the doc's `env` runs no `services[].aiStack` service; once it does, the run is due.
 - **Failure paths:** at least one negative or edge case (what a tester tries: invalid input, a denial, empty data).
 
 ## Test cases (the gates judge the rendered text)

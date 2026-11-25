@@ -3,8 +3,9 @@
 Wraps devtools.py: finish's builtin:testingDocs gate, mr_create (a non-Draft MR), render_cases (goals: proof + impact sections),
 cases_cmd (`cases result ... viewport=<WxH> hit=PASS|FAIL`; `cases add` warns), cases_fill_checks (a filled check gets a channel).
 crafty.ps1 wt commit runs `proof --branch <b> --impact` (refuses a non-WIP commit on a task branch without the map).
-Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844).
-Sections: L12 gaps · L111 wraps · L178 verb"""
+Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844);
+qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack).
+Sections: L13 gaps · L151 wraps · L218 verb"""
 import os, re, sys
 
 DT = None
@@ -95,8 +96,46 @@ def proof_gaps(c, tid='', me=''):
                 out.append(f'check {gid} (ui): no hit test of the controls touched (browser.mjs hitTest(); cases result ... hit=PASS)')
         elif ch == 'ai':
             out += [f'check {gid} (ai): no deterministic guard: "guard": "<unit test: code validates the AI output / plan>"'] if not g.get('guard') else []
-            out += [f'check {gid} (ai): no local run PASS (one run; never N reruns)'] if not ok else []
+            if not ok and not ai_waived(g, c):
+                lane, wv = ai_lane(c), str(DT.cfg('qa.aiWaiver', '') or '')
+                out.append(f'check {gid} (ai): no local run PASS (one run; never N reruns)' + (
+                    f'; {lane} runs the AI stack, so waiver {wv} no longer applies (envy.ps1 use -Env {lane} -Services <its aiStack service>)' if wv and lane else ''))
     return out
+
+
+def _by_name(items):
+    """Services merged by name like envy's Merge-Cfg (a later entry's keys win)."""
+    by = {}
+    for s in [s for s in items if isinstance(s, dict)]:
+        by[s.get('name') or id(s)] = {**by.get(s.get('name') or id(s), {}), **s}
+    return list(by.values())
+
+
+def ai_lane(c):
+    """The local env running the AI stack (localEnv.envs.<env>.services[].aiStack, merged by name over defaults / extends) for this
+    goals doc's env ("env": "<env> r<n>"; a lane id <env>-<bird> / <env><k> of a laned env is that env + its override keys; none
+    named or unknown: any env) -> its name, else ''."""
+    envs = DT.cfg('localEnv.envs', None)
+    envs = envs if isinstance(envs, dict) else {}
+    named, ai = (str(c.get('env') or '').split() or [''])[0], (lambda ss: any(s.get('aiStack') for s in ss))
+
+    def svcs(n, seen=()):
+        e = envs.get(n) if isinstance(envs.get(n), dict) else {}
+        up = e.get('extends')
+        return _by_name((svcs(up, seen + (n,)) if up and up not in seen else list(DT.cfg('localEnv.defaults.services', None) or [])) + list(e.get('services') or []))
+    laned = [g for g in envs if g != named and int(((envs.get(g) or {}).get('lanes') or {}).get('max') or 1) > 1
+             and (named.startswith(g + '-') or re.fullmatch(re.escape(g) + r'\d+', named))]
+    if laned:
+        over = envs.get(named) if isinstance(envs.get(named), dict) else {}
+        return named if ai(_by_name(svcs(max(laned, key=len)) + list(over.get('services') or []))) else ''
+    if named in envs:
+        return named if ai(svcs(named)) else ''
+    return next((n for n in envs if ai(svcs(n))), '')
+
+
+def ai_waived(g, c):
+    """An ai goal's local run waived (qa.aiWaiver: the owner decision) while its product's env runs no AI stack; a guard is still due."""
+    return bool(DT.cfg('qa.aiWaiver', '') and g.get('guard') and not ai_lane(c))
 
 
 def proof_of(g, c):
@@ -104,7 +143,8 @@ def proof_of(g, c):
     if g.get('preverify') or g.get('waiver'):
         return f'preverify {g["preverify"]}' if g.get('preverify') else f'waiver {g["waiver"]}'
     ok = [x for x in c.get('cases') or [] if isinstance(x, dict) and x.get('check') == g.get('id') and _passed(x)]
-    run = ' · '.join(f'{x.get("id")} PASS' + ''.join(f' {k} {x[k]}' for k in ('viewport', 'hit') if x.get(k)) for x in ok) or 'none'
+    run = ' · '.join(f'{x.get("id")} PASS' + ''.join(f' {k} {x[k]}' for k in ('viewport', 'hit') if x.get(k)) for x in ok) or (
+        f'waiver {DT.cfg("qa.aiWaiver")} (no local AI lane)' if str(g.get('channel') or '').lower() == 'ai' and ai_waived(g, c) else 'none')
     return (f'guard {g["guard"]} · ' if g.get('guard') else '') + run
 
 
@@ -213,6 +253,29 @@ def selftest():
        any("testers' screen 390x844" in g for g in proof_gaps({**good, 'checks': [{**good['checks'][0], 'mobile': True}] + good['checks'][1:]})))
     ex('no hit test is a gap', any('no hit test' in g for g in proof_gaps({**good, 'cases': [{**good['cases'][0], 'hit': ''}, good['cases'][1]]})))
     ex('an ai goal without a guard is a gap', any('no deterministic guard' in g for g in proof_gaps({**good, 'checks': good['checks'][:1] + [{'id': 'T2', 'channel': 'ai'}] + good['checks'][2:]})))
+    cfg0 = DT.cfg
+    try:
+        lanes = {'max': 3}
+        conf = {'qa.aiWaiver': 'dec-9', 'localEnv.envs': {'shop': {'lanes': lanes, 'services': [{'name': 'api'}]}, 'crm': {'lanes': lanes, 'services': [{'name': 'llm', 'aiStack': True}]},
+                'crm-kestrel': {'services': [{'name': 'db'}]}, 'b': {'extends': 'crm', 'services': [{'name': 'llm', 'aiStack': False}]},
+                'tool': {'services': [{'name': 'llm', 'aiStack': True}]}, 'tool-eu': {'services': [{'name': 'api'}]}}}
+        DT.cfg = lambda p, d=None: conf.get(p, d)
+        norun = {**good, 'cases': good['cases'][:1] + [{**good['cases'][1], 'check': 'T9'}]}
+        gp = lambda env, **k: proof_gaps({**norun, 'env': env, **k})
+        ex('qa.aiWaiver: an ai goal with its guard and no local run passes while its env runs no AI stack (proof says waiver)',
+           not gp('shop-kestrel r4') and 'waiver dec-9 (no local AI lane)' in proof_of(good['checks'][1], {**norun, 'env': 'shop r4'}))
+        ex('qa.aiWaiver stops once the env runs an aiStack service (lane id too); no guard, no waiver, unknown env: any env',
+           any('crm-osprey runs the AI stack, so waiver dec-9 no longer applies' in g for g in gp('crm-osprey r2'))
+           and any('no local run PASS' in g for g in gp('shop r1', checks=good['checks'][:1] + [{'id': 'T2', 'channel': 'ai'}]))
+           and any('no local run PASS' in g for g in gp('')) and any('no local run PASS' in g for g in gp('nope r1')))
+        ex('ai lane: a lane override key keeps its env\'s aiStack, <env><k> is a lane, an extends child turning it off and a non-laned'
+           ' sibling env have none, defaults.services count', [ai_lane({'env': e}) for e in ('crm-kestrel r1', 'crm2 r1', 'b r1', 'tool-eu r1', 'shop r1')]
+           == ['crm-kestrel', 'crm2', '', '', ''] and (conf.update({'localEnv.defaults.services': [{'name': 'm', 'aiStack': True}]}) or ai_lane({'env': 'shop r1'})) == 'shop')
+        conf.pop('localEnv.defaults.services')
+        conf.pop('qa.aiWaiver')
+        ex('no qa.aiWaiver: the local run is due everywhere', any('no local run PASS' in g and 'waiver' not in g for g in gp('shop r1')))
+    finally:
+        DT.cfg = cfg0
     ex('happy path only and an unset channel are gaps', [g[:15] for g in proof_gaps({**good, 'checks': good['checks'] + [{'id': 'T4'}], 'cases': [{**x, 'type': 'positive'} for x in good['cases']]})] ==
        ['happy path only', "check T4: chann"])
     ex('impact map: missing, an empty part, an open render', impact_gaps({})[0].startswith('no impact map') and impact_gaps({'impact': {**imp, 'path': ''}}) == ['impact.path is empty']
