@@ -499,11 +499,11 @@ function Write-KitTaskTags([string]$Task, $T, $J) {
   elseif ($T) { $null = Set-TrackerDescription $Task (Set-KitDescSection $T.description 'tags' $(if (@($J.tags).Count) { "**Tags:** $(@($J.tags) -join ', ')" } else { '' }) '') }
   Clear-TrackerMemo $Task; if (-not $__trDry) { Update-KitTaskIndex $Task { param($x) $x.tags = @($J.tags) } }   # a later read in this process sees them
 }
-# ONE WATCH for kit tasks off the tag rule (owner 2026-11-25: one kind, one product tag, no area / wave tag; kitbag.py naming scan); fix: tracker retag
+# ONE WATCH for kit tasks off the tag rule (owner 2026-11-25: one kind, broad area, product tag, no wave tag; kitbag.py naming scan); fix: tracker retag
 function Get-KitTagGapFlag { $lec = $global:LASTEXITCODE; $rows = @(@(try { & (Get-Python) -X utf8 $KitCmd.kitbag naming scan --json 2>$null | Out-String | ConvertFrom-Json } catch { }) | Where-Object { $_.kind -eq 'tags' }); $global:LASTEXITCODE = $lec
   if (-not $rows.Count) { return }; $ids = @($rows | ForEach-Object { "$($_.where)" -replace '^tracking ' })
   [pscustomobject]@{ level = 'WATCH'; what = "$($rows.Count) kit task(s) off the tag rule: $(@($rows | Select-Object -First 5 | ForEach-Object { "$("$($_.where)" -replace '^tracking ') ($($_.why))" }) -join '; ')"; kind = 'TAGS'; who = 'tracker'
-    action = "Dry run, then apply: & $($KitCmd.dev) tracker retag $($ids -join ',') -DryRun; then without -DryRun (a person's own tags stay)."; problem = "$($rows.Count) task(s): a kind / product tag missing or doubled, or an area / wave tag"; next = 'tracker retag <ids> -DryRun' }
+    action = "Dry run, then apply: & $($KitCmd.dev) tracker retag $($ids -join ',') -DryRun; then without -DryRun (a person's own tags stay)."; problem = "$($rows.Count) task(s): a kind / broad area / product tag missing or doubled, or a narrow area / wave tag"; next = 'tracker retag <ids> -DryRun' }
 }
 # after tracker create (lib.ps1 New-TrackerTask): kind, product, area of the name Format-KitKeyedName made
 function Set-KitNewTaskTags([string]$Task) { if ($Task -and @($script:KitNameTags).Count) { $null = Set-KitTaskTags $Task $script:KitNameTags -Soft } }
@@ -517,7 +517,7 @@ function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fal
 # tracker tags <id> <group=value> ... | tracker retag <parent>[,<parent>] [-DryRun]: keyed titles + labels of the trees -> <KEY> <outcome>
 # + tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md); -DryRun: the table only (shown to the owner before an apply)
 function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
-  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind product phase repo env risk decision origin test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
+  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product phase repo env risk decision origin test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
   if (-not $Id) { 'usage: tracker retag <parent>[,<parent>] [-DryRun]'; exit 2 }
   $Out = Join-Path (Get-KitPath cache -Create) "retag-$((Split-KitList $Id)[0] -replace '[^\w.-]', '_').md"
   $dry = $__trDry; $script:__trDry = $false   # the reads run for real; the writes below only without -DryRun

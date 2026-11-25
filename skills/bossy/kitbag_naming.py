@@ -11,7 +11,7 @@
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
   python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug env=- ...   # JSON {tags, add, remove}
-Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, product: tags)
+Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, area, product: tags)
  · tag `on-staging` (lowercase kebab, from the TAG_GROUPS vocabulary) · desc `ask catalogue create-only prompt`
  · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-ask` · agent `devy-ask-prompts` (no topic: `devy-4`) · area `ask-prompts`
    (what it covers; a tie `-2`) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
@@ -23,7 +23,7 @@ PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code
 one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags);
-one kind and one product tag first (scan, WATCH TAGS; fix: tracker retag); no area or wave tag (owner 2026-11-25).
+one kind, one broad area (naming.tags.areaMap) and one product tag first (scan, WATCH TAGS; fix: tracker retag); no wave tag.
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
 Sections: L33 model · L110 no repeats · L214 tags
 """
@@ -213,9 +213,9 @@ def make(kind, p, cfg=None):
 
 # ---- tags: what a title no longer says (owner 2026-11-24); tracker labels / tags, MR labels, doc properties carry them
 # group: (exclusive: one value at a time, values | a value regex | None: the registries' names / repo names); the comment: who sets it
-TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, product, then the rest; a person's own tags last)
+TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, broad area, product, then the rest; a person's own tags last)
     'kind': (True, ('feature', 'bug', 'chore', 'spike', 'docs', 'test')),   # tracker create (the old [Type]), a QA bug
-    'product': (True, None), 'area': (True, None),                         # tracker create: the key's PRODUCT name; area RETIRED (owner 2026-11-25: the description holds it)
+    'area': (True, None), 'product': (True, None),                         # tracker create: the key's broad area (naming.tags.areaMap) and PRODUCT name
     'wave': (True, r'wave-\d+'),                                            # RETIRED (owner 2026-11-25: no numbers): any wave= clears; old wave-N tags go
     'phase': (True, ('spec', 'build', 'review', 'qa')),                     # by hand: tracker tags <id> phase=qa
     'repo': (False, None),                                                  # by hand / brief repos: api-code -> api
@@ -225,8 +225,24 @@ TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, produc
     'origin': (True, ('qa-found', 'tester-report', 'retro')),               # a QA run's bug: qa-found; others by hand
     'test': (False, ('ui', 'api', 'mobile')),                               # by hand / testing doc
 }
-RETIRED = ('wave', 'area')   # owner 2026-11-25: no numbers; the area lives in the description
+RETIRED = ('wave',)   # owner 2026-11-25: no numbers
 KIND_TAG = {'feat': 'feature', 'fix': 'bug', 'refactor': 'chore', 'perf': 'chore'}
+
+
+def area_map(cfg):
+    """{AREA code: broad tag} (naming.tags.areaMap: wide module names reused across tasks, owner 2026-11-25)."""
+    m = (cfg.get('tags') or {}).get('areaMap')
+    return {str(k).upper(): slugify(v, 6) for k, v in m.items() if slugify(v, 6)} if isinstance(m, dict) else {}
+
+
+def area_broad(cfg):
+    """The broad area vocabulary: the map's values, plus the name of an area code the map leaves out."""
+    return set(area_map(cfg).values()) | {slugify(n, 6) for c, n in cfg['areas'].items() if c not in area_map(cfg)}
+
+
+def area_narrow(cfg):
+    """Area names the map replaces (catalogue under website): an old narrow tag the retag swaps for the broad one."""
+    return {slugify(cfg['areas'][c], 6) for c in area_map(cfg) if c in cfg['areas']} - area_broad(cfg)
 
 
 def tag_groups(cfg):
@@ -238,8 +254,10 @@ def tag_groups(cfg):
 def tag_value(group, value, cfg):
     """A part as its tag: product / area code -> its name, feat -> feature, 2 -> wave-2, staging -> on-staging, api-code -> api."""
     v = str(value or '').strip()
-    if group in ('product', 'area'):
-        v = cfg[group + 's'].get(v.upper(), v)
+    if group == 'area':   # owner 2026-11-25: a broad module tag reused across tasks (naming.tags.areaMap), else the area's name
+        v = area_map(cfg).get(v.upper(), cfg['areas'].get(v.upper(), v))
+    elif group == 'product':
+        v = cfg['products'].get(v.upper(), v)
     elif group == 'kind':
         v = KIND_TAG.get(v.lower(), v)
     elif group == 'wave' and (m := re.search(r'(\d+)\s*$', v)):
@@ -254,6 +272,8 @@ def tag_value(group, value, cfg):
 
 def tag_known(group, t, cfg, vals):
     """t is a value of group: in its list, its regex, a registry name (product / area); repo: any slug."""
+    if vals is None and group == 'area':
+        return t in area_broad(cfg)
     if vals is None:
         return group == 'repo' or t in {slugify(x, 6) for x in cfg[group + 's'].values()}
     return bool(re.fullmatch(vals, t)) if isinstance(vals, str) else t in vals
@@ -262,7 +282,8 @@ def tag_known(group, t, cfg, vals):
 def tag_group(t, cfg, groups):
     """The group of a live tag ('' = a person's own tag, kept); an old '<group>: ...' label (Wave: x wave 2) counts as its group."""
     lt = str(t).strip().lower()
-    return next((g for g, (_, vals) in groups.items() if g != 'repo' and (tag_known(g, lt, cfg, vals) or re.match(rf'{g}\s*:', lt) or (g == 'wave' and re.match(r'wave-.*\d$', lt)))), '')   # Jira kept 'wave-x-wave-2'
+    return next((g for g, (_, vals) in groups.items() if g != 'repo' and (tag_known(g, lt, cfg, vals) or re.match(rf'{g}\s*:', lt) or (g == 'wave' and re.match(r'wave-.*\d$', lt))
+                 or (g == 'area' and lt in area_narrow(cfg)))), '')   # a narrow area name (catalogue): the broad tag replaces it   # Jira kept 'wave-x-wave-2'
 
 
 def tags(parts, have=(), cfg=None):
@@ -274,9 +295,9 @@ def tags(parts, have=(), cfg=None):
         p.setdefault('product', km[1]); p.setdefault('area', km[2])
     if 'type' in p:
         p.setdefault('kind', p.pop('type'))
-    p.pop('wave', None); p.pop('area', None)   # retired groups: never set
+    p.pop('wave', None)   # retired group: never set
     have = [str(h).strip() for h in have if str(h).strip()]
-    keep = [h for h in have if tag_group(h, cfg, groups) not in RETIRED]   # old wave-N / 'Wave: x' / area tags go on any update
+    keep = [h for h in have if tag_group(h, cfg, groups) not in RETIRED]   # old wave-N / 'Wave: x' tags go on any update
     for g, raw in p.items():
         if g not in TAG_GROUPS:
             bad.append(f'unknown tag group {g!r} ({", ".join(TAG_GROUPS)})')
@@ -295,17 +316,19 @@ def tags(parts, have=(), cfg=None):
         keep += [t for t in new if t not in [k.lower() for k in keep]]
     if bad:
         raise ValueError('; '.join(bad))
-    keep.sort(key=lambda t: list(TAG_GROUPS).index(g) if (g := tag_group(t, cfg, groups)) else len(TAG_GROUPS))   # kind, product, the rest; a person's own last
+    keep.sort(key=lambda t: list(TAG_GROUPS).index(g) if (g := tag_group(t, cfg, groups)) else len(TAG_GROUPS))   # kind, area, product, the rest; a person's own last
     low = lambda xs: {x.lower() for x in xs}   # trackers lower-case tags (ClickUp)
     return {'tags': keep, 'add': [t for t in keep if t.lower() not in low(have)], 'remove': [h for h in have if h.lower() not in low(keep)]}
 
 
 def tag_gaps(have, cfg=None):
-    """[problem]: a kit task carries exactly one kind and one product tag (owner 2026-11-25); area and wave tags are retired."""
+    """[problem]: a kit task carries exactly one kind, one broad area and one product tag (owner 2026-11-25); no narrow area or wave tag."""
     cfg = cfg or naming_cfg()
     groups = tag_groups(cfg)
     by = [tag_group(t, cfg, groups) for t in have]
-    out = [f'{n} {g} tags' if n else f'no {g} tag' for g in ('kind', 'product') if g in groups and (n := by.count(g)) != 1]
+    by = [g if g != 'area' or str(t).strip().lower() in area_broad(cfg) else 'narrow' for t, g in zip(have, by)]
+    out = [f'{n} {g} tags' if n else f'no {g} tag' for g in ('kind', 'area', 'product') if g in groups and (n := by.count(g)) != 1]
+    out += [f'narrow area tag {t!r} (a broad one replaces it)' for t, g in zip(have, by) if g == 'narrow']
     return out + [f'{g} tag {t!r} (retired)' for t, g in zip(have, by) if g in RETIRED]
 
 
@@ -339,7 +362,8 @@ def live_names(kit=None):
 
 
 def tag_scan(cfg):
-    """[(kind 'tags', task name, where, why)]: a task whose tags the kit recorded (task index: the kit tagged it) miss or double a
+    """[(kind 'tags', task name, where, why)]: a task whose tags the kit recorded (task index: the kit tagged it) 
+
     kind / product tag or keep an area / wave tag; fix: crafty.ps1 tracker retag <ids> [-DryRun] (supervise WATCH TAGS)."""
     out, tr, d = [], (read_tracking() or {}).get('tasks') or {}, kit_path('tasks')
     for fn in sorted(os.listdir(d)) if osp.isdir(d) else []:

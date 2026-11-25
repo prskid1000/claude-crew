@@ -59,19 +59,19 @@ Set-JsonFile "$wd/plan.json" @{ product = 'SHOP'; areas = @{ ORD = 'Orders' }; i
   @{ code = 'Z1'; id = 't-4'; area = 'BAD'; title = 'Z1 something' }, @{ code = 'G9'; id = 't-5'; title = 'SHOP-PAY-003 [Feature] Shop — Payments: Payments refunds (was G9)' }) }
 $rn = Kb naming rename --plan "$wd/plan.json"
 Expect "rename: dry-run rows G3 -> SHOP-CAT-001, G5 -> SHOP-ORD-001, G4 -> SHOP-CAT-002, unknown AREA flagged, exit 1 ($($rn.code))" ($rn.code -eq 1 -and
-  $rn.out -match '\| G3 \| t-1 \| .* \| SHOP-CAT-001 \| SHOP-CAT-001 Public catalogue endpoint \(was G3\) \| no kind tag, no product tag \| feature, shop \| — \| — \|' -and $rn.out -match '\| G5 \| t-2 \|.*\| SHOP-ORD-001 \|' -and
+  $rn.out -match '\| G3 \| t-1 \| .* \| SHOP-CAT-001 \| SHOP-CAT-001 Public catalogue endpoint \(was G3\) \| no kind tag, no area tag, no product tag \| feature, catalogue, shop \| — \| — \|' -and $rn.out -match '\| G5 \| t-2 \|.*\| SHOP-ORD-001 \|' -and
   $rn.out -match '\| G4 \| t-3 \|.*\| SHOP-CAT-002 \|' -and $rn.out -match 'unknown AREA BAD' -and $rn.out -match 'DRY RUN' -and $rn.out -match 'naming seed SHOP-CAT 2' -and
-  $rn.out -match '\| G9 \| t-5 \|.*\| SHOP-PAY-003 \| SHOP-PAY-003 Payments refunds \(was G9\) \| no kind tag, no product tag \| feature, shop \| — \| — \|')
-# ---- tags (owner 2026-11-24): one vocabulary; an exclusive group keeps one value (an old 'wave: <x> wave 1' label too); -value drops one; off-vocabulary refused
+  $rn.out -match '\| G9 \| t-5 \|.*\| SHOP-PAY-003 \| SHOP-PAY-003 Payments refunds \(was G9\) \| no kind tag, no area tag, no product tag \| feature, payments, shop \| — \| — \|')
+# ---- tags: one vocabulary; an exclusive group keeps one value; -value drops one; off-vocabulary refused
 $tg1 = Kb naming tags key=SHOP-CAT-004 kind=Bug wave=2 --have 'wave: v2 wave 1,urgent'; $tg2 = Kb naming tags env=needs-deploy decision=-needs-owner --have 'on-stg,needs-owner,bug'; $tg3 = Kb naming tags risk=nope
 $tj1 = $tg1.out | ConvertFrom-Json; $tj2 = $tg2.out | ConvertFrom-Json
-Expect "tags (owner 2026-11-25): kind, product, own last; area and wave tags retired (the old label goes); env one value, decision value dropped; unknown value exit 1 ($($tj1.tags -join ',') | $($tj2.tags -join ','))" (($tj1.tags -join ',') -eq 'bug,shop,urgent' -and
+Expect "tags (owner 2026-11-25): kind, area, product, own last; a wave tag retired (the old label goes); env one value, decision value dropped; unknown value exit 1 ($($tj1.tags -join ',') | $($tj2.tags -join ','))" (($tj1.tags -join ',') -eq 'bug,catalogue,shop,urgent' -and
   ($tj1.remove -join ',') -eq 'wave: v2 wave 1' -and ($tj2.tags -join ',') -eq 'bug,needs-deploy' -and ($tj2.remove -join ',') -eq 'on-stg,needs-owner' -and $tg3.code -eq 1 -and $tg3.out -match 'not in the vocabulary')
-# review: a re-run keeps a new-style bug a bug; a repo word equal to an AREA code is a repo tag; a person's 'team=core' label is no part; two waves refused
+# review: a re-run keeps a bug; a repo word equal to an AREA code is a repo tag; a person's label stays
 Set-JsonFile "$wd/plan2.json" @{ items = @(@{ id = 't-9'; title = 'SHOP-CAT-007 crash on save'; tags = @('bug', 'shop') }) }; $rn2 = Kb naming rename --plan "$wd/plan2.json" --json
 $tg4 = Kb naming tags key=SHOP-CAT-004 repo=cat-svc --have 'team=core'; $tg5 = Kb naming tags 'wave=1,2'
-Expect "tags review: rerun keeps bug, repo tag 'cat', a person's label kept, wave= ignored ($($tg4.out) | $($rn2.out -replace '\s+', ' '))" ((($rn2.out | ConvertFrom-Json).tags -join ',') -eq 'bug,shop' -and -not @(($rn2.out | ConvertFrom-Json).gaps).Count -and
-  (($tg4.out | ConvertFrom-Json).tags -join ',') -eq 'shop,team=core,cat' -and $tg5.code -eq 0 -and -not @(($tg5.out | ConvertFrom-Json).tags).Count)
+Expect "tags review: rerun keeps bug, repo tag 'cat', a person's label kept, wave= ignored ($($tg4.out) | $($rn2.out -replace '\s+', ' '))" ((($rn2.out | ConvertFrom-Json).tags -join ',') -eq 'bug,catalogue,shop' -and (@(($rn2.out | ConvertFrom-Json).gaps) -join ',') -eq 'no area tag' -and
+  (($tg4.out | ConvertFrom-Json).tags -join ',') -eq 'catalogue,shop,team=core,cat' -and $tg5.code -eq 0 -and -not @(($tg5.out | ConvertFrom-Json).tags).Count)
 # naming.titleStrip (owner 2026-11-24): org regexes cut old codes from retag titles
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' }; titleStrip = @('^Old v1 [A-Z]\d+\s+', '\s*\(was K\d\)') } }
 Set-JsonFile "$wd/plan3.json" @{ items = @(@{ id = 't-8'; title = 'SHOP-CAT-008 [Feature] Catalogue: Old v1 G2 Price list (was K1)' }) }; $rn3 = Kb naming rename --plan "$wd/plan3.json" --json
@@ -127,7 +127,7 @@ Expect "keyed task: MR title, commit subject, doc title (v per changed round), b
   @($tBr)[0] -match '^fix/SHOP-CAT-010-local-\d+-crash-on-save$' -and "$tBr" -match 'REFUSED .*no kit key')
 Expect "tracker: render previews <P>-<A>-000, create allocates; a bug under it takes the parent's key; update keeps it; tags kind product area ($($tDry.name) | $($tNew.name) | $($tBug.name) | $($tUpd.name) | $($tNewV.tags) | $($tBug.tags))" (
   $tDry.name -eq 'SHOP-CAT-000 Catalogue blocks' -and $tNew.name -eq 'SHOP-CAT-009 Catalogue blocks' -and $tBug.name -eq 'SHOP-CAT-010 Crash on save' -and $tUpd.name -eq 'SHOP-CAT-009 Catalogue blocks and nav' -and
-  ($tNewV.tags -join ',') -eq 'feature,shop' -and ($tBug.tags -join ',') -eq 'bug,shop,qa-found')
+  ($tNewV.tags -join ',') -eq 'feature,catalogue,shop' -and ($tBug.tags -join ',') -eq 'bug,catalogue,shop,qa-found')
 # owner 2026-11-24: a wave's area subtask is keyed from its parent; a rename never drops a key or type (SHOP-AGT-001 vanished by hand)
 $env:KIT_TRACKER_TYPE = 'none'
 $tSub = pwsh -NoProfile -File $D tracker create -Spec (@{ kind = 'Feature'; title = '[Feature] Shop Catalogue fix wave — grid page (web)'; parent = $tNew.id; newTask = 'wave area'; list = 'L1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'grid' }); acceptance = @('a'); links = @('https://x.example/1') } | ConvertTo-Json -Compress -Depth 5) 2>$null | ConvertFrom-Json
@@ -211,14 +211,15 @@ Expect "labels: board show '<role>-<topic> · <words> (<run id>)', no key / wave
   $show -match "run buildy-public · public price list \(buildy-20261123-01\)" -and $show -match "$($d2.id) " -and $show -notmatch "$($d2.id) · (area-)?cat" -and $lbl[0] -eq 'testy' -and
   $lbl[1] -eq 'select · card refunds' -and $lbl[2] -eq 'devy-cat' -and $lbl[3] -eq 'briefy-v1retest' -and $lbl[4] -eq 'devy-jc' -and
   [datetime]$lbl[5] -eq ([datetimeoffset]'2026-11-23T10:00:00Z').LocalDateTime -and $lbl[6] -eq '15:01:32')
-# shown names (owner 2026-11-25; the normaliser's examples: lint-arch.tests.ps1); a kit task's tags: one kind, area, product, no wave (WATCH TAGS)
+# shown names (normaliser examples: lint-arch.tests.ps1); tags: one kind, broad area (areaMap), product
 $ks = & $bj @('-Type', 'kitty', '-Run', 'kitty-fix-0007', '-Subject', 'rest', '-Area', 'kit'); $show2 = pwsh -NoProfile -File $O board show | Out-String
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue' } } }; Set-JsonFile (TkPath $k tracking) @{ tasks = @{ 'tg-1' = @{ name = 'SHOP-CAT-021 Grid page' }; 'tg-2' = @{ name = 'SHOP-CAT-022 Grid sort' } } }
-Set-JsonFile (Join-Path (TkPath $k tasks -Create) 'tg-1.json') @{ task = 'tg-1'; tags = @('shop', 'wave-3') }; Set-JsonFile (Join-Path (TkPath $k tasks) 'tg-2.json') @{ task = 'tg-2'; tags = @('bug', 'shop') }
+Set-JsonFile (Join-Path (TkPath $k tasks -Create) 'tg-1.json') @{ task = 'tg-1'; tags = @('shop', 'wave-3') }; Set-JsonFile (Join-Path (TkPath $k tasks) 'tg-2.json') @{ task = 'tg-2'; tags = @('bug', 'catalogue', 'shop') }
 $tsc = @((Kb naming scan --json).out | ConvertFrom-Json | Where-Object { $_.kind -eq 'tags' -and $_.where -match ' tg-\d$' }); $tgf = pwsh -NoProfile -Command ". '$O'; (Get-KitTagGapFlag).action" | Out-String
-Expect "board show 'kitty-rest (kitty-fix-0007)', join warns; tag scan ($($tsc.why -join ' | ')); WATCH TAGS: retag dry run" ($show2 -match 'run kitty-rest \(kitty-fix-0007\)' -and $ks.out -match 'NAME run' -and
-  $tsc.Count -eq 1 -and $tsc[0].why -eq "no kind tag; wave tag 'wave-3' (retired)" -and $tgf -match 'tracker retag \S*tg-1\S* -DryRun')
-# the wave-brief render names areas area-<AREA> (dependsOn follows, old ids aliased) and the run label '<KEY> <short title>'
+Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' }; tags = @{ areaMap = @{ CAT = 'website'; PAY = 'website' } } } }
+$am = (Kb naming tags key=SHOP-CAT-004 kind=bug --have 'catalogue,shop,urgent').out | ConvertFrom-Json; $amG = Kb naming tags area=catalogue
+Expect "board show, join warns; tag scan ($($tsc.why -join ' | ')); WATCH TAGS; areaMap ($($am.tags -join ','))" ($show2 -match 'run kitty-rest \(kitty-fix-0007\)' -and $ks.out -match 'NAME run' -and
+  $tsc.Count -eq 1 -and $tsc[0].why -eq "no kind tag; no area tag; wave tag 'wave-3' (retired)" -and $tgf -match 'tracker retag \S*tg-1\S* -DryRun' -and ($am.tags -join ',') -eq 'bug,website,shop,urgent' -and ($am.remove -join ',') -eq 'catalogue' -and $amG.code -eq 1)# the wave-brief render names areas area-<AREA> (dependsOn follows, old ids aliased) and the run label '<KEY> <short title>'
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }; $wpy = Join-Path $wd 'wave_ids_check.py'
 Set-Content -LiteralPath $wpy -Encoding utf8 -Value @"
 import json, sys
