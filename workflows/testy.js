@@ -11,13 +11,13 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L65 record-args · L86 prepare · L116 config · L148 prompts · L241 local · L269 app · L299 test-prompt ·
-//   L357 verify · L419 run-item · L603 pool · L625 budget · L657 run · L711 learn
+// Sections: L16 args · L67 record-args · L88 prepare · L118 config · L150 prompts · L240 local · L268 app · L298 test-prompt ·
+//   L356 verify · L418 run-item · L604 pool · L626 budget · L667 run · L721 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
-2. Short form (preferred): { runDir, kitDir (absolute: every form), only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next> }
+2. Short form (preferred): { runDir, kitDir (absolute: every form), only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next>, maxMinutes?: <wall clock> }
 3. Full run.json (+ runDir; also written to <runDir>/run.json for pokey.ps1 finalize):
 { runDir: '<runtime>/work/qa-runs/<run>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
@@ -31,13 +31,15 @@ export const meta = {
 } */
 // kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tasks": "tasks/"}}
+const say = (it, s) => log(`${it.code}: ${s}`)
+const _S = { type: 'string' }, _B = { type: 'boolean' }, _I = { type: 'integer' }, _SA = { type: 'array', items: _S }, dsc = (d, t = _S) => ({ ...t, description: d })
 // a tester step, no result (2026-11-25 login race): one retry, <label>~retry1; close/hold never
 const agent1 = agent, TRY2 = /^([\w-]*test|retest-strong|handoff|verify|audit):/
 try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agent1(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
 // an unknown arg is refused, never dropped: forms 1-3 + run.json keys (STATE.md qa-runs:run)
-const ARG_KEYS = 'select name label started only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent'.split(' ')
+const ARG_KEYS = 'maxMinutes select name label started only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent'.split(' ')
 const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
 if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
@@ -76,19 +78,19 @@ ARGS>>>
 2. Run in PowerShell (pwsh 7): & ${K0}/skills/bossy/bossy.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
 Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
-  const r = await agent(prompt, { label, phase: phaseName, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
+  const r = await agent(prompt, { label, phase: phaseName, schema: { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
   if (r && r.ok) return r.output || ''
  }
  log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
  return ''
 }
 if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')   // recorded again with its plan once its items are known
-// ---- prepare: pokey.ps1 prepare builds the run (args.select, pokey L1) or prints a built one (runDir); one STEP, last line RUN <json>
+// ---- prepare: pokey.ps1 prepare builds the run (args.select, pokey L1) or prints one (runDir); one STEP, last line RUN <json>
 const q0 = (s) => String(s).replace(/'/g, "''")
 const prepStep = async (cmd, label) => {
  for (const [lb, model] of [[label, MODELS.step], [`${label}-retry`, MODELS.stepRetry]]) {
   const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else (a <yyyy-...> placeholder stays as typed: the script fills it):${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}\n${cmd}`,
-   { label: lb, phase: 'Prepare', schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
+   { label: lb, phase: 'Prepare', schema: { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
   try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried on sonnet */ }
  }
  return null
@@ -164,55 +166,52 @@ SEAT (memory + item claim) - your FIRST command, before anything else:
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
 // it.model/effort win; else MODELS.test
-function modelFor(it) {
- if (it.model) return { model: it.model, ...(it.effort ? { effort: it.effort } : {}) }
- return { model: MODELS.test, ...(it.effort ? { effort: it.effort } : {}) }
-}
+const modelFor = (it) => ({ model: it.model || MODELS.test, ...(it.effort ? { effort: it.effort } : {}) })
 
 const CHECKS_SCHEMA = {
  type: 'object',
  properties: {
-  code: { type: 'string' },
-  skipped: { type: 'boolean', description: 'true ONLY when pokey.ps1 seat answered ALREADY (another worker owns this item)' },
+  code: _S,
+  skipped: dsc('true ONLY when pokey.ps1 seat answered ALREADY (another worker owns this item)', _B),
   checks: {
    type: 'array',
    items: {
     type: 'object',
     properties: {
-     id: { type: 'string', description: 'check number exactly as in the guide; X1, X2 ... for defects found off-script' },
-     case: { type: 'string', description: 'variants of one guide row (ids V1, V2 ...): that row id, e.g. T1; fills its Result / Evidence in the human testing doc' },
-     subtask_id: { type: 'string', description: 'tracker id of the task this check belongs to' },
-     screen: { type: 'string' },
+     id: dsc('check number exactly as in the guide; X1, X2 ... for defects found off-script'),
+     case: dsc('variants of one guide row (ids V1, V2 ...): that row id, e.g. T1; fills its Result / Evidence in the human testing doc'),
+     subtask_id: dsc('tracker id of the task this check belongs to'),
+     screen: _S,
      result: { type: 'string', enum: ['PASS', 'PASS_WITH_NOTE', 'FAIL', 'NOT_TESTED', 'OUT_OF_SCOPE', 'PENDING'] },
      defect: { type: 'string', enum: ['own', 'new'], description: 'FAIL only (pokey tester step 5)' },
-     knownBug: { type: 'string', description: 'FAIL only: tracker id of the open task that already tracks this defect (not a tested task); no new [Bug], not the task\'s own failure' },
-     signature: { type: 'string', description: 'new defect: file:line, exact error text or URL pattern (the open collector [Bug] dedupes on it)' },
+     knownBug: dsc('FAIL only: tracker id of the open task that already tracks this defect (not a tested task); no new [Bug], not the task\'s own failure'),
+     signature: dsc('new defect: file:line, exact error text or URL pattern (the open collector [Bug] dedupes on it)'),
      cause: { type: 'string', enum: ['no-mail-sandbox', 'phone-only', 'undeployed', 'env-data', 'tool-down'], description: 'NOT_TESTED only: why' },
-     env_fix: { type: 'string', description: 'local env, NOT_TESTED: the exact coordinator-only fix' },
-     what_was_done: { type: 'string' },
-     observed: { type: 'string', description: 'what you saw; for FAIL the failing call (method, URL, status, body excerpt) or message' },
-     evidence: { type: 'array', items: { type: 'string' }, description: 'file names (not paths) that exist in shots/ or evidence/; a human testing doc check (PASS / note / FAIL): at least one screenshot; JSON only from the UI action (network / app log)' },
-     attempts: { type: 'integer', description: 'runs of this check (LLM-driven / timing: 5+)' },
-     window: { type: 'string', description: 'conditions + UTC times, e.g. "first 5 min after a restart, 14:02-14:10 UTC"' },
+     env_fix: dsc('local env, NOT_TESTED: the exact coordinator-only fix'),
+     what_was_done: _S,
+     observed: dsc('what you saw; for FAIL the failing call (method, URL, status, body excerpt) or message'),
+     evidence: dsc('file names (not paths) that exist in shots/ or evidence/; a human testing doc check (PASS / note / FAIL): at least one screenshot; JSON only from the UI action (network / app log)', _SA),
+     attempts: dsc('runs of this check (LLM-driven / timing: 5+)', _I),
+     window: dsc('conditions + UTC times, e.g. "first 5 min after a restart, 14:02-14:10 UTC"'),
     },
     required: ['id', 'subtask_id', 'screen', 'result', 'what_was_done', 'observed', 'evidence', 'attempts'],
    },
   },
-  findings: { type: 'array', items: { type: 'string' } },
-  setup_changes: { type: 'array', items: { type: 'string' } },
-  data_created: { type: 'array', items: { type: 'string' } },
-  handoff: { type: 'string', description: 'only at a budget HANDOFF: the resume brief path (checks done, checks left)' },
+  findings: _SA,
+  setup_changes: _SA,
+  data_created: _SA,
+  handoff: dsc('only at a budget HANDOFF: the resume brief path (checks done, checks left)'),
  },
  required: ['code', 'checks', 'findings', 'setup_changes', 'data_created'],
 }
 const VERIFY_SCHEMA = {
  type: 'object',
- properties: { verdicts: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' },
+ properties: { verdicts: { type: 'array', items: { type: 'object', properties: { id: _S,
   outcome: { type: 'string', enum: ['confirmed', 'refuted', 'inconclusive'], description: 'see the prompt' },
-  attempts: { type: 'integer', description: 'how many times you ran the check' },
-  observed: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } },
-  basis: { type: 'string', description: '_verify evidence files, the log window read (UTC), or the code path (file:line); none' },
-  knownBug: { type: 'string', description: 'confirmed FAIL already tracked by an open task (not a tested task): its tracker id; empty = keep the class' },
+  attempts: dsc('how many times you ran the check', _I),
+  observed: _S, evidence: _SA,
+  basis: dsc('_verify evidence files, the log window read (UTC), or the code path (file:line); none'),
+  knownBug: dsc('confirmed FAIL already tracked by an open task (not a tested task): its tracker id; empty = keep the class'),
   defect: { type: 'string', enum: ['own', 'new', ''], description: 'confirmed FAIL: own = the task\'s own expected behaviour, new = another defect; empty = keep' } },
   required: ['id', 'outcome', 'attempts', 'observed', 'evidence', 'basis'] } } },
  required: ['verdicts'],
@@ -220,18 +219,18 @@ const VERIFY_SCHEMA = {
 const AUDIT_SCHEMA = {
  type: 'object',
  properties: {
-  reclassify: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, defect: { type: 'boolean' },
-   notExercised: { type: 'boolean', description: 'part of Expected never exercised' },
-   unreachable: { type: 'boolean', description: 'with notExercised: its screen/endpoint is missing (-> FAIL)' },
-   own: { type: 'boolean', description: 'with defect: the task\'s own expected behaviour' },
-   part: { type: 'string', description: 'with notExercised: the part of Expected that was not exercised' },
-   reason: { type: 'string' } }, required: ['id', 'defect', 'reason'] } },
-  newDefects: { type: 'array', items: { type: 'object', properties: { screen: { type: 'string' }, what_was_done: { type: 'string' }, observed: { type: 'string', description: '<= 40 words: <observed> vs <expected>; <evidence>' }, detail: { type: 'string', description: 'the rest, no cap' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['screen', 'what_was_done', 'observed', 'evidence'] } },
+  reclassify: { type: 'array', items: { type: 'object', properties: { id: _S, defect: _B,
+   notExercised: dsc('part of Expected never exercised', _B),
+   unreachable: dsc('with notExercised: its screen/endpoint is missing (-> FAIL)', _B),
+   own: dsc('with defect: the task\'s own expected behaviour', _B),
+   part: dsc('with notExercised: the part of Expected that was not exercised'),
+   reason: _S }, required: ['id', 'defect', 'reason'] } },
+  newDefects: { type: 'array', items: { type: 'object', properties: { screen: _S, what_was_done: _S, observed: dsc('<= 40 words: <observed> vs <expected>; <evidence>'), detail: dsc('the rest, no cap'), evidence: _SA }, required: ['screen', 'what_was_done', 'observed', 'evidence'] } },
  },
  required: ['reclassify', 'newDefects'],
 }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' } }, required: ['signals'] }
-const FINAL_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }
+const FINAL_SCHEMA = { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }
 // one mechanical command run by a cheap agent: { ok, output }
 // output = its last output line unless whole (a multi-line JSON)
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
@@ -284,7 +283,7 @@ PHONE lane ${L.n} "${L.name}", serial ${L.serial}${L.user ? `, test login ${L.us
 const API = `
 API-ONLY LANE: pokey.ps1 api only (exit 1 on HTTP >= 400: judge the status against Expected); save request/response evidence for every check. A human testing doc row with UI steps needs a web or app lane (its screenshot): NOT_TESTED tool-down naming it; a "No UI trigger" row: its log excerpt.`
 
-// an item's lane (default: the first qa.lanes entry), its config and kind; a lane with devices runs one item per device
+// an item's lane (default: the first qa.lanes entry), config and kind; a devices lane runs one item per device
 const laneOf = (it) => (it && it.lane) || Object.keys(QL)[0]
 const laneCfg = (it) => QL[laneOf(it)] || {}
 const kindOf = (it) => laneCfg(it).kind || laneOf(it)
@@ -436,7 +435,7 @@ function adoptRetry(res, retry, note) {
  for (const c2 of (retry && !retry.skipped && retry.checks) || []) {
   const i = res.checks.findIndex((c) => (c.id === c2.id || c.guideId === c2.id) && c.result === 'NOT_TESTED')
   if (i < 0 || c2.result === 'NOT_TESTED') continue
-  // the report's Saw cell shows what the retry saw; the blocked first attempt stays in the results file
+  // the Saw cell shows the retry's view; the blocked first attempt stays in the results file
   res.checks[i] = { ...c2, id: res.checks[i].id, observed: `${c2.observed} (${note})`, firstAttempt: res.checks[i].observed }
  }
 }
@@ -445,16 +444,16 @@ async function runItem(it, idx, L) {
  const phase = 'Test'
  let retried = false
  let res = await agent(testPrompt(it, L), { label: `test:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
- if (res && res.skipped) { log(`${it.code}: skipped - another worker owns or finished it`); return { code: it.code, skipped: true } }
+ if (res && res.skipped) { say(it, `skipped - another worker owns or finished it`); return { code: it.code, skipped: true } }
  let written = res && JSON.parse(JSON.stringify(res))   // what results.json holds (scoped testers write results-retry.json)
  for (let h = 0; res && res.handoff && h < 3; h++) {   // budget handoff -> a fresh tester
-  log(`${it.code}: HANDOFF at its budget (${res.handoff}): a fresh tester continues`)
+  say(it, `HANDOFF at its budget (${res.handoff}): a fresh tester continues`)
   const more = await agent(testPrompt({ ...it, scoped: true }, L) + `\nHANDOFF: a previous tester reached its budget; read its resume brief ${res.handoff} first and test only the checks it lists as left.`, { label: `handoff:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
   res = more && !more.skipped ? { ...res, handoff: more.handoff || '', checks: [...res.checks.filter((c) => !more.checks.some((m) => m.id === c.id)), ...more.checks], findings: [...new Set([...(res.findings || []), ...(more.findings || [])])] } : { ...res, handoff: '' }
  }
- if (!res || ntShare(res) > 0.25) {
-  log(`${it.code}: ${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running${res ? ' only those' : ''}`)
-  // owner 2026-11-19: a retest re-runs only the NOT_TESTED checks (a whole-package rerun of a phone package took 97 min)
+ if ((!res || ntShare(res) > 0.25) && !(CAPMIN && await late(phase))) {
+  say(it, `${res ? Math.round(ntShare(res) * 100) + '% NOT_TESTED' : 'no result'} — re-running${res ? ' only those' : ''}`)
+  // owner 2026-11-19: a retest re-runs only the NOT_TESTED checks (a whole phone-package rerun took 97 min)
   const open = res ? retryIds(res) : [], full = !open.length   // no result or no checks: the whole guide again
   const prior = full ? '' : `\nA previous attempt left these NOT_TESTED — they MUST now be executed: ${open.join(', ')}. Reuse its valid evidence.`
   const again = await agent(testPrompt(full ? it : { ...it, only: open, scoped: true }, L) + prior, { label: `retest:${it.code}${tag(L)}`, phase, schema: CHECKS_SCHEMA, agentType: 'checky', ...modelFor(it) })
@@ -501,13 +500,13 @@ async function runItem(it, idx, L) {
   for (const d of (a && a.newDefects) || []) {
    res.checks.push({ id: `X${++n}`, subtask_id: ((it.subtasks || [])[0] || {}).id || '', screen: d.screen, result: 'FAIL', defect: 'new', what_was_done: d.what_was_done, observed: d.observed, verify: vJoin('Note audit: raised this new defect', d.detail), evidence: d.evidence || [] })
   }
-  if (a) log(`${it.code}: audit -> ${(a.reclassify || []).filter((d) => d.defect).length} note(s) reclassified, ${(a.reclassify || []).filter((d) => !d.defect && d.notExercised).length} not exercised, ${(a.newDefects || []).length} new defect(s)`)
+  if (a) say(it, `audit -> ${(a.reclassify || []).filter((d) => d.defect).length} note(s) reclassified, ${(a.reclassify || []).filter((d) => !d.defect && d.notExercised).length} not exercised, ${(a.newDefects || []).length} new defect(s)`)
  }
 
  // Stronger retry (owner rule): ONE scoped MODELS.retest attempt before the result rule
  const blocked = res.checks.filter(retryable)
- if (blocked.length && MODELS.retest) {
-  log(`${it.code}: ${blocked.length} check(s) NOT_TESTED -> one retry on ${MODELS.retest} (${blocked.map((c) => c.id).join(', ')})`)
+ if (blocked.length && MODELS.retest && !(CAPMIN && await late('Verify'))) {
+  say(it, `${blocked.length} check(s) NOT_TESTED -> one retry on ${MODELS.retest} (${blocked.map((c) => c.id).join(', ')})`)
   const why = blocked.map((c) => `- ${c.id} (${c.screen}): blocked by ${c.cause || 'unknown'}: ${c.observed} -> ${causeHint(c)}`).join('\n')
   const r2 = await agent(testPrompt({ ...it, only: [...new Set(blocked.map((c) => c.guideId || c.id))], scoped: true }, L) +
    `\nSTRONGER RETRY: a first tester could not complete these checks. What blocked it:\n${why}\nWork around each blocker (other data, user, path, the API, the lead notes) and execute the check; NOT_TESTED again only when truly impossible, with the cause.`,
@@ -517,7 +516,7 @@ async function runItem(it, idx, L) {
  }
  // ENV-FIX (bossy E4): coordinator fixes the env, we retest; after ENV_FIX_CYCLES held, never failedTesting
  let envFix = null
- for (let cyc = 1; LOCALENV(it) && cyc <= ENV_FIX_CYCLES; cyc++) {
+ for (let cyc = 1; LOCALENV(it) && cyc <= ENV_FIX_CYCLES && !(CAPMIN && await late('Verify')); cyc++) {
   const open = res.checks.filter(retryable)
   if (!open.length) break
   const need = open.map((c) => `${c.id}: ${c.env_fix || c.cause || 'unknown'}: ${c.observed}`).join(' | ').slice(0, 1200).replace(/'/g, "''").replace(/[\r\n]+/g, ' ')
@@ -525,7 +524,7 @@ async function runItem(it, idx, L) {
    `envfix-ask:${it.code}`, 'Verify')
   const id = (/\b(envfix-[a-z0-9]+(?:-[a-z0-9]+)*|e-\d{14}-[\w-]+)/.exec((asked && asked.output) || '') || [])[1]
   if (!id) { envFix = { cycles: cyc, state: 'not raised', output: asked ? asked.output : 'agent returned nothing' }; break }
-  log(`${it.code}: ENV-FIX ${id} (cycle ${cyc}/${ENV_FIX_CYCLES}) -> the coordinator: ${open.map((c) => c.id).join(', ')}`)
+  say(it, `ENV-FIX ${id} (cycle ${cyc}/${ENV_FIX_CYCLES}) -> the coordinator: ${open.map((c) => c.id).join(', ')}`)
   let ans = null
   for (let t = 0; t < ENV_FIX_TRIES && !ans; t++) {
    const w = await runStep(`& ${ORCH} decide wait -Id ${id} -MaxMinutes 9`, `envfix-wait:${it.code}`, 'Verify', { ok: 'when it prints ANSWERED', slow: true })
@@ -540,13 +539,15 @@ async function runItem(it, idx, L) {
   retried = true
  }
  // still mostly NOT_TESTED after the stronger retry, shared env: a broken run, not a verdict (local items: ENV-FIX)
+ if (CAPMIN && await late('Verify')) for (const c of res.checks.filter(retryable)) c.observed = `${c.observed} (run time cap: not retried)`
  const broken = ntShare(res) > 0.5 && !LOCALENV(it) ? `${Math.round(ntShare(res) * 100)}% NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict - results held, the coordinator decides (retest or close)` : ''
- if (broken) log(`${it.code}: ${broken}`)   // held below (held.json: supervise asks), never dropped unpublished
+ if (broken) say(it, `${broken}`)   // held below (held.json: supervise asks), never dropped unpublished
  const envFixOpen = !!LOCALENV(it) && res.checks.some(retryable)
- if (envFixOpen) log(`${it.code}: ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (bossy E4)`)
+ if (envFixOpen) say(it, `ENV-FIX UNRESOLVED (${envFix ? `${envFix.state}, ${envFix.cycles} cycle(s)` : 'no cycle'}): results held, not failedTesting - the coordinator decides (bossy E4)`)
  const fails = res.checks.filter((c) => c.result === 'FAIL')
- if (fails.length && !VERIFY) for (const c of fails) c.verify = vJoin('not re-tested (verify: false)', c.verify)
- if (fails.length && VERIFY) {
+ const capped = fails.length && VERIFY && CAPMIN && await late('Verify')
+ if (fails.length && (!VERIFY || capped)) for (const c of fails) c.verify = vJoin(`not re-tested (${capped ? 'run time cap' : 'verify: false'})`, c.verify)
+ if (fails.length && VERIFY && !capped) {
   const v = await agent(verifyPrompt(it, fails, L), { label: `verify:${it.code}${tag(L)}`, phase: 'Verify', schema: VERIFY_SCHEMA, agentType: 'checky', ...pick('verify'), ...(it.effort ? { effort: it.effort } : {}) })
   const byId = Object.fromEntries(((v && v.verdicts) || []).map((x) => [x.id, x]))
   for (const c of fails) {
@@ -568,7 +569,7 @@ async function runItem(it, idx, L) {
    if (basis && !/^none\b/i.test(basis)) x.observed = `${x.observed} [basis: ${basis}]`
    const firstEv = (c.evidence || []).length > 0   // the first run's own evidence (before the verifier's)
    c.evidence = [...c.evidence, ...(x.evidence || [])]
-   // re-test + audit text lives in verify (the report renders it outside the Results cell); observed stays within the note cap
+   // re-test + audit text in verify (rendered outside the Results cell); observed stays within the note cap
    const audit = c.verify
    if (outcome === 'confirmed' && String(x.knownBug || '').trim()) c.knownBug = String(x.knownBug).trim()   // pokey finalize checks the id exists
    if (outcome === 'confirmed' && ['own', 'new'].includes(x.defect)) c.defect = x.defect   // the verifier corrects the class
@@ -633,7 +634,7 @@ const REC = await recordArgs(RUN0, R.runDir, 'Test', PLAN)
 takeConfig(REC)
 try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(REC) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
 // the caller's run options carry into next (a short-form call reads the rest from run.json)
-const OPTS = Object.fromEntries('devices verify learn webParallel apiParallel skipClose context contextFiles outOfScope envFixCycles envFixWaitMinutes alsoTargets'.split(' ').filter((k) => ARGS0[k] !== undefined).map((k) => [k, ARGS0[k]]))
+const OPTS = Object.fromEntries('maxMinutes devices verify learn webParallel apiParallel skipClose context contextFiles outOfScope envFixCycles envFixWaitMinutes alsoTargets'.split(' ').filter((k) => ARGS0[k] !== undefined).map((k) => [k, ARGS0[k]]))
 const nextCall = (only, extra) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, ...OPTS, ...(only && { only }), ...(ARGS0.lanes && { lanes: ARGS0.lanes }), ...(ARGS0.instance && { instance: ARGS0.instance }), ...extra } })
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(R.items.length * BUD.stopAt * BUD.cap / BUD.estimate))
@@ -643,9 +644,18 @@ if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
 // the run's spend (its agents' transcripts): gate() near the stop line, and once for the outcome
 async function measure(phaseName) {
  const r = await runStep(`& ${ORCH} budget -Run '${RUN0}' -Json`, 'budget', phaseName).catch(() => null)
- try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {}
+ try { const j = JSON.parse(r.output); BUD.spent = j.spent; BUD.min = j.minutes; BUD.guess = 0 } catch (e) {}
+}
+// wall-clock cap per launch (2026-11-25: "90 min" ran 4.5 h): args.maxMinutes, else budget.runMinutes
+const CAPMIN = +R.maxMinutes || +BUD.runMinutes || 0
+async function late(ph) {
+ if (!CAPMIN || BUD.late) return !!BUD.late
+ BUD.m = BUD.m || measure(ph).then(() => { BUD.m = null }); await BUD.m
+ if (BUD.min >= CAPMIN && !BUD.late) { BUD.late = true; log(`TIME CAP ${BUD.min}/${CAPMIN} min: no new step; unstarted items -> next`) }
+ return !!BUD.late
 }
 async function gate(phaseName) {   // before a new item; measures only near the stop line
+ if (CAPMIN && await late(phaseName)) return false
  if (BUD.stop || !BUD.cap) return !BUD.stop
  BUD.guess += BUD.unit
  if (BUD.spent + BUD.guess < 0.6 * BUD.stopAt * BUD.cap) return true
@@ -676,7 +686,7 @@ const parts = await Promise.all([...lanes.filter((l) => !l.c.devices && l.items.
 const all = parts.flat().filter(Boolean)
 if (NODEV && devLanes.length) log(`NOT_TESTED (devices none; tasks stay open): ${devLanes.flatMap((l) => l.items.map((it) => it.code)).join(', ')}`)
 
-// follow-ups: PENDING checks -> an item <code><Lane initial> on the lane's followUp lane, in run.json first (finalize reads it)
+// follow-ups: PENDING checks -> an item <code><Lane initial> on its followUp lane, in run.json first (finalize reads it)
 const fuLane = (it) => { const t = laneCfg(it).followUp; return t && t in QL ? t : '' }
 const pend = all.filter((x) => x.pending && x.pending.length).map((r) => ({ r, it: R.items.find((x) => x.code === r.code) })).filter((p) => p.it)
 for (const { r, it } of pend.filter((p) => !fuLane(p.it) || (QL[fuLane(p.it)].devices && !LANES.length))) {
@@ -713,7 +723,7 @@ log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (oth
 phase('Learn')
 // every finished run ends with a retro (bossy E10)
 const retroDue = (results) => { log('RETRO DUE: run /tidy (bossy E10) once no other workflow of this session runs'); return { results, unpublished: results.filter((r) => r.unpublished || r.error).map((r) => r.code), envFixOpen: results.filter((r) => r.envFixOpen).map((r) => r.code), retroDue: true,
- budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop }, ...(STOPPED.length + LATER.length ? { next: nextCall([...STOPPED, ...LATER]) } : {}) } }
+ budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop, ...(CAPMIN && { minutes: BUD.min, capMinutes: CAPMIN, timeCapped: !!BUD.late }) }, ...(STOPPED.length + LATER.length ? { next: nextCall([...STOPPED, ...LATER]) } : {}) } }
 const eventful = all.some((r) => r.error || r.eventful)
 if (LEARN === false || (LEARN === 'auto' && !eventful)) {
  await runStep(`& ${ORCH} cleanup -Quiet`, 'cleanup', 'Learn')

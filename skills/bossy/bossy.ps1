@@ -267,7 +267,7 @@ if ($Run) {
   if (-not $sf) { "no launch record for run $Run"; exit 1 }
   $wf = if ($sf.wfDir -and (Test-Path $sf.wfDir)) { $sf.wfDir } else { $t = Find-KitTranscript "-Run '$Run' " 'agent-*.jsonl'; if ($t) { Split-Path $t } }
   $sp = @(if ($wf) { Get-ChildItem $wf -Filter 'agent-*.jsonl' | ForEach-Object { (Get-KitSpend $_.FullName).spend } })
-  $o = [ordered]@{ run = $Run; spent = [int](($sp | Measure-Object -Sum).Sum); agents = $sp.Count; cap = [int]$sf.cap; estimate = [int]$sf.estimate; stopAt = [double]$sf.stopAt }
+  $o = [ordered]@{ run = $Run; spent = [int](($sp | Measure-Object -Sum).Sum); agents = $sp.Count; cap = [int]$sf.cap; estimate = [int]$sf.estimate; stopAt = [double]$sf.stopAt; minutes = [int]((Get-Date) - [datetime]$sf.at).TotalMinutes }
   Invoke-KitLocked $sf.file { $j = Get-Content $sf.file -Raw | ConvertFrom-Json; $j | Add-Member -Force NoteProperty wfDir $wf; $j | Add-Member -Force NoteProperty spent $o.spent; Write-KitAtomic $sf.file ($j | ConvertTo-Json -Depth 30) }
   if ($Json) { $o | ConvertTo-Json -Compress } else { "run $Run`: spent $($o.spent) of the cap $($o.cap) ($($o.agents) agents; stop at $([int]($o.stopAt * 100))%)" }; exit 0
 }
@@ -313,7 +313,7 @@ if ($Self) {
   try { $a = $raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop } catch { "MISMATCH: not valid JSON ($($_.Exception.Message))"; exit 1 }
   $leaf = Split-Path $Script -Leaf
   $rec = [ordered]@{ script = (Join-Path $kit "workflows/$leaf"); run = $Run; args = $a; argsRaw = $raw; runDir = $(if ($RunDir) { $RunDir } else { $a.runDir }); fnv = $got; at = (Get-KitStamp) } + (Get-KitHolder)
-  $bud = if ($Plan) { $c = Get-KitPlanCap $Plan; $b0 = Get-KitBudget; [ordered]@{ cap = $c.cap; estimate = $c.estimate; stopAt = $b0.runStopAt; handoffAt = $b0.handoffAt; plan = $Plan }; $rec += [ordered]@{ cap = $c.cap; estimate = $c.estimate; stopAt = $b0.runStopAt; plan = $Plan } }
+  $bud = if ($Plan) { $c = Get-KitPlanCap $Plan; $b0 = Get-KitBudget; [ordered]@{ cap = $c.cap; estimate = $c.estimate; stopAt = $b0.runStopAt; handoffAt = $b0.handoffAt; plan = $Plan; runMinutes = [int](Get-KitSetting 'budget.runMinutes' 0) }; $rec += [ordered]@{ cap = $c.cap; estimate = $c.estimate; stopAt = $b0.runStopAt; plan = $Plan } }
   $sf = Get-SelfLaunchFile $leaf $Run $got
   $prev = if (Test-Path -LiteralPath $sf) { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json }   # a live run re-recording keeps its pause
   Write-KitState $sf $rec
@@ -944,7 +944,7 @@ switch ($Action) {
       }
       $o.checkedAt = (Get-KitStamp); Save $o -Run
       $o.mrs = @(@($o.mrs) | ForEach-Object { NormRef $_ } | Where-Object { $_ } | Select-Object -Unique)
-      # merged 60+ min, not promoted, not HELD = LAG; planned areas not delivered = the HOLD line below, never a LAG
+      # merged 60+ min, not promoted, not HELD = LAG; planned areas not delivered = the HOLD line below
       $planHeld = @($o.mrs).Count -and @(Get-KitPlannedAreas $o.task $o.planReleased -Merged).Count
       if ($o.lagLine -and -not $o.holdPromotion -and -not $planHeld -and $o.lagAt -and ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -lt (Get-KitParam 'track.lagRecheckMinutes') -and -not $Quiet -and (Test-LagLive $o)) { $o.lagLine }
       if (@($o.mrs).Count -and (-not $o.lagAt -or ((Get-Date) - [datetime]$o.lagAt).TotalMinutes -ge (Get-KitParam 'track.lagRecheckMinutes'))) {
@@ -1115,7 +1115,7 @@ function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Wher
 # the last sweep: the lock's start while its pwsh runs, else the last finished report (a dead or hung sweep's lock never counts)
 function Get-KitLastSweepAt { $h = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'supervise.lock') | ConvertFrom-Json -AsHashtable } catch { $null }
   $ra = try { (Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json -AsHashtable).report.at } catch { $null }
-  # a live pid (a reused one started later never counts): its start or, a long-lived host, the report it finished since
+  # a live pid (a reused one started later never counts): its start or, a long-lived host, its finished report
   if ($h.at -and $h.pid) { $sp = Get-Process -Id ([int]$h.pid) -ErrorAction SilentlyContinue; if ($sp -and $sp.StartTime -le ([datetime]$h.at).AddSeconds(5)) { return @(@([datetime]$h.at) + @(if ($ra) { [datetime]$ra }) | Sort-Object)[-1] } }
   if ($ra) { [datetime]$ra } }
 function Get-KitDiskCoordAt([string]$File) { $cv = try { (Read-KitText $File | ConvertFrom-Json -AsHashtable).coordAt } catch { $null }; if ($cv -is [datetime]) { (Get-KitStamp stored $cv) } else { "$cv" } }
@@ -1142,7 +1142,7 @@ Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
   $myHolder = Get-KitHolder   # only a live other process blocks (not a restart or a dead holder)
   $other = $held -and $held.session -ne $me -and -not ($held.holderPid -and $held.holderPid -eq $myHolder.holderPid -and $held.holderStart -eq $myHolder.holderStart) -and (Test-KitHolder $held) -ne $false
-  # report <= a beat old: the OS timer sweeps once the last sweep is a beat old; a session skips one under half a beat
+  # report <= a beat old: the OS timer sweeps once the last is a beat old; a session skips one under half a beat
   $lsa = Get-KitLastSweepAt; $agoMin = if ($lsa) { ((Get-Date) - $lsa).TotalMinutes } else { 1e9 }; $asideMin = if ($me -eq 'os-timer') { Get-KitOsBeatAsideMinutes } else { (Get-KitBeatMinutes) * 0.5 }
   if (-not $Takeover -and ($other -or $me -eq 'os-timer') -and $agoMin -lt $asideMin) { $script:aside = "another session's supervisor ran $([int]$agoMin) min ago (session $($held.session)): this heartbeat steps aside (stop it, or -Takeover)"
     # a session that skips still beats: health OVERDUE reads coordAt
@@ -1347,7 +1347,7 @@ if ((Test-Path (Get-KitPath scope-log)) -and (Within 'scope')) { foreach ($w in 
 # 5. QA results: new [Bug], failedTesting tasks (bossy E6)
 if (-not (Within 'QA bug tasks')) { foreach ($qv in @($script:KitQaBugs.views.Values | Where-Object { $_ })) { Stop-KitProcessTree $qv.p } }
 else {
-  # parents and their tracker views: Start-KitSupervisePrefetchQaBugs (process-gates.ps1), started with the sweep (failed: now)
+  # parents + tracker views: Start-KitSupervisePrefetchQaBugs (process-gates.ps1) with the sweep
   if (-not $script:KitQaBugs) { try { Start-KitSupervisePrefetchQaBugs } catch { Flag 'WATCH' "QA bug tasks: parents not read: $($_.Exception.Message)" 'Look at qa-parents.json (cache) and the QA runs; supervise asks again next round.' } }
   $qaRecent = @($script:KitQaBugs.recent); $parents = @($script:KitQaBugs.parents)
   if ($parents.Count) { $null = Update-KitQaParents { param($q) foreach ($qp in $parents) { if ($q[$qp]) { $q[$qp].seen = (Get-KitStamp stored $now) } } } }
@@ -1389,7 +1389,7 @@ if (Within 'failedTesting tasks') {
     if ("$l" -match '^(\S+) (\S+) (.+)$' -and $Matches[1] -in $ids -and (-not ($c = $state.ftStatus[$Matches[1]]) -or [datetimeoffset]$Matches[2] -gt [datetimeoffset]$c.at)) { $state.ftStatus[$Matches[1]] = @{ at = $Matches[2]; st = $Matches[3] } }
   }
   $back = @(Select-KitFailedLive $ids $trk $state.ftStatus | ForEach-Object { "$_ ($($ft[$_]))" })
-  # $ids = no fix MR linked since the run (track add -Mrs / route reopen it): an -Ack needs a decision id or MR, hides 2 h
+  # $ids = no fix MR linked since the run (track add -Mrs / route reopen): an -Ack needs a decision id or MR, hides 2 h
   if ($back.Count) { Flag 'ACT' "$($back.Count) task(s) failed testing, back to the dev flow, no fix MR linked: $($back -join '; ')" "Fixed in another task's or run's wave: & $($KitCmd.orch) track route -From <id> -To <task | run> [-Items <check ids>] [-Mrs <its fix MRs>], or & $($KitCmd.orch) track add -Task <id> -Mrs <fix MRs>; not fixed yet: ONE /buildy mode 'bugfix' for all: & $($KitCmd.orch) bugbrief -Task <id> -Agent B-<code> -Repos <repos> -Mandate '<owner words>' per task (reproduce locally first), then launch." @{ kind = 'FAILED TESTING'; who = @($back | ForEach-Object { ($_ -split ' ')[0] }) -join ', '; problem = "no fix MR linked: $($back -join '; ')"; ackNeeds = 'ref' } }
 }
 foreach ($w in @(Get-KitScopeWatch)) { Flag 'WATCH' $w.what $w.action }   # live status names of no role
@@ -1809,7 +1809,7 @@ function Invoke-Decide {
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
-      # a scope ask (-Gate scope, or naming `decide record -Gate scope`) answered by a recording pick: the scope word (wt commit -ScopeOk)
+      # a scope ask (-Gate scope, or naming `decide record -Gate scope`) answered by a pick: the scope word (wt commit -ScopeOk)
       # dec-37: "outside the web-payments paths" / "(scope-ok ...)" was a scope ask the old wording test missed
       $isScope = $o.gate -eq 'scope' -or "$($o.question) $(@($o.options | ForEach-Object label) -join ' ')" -match '(?i)\boutside\b[^.?]{0,60}\b(area|paths?|scope)\b|\bscope[- ]?(ok|word|record)\b'
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($isScope) { "$($o.item)" }
@@ -1818,7 +1818,7 @@ function Invoke-Decide {
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))(\s*[:.)(—-]|\s*$)" })[0]; $said = if ($pick) { "$($pick.label)" } else { $Answer }
       if ($scItem -and $By -notmatch $crewRx) {
         $denyRx = "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep|drop|skip|remove|exclude|decline|undo|without|narrow)\b"
-        # a pick is judged by its own label (its description: only "merge .. as is"): the owner's why may name the other side (dec-47)
+        # a pick is judged by its label (description: only "merge .. as is"): the owner's why may name the other side (dec-47)
         $asIs = $pick -and "$($pick.description)" -match '(?i)\bmerge\b.{0,30}\bas is\b'
         if ($said -notmatch $denyRx -and ((($said -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept|change|extend)\b' -or $asIs) -and ($pick -or $Answer -notmatch $denyRx)) -or ($Answer -match '(?i)\bscope[- ]?ok\b' -and $Answer -notmatch $denyRx))) {
           $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitName dec "scope $scItem" $dir -Cap 16)
@@ -1886,7 +1886,7 @@ function Invoke-Decide {
         }
         "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt)$(Format-KitWordPin $d) | question: $($d.question)"; exit 0
       }
-      # deploy.triggers {<env | repo>: auto}: the owner's standing word (every env named and every MR's repo auto)
+      # deploy.triggers {<env | repo>: auto}: the owner's standing word (every env named and MR repo is auto)
       $tgs = if (-not $Id -and $gates -contains 'deploy') { Get-KitSetting 'deploy.triggers' $null }
       # a key covers its env group (<key>-*) and the repos whose repos[].deploys target such an env
       if ($tgs) { $tgH = $tgs | ConvertTo-Json -Depth 3 | ConvertFrom-Json -AsHashtable; $tgOn = @($tgH.Keys | Where-Object { "$($tgH[$_])".ToLower() -eq 'auto' })
@@ -2069,7 +2069,7 @@ function Update-Exclude {
   $end = '# <<< kit localOnly'
   $old = if (Test-Path $ex) { Get-Content $ex -Raw } else { '' }
   $rest = [regex]::Replace($old, '(?s)\r?\n?# >>> kit localOnly[^\n]*.*?' + [regex]::Escape($end) + '\r?\n?', "`n").TrimEnd()
-  # a line outside the block that hides a tracked file blocks pushes (pre-push LOCAL FILE): never ours to keep
+  # a line outside the block hiding a tracked file blocks pushes (pre-push LOCAL FILE): never ours to keep
   $dropped = @(); $rest = (@($rest -split '\r?\n' | Where-Object { $ln = $_.Trim(); if ($ln -and -not $ln.StartsWith('#') -and @(git -C $kit ls-files -c -i "--exclude=$ln" 2>$null).Count) { $dropped += $ln; $false } else { $true } }) -join "`n").TrimEnd()
   $block = if ($paths.Count) { "$begin`n" + (($paths | ForEach-Object { "/$_" }) -join "`n") + "`n$end" } else { '' }
   $new = (@($rest, $block) | Where-Object { $_ }) -join "`n`n"

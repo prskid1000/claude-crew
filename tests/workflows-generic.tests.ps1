@@ -112,6 +112,8 @@ $lo = pwsh @np $O launch -Self -Script buildy.js -Run cfgrun -ArgsFile $cf -Plan
 $cfg = ($lo -split "`n" | Where-Object { $_ -like 'CONFIG *' }) -replace '^CONFIG ' | ConvertFrom-Json
 $pc = & { . $O; $a = Get-KitPlanCap 'devy/@build=sonnet:1,step/@step=haiku:1'; $b = Get-KitPlanCap 'devy/opus:1,step/haiku:1'; "$($a.cap -eq $b.cap)|$(($a.perModel.Keys | Sort-Object) -join ',')" }
 Expect "launch -Self prints CONFIG: models, repo roles by name + alias, qa.lanes; plan @phase tokens = models.<phase> ($pc)" ($cfg.models.build -eq 'opus' -and -not $cfg.models._readme -and $cfg.roles.core -eq 'producer' -and $cfg.roles.api -eq 'producer' -and -not $cfg.roles.ui -and $cfg.qaLanes.web.kind -eq 'web' -and $cfg.intermittentRx -eq 'boom' -and $pc -eq 'True|haiku,opus')
+$bm = pwsh @np $O budget -Run cfgrun -Json | ConvertFrom-Json
+Expect 'launch -Self BUDGET carries budget.runMinutes (0); budget -Run -Json the minutes since its launch' ($lo -match 'BUDGET \{.*"runMinutes":0' -and $bm.minutes -ge 0 -and $bm.minutes -lt 5)
 Remove-Item (Join-Path $k 'skills/crafty/kit.local.json')
 # qa.intermittentRx (CONFIG line) replaces the flaky-FAIL regex that earns 5 verify attempts; unset or no regex: the default
 $jsir = Join-Path (Kd) 'ir.mjs'; [IO.File]::WriteAllText($jsir, @'

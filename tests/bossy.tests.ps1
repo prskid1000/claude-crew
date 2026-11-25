@@ -1,6 +1,6 @@
 #Requires -Version 7
 <#
-bossy.tests.ps1: bossy.ps1 decide, launch, board, supervise, learn, budget, setup (adapters: supervise-resources).
+bossy.tests.ps1: bossy.ps1 decide, launch, board, supervise, learn, budget (testy run time cap), setup (adapters: supervise-resources).
 Usage: pwsh -NoProfile -File <kit>/tests/bossy.tests.ps1 (or tests/kit-tests.ps1 -Area bossy).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -230,5 +230,12 @@ Expect 'pause: record, PAUSE on beat, leave waits, launch paused; resume of a wa
 foreach ($n in 1, 40, 120) { $lf = Join-Path (Kd) "L$n.jsonl"; Set-Content $lf '{}'; (Get-Item $lf).LastWriteTime = (Get-Date).AddMinutes(-$n); & $J @{ session = "s-L$n"; agent = "L$n"; run = 'lr'; status = 'working'; beat = (Get-Date).AddMinutes(-[math]::Max(90, $n)).ToString('o'); joined = (Get-Date).AddHours(-3).ToString('o'); transcript = $lf } (Join-Path (TkPath $k board -Create) "s-L$n.json") }
 $lv = Invoke-PsTest 'liveact' '. $args[0]; $g = New-Item -ItemType Directory -Force (Get-KitGateLedger); Set-Content "$g/1.json" "{`"pid`": $PID, `"owner`": `"G`"}";Test-KitLive @{ agent = "L1"; session = "s-L1" }; Test-KitLive @{ agent = "L40"; session = "s-L40" }; (Get-KitLastActivity $args[1] @{ beat = "2000-01-01" }) -gt (Get-Date).AddMinutes(-5); Test-KitLive (New-KitLease L1); Test-KitLive (New-KitLease L120); Test-KitLive @{ agent = "G" }' @($O, (Join-Path (Kd) 'L1.jsonl'))
 Expect "Test-KitLive ($($lv -join ','))" (($lv -join ',') -eq 'True,False,True,True,False,True')
+# testy maxMinutes (a "90 min" run took 4.5 h): past it no retest / verify / new item; NOT_TESTED says why; close still runs
+$jsTc = @'
+let b = 0; const { calls, agent } = _mock((p, o) => o.label === 'budget' ? _ok(JSON.stringify({ spent: 0, minutes: b++ ? 40 : 10 })) : /^test:/.test(o.label) ? _res('T1', [_ck('C1', 'FAIL'), _ck('C2', 'NOT_TESTED')]) : /^close/.test(o.label) ? { ok: false, output: 'x' } : undefined)
+run({ runDir: 'C:/runs/R7', ..._kl, maxMinutes: 30, apiParallel: 1, items: [_item('T1'), _item('T2')] }, agent, _n, _n, null).then((o) => { const L = calls.map((c) => c.label), ck = o.results[0].result.checks
+ console.log(`tc-cap:${!L.some((l) => /^(retest|verify|test:T2)/.test(l)) && L.includes('close:T1') && o.budget.timeCapped && o.next.args.only.includes('T2') && o.next.args.maxMinutes === 30 && /run time cap/.test(ck[1].observed) && /run time cap/.test(ck[0].verify)}`) }).catch(_err)
+'@
+Expect-Each (Invoke-Js tc-timecap $jsTc (Join-Path $src 'workflows/testy.js')) 'testy run time cap: #' 'tc-cap' -Show 8
 Remove-TestKit $k
 Complete-Tests
