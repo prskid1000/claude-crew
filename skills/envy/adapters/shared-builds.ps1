@@ -247,3 +247,22 @@ function Write-JavaArgs([string]$e, $s, [string]$from, [string]$to, [string]$art
   $ja = JavaArgsFile $art; Remove-Item -LiteralPath $ja -Force -ErrorAction SilentlyContinue   # a hard link from a shared stage is never written in place
   Set-Content -LiteralPath $ja "-cp `"$cp`"" -NoNewline -Encoding utf8NoBOM   # java @argfile: quoted, forward slashes (a backslash escapes in quotes)
 }
+function ReleaseDirOf([string]$root, [string]$art) { if (-not $art) { return $null }; $rel = [IO.Path]::GetRelativePath($root, $art); if ($rel -match '^\.\.') { return $null }; Join-Path $root (($rel -split '[\\/]')[0]) }
+# -> the release folders past keepReleases that no service runs from (removed; -DryRun: listed only)
+function Remove-OldReleases([string]$e, $s, [string]$root, [switch]$DryRun) {
+  $inUse = @((Read-State $e).services.Values | ForEach-Object { ReleaseDirOf $root "$($_.artifact)" } | Where-Object { $_ })
+  $old = @(Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | Sort-Object LastWriteTime -Descending | Select-Object -Skip $script:KeepReleases | Where-Object { $_.FullName -notin $inUse })
+  if ($DryRun) { return @($old.FullName) }
+  $old | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; @($old.FullName)
+  $store = Join-Path $root '_lib'; if (-not (Test-Path -LiteralPath $store)) { return }
+  $refs = @{}; foreach ($m in Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | ForEach-Object { Join-Path $_.FullName '.libs.json' } | Where-Object { Test-Path -LiteralPath $_ }) { foreach ($p in (Get-KitProps (Get-Content -LiteralPath $m -Raw | ConvertFrom-Json))) { $refs["$($p.Value)"] = $true } }
+  Get-ChildItem -LiteralPath $store -File | Where-Object { -not $refs[$_.BaseName] } | Remove-Item -Force -ErrorAction SilentlyContinue   # no release links it
+}
+# no agent owns a lane build: that agent's release killed train builds (2026-11-25)
+function LaneEnv([string]$e, $item) { $v = EnvVars $e $item; $v.CLAUDE_AGENT = ''; $v }
+# a build the kit stopped (release, PAUSE) blames no layer: new layers and drops fail with "deploy again", the live release stays
+function Set-KilledBuild([string]$why, $kept, [scriptblock]$isNew, $reqs, $cur, [string]$rn, $results) {
+  $m = "${why}: not your branch, deploy again"
+  foreach ($l in @($kept | Where-Object { & $isNew $_ })) { if ($l.request) { $results[$l.request] = @{ outcome = 'failed'; message = $m } } }
+  foreach ($q in @($reqs | Where-Object { $_.kind -eq 'drop' -and @($cur[$rn].branch) -contains $_.branch })) { $results[$q.id] = @{ outcome = 'failed'; message = $m } }
+}

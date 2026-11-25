@@ -3,7 +3,7 @@
 tests/db-generic.tests.ps1: the db adapters on layouts other than ours, offline (mocked SQL, shims): migration sets (two masters,
 admin + tenant scopes: registry first on tag, last on rollback; search path = the resources root), several masters without sets
 refused, a flyway-style dir set (files under its dir count as migrations), tenant models none / column / one-DB, postgres never
-calls the mysql client, envy verbs a local adapter registers.
+calls the mysql client, envy verbs a local adapter registers, a kit-stopped lane build (no owner, no layer blamed).
 Usage: pwsh -NoProfile -File tests/db-generic.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area db-generic).
 Exit codes: 0 pass · 1 fail.
 #>
@@ -138,6 +138,13 @@ try {
     "$dry#$n0#$run#$($dels -join ';')#$(@($global:tcSql -match 'information_schema') -join '')" }
   Expect "tenant model column: dry run counts, keep refused, delete retried past a FK, registry last ($tcR)" ($tcR -match "would delete 2 row\(s\) from public\.orders, 2 row\(s\) from public\.orgs \| \[cl\] tenant base kept" -and $tcR -match "#0#\[cl\] tenant acme: rows deleted from 2 table\(s\)#DELETE FROM public\.orders WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme';DELETE FROM public\.orgs WHERE org_id = 'acme'#.* AND TABLE_SCHEMA IN \('app'\)$")
 } finally { $env:PATH = $oldPath }
+# 2026-11-25: an agent's release killed lane builds it owned; the train blamed a layer
+$kb = & { . (Join-Path $k 'skills/envy/envy.ps1') help *> $null; $g = Join-Path (New-Item -ItemType Directory -Force (Kd)).FullName 'g.ps1'; Set-Content $g "Write-Host '[gate] stopped by the kit: x (exit -1)'; `"o=`$env:CLAUDE_AGENT`" > '$g.txt'; exit -1"
+  $KitCmd.dev = $g; $env:CLAUDE_AGENT = 'dv'; function EnvServices { @{ name = 'api'; build = 'b' } }; function RepoOf { 'r' }; function SvcDir { $PWD }; function EnvVars { [ordered]@{} }; function EnvRepos { @{} }
+  foreach ($f in 'BuildKey', 'Find-CheckBuild', 'Get-LayerReactorFlags', 'Event', 'Expand-Placeholders') { Set-Item "function:$f" { } }
+  $rs = @{}; Set-KilledBuild k @(@{ request = 1 }) { 1 } @(@{ kind = 'drop'; id = 2; branch = 'b' }) @{ r = @{ branch = 'b' } } r $rs
+  "$(Build-Repo kb r 6>$null)|$(Get-Content "$g.txt")|$env:CLAUDE_AGENT|$($rs[1].outcome)$($rs[2].outcome)" }
+Expect "envy lane build killed, no owner; layer + drop failed ($kb)" ($kb -eq 'killed: api: x|o=|dv|failedfailed')
 Remove-TestKit $k
 # the test helper: a read without the end marker is asked again; a write batch is never re-run (it may have run: a re-run hides the flake)
 $tmq = & { $script:tmCalls = 0; function mysql { $script:tmCalls++; $global:LASTEXITCODE = 0; if ($script:tmCalls -eq 1) { 'lost' } else { 'r'; '__kit_rows_end__' } }

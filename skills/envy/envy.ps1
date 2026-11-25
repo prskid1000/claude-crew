@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L471 code · L482 migrations ·
-  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L633 shared builds · L772 hooks · L846 marks · L1030 seed ·
-  L1097 processes · L1461 daemon · L1936 cleanup · L2008 verbs
+  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L633 shared builds · L764 hooks · L838 marks · L1022 seed ·
+  L1089 processes · L1453 daemon · L1931 cleanup · L2003 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -632,6 +632,7 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
 }
 # ---- shared builds: a recorded copy of the same code + build config is staged, no build (reuseBuilds: own lane; shareBuild: any)
 function Build-Repo([string]$e, [string]$rn) {
+  $script:Killed = ''
   foreach ($s in EnvServices $e | Where-Object { $_.build -and (RepoOf $e $_) -eq $rn }) {
     $script:SharedStage.Remove($s.name); $script:BuildKeys[$s.name] = $key = BuildKey $e $s
     $script:CheckBuild.Remove($s.name)
@@ -643,9 +644,10 @@ function Build-Repo([string]$e, [string]$rn) {
     elseif ($lr = Get-LayerReactorFlags $e $s $cmd) { $cmd = Add-ToolFlags $cmd $lr }
     Write-Host "[$e] building $($s.name): $cmd"
     $log = LogFile $e "$($s.name)-build"; Remove-Item $log -ErrorAction SilentlyContinue; $t0 = Get-Date
-    With-Env (EnvVars $e $s) { & $KitCmd.dev gate -Dir $dir -Cmd "$cmd > `"$log`" 2>&1" *>&1 | Select-String -Pattern '^\[gate\] (starting|waiting.*Biggest)' | ForEach-Object { Write-Host "  $_" } }
+    With-Env (LaneEnv $e $s) { & $KitCmd.dev gate -Dir $dir -Cmd "$cmd > `"$log`" 2>&1" *>&1 | Select-String -Pattern '^\[gate\] (starting|waiting.*Biggest|stopped by the kit|PAUSE)' | ForEach-Object { if ("$_" -match 'kit: (.+?) \(exit|\] (PAUSE.+)') { $script:Killed = "$($Matches[1])$($Matches[2])" }; Write-Host "  $_" } }
     $bc = $LASTEXITCODE
     Event $e 'build' @{ service = $s.name; repo = $rn; ok = -not $bc; code = $bc; sec = [int]((Get-Date) - $t0).TotalSeconds; sha = "$(git -C (EnvRepos $e)[$rn].wt rev-parse --short HEAD 2>$null)".Trim() }   # durations feed the learned parameters
+    if ($bc -and $script:Killed) { return "killed: $($s.name): $script:Killed" }
     if ($bc) {
       $code = $bc; $lines = @(Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '^\[gate\]|^WARNING:' })
       $errs = @($lines | Where-Object { $_ -match '(?i)\berror\b|failed|exception|cannot find|not found' } | Select-Object -First 10)
@@ -708,17 +710,7 @@ function Add-ReleaseFiles([string]$from, [string]$to, [switch]$Release, [switch]
   $null = New-Item -ItemType Directory -Force $to; Copy-Item (Join-Path $from '*') $to -Recurse -Force -Exclude 'app.aot'
 }
 # the release folder an artifact path lies in (artifact = a file in it, or the folder itself)
-function ReleaseDirOf([string]$root, [string]$art) { if (-not $art) { return $null }; $rel = [IO.Path]::GetRelativePath($root, $art); if ($rel -match '^\.\.') { return $null }; Join-Path $root (($rel -split '[\\/]')[0]) }
-# -> the release folders past keepReleases that no service runs from (removed; -DryRun: listed only)
-function Remove-OldReleases([string]$e, $s, [string]$root, [switch]$DryRun) {
-  $inUse = @((Read-State $e).services.Values | ForEach-Object { ReleaseDirOf $root "$($_.artifact)" } | Where-Object { $_ })
-  $old = @(Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | Sort-Object LastWriteTime -Descending | Select-Object -Skip $script:KeepReleases | Where-Object { $_.FullName -notin $inUse })
-  if ($DryRun) { return @($old.FullName) }
-  $old | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; @($old.FullName)
-  $store = Join-Path $root '_lib'; if (-not (Test-Path -LiteralPath $store)) { return }
-  $refs = @{}; foreach ($m in Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -notlike '_*' | ForEach-Object { Join-Path $_.FullName '.libs.json' } | Where-Object { Test-Path -LiteralPath $_ }) { foreach ($p in (Get-KitProps (Get-Content -LiteralPath $m -Raw | ConvertFrom-Json))) { $refs["$($p.Value)"] = $true } }
-  Get-ChildItem -LiteralPath $store -File | Where-Object { -not $refs[$_.BaseName] } | Remove-Item -Force -ErrorAction SilentlyContinue   # no release links it
-}
+# ReleaseDirOf, Remove-OldReleases (keepReleases): adapters/shared-builds.ps1
 # services[].unpack: unpacks {artifact} into {out}: a runnable file of its type + libraries
 function Expand-Artifact([string]$e, $s, [string]$file, [string]$to) {
   $tmp = Join-Path (Split-Path $to) '_unpack'; Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -742,7 +734,7 @@ function Invoke-AotTrain([string]$e, $s, [string]$artifact) {
   $f = AotFile $artifact; $tmp = "$f.tmp"; Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
   $cmd = (Expand-Placeholders ([string]$s.aotTrain) $e $s (SvcDir $e $s) $artifact).Replace('{aotFile}', $tmp); $t0 = Get-Date
   $log = LogFile $e "aot-$($s.name)"; Add-Content $log "== $(Now) training: $cmd"
-  With-Env (EnvVars $e $s) { & $KitCmd.dev gate -Dir (Split-Path $f) -Cmd "$cmd >> `"$log`" 2>&1" *>&1 | Out-Null }
+  With-Env (LaneEnv $e $s) { & $KitCmd.dev gate -Dir (Split-Path $f) -Cmd "$cmd >> `"$log`" 2>&1" *>&1 | Out-Null }
   $ok = -not $LASTEXITCODE -and (Test-Path -LiteralPath $tmp) -and (Get-Item -LiteralPath $tmp).Length
   if ($ok) { Move-Item -LiteralPath $tmp $f -Force } else { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
   Event $e 'aot-train' @{ service = $s.name; ok = [bool]$ok; sec = [int]((Get-Date) - $t0).TotalSeconds; artifact = $artifact }
@@ -1536,10 +1528,12 @@ function Run-Train {
       continue
     }
     $err = Build-Repo $e $rn
+    if ($script:Killed -notmatch '^$|PAUSE') { $err = Build-Repo $e $rn }
+    try { if ($script:Killed) { throw $err }
     if ($err) {
       $base = @($kept | Where-Object { -not (& $isNew $_) }); $cands = @($kept | Where-Object { & $isNew $_ })
       $state = @{ err = $err }
-      $try = { param($set) $null = Sync-Repo $e $r @($set) -NoFetch; $state.err = Build-Repo $e $rn; -not $state.err }
+      $try = { param($set) $null = Sync-Repo $e $r @($set) -NoFetch; $state.err = Build-Repo $e $rn; if ($script:Killed) { throw $state.err }; -not $state.err }
       Phase "build failed in $rn : finding the culprit among $($cands.Count) new layer(s)" $codeBlock @($affected)
       if (-not $cands.Count -or -not (& $try $base)) {
         foreach ($l in $cands) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : the target + the layers already live do not build either: $($state.err)" } } }
@@ -1559,9 +1553,10 @@ function Run-Train {
       }
       $kept = @($base) + @($cands)
       $null = Sync-Repo $e $r $kept -NoFetch
-      $err = Build-Repo $e $rn
+      $err = Build-Repo $e $rn; if ($script:Killed) { throw $err }
       if ($err) { $notes.Add("$rn still does not build after removing culprits: kept the running release ($err)"); foreach ($l in $kept | Where-Object { & $isNew $_ }) { if ($l.request) { $results[$l.request] = @{ outcome = 'rejected'; message = "$rn : $err" } } }; $null = Sync-Repo $e $r @($cur[$rn]) -NoFetch; continue }
     }
+    } catch { if ("$_" -notlike 'killed:*') { throw }; Set-KilledBuild "$_" $kept $isNew $reqs $cur $rn $results; $null = Sync-Repo $e $r @($cur[$rn]) -NoFetch; continue }
     $newLayers[$rn] = @($kept | Where-Object { & $isNew $_ })
     $artifacts += (Stage-Artifacts $e $rn $tag)
     $repoOut[$rn] = @{ target = $r.target; targetSha = $targetSha; layers = @($kept) }
