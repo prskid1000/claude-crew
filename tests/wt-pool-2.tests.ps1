@@ -22,7 +22,7 @@ $owTest = Invoke-PsTest pool-orphan-wait @"
 $owOut = $owTest -join ' '
 Expect "pool: board leave removes only the leaving agent's queued waits; a waiter stops once its agent left after the wait began, never for one that never joined, left before it, or has a live successor row ($owOut)" ($owOut -match 'removed:devQ-app kept:True' -and $owOut -match 'never-joined:False' -and $owOut -match 'left-after:True' -and $owOut -match 'left-before:False' -and $owOut -match 'successor-live:False')
 $lsrc = Get-Content (Join-Path $k 'skills/crafty/adapters/wt-pool.ps1') -Raw; $bsrc = Get-Content (Join-Path $k 'skills/bossy/bossy.ps1') -Raw
-Expect "pool: the lease wait loop exits on a removed / replaced wait file or a gone agent, and its finally keeps a newer waiter's file; board leave calls Remove-KitPoolWaits" ($lsrc -match 'if \(-not \(& \$ownWait\)\) \{ throw' -and $lsrc -match 'Test-KitPoolWaiterGone \$Agent \$since' -and $lsrc -match 'finally \{ if \(& \$ownWait\)' -and $bsrc -match 'Remove-KitPoolWaits \$script:leftEntry\.agent')
+Expect "pool: the lease wait loop exits on a removed / replaced wait file or a gone agent, and its finally keeps a newer waiter's file; board leave calls Remove-KitPoolWaits" ($lsrc -match 'if \(-not \(& \$ownWait\)\) \{ throw' -and $lsrc -match 'if \(-not \(& \$ownWait\)\) \{ return \$null \}' -and $lsrc -match 'Test-KitPoolWaiterGone \$Agent \$since' -and $lsrc -match 'finally \{ if \(& \$ownWait\)' -and $bsrc -match 'Remove-KitPoolWaits \$script:leftEntry\.agent')
 # coordinator 2026-11-25: 9 TASK CLOCK nudges to a workflow agent's left id never arrived: a msg goes to the live row of the same run,
 # area and type; the agent's next wt / check / checkpoint call prints its unread messages (stderr)
 $mbTest = Invoke-PsTest board-msg-left @"
@@ -32,21 +32,22 @@ $mbTest = Invoke-PsTest board-msg-left @"
 @{ agent = 'devy-lone'; type = 'devy'; run = 'r2'; area = 'a2'; status = 'left'; beat = `$now } | ConvertTo-Json | Set-Content (Join-Path `$bd 'devy-lone-1.json')
 Send-BoardMsg 'supervise' 'devy-old' 'TASK CLOCK: open the MR'; Send-BoardMsg 'supervise' 'devy-lone' 'kept'
 "to:`$script:KitMsgTo new:`$(Test-Path (Get-InboxFile 'devy-90')) lone:`$(Test-Path (Get-InboxFile 'devy-lone'))"
+Show-KitVerbInbox @('release', '-Agent', 'devy-90'); `$env:KIT_AGENT = 'coordinator'; Show-KitVerbInbox @('lease', '-Agent', 'devy-90'); Remove-Item Env:KIT_AGENT
 Show-KitVerbInbox @('lease', '-Repo', 'x', '-Agent', 'devy-90'); Show-KitVerbInbox @('lease', '-Agent', 'devy-90'); Show-KitVerbInbox @('lease', '-Agent', 'devy-lone')
 "@
 $mbOut = $mbTest -join ' // '
 Expect "board msg: a left id's message goes to the live agent of its run + area (a lone one stays); wt / check / checkpoint print the unread ones once, never a left agent's ($mbOut)" ($mbOut -match 'to:devy-lone new:True lone:True' -and @([regex]::Matches($mbOut, '\[inbox\] MESSAGE for devy-90 \(do what it says\): \d\d:\d\d from supervise: TASK CLOCK: open the MR')).Count -eq 1 -and $mbOut -notmatch 'MESSAGE for devy-lone' -and (Get-Content (Join-Path $k 'skills/crafty/crafty.ps1') -Raw) -match "if \(\`$__verb -in 'wt', 'check', 'checkpoint'\) \{ try \{ Show-KitVerbInbox")
 # coordinator 2026-11-25: an api suite reads its URLs from cypress/data/config.ts (devys hand-edited it): tests.e2e.run[].portFiles
 # get the lane's ports for the run and are put back after; a file with its own edits is refused; a killed run is restored first
-$pfRepo = Join-Path (Kd) 'pf-repo'; New-Item -ItemType Directory -Force "$pfRepo/cypress/data" | Out-Null; Set-Content "$pfRepo/cypress/data/config.ts" "serverUrl: 'http://localhost:8443'"; Save-GitRepo $pfRepo base
+$pfRepo = Join-Path (Kd) 'pf-repo'; New-Item -ItemType Directory -Force "$pfRepo/cypress/data" | Out-Null; Set-Content "$pfRepo/cypress/data/config.ts" "serverUrl: 'http://localhost:8443'"; Set-Content "$pfRepo/b.ts" "u: 'http://localhost:8443'"; Save-GitRepo $pfRepo base
 $pfTest = Invoke-PsTest port-files @"
 . '$k/skills/crafty/lib.ps1'; `$fx = { param([string]`$t) `$t -replace ':8443', ':8543' }; `$cf = '$pfRepo/cypress/data/config.ts'
 Use-KitLanePortFiles '$pfRepo' @('cypress/data/config.ts', 'gone.ts') `$fx; "run:`$((Get-Content `$cf -Raw).Trim())|mark:`$(Test-Path (Get-KitPortFilesMark '$pfRepo'))"
 Use-KitLanePortFiles '$pfRepo' @('cypress/data/config.ts') `$fx; "again:`$((Get-Content `$cf -Raw).Trim())"
 Restore-KitLanePortFiles '$pfRepo'; "after:`$((Get-Content `$cf -Raw).Trim())|mark:`$(Test-Path (Get-KitPortFilesMark '$pfRepo'))|clean:`$(-not (git -C '$pfRepo' status --porcelain))"
-Set-Content `$cf "serverUrl: 'http://localhost:8443' // mine"; try { Use-KitLanePortFiles '$pfRepo' @('cypress/data/config.ts') `$fx; 'own:written' } catch { "own:refused" }
+Set-Content `$cf "serverUrl: 'http://localhost:8443' // mine"; try { Use-KitLanePortFiles '$pfRepo' @('b.ts', 'cypress/data/config.ts') `$fx; 'own:written' } catch { "own:refused|b:`$((Get-Content '$pfRepo/b.ts' -Raw).Trim())" }
 "@
 $pfOut = $pfTest -join ' // '
-Expect "e2e portFiles: lane ports written for the run (a missing file skipped), a second run restores the first, put back after (clean tree); a file with its own edits refused; crafty runs it in try / finally ($pfOut)" ($pfOut -match "run:serverUrl: 'http://localhost:8543'\|mark:True" -and $pfOut -match "again:serverUrl: 'http://localhost:8543'" -and $pfOut -match "after:serverUrl: 'http://localhost:8443'\|mark:False\|clean:True" -and $pfOut -match 'own:refused' -and (Get-Content (Join-Path $k 'skills/crafty/crafty.ps1') -Raw) -match 'Invoke-KitE2eRuns \$st\.dir \$runs @\(if \(\$ln\) \{ \$recipe\.portFiles \}\)' -and (Get-Content (Join-Path $k 'skills/crafty/adapters/wt-pool.ps1') -Raw) -match '\} finally \{ Restore-KitLanePortFiles \$Dir \}')
+Expect "e2e portFiles: lane ports written for the run (a missing file skipped), a second run restores the first, put back after (clean tree); a file with its own edits refused; crafty runs it in try / finally ($pfOut)" ($pfOut -match "run:serverUrl: 'http://localhost:8543'\|mark:True" -and $pfOut -match "again:serverUrl: 'http://localhost:8543'" -and $pfOut -match "after:serverUrl: 'http://localhost:8443'\|mark:False\|clean:True" -and $pfOut -match "own:refused\|b:u: 'http://localhost:8443'" -and (Get-Content (Join-Path $k 'skills/crafty/crafty.ps1') -Raw) -match 'Invoke-KitE2eRuns \$st\.dir \$runs @\(if \(\$ln\) \{ \$recipe\.portFiles \}\)' -and (Get-Content (Join-Path $k 'skills/crafty/adapters/wt-pool.ps1') -Raw) -match '\} finally \{ Restore-KitLanePortFiles \$Dir \}')
 Remove-TestKit $k
 Complete-Tests

@@ -33,7 +33,16 @@ $kbr = & { . $lkL; function Get-MigTool { 'liquibase' }; function Get-RepoConf($
   $g2 = & $mkConflict kb-routes 'web/routes.txt' "r0" "r0`nr1" "r0`nr2"; $r2 = Resolve-LaneKeepBoth shop $rkb $g2 @('web/routes.txt') "$nhd"
   $g3 = & $mkConflict kb-code 'src/App.java' 'class A { int x = 0; }' 'class A { int x = 1; }' 'class A { int x = 2; }'; $r3 = Resolve-LaneKeepBoth shop $rkb $g3 @('src/App.java') "$nhd"
   $g4 = & $mkConflict kb-mixed 'src/db/changelog/master.xml' (& $inc 'a') "$(& $inc 'a', 'b')<!-- x -->" "$(& $inc 'a')<changeSet id=`"1`"/>"; $r4 = Resolve-LaneKeepBoth shop $rkb $g4 @('src/db/changelog/master.xml') "$nhd"
+  $g5 = Join-Path (Kd) 'kb-del'; New-Item -ItemType Directory -Force "$g5/web" | Out-Null; Set-Content "$g5/web/routes.txt" 'r0'; Save-GitRepo $g5 base; git -C $g5 branch -q theirs
+  Remove-Item "$g5/web/routes.txt"; git -C $g5 commit -q -am del; git -C $g5 switch -q theirs; Set-Content "$g5/web/routes.txt" "r0`nr2"; git -C $g5 commit -q -am edit; git -C $g5 switch -q -; git -C $g5 merge -q --no-ff --no-edit theirs 2>&1 | Out-Null
+  $r5 = Resolve-LaneKeepBoth shop $rkb $g5 @('web/routes.txt') "$nhd"; $r4 = "$r4|del:$r5|$(Test-Path (Join-Path $g5 '.git/MERGE_HEAD'))"
   "$r1|$($t1 -match 'b\.xml' -and $t1 -match 'c\.xml' -and $t1 -notmatch '<<<<<<<')|$(Test-Path (Join-Path $g1 '.git/MERGE_HEAD'))|$r2|$r3|$(Test-Path (Join-Path $g3 '.git/MERGE_HEAD'))|$r4" }
-Expect "train merge: an include-only changelog master conflict and a repos[].appendOnly file keep both sides and commit; code or a non-include line: refused, merge untouched ($kbr)" ($kbr -eq 'True|True|False|True|False|True|False')
+Expect "train merge: an include-only changelog master conflict and a repos[].appendOnly file keep both sides and commit; code or a non-include line: refused, merge untouched ($kbr)" ($kbr -eq 'True|True|False|True|False|True|False|del:False|True')
+# envfix-phone 2026-11-25: ui login / user create on a lane name: the base target on the lane's ports + the lane entry's own logins
+$prt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); function Get-LaneTarget($c, $n) { if ($n -eq 'local-shop-osprey') { [pscustomobject]@{ api = 'http://127.0.0.1:8280'; users = [pscustomobject]@{ base1 = @{} } } } }
+  $tg = [ordered]@{ 'local-shop' = [ordered]@{ api = 'http://127.0.0.1:8080' }; 'local-shop-osprey' = [ordered]@{ users = [ordered]@{ driver1 = @{} } }; 'stage' = [ordered]@{ api = 'https://s'; users = [ordered]@{ a = @{} } } }
+  $l1 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $tg.Remove('local-shop-osprey'); $l2 = Resolve-PokeyTarget $tg 'local-shop-osprey'; $s = Resolve-PokeyTarget $tg 'stage'
+  "$($l1.api)|$(@($l1.users.Keys) -join ',')|$(@($l2.users.Keys) -join ',')|$($s.api)|$($null -eq (Resolve-PokeyTarget $tg 'nope'))" }
+Expect "pokey targets: a lane name = the base on the lane's ports with the lane entry's own logins (none: the base's, as a dict); a full entry as is ($prt)" ($prt -eq 'http://127.0.0.1:8280|driver1|base1|https://s|True')
 Remove-TestKit $laneKit
 Complete-Tests

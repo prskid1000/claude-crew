@@ -19,8 +19,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L30 lanes · L44 report · L161 seat · L310 api · L573 users · L705 login surfaces (parity.json login) · L738 finalize ·
-  L1289 results · L1324 retest · L1381 prepare
+Sections: L30 lanes · L44 report · L161 seat · L310 api · L582 users · L714 login surfaces (parity.json login) · L747 finalize ·
+  L1298 results · L1333 retest · L1390 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -354,6 +354,15 @@ function Get-LaneTarget($cfg, [string]$name) {
   }
   $null
 }
+# a target by name (api, ui login, user): an entry with its own URLs as is; a lane name (<target>-<bird> / <target><k>) = the base
+# target on that lane's ports, plus the users / created of a lane entry holding only logins (a lane DB has its own; envfix-phone)
+function Resolve-PokeyTarget($targets, [string]$Name) {
+  $own = Get-KitMember $targets $Name; if ($own -and ((Get-KitMember $own 'api') -or (Get-KitMember $own 'web'))) { return $own }
+  $lt = Get-LaneTarget ([pscustomobject]@{ targets = $targets }) $Name; if (-not $lt) { return $own }
+  if ($own) { foreach ($lk in 'users', 'created', 'defaultUser', 'defaultTenant') { if ($null -ne (Get-KitMember $own $lk)) { Set-KitProp $lt $lk (Get-KitMember $own $lk) } } }
+  if ($targets -is [Collections.IDictionary]) { foreach ($lk in 'users', 'created') { $v = Get-KitMember $lt $lk; if ($v -isnot [Collections.IDictionary]) { $d = [ordered]@{}; foreach ($p in @(Get-KitProps $v)) { $d[$p.Name] = $p.Value }; Set-KitProp $lt $lk $d } } }   # user / ui login read .Keys
+  $lt
+}
 # the user when -As is not given: target defaultUser, kit api.defaultUser, the target's only user; several and none chosen = $null
 function Resolve-ApiUser($t) {
   $names = @((Get-KitProps $t.users).Name | Where-Object { $cm = Get-KitMember $t.created $_; -not ($cm -and $cm.seat) })   # a seat login never becomes the default
@@ -428,8 +437,8 @@ if (-not $Target) { $Target = $cfg.default }
 # a QA run pins its targets (KIT_QA_TARGETS)
 $pin = @("$env:KIT_QA_TARGETS" -split '[,\s]+' | Where-Object { $_ })
 if ($pin.Count -and $Target -notin $pin) { throw "target '$Target' is not this QA run's target ($($pin -join ', ')): a run tests only its own env (run.json target / alsoTargets)" }
-$t = (Get-KitMember $cfg.targets $Target)
-if (-not $t -and $Target -match '^(?<b>.+?)(?<k>\d+)$' -and (Get-KitMember $cfg.targets "$($Matches.b)-$("$(Get-KitBirdName ([int]$Matches.k))".ToLower())")) { $nk = "$($Matches.b)-$("$(Get-KitBirdName ([int]$Matches.k))".ToLower())"; Write-Warning "old lane target '$Target': use $nk"; $Target = $nk; $t = (Get-KitMember $cfg.targets $Target) }
+$t = Resolve-PokeyTarget $cfg.targets $Target
+if (-not $t -and $Target -match '^(?<b>.+?)(?<k>\d+)$' -and (Get-KitMember $cfg.targets "$($Matches.b)-$("$(Get-KitBirdName ([int]$Matches.k))".ToLower())")) { $nk = "$($Matches.b)-$("$(Get-KitBirdName ([int]$Matches.k))".ToLower())"; Write-Warning "old lane target '$Target': use $nk"; $Target = $nk; $t = Resolve-PokeyTarget $cfg.targets $Target }
 if (-not $t) { $t = Get-LaneTarget $cfg $Target }
 if (-not $t) { throw "Unknown target '$Target'. Known: $((Get-KitProps $cfg.targets).Name -join ', ')$(if ($Target -match '\d$|-[a-z]+$') { ' (a local env lane <target>-<bird>: its base target must point at lane 1 ports; envy.ps1 envs)' })" }
 if (-not $Tenant) { $Tenant = [string]$t.defaultTenant }
@@ -637,7 +646,7 @@ param(
   [switch]$Seat                      # a run's own parallel login (seat acquire): seat cleanup deactivates it
 )
 $ErrorActionPreference = 'Stop'
-$tf = Get-PokeyTargets; $t = $tf.data.targets[$Target]
+$tf = Get-PokeyTargets; $t = Resolve-PokeyTarget $tf.data.targets $Target
 # list on a lane (<target>-<bird>): its logins are the base target's (create / deactivate keep the exact target)
 if (-not $t -and $Action -eq 'list' -and ($lb = Get-LaneBase $tf.data.targets $Target)) { $Target = $lb.base; $t = $tf.data.targets[$Target] }
 # list on an env or lane name (rm-osprey, rm-local, lane-03): the target on that group's lane-1 ports
@@ -658,7 +667,7 @@ if ($made[$Name].ids -is [Collections.IDictionary]) { foreach ($key in @($made[$
 $vars.email = Expand-UserTemplate $(if ($rc.email) { $rc.email } else { '{login}@example.invalid' }) $vars
 $save = {   # one writer, under the file lock; never prints a value
   param([scriptblock]$Change)
-  Invoke-KitLocked $tf.file { $d = Get-Content -LiteralPath $tf.file -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates; $tt = $d.targets[$Target]; if ($tt.created -isnot [Collections.IDictionary]) { $tt.created = [ordered]@{} }; if ($tt.users -isnot [Collections.IDictionary]) { $tt.users = [ordered]@{} }; & $Change $tt; Write-KitAtomic $tf.file ($d | ConvertTo-Json -Depth 30) }
+  Invoke-KitLocked $tf.file { $d = Get-Content -LiteralPath $tf.file -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates; $tt = $d.targets[$Target]; if ($null -eq $tt) { $tt = $d.targets[$Target] = [ordered]@{} }; if ($tt.created -isnot [Collections.IDictionary]) { $tt.created = [ordered]@{} }; if ($tt.users -isnot [Collections.IDictionary]) { $tt.users = [ordered]@{} }; & $Change $tt; Write-KitAtomic $tf.file ($d | ConvertTo-Json -Depth 30) }
 }
 $ro = if ($Role) { $Role } else { [string]$made[$Name].role }   # deactivate: the role it was made with
 $steps = @{}; foreach ($sn in 'find', 'create', 'deactivate') { $steps[$sn] = Get-UserSteps $rc $ro $sn }
@@ -716,7 +725,7 @@ Register-KitAdapter login app @{ users = $true; secretRefs = $true; profiles = $
 function Invoke-UiLogin {
 param([Parameter(Mandatory)][string]$Target, [Parameter(Mandatory)][string]$As, [string]$Serial, [string]$Tenant)
 if ($Serial) { $env:ANDROID_SERIAL = $Serial }
-$tf = Get-PokeyTargets; $t = $tf.data.targets[$Target]; if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ')" }
+$tf = Get-PokeyTargets; $t = Resolve-PokeyTarget $tf.data.targets $Target; if (-not $t) { throw "Unknown target '$Target'. Known: $(@($tf.data.targets.Keys) -join ', ')" }
 $lp = Get-KitLoginPair $t $As; $u = $lp.u; if (-not $u[0]) { "NO-USER '$As' in target ${Target}: pokey.ps1 user list -Target $Target, or user create"; exit 2 }
 if (-not $Tenant -and "$($lp.pf.fields.tenant)") { $Tenant = "$($lp.pf.fields.tenant)" }
 if (-not $Tenant) { $Tenant = if ($t.created -is [Collections.IDictionary] -and $t.created[$As].tenant) { [string]$t.created[$As].tenant } else { [string]$t.defaultTenant } }

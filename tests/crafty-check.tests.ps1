@@ -173,10 +173,9 @@ $dgr = foreach ($c in @(@('fail', 200, 1), @('pass', 200, 0), @('short', 5, 0)))
   $o = pwsh @np $D check -Dir $dg -Step test -Tests DigestTest -Force 2>&1 | Out-String
   "$($c[0]):$LASTEXITCODE,$($o -match 'ERROR boom in Foo'),$($o -match 'noise 101\b'),$($o -match 'noise [15]0\b'),$($o -match 'noise (200|5)\b'),$($o -match 'the full log: \S+\.log')" }
 Expect "check digest: failure line + 2 after, the last 10, the log path; a pass only the tail; a short run whole ($($dgr -join ' '))" (($dgr -join ' ') -eq 'fail:1,True,True,False,True,True pass:0,False,False,False,True,True short:0,False,False,False,True,False')
-# supervise ACT 2026-11-25 (pasted build logs): a printed line is cut to 200 chars
-'"x" * 900; "tail-ok"' | Set-Content "$dg/gen3.ps1"; '{ "stack": "java-maven", "commands": { "test": "pwsh -NoProfile -File gen3.ps1 {tests}" } }' | Set-Content "$dg/.claude-stack.json"
+'"x" * 900; ("y" * 300) + " AssertionError: b"; "tail-ok"; exit 1' | Set-Content "$dg/gen3.ps1"; '{ "stack": "java-maven", "commands": { "test": "pwsh -NoProfile -File gen3.ps1 {tests}" } }' | Set-Content "$dg/.claude-stack.json"
 $lo = pwsh @np $D check -Dir $dg -Step test -Tests DigestTest -Force 2>&1 | Out-String; $loX = @($lo -split "`r?`n" | Where-Object { $_ -match '^x{20}' })
-Expect "check digest: a long line prints cut to 200 chars + …, the next line whole ($(@($loX | ForEach-Object Length) -join ','))" ($loX.Count -eq 1 -and $loX[0].Length -eq 202 -and $loX[0].EndsWith(' …') -and $lo -match 'tail-ok')
+Expect "check digest (ACT 2026-11-25): a line cut to 200 + …, a marker past it found ($(@($loX | ForEach-Object Length) -join ','))" ($loX.Count -eq 1 -and $loX[0].Length -eq 202 -and $loX[0].EndsWith(' …') -and $lo -match 'tail-ok' -and $lo -match '\[gate\] first failures:\s+y{20}')
 # first failures last (agents | tail -N): compile errors before test failures; zero counts and warnings are no failure
 @'
 1..40 | ForEach-Object { "[WARNING] deprecated API: errors may fail $_" }; '[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0'

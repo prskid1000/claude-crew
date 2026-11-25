@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L191 names · L284 slots · L328 lease · L444 release · L490 lanes · L636 sync · L738 pool · L781 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L328 lease · L445 release · L491 lanes · L640 sync · L742 pool · L785 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -364,6 +364,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
     while (-not $got) {
       $got = Invoke-KitLocked $poolLock {
         if (Test-Path -LiteralPath $wf) { (Get-Item -LiteralPath $wf).LastWriteTime = Get-Date }   # heartbeat: 3 min untouched = a dead waiter
+        if (-not (& $ownWait)) { return $null }   # cancelled between polls: never a slot for a left agent (the check below throws)
         $slots = @(Get-KitSlots $Repo); $byN = @{}; $ls = @{}
         foreach ($s in $slots) { $byN[$s.n] = $s; $ls[$s.n] = Read-KitSlotLease $s.file }
         $reserved = @(foreach ($n in 1..$size) { if (-not $byN[$n]) { $rf = Get-KitSlotFile (Get-KitSlotLeaf $n $rl); $ro = Read-KitSlotLease $rf
@@ -602,16 +603,19 @@ function Restore-KitLanePortFiles([string]$Dir) {
 }
 # crafty.ps1 check -Step e2e: each run through the gate (its own log), the lane's portFiles written around them -> the last failing exit
 function Invoke-KitE2eRuns([string]$Dir, [string[]]$Runs, [string[]]$PortFiles, [scriptblock]$Fix) {
-  $rc = 0; $n = 0; if (@($PortFiles | Where-Object { $_ }).Count -and $Fix) { Use-KitLanePortFiles $Dir $PortFiles $Fix } else { Restore-KitLanePortFiles $Dir }
-  try { foreach ($r in $Runs) { $n++; if ($Runs.Count -gt 1) { Write-Host "[check] e2e run $n/$($Runs.Count): $r" }
+  $rc = 0; $n = 0
+  try { if (@($PortFiles | Where-Object { $_ }).Count -and $Fix) { Use-KitLanePortFiles $Dir $PortFiles $Fix } else { Restore-KitLanePortFiles $Dir }
+    foreach ($r in $Runs) { $n++; if ($Runs.Count -gt 1) { Write-Host "[check] e2e run $n/$($Runs.Count): $r" }
       & $KitCmd.dev gate -Dir $Dir -Cmd $r -Log (Get-CheckLog $Dir "e2e-$n") | Out-Host; if ($LASTEXITCODE) { $rc = $LASTEXITCODE } } } finally { Restore-KitLanePortFiles $Dir }
   $rc
 }
 function Use-KitLanePortFiles([string]$Dir, [string[]]$Files, [scriptblock]$Fix) {
-  Restore-KitLanePortFiles $Dir; $done = @()
-  foreach ($rel in @($Files | Where-Object { $_ })) { $p = Join-Path $Dir $rel
-    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { Write-Host "[check] e2e: portFiles $rel not in $Dir`: skipped"; continue }
+  Restore-KitLanePortFiles $Dir; $done = @(); $use = @()
+  foreach ($rel in @($Files | Where-Object { $_ })) {   # every file checked before any is written
+    $null = git -C $Dir ls-files --error-unmatch -- $rel 2>$null; if ($LASTEXITCODE -or -not (Test-Path -LiteralPath (Join-Path $Dir $rel) -PathType Leaf)) { Write-Host "[check] e2e: portFiles $rel not a tracked file in $Dir`: skipped"; continue }
     if (@(git -C $Dir status --porcelain -- $rel).Count) { throw "e2e: portFiles $rel has edits of its own: commit or revert them (the lane ports are written for the run and put back with git checkout)" }
+    $use += $rel }
+  foreach ($rel in $use) { $p = Join-Path $Dir $rel
     $was = [IO.File]::ReadAllText($p); $new = & $Fix $was; if ($new -eq $was) { continue }
     [IO.File]::WriteAllText($p, $new); $done += $rel; Write-KitAtomic (Get-KitPortFilesMark $Dir) (@{ files = $done } | ConvertTo-Json -Compress) }
   if ($done.Count) { Write-Host "[check] e2e: lane ports in $($done -join ', ') for this run (put back after it)" }

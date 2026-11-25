@@ -61,18 +61,18 @@ function Exit-KitCiRuns {   # in crafty.ps1 check: its $Step, $Tests, $AllTests,
 # a gated run's log -> what an agent reads (owner 2026-11-22: 60 agents pasted whole build / test logs): a short log whole; else the
 # failure lines (+ the next 2 lines each) up to check.printLines, the last 10 lines (the summary), the log path
 function Write-KitRunDigest([string]$Path, [int]$Code) {
-  # each line cut to 200 chars like the first failures: a 60-line digest of long stack / bundle lines pasted 3-4k tokens (supervise ACT 2026-11-25)
-  $ls = @(try { Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop } catch { }) | ForEach-Object { if ("$_".Length -gt 200) { "$_".Substring(0, 200) + ' …' } else { "$_" } }; $ls = @($ls)
+  # matched on whole lines, printed cut to 200 chars like the first failures (60 long stack / bundle lines pasted 3-4k tokens, 2026-11-25)
+  $ls = @(try { Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop } catch { }); $cut = { param($x) if ("$x".Length -gt 200) { "$x".Substring(0, 200) + ' …' } else { "$x" } }
   $cap = [int](Get-KitParam 'check.printLines')
-  if ($ls.Count -le $cap) { foreach ($l in $ls) { Write-Host $l }; if ($Code) { foreach ($l in @(Get-KitRunFailures $ls)) { Write-Host $l } }; return }
+  if ($ls.Count -le $cap) { foreach ($l in $ls) { Write-Host (& $cut $l) }; if ($Code) { foreach ($l in @(Get-KitRunFailures $ls)) { Write-Host $l } }; return }
   $tail = 10; $keep = [Collections.Generic.SortedSet[int]]::new()
   if ($Code) {
     $rx = '(?i)\b(error|errors|fail(ed|ure|ures|ing)?|exception|assert\w*|traceback|panic|fatal|expected|not ok)\b|^\s*[✗×✖]|(?-i:^E\s)'
     for ($i = 0; $i -lt $ls.Count - $tail -and $keep.Count -lt $cap - $tail; $i++) { if ($ls[$i] -match $rx -and $ls[$i] -notmatch $script:KitDigestNoise) { for ($j = $i; $j -le [math]::Min($i + 2, $ls.Count - $tail - 1); $j++) { $null = $keep.Add($j) } } }
   }
-  $prev = -1; foreach ($i in $keep) { if ($prev -ge 0 -and $i -gt $prev + 1) { Write-Host '  ...' }; Write-Host $ls[$i]; $prev = $i }
+  $prev = -1; foreach ($i in $keep) { if ($prev -ge 0 -and $i -gt $prev + 1) { Write-Host '  ...' }; Write-Host (& $cut $ls[$i]); $prev = $i }
   if ($keep.Count) { Write-Host '  ...' }
-  foreach ($l in @($ls | Select-Object -Last $tail)) { Write-Host $l }
+  foreach ($l in @($ls | Select-Object -Last $tail)) { Write-Host (& $cut $l) }
   Write-Host "[gate] $($ls.Count) lines, $(if ($Code) { "$($keep.Count) failure line(s) and " })the last $tail shown; the full log: $Path (read a range: never the whole file)"
   if ($Code) { foreach ($l in @(Get-KitRunFailures $ls)) { Write-Host $l } }   # last: an agent's | tail -N still sees them
 }

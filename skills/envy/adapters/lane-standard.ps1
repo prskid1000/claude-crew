@@ -3,7 +3,7 @@
 # lane-standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird" / "nn", no older lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
 # (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs under the kit, off the system drive, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
-# Sections: L7 lane standard · L56 lane worktrees · L156 doctor
+# Sections: L7 lane standard · L56 lane worktrees · L159 doctor
 # ---- lane standard: doctor rows, port clashes, env aliases
 function Get-LanePathArgs([string]$Text) {
   @([regex]::Matches($Text, '(?i)(path\.data|path\.logs|datadir|data[-_]dir|log[-_]dir|log-error|defaults-file)[= ]\s*"?([^\s"]+)') | ForEach-Object { [pscustomobject]@{ key = $_.Groups[1].Value.ToLower(); path = $_.Groups[2].Value.Replace('\', '/').TrimEnd('/') } })
@@ -87,7 +87,7 @@ function Ensure-Worktree([string]$e, $r) {
   Write-Host "[$e] creating worktree $($r.wt) ($($r.name) @ $($r.target))"
   git -C $co branch -D "localenv/$e" 2>$null | Out-Null   # old names, no worktree: test merges only
   $wb = if ($r.branch) { $r.branch } else { Get-KitLaneBranch $e }; $wn = if ($r.wtName) { $r.wtName } else { "lane-$(Get-KitLaneSlug $e)" }   # a second target (EnvRepos): its own
-  $out = @(& $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch $wb -Target $r.target -Name $wn *>&1 | ForEach-Object { "$_" } | Where-Object { $_ }); $wx = $LASTEXITCODE; $out | ForEach-Object { Write-Host "  $_" }
+  $env:KIT_NO_INBOX = '1'; try { $out = @(& $KitCmd.dev wt new -Repo $r.cfg.checkout -Branch $wb -Target $r.target -Name $wn *>&1 | ForEach-Object { "$_" } | Where-Object { $_ }); $wx = $LASTEXITCODE } finally { Remove-Item Env:KIT_NO_INBOX -ErrorAction SilentlyContinue }; $out | ForEach-Object { Write-Host "  $_" }
   # a failed wt new (a missing dep source) surfaced here, not as Sync-Repo's "toplevel: )"
   if (-not (Test-LaneWorktree $r.wt)) { throw "[$e] lane worktree $($r.wt) ($($r.name) @ $($r.target)) not created: $(if ($out) { $out[-1] } else { "wt new exit $wx, no output" })" }
 }
@@ -99,8 +99,11 @@ function Resolve-LaneKeepBoth([string]$e, $r, [string]$d, [string[]]$Files, [str
   if (-not @($Files).Count) { return $false }
   $globs = @(Get-RepoConf $r.name 'appendOnly' @() | Where-Object { $_ }); $tool = Get-MigTool $e
   foreach ($f in $Files) { $rel = "$f".Replace('\', '/')
+    # both sides present (no modify / delete), conflict markers in the file (no binary conflict)
+    if (@(git -C $d ls-files -u -- $f 2>$null | Where-Object { $_ -match '^\d+ \S+ [23]\t' }).Count -ne 2 -or "$(Get-Content -LiteralPath (Join-Path $d $f) -Raw -ErrorAction SilentlyContinue)" -notmatch '(?m)^<<<<<<< ') { return $false }
     if (-not (@($globs | Where-Object { $rel -like "$_".Replace('\', '/') }).Count -or ((Test-MigVerb $tool 'appendOnly') -and (Invoke-MigVerb $tool 'appendOnly' @{ file = (Join-Path $d $f) })))) { return $false } }
   $null = & (Get-Python) -X utf8 $KitCmd.devtools keepboth @(@($Files) | ForEach-Object { Join-Path $d $_ }) 2>&1; if ($LASTEXITCODE) { return $false }
+  if (@($Files | Where-Object { "$(Get-Content -LiteralPath (Join-Path $d $_) -Raw)" -match '(?m)^(<<<<<<<|>>>>>>>) ' }).Count) { return $false }
   git -C $d add -- @($Files) 2>$null | Out-Null
   $null = git -C $d -c "core.hooksPath=$HooksDir" -c user.name=localenv -c user.email=localenv@localhost commit -q --no-edit 2>&1; -not $LASTEXITCODE
 }

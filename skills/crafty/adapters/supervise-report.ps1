@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L179 transcript tails · L247 supervise sweep · L327 status rows
+# Sections: L6 supervise report · L183 transcript tails · L251 supervise sweep · L331 status rows
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -155,8 +155,12 @@ function Read-KitInboxNew([string]$Agent, [switch]$All) {
 function Test-KitBoardAgent([string]$Agent) { [bool]@(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-1) | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { "$($_.agent)" -eq $Agent -and $_.status -ne 'left' }).Count }
 # crafty.ps1 wt / check / checkpoint: the caller's unread messages on stderr (-Agent, KIT_AGENT, CLAUDE_AGENT): a workflow agent that
 # never beats still gets a TASK CLOCK / BUILDS nudge at its next kit call
+# only the caller's own id: -Agent counts when it is KIT_AGENT / CLAUDE_AGENT or neither is set; never on -Read, release, sweep or a
+# kit child (KIT_NO_INBOX: lane worktree calls), so a coordinator's wt release -Agent <x> leaves x's inbox unread
 function Show-KitVerbInbox([string[]]$VerbArgs) {
-  $ai = [array]::IndexOf(@($VerbArgs | ForEach-Object { "$_".ToLower() }), '-agent'); $own = @(@($(if ($ai -ge 0 -and $ai + 1 -lt @($VerbArgs).Count) { @($VerbArgs)[$ai + 1] }), $env:KIT_AGENT, $env:CLAUDE_AGENT) | Where-Object { "$_".Trim() } | ForEach-Object { "$_" } | Select-Object -Unique)
+  $lo = @($VerbArgs | ForEach-Object { "$_".ToLower() }); if ($env:KIT_NO_INBOX -or '-read' -in $lo -or @($lo | Select-Object -First 1) -in 'release', 'sweep') { return }
+  $envIds = @($env:KIT_AGENT, $env:CLAUDE_AGENT | Where-Object { "$_".Trim() }); $ai = [array]::IndexOf($lo, '-agent'); $argId = if ($ai -ge 0 -and $ai + 1 -lt $lo.Count) { "$(@($VerbArgs)[$ai + 1])" }
+  $own = @(@($(if ($argId -and (-not $envIds.Count -or $argId -in $envIds)) { $argId }) + $envIds) | Where-Object { "$_".Trim() } | ForEach-Object { "$_" } | Select-Object -Unique)
   foreach ($o in $own) { if ($o -ne $env:CLAUDE_AGENT -and -not (Test-KitBoardAgent $o)) { continue }; foreach ($m in @(try { Read-KitInboxNew $o } catch { })) { [Console]::Error.WriteLine("[inbox] MESSAGE for $o (do what it says): $m") } }
 }
 function Show-KitGateInbox([string]$Owner) { if (-not $env:CLAUDE_AGENT -and -not (Test-KitBoardAgent $Owner)) { return }; foreach ($m in @(try { Read-KitInboxNew $Owner } catch { })) { Write-Host "[gate] MESSAGE for $Owner (follow it for this and every later build): $m" } }
