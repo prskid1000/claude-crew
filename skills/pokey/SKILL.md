@@ -17,6 +17,7 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 | `pokey.ps1` | steps 1-4, 6; L1, L3 (verbs: its header) |
 | `<kit>/skills/crafty/crafty.ps1` | step 3 (`check -Step e2e`); L1 Selection (`tracker list/view/owner`; a local env: `envy.ps1 status -Env`) |
 | `browser.mjs` | step 3 (web: read its header first; one logged-in headless Chrome per port) |
+| `matrix.mjs` | step 3 (a UI case at every variant at once; run it, its header prints the usage) |
 | `adapters/*`, `video.py` | used by the `pokey.ps1` / `browser.mjs` verb that needs them |
 | `media.md` | task videos (`pokey.ps1 evidence`) |
 | `lead.md` | L0-L3: `checky` lead, the coordinator (a test-only run, Selection) |
@@ -37,9 +38,10 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
    on HTTP 0 / >= 400, body still printed);
    web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`): UI checks
-   at each variant the change needs, all at once in one browser (`node adapters/ui-checks.mjs matrix --task <id> --case <id>
-   --script <case.mjs> --out <dir> --agent <you>`: a context per variant, per-variant results + the `Matrix:` line;
-   `devtools.py matrix-scope <task> --dir <wt>` first) + `layoutIssues()`; stated qualities measured (`contrast()`, timings);
+   at each variant the change needs, all at once in one browser (`node matrix.mjs --task <id> --case <id> --script
+   <case.mjs> --out <dir> --agent <you>`: a context per variant, per-variant results + the `Matrix:` line; a narrow
+   variant opens its collapsed nav first: `ui.openNav(page)`; `devtools.py matrix-scope <task> --dir <wt>` first) +
+   `layoutIssues()`; stated qualities measured (`contrast()`, timings);
    app `pokey.ps1 ui dump|tap|tapid|type|swipe|shot|shotmark|wait|log` (`$env:ANDROID_SERIAL` set);
    e2e: `check -Step e2e`. A human doc row: from the UI only, as its steps say (`api` for setup data only).
    Check id = guide row id; variants (V1, V2): `case: <row id>`; rows covered earlier need no NOT_TESTED filler.

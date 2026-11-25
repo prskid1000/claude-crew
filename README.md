@@ -593,6 +593,7 @@ flowchart LR
   skills_pokey_SKILL_md -->|"steps 1-4, 6; L1, L3 (verbs: its header)"| skills_pokey_pokey_ps1["pokey.ps1"]
   skills_pokey_SKILL_md -->|"step 3 (check -Step e2e); L1 Selection (tracker…"| skills_crafty_crafty_ps1["crafty.ps1"]
   skills_pokey_SKILL_md -->|"step 3 (web: read its header first; one…"| skills_pokey_browser_mjs["browser.mjs"]
+  skills_pokey_SKILL_md -->|"step 3 (a UI case at every variant at once; run…"| skills_pokey_matrix_mjs["matrix.mjs"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_annotate_ps1["annotate.ps1"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_api_auth_ps1["api-auth.ps1"]
   skills_pokey_SKILL_md -->|"used by the pokey.ps1 / browser.mjs verb that…"| skills_pokey_adapters_deployed_checks_ps1["deployed-checks.ps1"]

@@ -31,7 +31,7 @@ export async function pwPage(eng, bo, VIEW, quiet = [], ws = '') {
   const ctx = await browser.newContext({ viewport: VIEW, locale: bo.lang, timezoneId: bo.timezone || undefined })
   return { browser, page: wrapPage(ctx, await ctx.newPage()) }
 }
-// a context's page with the puppeteer method names browser.mjs calls (ui-checks.mjs matrix: a context per variant)
+// a context's page with the puppeteer method names browser.mjs calls (the matrix: a context per variant)
 export function wrapPage(ctx, page) {
   const go0 = page.goto.bind(page), wn = page.waitForNavigation.bind(page)
   const wu = (o = {}) => ({ ...o, waitUntil: o.waitUntil === 'networkidle2' ? 'networkidle' : o.waitUntil })
@@ -71,7 +71,7 @@ if (process.argv[2] === 'serve' && resolve(process.argv[1] || '') === fileURLToP
   const end = async () => { await srv.close().catch(() => {}); if (readTok(tokF) === tok) rmSync(tokF, { force: true }); process.exit(0) }
   setInterval(() => { let at = 0; try { at = statSync(used).mtimeMs } catch {}; if (Date.now() - at > idle) end() }, Math.min(5000, idle))
 }
-// registry (parity.json browser-engine; browser.mjs session() picks by browser.engine; context: ui-checks.mjs matrix): chrome = a CDP session per login, reused
+// registry (parity.json browser-engine; browser.mjs session() picks by browser.engine; context: the matrix): chrome = a CDP session per login, reused
 // across calls (browser.mjs); the Playwright engines a browser server per login, reused across calls (pwServed)
 export const ADAPTERS = { 'browser-engine': {} }
 ADAPTERS['browser-engine']['chrome'] = { session: true, reuse: true, context: true }

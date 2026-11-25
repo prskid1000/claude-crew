@@ -122,12 +122,13 @@ if ($bk) {
   [IO.File]::WriteAllText("$qk/targets.local.json", "{`"default`": `"loc`", `"targets`": {`"loc`": {`"web`": `"http://127.0.0.1:$wp`"}}}")
   $kf = Join-Path $k 'skills/crafty/kit.local.json'; $kj = if (Test-Path $kf) { Get-Content $kf -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
   $kj.qa = @{ matrix = @{ viewports = @('800x600', '1024x700', '390x844'); fontScales = @(1, 2, 3) } }; $kj | ConvertTo-Json -Depth 9 | Set-Content $kf
-  [IO.File]::WriteAllText("$(Kd)/case.mjs", "export default async ({ page, tag }) => ({ result: process.env.FAILX && tag.startsWith('390') ? 'FAIL' : 'PASS', w: await page.evaluate(() => innerWidth) })")
+  # coordinator 2026-11-25: a case calling browser.mjs hitTest hung the CLI (it re-imported itself); the menu sits behind a hamburger
+[IO.File]::WriteAllText("$(Kd)/case.mjs", "export default async ({ page, tag, b, ui }) => { const nav = await ui.openNav(page), h = await b.hitTest(page, [{ text: 'Groups' }])`n  return { result: process.env.FAILX && tag.startsWith('390') ? 'FAIL' : nav && h.pass ? 'PASS' : 'FAIL', w: await page.evaluate(() => innerWidth) } }")
   $res = NodeT pmatrix @'
 const { existsSync, readFileSync, writeFileSync, mkdirSync } = await import('node:fs'), { join } = await import('node:path'), { execFile } = await import('node:child_process')
 if (!m.CHROME) { console.log('nochrome'); process.exit(0) }
 const [wp, dir] = process.argv.slice(2), http = await import('node:http'), net = await import('node:net')
-const srv = http.createServer((q, r) => { r.setHeader('content-type', 'text/html'); r.end('<p>x</p>') }).listen(+wp, '127.0.0.1'); await new Promise((r) => srv.on('listening', r))
+const srv = http.createServer((q, r) => { r.setHeader('content-type', 'text/html'); r.end('<button class="navbar-toggler" aria-expanded="false" onclick="document.getElementById(\'m\').hidden=false">=</button><nav id="m" hidden><a href="#">Groups</a></nav><p>x</p>') }).listen(+wp, '127.0.0.1'); await new Promise((r) => srv.on('listening', r))
 const cp = await new Promise((r) => { const sv = net.createServer().listen(0, '127.0.0.1', () => { const p = sv.address().port; sv.close(() => r(p)) }) })
 writeFileSync(m.kitPath('browser-ports', { create: true }), JSON.stringify({ [m.sessionKey('loc', '', '')]: cp }))
 process.env.CLAUDE_AGENT = 'kt-a'; const bf = join(m.kitPath('agents'), 'kt-a', `busy-${process.pid}.json`)
@@ -139,7 +140,7 @@ t = Date.now(); const ser = await m.matrix(s, work, { matrix: mx }), serMs = Dat
 console.log(`par:${par.length === 9 && par.every((x) => x.result.seen === 'T' && x.result.l === 'de-DE' && x.variant.endsWith('_de-de')) && par.map((x) => x.result.w).join() === ser.map((x) => x.result.w).join() && ser[1].result.seen !== 'T'}`)
 console.log(`clean:${s.browser.browserContexts().length === 1}`); console.log(`busy:${busy}`); await s.done(); console.log(`unbusy:${!existsSync(bf)}`)
 // async: a sync spawn blocks this process's web server (a 60 s stall per CDP call)
-const cli = (env, ...a) => new Promise((r) => execFile(process.execPath, [m.KIT + '/skills/pokey/adapters/ui-checks.mjs', 'matrix', '--case', 'A1', '--script', dir + '/case.mjs', '--out', dir + '/mx', '--path', '/', ...a], { encoding: 'utf8', env: { ...process.env, ...env } }, (e, stdout, stderr) => r({ status: e ? e.code : 0, stdout, stderr })))
+const cli = (env, ...a) => new Promise((r) => execFile(process.execPath, [m.KIT + '/skills/pokey/matrix.mjs', '--case', 'A1', '--script', dir + '/case.mjs', '--out', dir + '/mx', '--path', '/', ...a], { encoding: 'utf8', env: { ...process.env, ...env } }, (e, stdout, stderr) => r({ status: e ? e.code : 0, stdout, stderr })))
 const full = await cli({}), j = JSON.parse(readFileSync(dir + '/mx/A1-matrix.json', 'utf8'))
 console.log(`cli:${full.status === 0 && j.rows.length === 9 && j.rows.every((x) => x.result.result === 'PASS') && /^Matrix: 800x600_f1, 800x600_f2, .*390x844_f3$/m.test(full.stdout)}`)
 mkdirSync(m.kitPath('tasks'), { recursive: true }); writeFileSync(join(m.kitPath('tasks'), 'T9.json'), JSON.stringify({ cases: { matrixScope: { scope: 'reduced', reason: '1 file(s)', matrix: { viewports: ['1366x768', '390x844'] } } } }))
@@ -148,7 +149,7 @@ console.log(`reduced:${red.status === 1 && /^FAIL A1 390x844 /m.test(red.stdout)
 console.log(`speed:${parMs < serMs * 0.75} ${serMs} ${parMs}`); await m.killSession(cp); srv.close(); process.exit(0)
 '@ $wp (Kd)
   if ("$res" -match 'nochrome') { 'SKIP matrix parallel (no Chrome or Edge)' } else {
-    Expect-Each $res 'browser.mjs matrix: parallel = a context per variant (own viewport, locale, storage; the login copied), closed after; ui-checks.mjs matrix CLI: per-variant results + the Matrix line, a recorded reduced set, exit 1 on a FAIL; a session marks its agent busy #' 'par', 'clean', 'busy', 'unbusy', 'cli', 'reduced'
+    Expect-Each $res 'browser.mjs matrix: parallel = a context per variant (own viewport, locale, storage; the login copied), closed after; matrix.mjs CLI (a case calling hitTest, openNav): per-variant results + the Matrix line, a recorded reduced set, exit 1 on a FAIL; a session marks its agent busy #' 'par', 'clean', 'busy', 'unbusy', 'cli', 'reduced'
     $sp = "$(@($res) -match '^speed:')"; Expect "matrix: 9 variants of 1.5 s, 4 at once (3 waves + ~1 s context and load each) vs one after another ($sp ms)" ($sp -match '^speed:True ') }
 }
 # prepare (moved from qa-config: its cap): the run title is cut to 25 words

@@ -215,7 +215,7 @@ def wrap_fill(orig):
     return run
 
 
-# ---- matrix scope: the qa.matrix variants a diff needs (qa.matrixRun); ui-checks.mjs matrix --task runs the recorded set
+# ---- matrix scope: the qa.matrix variants a diff needs (qa.matrixRun); pokey matrix.mjs --task runs the recorded set
 MX_RUN = {'parallel': 4, 'full': [r'\.(css|scss|sass|less|styl|pcss)$', r'(^|/)(layouts?|styles?|themes?|tokens?)(/|\.|$)', r'tailwind\.config',
                                   r'\.(svg|png|jpe?g|webp|gif|woff2?|ttf)$'],
           'newScreen': [r'\.(html|vue|svelte|jsx|tsx)$', r'(^|/)(pages?|screens?|views?|routes?)(/|\.|$)'], 'reduced': {'viewports': ['web', 'mobile'], 'locales': 1},
@@ -281,7 +281,7 @@ def matrix_scope_cmd(argv):
         print(json.dumps(sc))
         return 0
     print(f'matrix-scope {tid or wt}: {sc["scope"]} ({sc["reason"]}): {n} variant(s) per UI case {json.dumps({k: v for k, v in sc["matrix"].items() if v})}'
-          + (f'\nrun: node <kit>/skills/pokey/adapters/ui-checks.mjs matrix --task {tid} --case <id> --script <case.mjs> --out <dir>' if tid else ' (no task: not recorded)'))
+          + (f'\nrun: node <kit>/skills/pokey/matrix.mjs --task {tid} --case <id> --script <case.mjs> --out <dir>' if tid else ' (no task: not recorded)'))
     return 0
 
 
@@ -296,7 +296,7 @@ def wrap_gaps(orig):
         if '(reduced:' not in line:
             locs = [v for v in (DT.cfg('qa.matrix', None) or {}).get('locales') or [] if norm(v) not in toks]
             if locs and gi is None and re.search(r'!\[|<img\b|\.(png|jpe?g)\b', ai_md or '', re.I):
-                out.append(f'UI cases miss qa.matrix locale(s) {", ".join(locs)}: run each per variant (ui-checks.mjs matrix), then add them to the "Matrix:" line')
+                out.append(f'UI cases miss qa.matrix locale(s) {", ".join(locs)}: run each per variant (pokey matrix.mjs), then add them to the "Matrix:" line')
             return out
         rec = ((DT.state_read(DT.task_file(tid)) or {}).get('cases') or {}).get('matrixScope') if tid else None
         fs = changed_files(rec['dir']) if tid and (rec or {}).get('scope') == 'reduced' and os.path.isdir(rec.get('dir') or '') else []
@@ -308,7 +308,7 @@ def wrap_gaps(orig):
         want = (rec or matrix_scope([('M', 'x')]))['matrix']
         miss = [str(v) for kx in AXES for v in want.get(kx) or [] if norm(v) not in toks]
         if gi is not None:
-            out = out[:gi] + ([f'UI cases miss reduced-matrix value(s) {", ".join(miss)}: run them (ui-checks.mjs matrix --task {tid or "<task>"})'] if miss else []) + out[gi + 1:]
+            out = out[:gi] + ([f'UI cases miss reduced-matrix value(s) {", ".join(miss)}: run them (pokey matrix.mjs --task {tid or "<task>"})'] if miss else []) + out[gi + 1:]
         return out
     return run
 

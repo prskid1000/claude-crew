@@ -1,9 +1,8 @@
-// ui-checks.mjs: a module skills/pokey/browser.mjs imports, and a CLI. Usage: below. Exit codes: (CLI) 0 all variants PASS · 1 a FAIL · 2 usage.
+// ui-checks.mjs: a module skills/pokey/browser.mjs and matrix.mjs import. Usage: through them. Exit codes: none (a module).
 // ui-checks.mjs: layout faults, contrast, hit tests for any web UI, selector-free, and the qa.matrix loop; browser.mjs re-exports them.
 //   const b = await import('file:///<kit>/skills/pokey/browser.mjs'); await b.layoutIssues(s.page); await b.contrast(s.page, '.icon')
-//   node <kit>/skills/pokey/adapters/ui-checks.mjs matrix --case A3 --script case.mjs --out <dir> [--task <id>] [--agent <id>]: the case at
-//   every variant, n contexts at once; case.mjs: export default async ({ page, tag, viewport, locale, b, out }) => ({ result: 'PASS' })
-// Sections: L8 checks · L82 matrix
+//   a case at every variant, n contexts at once: node <kit>/skills/pokey/matrix.mjs (never run this module: browser.mjs imports it)
+// Sections: L7 checks · L81 matrix
 
 // ---- checks: layout, contrast, hit test
 // controls another element covers (hit test at the centre of the first line box), text boxes overlapping, text cut by an overflow
@@ -133,30 +132,15 @@ export async function matrix(s, fn, m, { parallel = 1 } = {}) {
   await Promise.all(Array.from({ length: Math.min(parallel, vs.length) }, work))
   return out
 }
-const qaCfg = async () => { const b = await import('../browser.mjs'), { readFileSync } = await import('node:fs'); try { return JSON.parse(readFileSync(b.localFile('skills/crafty/kit.local.json'), 'utf8')).qa || {} } catch { return {} } }
+export const qaCfg = async () => { const b = await import('../browser.mjs'), { readFileSync } = await import('node:fs'); try { return JSON.parse(readFileSync(b.localFile('skills/crafty/kit.local.json'), 'utf8')).qa || {} } catch { return {} } }
 // browser.mjs testerScreen(s, fn, { mobile }): fn at qa.testerViewport (web 1366x768, mobile 390x844)
 export async function testerScreen(s, fn, { mobile = false } = {}) { const v = { web: '1366x768', mobile: '390x844', ...(await qaCfg()).testerViewport }; return matrix(s, fn, { viewports: [v[mobile ? 'mobile' : 'web']] }) }
 export const passed = (r) => r === true || /^pass/i.test(String(r?.result ?? r))
 // the AI doc's "Matrix:" line (devtools.py case_gaps reads it); a reduced set names its reason (proof.py matrix-scope)
 export const matrixLine = (rows, sc) => `Matrix: ${rows.map((x) => x.variant || 'default').join(', ')}${sc?.scope === 'reduced' ? ` (reduced: ${sc.reason})` : ''}`
-
-// CLI: one case x every variant it needs, concurrently in one browser; exit 0 all PASS · 1 a FAIL · 2 usage
-if (process.argv[2] === 'matrix' && (await import('node:path')).resolve(process.argv[1] || '') === (await import('node:url')).fileURLToPath(import.meta.url)) {
-  const { mkdirSync, readFileSync, writeFileSync } = await import('node:fs'), { join, resolve } = await import('node:path'), { pathToFileURL } = await import('node:url')
-  const arg = (k) => { const i = process.argv.indexOf('--' + k); return i > 2 ? process.argv[i + 1] : '' }
-  if (!arg('case') || !arg('script') || !arg('out')) { console.error('usage: node ui-checks.mjs matrix --case <id> --script <case.mjs> --out <dir> [--task <id>] [--agent <id>] [--target <t>] [--tenant <x>] [--as <user>] [--path </screen>] [--parallel <n>]'); process.exit(2) }
-  if (arg('agent')) process.env.CLAUDE_AGENT = arg('agent')
-  const b = await import('../browser.mjs'), cfg = await qaCfg()
-  // the variants: the task's recorded scope (devtools.py matrix-scope <task> --dir <wt>), else the full qa.matrix
-  const sc = arg('task') ? (() => { try { return JSON.parse(readFileSync(join(b.kitPath('tasks'), arg('task').replace(/[^\w.-]/g, '_') + '.json'), 'utf8')).cases?.matrixScope } catch { return null } })() : { scope: 'full', matrix: cfg.matrix || {} }
-  if (!sc?.matrix) { console.error(`matrix: task ${arg('task')} has no recorded scope: python -X utf8 <kit>/skills/crafty/devtools.py matrix-scope ${arg('task')} --dir <worktree>, then again`); process.exit(2) }
-  const out = resolve(arg('out')), fn = (await import(pathToFileURL(resolve(arg('script'))).href)).default, t0 = Date.now()
-  mkdirSync(out, { recursive: true })
-  const s = await b.session({ target: arg('target') || undefined, tenant: arg('tenant') || undefined, as: arg('as') || undefined })
-  let rows
-  try { if (arg('path')) await b.go(s.page, arg('path')); rows = await matrix(s, (v) => fn({ ...v, b, out, case: arg('case') }), sc.matrix, { parallel: Number(arg('parallel')) || cfg.matrixRun?.parallel || 4 }) } finally { await s.done() }
-  const line = matrixLine(rows, sc), fails = rows.filter((x) => !passed(x.result))
-  writeFileSync(join(out, `${arg('case')}-matrix.json`), JSON.stringify({ case: arg('case'), scope: sc.scope, reason: sc.reason || '', ms: Date.now() - t0, rows, line }, null, 1))
-  for (const x of rows) console.log(`${passed(x.result) ? 'PASS' : 'FAIL'} ${arg('case')} ${x.variant} ${x.ms ?? ''} ms ${JSON.stringify(x.result).slice(0, 160)}`)
-  console.log(line); process.exit(fails.length ? 1 : 0)
+// openNav(page, { toggle }): a narrow screen's collapsed nav (hamburger) opened before its items are checked; -> true when one was clicked
+export async function openNav(page, { toggle = '[aria-label*="menu" i][aria-expanded="false"], [aria-controls][aria-expanded="false"], .navbar-toggler, .hamburger, .menu-toggle, [class*="burger" i]' } = {}) {
+  for (const el of await page.$$(toggle)) { const b = await el.boundingBox().catch(() => null); if (!b) continue
+    await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); await new Promise((r) => setTimeout(r, 600)); return true }
+  return false
 }
