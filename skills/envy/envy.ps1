@@ -24,7 +24,7 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L470 code · L481 migrations ·
   L484 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L631 shared builds · L770 hooks · L844 marks · L1028 seed ·
-  L1095 processes · L1481 daemon · L1943 cleanup · L2015 verbs
+  L1095 processes · L1459 daemon · L1931 cleanup · L2003 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -1275,29 +1275,7 @@ function Pressure {
   $null
 }
 function Test-Room([string]$e, $s, [double]$waitedMin) { $m = Get-SysMem; Test-GateStart ((Get-GateAvailGB $m) - (Need-GB $e $s)) (KeepFreeGB) $waitedMin $m.TotalGB }
-function Wait-Room([string]$e, $s) {
-  $need = Need-GB $e $s; $keep = KeepFreeGB
-  $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false; $roomOk = $false; $cpu0 = $null
-  try {
-    while ($true) {
-      $m = Get-SysMem; $cpu = Get-SysCpu; $avail = Get-GateAvailGB $m
-      $ramOk = Test-GateStart ($avail - $need) $keep ((Get-Date) - $t0).TotalMinutes $m.TotalGB; $cpuOk = $cpu -lt $script:CpuMax
-      if ($ramOk -and $cpuOk) { $roomOk = $true; return }
-      $for = if ($ramOk) { 'CPU' } else { 'RAM' }
-      if ($ramOk) { if (-not $cpu0) { $cpu0 = Get-Date } } else { $cpu0 = $null }   # CPU only delays: cpuWaitMinutes of busy CPU in a row, then it starts
-      if ($cpu0 -and ((Get-Date) - $cpu0).TotalMinutes -ge $script:CpuWaitMin) { "[$e] CPU $cpu% for $($script:CpuWaitMin) min (localEnv.cpuWaitMinutes): starting $($s.name) anyway"; $roomOk = $true; return }
-      $eta = if ($cpu0) { $cpu0.AddMinutes($script:CpuWaitMin) } else { $until }
-      if ($marked -ne $for) { Update-State $e { param($x) $v = $x.services[$s.name]; $v.status = 'waiting'; $v.waitFor = $for; $v.waitPid = $PID; $v.waitStart = Get-KitPidStart $PID; $v.waitSince = (Get-KitStamp stored $t0); $v.waitUntil = (Get-KitStamp stored $eta) }; $marked = $for }
-      if (-not $ramOk -and (Get-Date) -gt $until) {
-        $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
-        Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = ''
-        throw "[$e] no room to start $($s.name) after $($script:RoomWaitMin) min: needs $need GB + keep-free $keep GB, available $avail GB. Biggest: $(($top | ForEach-Object { "$($_.n) $($_.gb)G" }) -join ', ')"
-      }
-      if (((Get-Date) - $said).TotalSeconds -ge 60) { "[$e] waiting for $for to start $($s.name): RAM avail $avail GB (need $need + keep $keep; after 20 min a 5% floor), CPU $cpu% (max $($script:CpuMax)%); $(if ($cpu0) { 'starts' } else { 'gives up' }) by $($eta.ToString('HH:mm'))"; $said = Get-Date }
-      Start-Sleep 10
-    }
-  } finally { if ($marked) { Update-State $e { param($x) $v = $x.services[$s.name]; if ($v.status -eq 'waiting') { if ($roomOk) { $v.waitFor = 'lock' } else { $v.status = 'down' } } } } }   # room got: still claimed while it waits for the start lock
-}
+# Wait-Room (RAM + the CPU queue): adapters/shared-builds.ps1 "start room"
 function Start-Pwsh([string[]]$a, [string]$dir, [string]$match, [string]$log) {
   $a = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'envy.ps1')) + $a; $pwsh = (Get-Process -Id $PID).Path
   if ($KitIsWindows) { return (Start-Process -FilePath $pwsh -ArgumentList (($a | ForEach-Object { if ("$_" -match '\s' -or "$_" -eq '') { "`"$_`"" } else { $_ } }) -join ' ') -WorkingDirectory $dir -WindowStyle Hidden -PassThru).Id }
@@ -1487,8 +1465,10 @@ $ErrorActionPreference = 'Stop'
 # ==== train worker
 function Phase([string]$p, [string[]]$blockServices = @(), [string[]]$blockRepos = @()) {
   Update-State $e { param($x) if ($x.train) { if ($x.train.phase -ne $p) { $x.train.phaseAt = (Now) }; $x.train.phase = $p; $x.train.blockServices = @($blockServices); $x.train.blockRepos = @($blockRepos); $x.train.waitingFor = @() } }
+  $script:Phases += @{ phase = $p; at = (Get-Date -Format 's') }   # the release event's phases: where a train's minutes went
   "$(Get-Date -Format 'HH:mm:ss') [$e] train $Train : $p"
 }
+$script:Phases = @()
 function Key($l) { "$($l.branch)@$($l.sha)" }
 
 function Run-Train {
@@ -1514,7 +1494,7 @@ function Run-Train {
     }
   }
   $newN = [int]$st.release.n + 1; $tag = "r$newN-$Train"
-  $repoOut = @{}; $artifacts = @{}; $newLayers = @{}
+  $repoOut = @{}; $artifacts = @{}; $newLayers = @{}; $noSwitch = @(); $skippedRepos = @()   # services whose inputs did not change: they keep running
   $ok = [Collections.Generic.List[string]]::new()
   if (-not $affected.Count) { Record-Train; return }
 
@@ -1544,6 +1524,13 @@ function Run-Train {
     if ([int]$st.release.n -gt 0 -and $live -and $live.targetSha -eq $targetSha -and -not $missing.Count -and (@($kept | ForEach-Object { Key $_ }) -join '|') -eq ($prevKeys -join '|')) {
       "[$e] $rn unchanged (same target commit and layers): no build"
       foreach ($l in $kept) { if ($l.request -and $results[$l.request].outcome -eq 'live') { $results[$l.request].message = 'already live' } }
+      continue
+    }
+    $repoSvcs = @(EnvServices $e | Where-Object { (Managed $_) -and (RepoOf $e $_) -eq $rn }); $same = @(if ([int]$st.release.n -gt 0 -and -not $missing.Count) { Get-SameInputs $e $rn $st })
+    if ($repoSvcs.Count -and $same.Count -eq $repoSvcs.Count -and -not @($kept | Where-Object { (& $isNew $_) -and $_.migrations }).Count) {   # the layers / target moved outside its inputs (no new migrations): the running release is this code
+      "[$e] $rn : inputs of $($same -join ', ') unchanged (services[].inputs): no build, no restart"; Event $e 'build-skip' @{ repo = $rn; services = $same }
+      foreach ($l in $kept) { if ($l.request -and $results[$l.request].outcome -eq 'live') { $results[$l.request].message = "inputs of $($same -join ', ') unchanged: no restart" } }
+      $newLayers[$rn] = @($kept | Where-Object { & $isNew $_ }); $repoOut[$rn] = @{ target = $r.target; targetSha = $targetSha; layers = @($kept) }; $ok.Add($rn); $noSwitch += $same; $skippedRepos += $rn
       continue
     }
     $err = Build-Repo $e $rn
@@ -1584,17 +1571,18 @@ function Run-Train {
     $keep = @($repoOut[$rn].layers | Where-Object { $_.request -notin $failed })
     "[$e] $rn : taking out layers whose request failed in another repo"
     $null = Sync-Repo $e $envRepos[$rn] $keep -NoFetch
+    if ($rn -in $skippedRepos) { $repoOut[$rn].layers = $keep; $newLayers[$rn] = @($newLayers[$rn] | Where-Object { $_.request -notin $failed }); continue }   # skipped (inputs unchanged): fewer layers, still no build
     $err = Build-Repo $e $rn
     if ($err) { $null = $ok.Remove($rn); $repoOut.Remove($rn); foreach ($s in @($artifacts.Keys | Where-Object { (RepoOf $e (Svc $e $_)) -eq $rn })) { $artifacts.Remove($s) }; $notes.Add("$rn : rebuild without the failed requests failed, kept the running release ($err)"); continue }
     $repoOut[$rn].layers = $keep; $newLayers[$rn] = @($newLayers[$rn] | Where-Object { $_.request -notin $failed })
-    foreach ($kv in (Stage-Artifacts $e $rn $tag).GetEnumerator()) { $artifacts[$kv.Key] = $kv.Value }
+    foreach ($kv in (Stage-Artifacts $e $rn $tag).GetEnumerator()) { $artifacts[$kv.Key] = $kv.Value; $noSwitch = @($noSwitch | Where-Object { $_ -ne $kv.Key }) }
   }
 
   $st2 = Read-State $e
   # up services switch over; a down one a lease needs starts on the new release here too (verified now, rolled back on failure,
   # never left live unchecked for the loop's next start); a down one nobody needs starts on it at its next lease
   $wanted = @(@($st2.leases.Values) + @($st2.holds.Values) | ForEach-Object { Closure $e @($_.services | Where-Object { $_ }) } | Select-Object -Unique)
-  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and (Managed $_) -and -not ($_.hot -and -not $_.artifact) -and ($st2.services[$_.name].status -eq 'up' -or ($_.artifact -and $_.name -in $wanted)) })
+  $switch = @(EnvServices $e | Where-Object { (RepoOf $e $_) -in $ok -and $_.name -notin $noSwitch -and (Managed $_) -and -not ($_.hot -and -not $_.artifact) -and ($st2.services[$_.name].status -eq 'up' -or ($_.artifact -and $_.name -in $wanted)) })
   $verifyDown = @($switch | Where-Object { $st2.services[$_.name].status -ne 'up' } | ForEach-Object name)
   $switchNames = @($switch | Where-Object { $_.name -notin $verifyDown } | ForEach-Object name)   # leases wait only for what runs
   $block = @(@($switchNames) + @(Dependents $e $switchNames) | Select-Object -Unique)
@@ -1769,7 +1757,7 @@ function Record-Train {
     $x.train = $null
   }
   if ($script:Preempted.Count) { Send-LeaseNotice $e $script:Preempted "$script:DoneWord done$(if ($changed.Count) { " (release $newN)" }): re-run your checks; your lease continues" }
-  Event $e 'release' @{ n = $(if ($changed.Count) { $newN } else { $null }); train = $Train; changed = $changed; results = $results; notes = @($notes) }
+  Event $e 'release' @{ n = $(if ($changed.Count) { $newN } else { $null }); train = $Train; changed = $changed; results = $results; notes = @($notes); phases = @($script:Phases) }
   $notes | ForEach-Object { "[$e] $_" }
   "$(Get-Date -Format 'HH:mm:ss') [$e] train $Train done: $(if ($changed.Count) { "release $newN ($($changed -join ', '))" } else { 'no new release' })"
 }
@@ -1953,11 +1941,11 @@ function Get-EnvOrphans {
       & $add 'worktree' $w.FullName 'no configured env runs it' ($ch.Count -or $failed)
     }
   }
-  $known = '^(loop|train(-\w+)?|db|smoke|migrations|seed|restore|events|tenant)$'
+  $known = '^(loop|train(-\w+)?|db|smoke|migrations|seed|restore|tenant)$'   # no <env>-events.jsonl: events = kitlog stream env (envy.ps1 events)
   $mine = { param([string]$base) if ($base -eq 'cleanup-quick') { return $true }; foreach ($n in $envs) { if ($base.StartsWith("$n-")) { $rest = $base.Substring($n.Length + 1) -replace '^(start|aot|task)-', '' -replace '-build$', ''
         return ($rest -match $known -or $rest -in @(EnvServices $n).name -or ($base -match "^$([regex]::Escape($n))-task-" -and (Get-KitMember (Get-EnvCfg $n).tasks $rest))) } }; $false }
   foreach ($f in Get-ChildItem -LiteralPath (Get-KitPath localenv-logs -Create) -File -ErrorAction SilentlyContinue) {
-    $b = $f.Name -replace '(\.(log|prev|wrapper|jsonl))+$', ''
+    $b = $f.Name -replace '(\.(log|prev|wrapper))+$', ''
     if (-not (& $mine $b) -and ((Get-Date) - $f.LastWriteTime).TotalDays -ge 1) { & $add 'log' $f.FullName 'no configured env or service writes it' $false }
   }
   $run = Join-Path (Get-KitPath localenv -Create) 'run'

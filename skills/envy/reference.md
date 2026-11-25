@@ -1,5 +1,5 @@
 # Local env reference (envy SKILL.md "Model" detail)
-For kitty / the coordinator editing `localEnv` or running owner verbs; any agent puzzled by a NOTICE, wait or lane.
+For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NOTICE, wait or lane.
 
 ## Train and leases
 - Train = every deploy queued when it starts: one merge, one gated build, one switch-over; a conflict refuses that branch; a
@@ -17,11 +17,12 @@ For kitty / the coordinator editing `localEnv` or running owner verbs; any agent
   once under memory pressure (a start waiting for RAM; a CPU wait is none).
 - A dependency of a waiting, starting or train-switched service is never idle. An out-of-memory line in a running service's
   log restarts it. Idle services all stop in one tick, also while a train waits for leases.
-- Starts wait for RAM (`roomWaitMinutes` 30: fails) and CPU over `cpuMaxPct` 90 (`cpuWaitMinutes` 2: starts);
-  `status`: waiting (CPU, until HH:mm). Keep-free floor: learned or `keepFreeGB`.
+- Starts wait for RAM (`roomWaitMinutes` 30: fails; keep-free floor learned or `keepFreeGB`) and CPU over `cpuMaxPct` 90
+  (`cpuWaitMinutes` 2: starts; `status` waiting CPU until HH:mm): up to `cpuSmallStartSec` 30 none, bigger ones in one
+  machine-wide queue, shortest first with aging.
 - A start starts a down `dependsOn` nobody starts, then waits for it to be healthy (one waiting for room: that wait more); one
   failing on a dependency connection waits again and retries once.
-- A dependency still down: the train keeps its release, no rollback (the service starts once it is up).
+- A dependency still down: the release stays, no rollback (it starts once that is up).
 - Restarts count only real starts (backoff 3 / 30 min).
 
 ## Lanes
@@ -43,8 +44,7 @@ For kitty / the coordinator editing `localEnv` or running owner verbs; any agent
   baseline yet: a green SQL-only seed check at its start marks one); db checks, pool, mark expiry and the temp watchdog rest.
   A train starts it for its DB steps and keeps it up.
 - A new release staged for a service in start backoff resets it, like `restart`.
-- `services[].shareBuild` true (a build that reads no per-lane value): a lane stages another lane's recorded copy of the same
-  code and build config, no build.
+- `services[].shareBuild` true (a build reading no per-lane value): another lane's copy of the same inputs + config, no build.
 - `services[].shareCheckBuild` (unset: on for a Maven `package` build without `prepare` or build `env`; true / false): a
   `crafty.ps1 check -Step build` jar of the same clean tree, service folder and -P / -D flags is staged, no build (a
   Spring Boot check skips the repackage: never).
@@ -94,10 +94,11 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
   outside the repo).
 - `unpack` = a command unpacking `{artifact}` into `{out}` (failed: plain artifact staged, event `unpack-fallback`).
 - `keepReleases` (2) per service + running ones.
-- `stageLinks` (true): the artifact is moved out of the build (copied when another service stages it); unpacked and static
-  files are kept once per content hash in `_lib` and hard-linked (never written in place).
-- `reuseBuilds` (false): a lane re-stages its own copy of the same tree + config, no build; only for builds that read
-  nothing outside the worktree (a local SNAPSHOT dependency goes stale).
+- `stageLinks` (true): the artifact moves out of the build (copied when another service stages it); unpacked / static
+  files: one per content hash in `_lib`, hard-linked (never written in place).
+- `reuseBuilds` (false): its own copy of the same inputs + config re-staged, no build (unchanged: no restart);
+  only for builds reading nothing outside the worktree (a local SNAPSHOT goes stale).
+- `services[].inputs`: repo paths keying the build; unset: Maven: `dir`'s top folder + in-repo deps + root files, else all.
 - `aotTrain` ({aotFile}): one gated background run per artifact after it is up; `{aot}` in `start` = `aotUse`
   (`-XX:AOTCache="{aotFile}"`) once it exists.
 - `classpathFile` (off): thin jar + this classpath: per-release argfile; `start`: `@"{javaArgs}" <main>`.

@@ -18,7 +18,7 @@ $cw = & { . $L3; Update-State dp { param($x) $x.services = @{ api = @{ status = 
   function Get-Date { if ($args.Count) { Microsoft.PowerShell.Utility\Get-Date @args } else { $script:clk } }
   function Get-SysMem { [pscustomobject]@{ AvailGB = 40; CacheGB = 0; TotalGB = 64 } }; function Get-SysCpu { 95 }; function Need-GB { 3 }; function KeepFreeGB { 6 }
   function Start-Sleep { if (-not $script:n++) { $script:seen = "$(Pressure)/$((Read-State dp).services.api.waitFor)/$(([datetime](Read-State dp).services.api.waitUntil).ToString('HH:mm'))" }; $script:clk = $script:clk.AddSeconds(30) }
-  $o = @(Wait-Room dp @{ name = 'api' }) -join ' '; "$script:seen|$script:n|$($o -like '*cpuWaitMinutes?: starting api anyway*')|$((Read-State dp).services.api.waitFor)" }
+  $o = @(Wait-Room dp @{ name = 'api' }) -join ' '; $cwPat = '*), first in the CPU queue*api anyway*'; "$script:seen|$script:n|$($o -like $cwPat)|$((Read-State dp).services.api.waitFor)" }
 Expect "start: CPU only is no memory pressure (waitFor CPU, until 10:02); it starts after 4 sleeps of 30 s, the claim waits for the lock ($cw)" ($cw -eq '/CPU/10:02|4|True|lock')
 $ip = & { . $L3; $old = (Get-Date).AddMinutes(-30).ToString('o')
   $mk = { param($api) @{ services = @{ search = @{ status = 'up'; lastNeed = $old; gb = 2 }; api = $api } } }
@@ -122,7 +122,6 @@ $uf = & { . $L3; function RepoOf { 'r' }; $script:evs = @(); function Event($e, 
   $r = Stage-Artifacts t r 'r9-f' 6>$null; "$((Split-Path $r.api -Leaf) -eq 'app-1.jar' -and (Get-Content $r.api) -eq 'fat')|$($script:evs -contains 'unpack-fallback')|$(-not (Test-Path (Join-Path $wtd 'api/target/app-1.jar')))" }
 $ls = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
 Expect "stage: a failed unpack -> the plain artifact (moved out of the build, no copy) + unpack-fallback; loop: kit.local.json or envy.ps1 / lib.ps1 mtime -> a fresh loop between trains ($uf)" ($uf -eq 'True|True|True' -and $ls -match '\$cfgNow = Get-LoopStamp' -and $ls -match 'if \(-not \$st\.train -and \$cfgNow -ne \$cfgAt -and' -and $ls -match 'if \(\$reload\) \{ \$null = Start-Pwsh')
-# stageLinks: build output stored once per content hash and hard-linked; a staged release's files linked, its AOT cache not; off: copies
 $sl = & { . $L3; $b = Join-Path $ud 'sl/build'; $root = Join-Path $ud 'sl/run'; New-Item -ItemType Directory -Force (Join-Path $b 'a'), $root | Out-Null
   'same' | Set-Content (Join-Path $b 'a/v.js'); 'one' | Set-Content (Join-Path $b 'main.js')
   $lj = { param($r) $p = Join-Path $root "$r/.libs.json"; if (Test-Path $p) { Get-Content $p -Raw | ConvertFrom-Json -AsHashtable } else { @{} } }
@@ -134,12 +133,12 @@ $sl = & { . $L3; $b = Join-Path $ud 'sl/build'; $root = Join-Path $ud 'sl/run'; 
 Expect "stage links: build files once per content hash (3 stored for 2 releases, .libs.json lists them), hard-linked; a release's files linked without app.aot; stageLinks false: plain copies ($sl)" ($sl -eq '2|True|3|HardLink|two|HardLink|False|0|')
 # cleanup: logs / run files / data folders / env worktrees no configured env uses are orphans; -DryRun deletes nothing
 & $J @{ localEnv = @{ cleanup = @{ dataRoots = @(@{ dir = (Join-Path $ud 'data'); match = 'sb1|^t$' }); quick = @(@{ name = 'old q'; paths = @("$ud/q/*"); olderThanDays = 1; cmd = 'echo q' }) }; envs = @{ t = @{ db = @{ datadir = (Join-Path $ud 'data/keepsb1') }; services = @(@{ name = 'api'; start = "run -Epath.data=$(Join-Path $ud 'data/t')"; port = 41017 }) } } } } $cf3 8
-$co = & { . $L3; $lgd = Get-KitPath localenv-logs -Create; foreach ($n in 't-api.log', 't-api.log.prev', 't-sb1-api.log', 't-loop.log', 'x-web.log') { Set-Content (Join-Path $lgd $n) 1; (Get-Item (Join-Path $lgd $n)).LastWriteTime = (Get-Date).AddDays(-2) }
+$co = & { . $L3; $lgd = Get-KitPath localenv-logs -Create; foreach ($n in 't-api.log', 't-api.log.prev', 't-sb1-api.log', 't-loop.log', 'x-web.log', 't-events.jsonl') { Set-Content (Join-Path $lgd $n) 1; (Get-Item (Join-Path $lgd $n)).LastWriteTime = (Get-Date).AddDays(-2) }
   New-Item -ItemType Directory -Force (Join-Path $ud 'data/t'), (Join-Path $ud 'data/tsb1'), (Join-Path $ud 'data/jdk'), (Join-Path $ud 'data/keepsb1') | Out-Null; 'd' | Set-Content (Join-Path $ud 'data/tsb1/x')
   New-Item -ItemType Directory -Force "$ud/q/old", "$ud/q/new" | Out-Null; (Get-Item "$ud/q/old").LastWriteTime = (Get-Date).AddDays(-3)
   $o = @(Get-EnvOrphans | ForEach-Object { Split-Path $_.path -Leaf } | Sort-Object) -join ','; $dry = Invoke-EnvCleanup -Quick -DryRun; $dq = ($dry -join ' ') -match 'q[\\/]old \(quick: old q\)' -and ($dry -join ' ') -notmatch 'q[\\/]new' -and ($dry -join ' ') -match 'would run \(old q\): echo q'
   "$o|$((Test-Path (Join-Path $ud 'data/tsb1')) -and ($dry -join ' ') -match 'would remove' -and $dq)" }
-Expect "cleanup: orphan logs (unknown env or service), run folders and data folders (dataRoots match only) found; -Quick adds cleanup.quick items past olderThanDays; -DryRun deletes nothing ($co)" ($co -match '^(.*,)?t-sb1-api\.log,(.*,)?tsb1,(.*,)?x-web\.log(,.*)?\|True$' -and $co -notmatch '(^|,)t-api\.log|t-loop|(^|,)t,|jdk|keepsb1')
+Expect "cleanup: orphan logs (unknown env or service), run folders and data folders (dataRoots match only) found (old <env>-events.jsonl too); -Quick adds cleanup.quick items past olderThanDays; -DryRun deletes nothing ($co)" ($co -match '(^|,)t-events\.jsonl,' -and $co -match '^(.*,)?t-sb1-api\.log,(.*,)?tsb1,(.*,)?x-web\.log(,.*)?\|True$' -and $co -notmatch '(^|,)t-api\.log|t-loop|(^|,)t,|jdk|keepsb1')
 # prepare: a local-only edit after each sync, committed on the env branch (never pushed); a failed prepare only warns
 $gr = Kd; $go = Join-Path $gr 'o'; git init -q -b main $go; Set-Content (Join-Path $go 'f.txt') 'v1'; git -C $go add .; git -C $go -c user.name=t -c user.email=t@t commit -qm init; git clone -q $go (Join-Path $gr 'c') 2>$null
 & $J @{ repos = @(@{ name = 'r'; checkout = (Join-Path $gr 'c'); target = 'main' }); localEnv = @{ envs = @{ t = @{ services = @(@{ name = 'web'; repo = 'r'; port = 41018; prepare = "pwsh -NoProfile -Command `"Set-Content f.txt '{cache}'`"" }) } } } } $cf3 8

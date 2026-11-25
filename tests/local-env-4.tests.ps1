@@ -167,6 +167,31 @@ $lcb = & { . $lkL; $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = '
   "$($hit.path -like '*api-1.jar')|$($null -eq $off)|$($null -eq $err)|$global:cbBuilt|$(Test-Path $to)|$(Test-Path "$cbs/api/target/api-1.jar")|$($null -eq $rebuilt)|$(@(Get-ChildItem (TkPath $laneKit check-builds) -Filter '*.json').Count)|$($null -eq $prep)|$($null -eq $flagged)|$moved" }
 Expect "check build shared: a clean tree's check build is staged by the env deploy of that tree (copied, no build); off, prepare, other -P / -D flags, rebuilt since (also between build and stage) or a dirty tree: none ($lcb)" ($lcb -eq 'True|True|True|0|True|True|True|1|True|True|True')
 Expect "lanes: the build key = the code without its prepare commits + the build config; without shareBuild none, unless reuseBuilds: a lane-only key (prepare commits count) ($lk2)" ($lk2 -eq '40|True|False|False|40|True|True')
+# owner 2026-11-25 (time to promoted): the key covers the service's inputs only: its top folder, the in-repo Maven modules it
+# depends on (aggregator two folders up, no pom between), root files; another product's folder changes neither key nor build
+$lki = & { . $lkL; . (Join-Path $src 'skills/crafty/adapters/container-tests.ps1'); $g = Join-Path $env:TEMP "lein-$PID"; Remove-Item $g -Recurse -Force -ErrorAction SilentlyContinue
+  $pom = { param($d, $a, $x) New-Item -ItemType Directory -Force (Join-Path $g $d) | Out-Null; Set-Content (Join-Path $g "$d/pom.xml") "<project><groupId>t</groupId><artifactId>$a</artifactId><version>1</version>$x</project>" }
+  & $pom '.' 'root' '<modules><module>lib/core</module><module>prod/api</module><module>other/api</module></modules>'; & $pom 'lib/core' 'core' ''
+  & $pom 'prod/api' 'api' '<parent><groupId>t</groupId><artifactId>root</artifactId><version>1</version><relativePath>../../pom.xml</relativePath></parent><dependencies><dependency><groupId>t</groupId><artifactId>core</artifactId></dependency></dependencies>'
+  & $pom 'other/api' 'oapi' ''; git -C $g init -q; $cm = { param($f, $t) Set-Content (Join-Path $g $f) $t; git -C $g add -A; git -C $g -c user.name=t -c user.email=t@t commit -q -m $f }; & $cm 'prod/api/A.java' 'a'
+  function RepoOf { 'w' }; function EnvRepos([string]$e) { @{ w = [pscustomobject]@{ wt = $g } } }; function Opt($k, $d) { if ($k -eq 'reuseBuilds') { $true } else { $d } }
+  $s = [pscustomobject]@{ name = 'api'; repo = 'w'; dir = 'prod/api'; build = 'mvn package'; artifact = 'target/*.jar' }; $wh = [pscustomobject]@{ name = 'api'; repo = 'w'; dir = 'prod/api'; build = 'mvn package'; artifact = 'target/*.jar'; inputs = @('.') }
+  $in = (Get-SvcInputs a $s) -join ','; $k0 = BuildKey a $s; $w0 = BuildKey a $wh
+  & $cm 'other/api/B.java' 'b'; $k1 = BuildKey a $s; $w1 = BuildKey a $wh; & $cm 'lib/core/C.java' 'c'; $k2 = BuildKey a $s; & $cm 'prod/web.txt' 'w'; $k3 = BuildKey a $s; & $cm 'package.json' '{}'; $k4 = BuildKey a $s
+  $nm = (Get-SvcInputs a ([pscustomobject]@{ name = 'web'; repo = 'w'; dir = 'other/web'; build = 'b' })) -join ','; $typo = (Get-InputsHash $g HEAD @('nope') 3>$null) -eq (Get-InputsHash $g HEAD @('.'))
+  Remove-Item $g -Recurse -Force -ErrorAction SilentlyContinue
+  "$in|$($k0 -eq $k1)|$($w0 -eq $w1)|$($k1 -eq $k2)|$($k2 -eq $k3)|$($k3 -eq $k4)|$nm|$typo" }
+Expect "lanes: build key by inputs (Maven: top folder + in-repo deps + root files): another folder keeps it, a dep / its folder / a root file changes it; ['.'], a non-Maven service or a path that does not exist = the whole tree ($lki)" ($lki -eq 'prod,lib/core|True|False|False|False|False|.|True')
+# a train skips a repo whose services' live release has the same key (no build, no restart): Get-SameInputs
+$lsi = & { . $lkL; $run = Join-Path (Get-KitPath localenv -Create) 'run/shop/api/r4'; New-Item -ItemType Directory -Force $run | Out-Null; $jar = Join-Path $run 'api.jar'; Set-Content $jar 'j'
+  $api = [pscustomobject]@{ name = 'api'; repo = 'w'; build = 'b'; artifact = 'x.jar' }; $sch = [pscustomobject]@{ name = 'search'; start = 'echo s' }
+  function EnvServices { @($api, $sch) }; function RepoOf([string]$e, $s) { if ($s.repo) { 'w' } }; function BuildKey { $script:bk }
+  $st = @{ services = @{ api = @{ artifact = $jar } }; builds = @{ api = @(@{ key = 'k1'; path = $jar }) } }
+  $script:bk = 'k1'; $same = (Get-SameInputs shop 'w' $st) -join ','; $script:bk = 'k2'; $diff = (Get-SameInputs shop 'w' $st) -join ','
+  $script:bk = 'k1'; $st.services.api.artifact = Join-Path $run 'gone.jar'; $gone = (Get-SameInputs shop 'w' $st) -join ','
+  $srcT = Get-Content $lkL -Raw; Remove-Item $run -Recurse -Force
+  "$same|$diff|$gone|$($srcT.Contains('$_.name -notin $noSwitch'))|$($srcT.Contains('Get-SameInputs $e $rn $st'))" }
+Expect "train: a repo whose services' live release has the same build key is skipped (no build, no switch-over); another key or a missing release builds ($lsi)" ($lsi -eq 'api|||True|True')
 $lsd = & { . $lkL; $none = [pscustomobject]@{ port = '' }; "$(Split-Path (SeedFile shop2) -Leaf)|$(Expand-Placeholders 'pokey -Target local-shop{lane}' shop2 $none '' '')|$(Expand-Placeholders 'local-shop{lane}' shop $none '' '')" }
 Expect "lanes: a lane seeds from its env's seed file; {lane} expands at run time too (seed commands) ($lsd)" ($lsd -eq 'shop.seed.json|pokey -Target local-shop2|local-shop')
 $lt = & { . (Join-Path $laneKit 'skills/pokey/pokey.ps1'); $tc = [pscustomobject]@{ targets = [pscustomobject]@{ 'local-shop' = [pscustomobject]@{ api = 'http://127.0.0.1:8080/x'; web = 'http://127.0.0.1:4200' } } }

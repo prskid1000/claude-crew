@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Sections: L9 poms · L43 reactor · L68 engine
+# Sections: L9 poms · L44 reactor · L69 engine
 # runtimes: before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
 # -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests, $Show.
@@ -17,7 +17,8 @@ function Get-KitPomInfo([string]$Pom) {
 # the topmost aggregator above module folder $Dir (up to the repo root) -> @{ root; all = its modules by artifactId } (envy lane builds too)
 function Get-KitReactorPoms([string]$Dir) {
   $root = $null; $d = Split-Path $Dir; $all = @{}
-  while ($d -and (Test-Path -LiteralPath (Join-Path $d 'pom.xml'))) { if ((Get-Content -LiteralPath (Join-Path $d 'pom.xml') -Raw) -match '<modules>') { $root = $d }; if (Test-Path -LiteralPath (Join-Path $d '.git')) { break }; $d = Split-Path $d }
+  # up to the git root; a folder without a pom between (<repo>/<product>/<module>, parent ../../pom.xml) does not stop it
+  for ($i = 0; $d -and $i -lt 12; $i++) { $pf = Join-Path $d 'pom.xml'; if ((Test-Path -LiteralPath $pf) -and (Get-Content -LiteralPath $pf -Raw) -match '<modules>') { $root = $d }; if (Test-Path -LiteralPath (Join-Path $d '.git')) { break }; $d = Split-Path $d }
   $q = [Collections.Generic.Queue[string]]::new(); if ($root) { $q.Enqueue($root) }
   while ($q.Count -and $all.Count -lt 400) { $p = Get-KitPomInfo (Join-Path $q.Dequeue() 'pom.xml'); if (-not $p -or $all[$p.key]) { continue }; $all[$p.key] = $p; foreach ($m in $p.mods) { $md = Join-Path $p.dir $m; if (Test-Path -LiteralPath (Join-Path $md 'pom.xml')) { $q.Enqueue($md) } } }
   @{ root = $root; all = $all }

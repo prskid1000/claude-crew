@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (crafty.ps1 check exits).
-# Sections: L4 check builds · L11 check stamps
+# Sections: L4 check builds · L11 check stamps · L42 ci runs
 # ---- check builds: a clean tree's build, keyed by its tree: envy deploys of the same code stage its artifact (envy Find-CheckBuild)
 function Save-CheckBuild([string]$Dir, [string]$Cmd, [datetime]$Start) {
   $top = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top -or @(git -C $top status --porcelain 2>$null).Count) { return }
@@ -38,4 +38,11 @@ function Save-CheckStamp([string]$Dir, [string]$Slot) {   # the newest 30 slots 
   $h = Read-CheckStamps $Dir; $h[$Slot] = @{ key = $script:CheckSrcKey; at = (Get-KitStamp) }
   $keep = [ordered]@{}; foreach ($kv in @($h.GetEnumerator() | Sort-Object { "$($_.Value.at)" } -Descending | Select-Object -First 30)) { $keep[$kv.Key] = $kv.Value }
   Write-KitAtomic (Get-CheckStampFile $Dir) ($keep | ConvertTo-Json -Depth 4)
+}
+# ---- ci runs: tests.ciRuns = "<repo>/<module>" globs whose MR pipeline runs the full build + suite (check skips them locally)
+function Exit-KitCiRuns {   # in crafty.ps1 check: its $Step, $Tests, $AllTests, $Force, $Show, $st, Get-CheckRepo, ConvertTo-GlobRx
+  if ($Force -or $Show -or -not ($Step -eq 'build' -or ($Step -eq 'test' -and $AllTests -and -not $Tests -and -not $Touched))) { return }
+  $Repo = Get-CheckRepo; if (-not $Repo.top) { return }
+  $key = "$(if ($Repo.conf.name) { $Repo.conf.name } else { Split-Path "$($Repo.top)" -Leaf })/$([IO.Path]::GetRelativePath("$($Repo.top)", $st.dir).Replace('\', '/'))".TrimEnd('/', '.')
+  foreach ($g in @(Get-KitSetting 'tests.ciRuns' @()) | Where-Object { $_ }) { if ($key -match (ConvertTo-GlobRx $g)) { Write-Host "[check] $Step left to CI: $key matches tests.ciRuns '$g'; before a push: check + -Step test -Tests <names> -Touched; -Force runs it here"; exit 0 } }
 }

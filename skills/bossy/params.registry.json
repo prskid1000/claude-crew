@@ -83,6 +83,7 @@
   "localEnv.leaseMinutes": "config default=30 unit=min",
   "localEnv.startLockMinutes": "config default=45 unit=min",
   "localEnv.cpuWaitMinutes": "config default=2 unit=min",
+  "localEnv.cpuSmallStartSec": "config default=30 unit=s",
   "localEnv.trainWaitFlagMinutes": "config default=10 unit=min",
   "localEnv.plannedDownActMinutes": "config default=15 unit=min",
   "supervise.stuckMinutes": "config default=20 unit=min",

@@ -941,6 +941,7 @@ if ($Step -eq 'e2e') {
   Write-Host "[check] e2e $(if ($rc) { "FAILED (exit $rc)" } else { 'ok' })"; exit $rc
 }
 
+Exit-KitCiRuns   # tests.ciRuns (adapters/check-stamps.ps1)
 $steps = if ($Step -eq 'quick') { 'compile', 'typecheck', 'lint' } else { @($Step) }
 $ran = 0
 foreach ($s in $steps) {
@@ -1030,7 +1031,6 @@ foreach ($s in $steps) {
   else {
     $lk = if ($s -eq 'test') { Get-TestLock @($Tests -split '[,\s]+' | Where-Object { $_ }) }
     if ($lk -and -not (Use-KitLock "$($lk.lock)" $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { Split-Path (Get-CheckRepo).top -Leaf }) $st.dir)) { Write-Host "[check] test not started: lock $($lk.lock) still held by $($script:KitLockRefused.holder) (repos[].exclusiveTests); retry when it ends"; exit 3 }
-    # "No module named" = a stale venv, not a failed test
     $runLog = Get-CheckLog $st.dir $s   # every step: the gate prints its digest (failure lines + summary), the log keeps the rest
     Write-Host "[check] $s output goes to $runLog; its digest prints when the run ends"; if ($pyRun) { $env:PYTHONUTF8 = '1' }
     $bt0 = (Get-Date).AddSeconds(-2)

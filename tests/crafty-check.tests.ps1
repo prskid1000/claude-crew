@@ -118,6 +118,18 @@ $sr = @(& $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A'; ('doc 2' | Set-Con
   ('b' | Set-Content "$sd/src/b.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'B'; (New-Item -Force $failFlag | Out-Null); ('c' | Set-Content "$sd/src/a.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A')
 Expect "check stamps: rerun skipped on the same sources, doc edit kept, -Force / source edit / other tests / failed run rerun ($($sr -join ' '))" (
   ($sr -join ' ') -eq '0:1:0 0:1:1 0:1:1 0:2:0 0:3:0 0:4:0 1:5:0 1:6:0')
+# tests.ciRuns (owner 2026-11-25: time to promoted): a module whose MR pipeline runs the full build + suite skips them locally
+# (exit 0, says why); named / touched tests, -Force and a module CI does not cover run
+$cid = Join-Path (Kd) 'ci-repo'; $cim = Join-Path $cid 'mod'; $cin = Join-Path $cid 'own'; $ciRuns = Join-Path (Kd) 'ci-runs.txt'; $ciCnt = Join-Path (Kd) 'ci-count.js'
+"require('fs').appendFileSync(String.raw``$ciRuns``, 'x')" | Set-Content $ciCnt
+foreach ($m in $cim, $cin) { New-Item -ItemType Directory -Force $m | Out-Null; (@{ stack = 'custom'; commands = @{ test = "node `"$ciCnt`" {tests}"; build = "node `"$ciCnt`"" } } | ConvertTo-Json) | Set-Content "$m/.claude-stack.json" }
+git -C $cid init -q; git -C $cid add -A; git -C $cid -c user.name=t -c user.email=t@t commit -q -m init
+$ciCf = Join-Path $k 'skills/crafty/kit.local.json'; $ciWas = Get-Content $ciCf -Raw -ErrorAction SilentlyContinue; $ciObj = if ($ciWas) { $ciWas | ConvertFrom-Json -AsHashtable } else { @{} }
+$ciObj.tests = @{ ciRuns = @('ci-repo/mod') }; & $J $ciObj $ciCf 8
+$ciRun = { param([string]$Dir, [string[]]$More) $o = pwsh @np $D check -Dir $Dir @More 2>&1 | Out-String; "${LASTEXITCODE}:$("$(Get-Content $ciRuns -Raw -ErrorAction SilentlyContinue)".Trim().Length):$([int]($o -match 'left to CI'))" }
+$ci = @(& $ciRun $cim '-Step', 'test', '-AllTests'; & $ciRun $cim '-Step', 'build'; & $ciRun $cim '-Step', 'test', '-Tests', 'A'; & $ciRun $cim '-Step', 'build', '-Force'; & $ciRun $cin '-Step', 'build'; & $ciRun $cim '-Step', 'test', '-AllTests', '-Touched')
+if ($ciWas) { Set-Content $ciCf $ciWas -NoNewline } else { Remove-Item $ciCf }
+Expect "check: tests.ciRuns skips the full suite and build of a module CI covers; named tests, -Force and other modules run ($($ci -join ' '))" (($ci -join ' ') -eq '0:0:1 0:0:1 0:1:0 0:2:0 0:3:0 1:3:0')
 # source key: 400 untracked long names (past the Windows command line) still hash and see an edit; a .md under src/ counts,
 # a top-level doc does not; a quoted name (not on Windows) is unescaped
 $keyOf = { pwsh -NoProfile -Command ". '$(Lib)'; Get-CheckSourceKey '$sd'" }

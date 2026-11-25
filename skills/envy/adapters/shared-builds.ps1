@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L104 lane pick · L154 thin artifacts
+# Sections: L4 shared builds · L132 lane pick · L182 start room · L226 thin artifacts
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -25,11 +25,39 @@ function BuildKey([string]$e, $s) {
   if (-not ($sb -or (Opt 'reuseBuilds' $false)) -or -not $s.build -or -not $s.repo -or -not ($s.artifact -or $s.static)) { return $null }
   $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return $null }
   $n = 0; while ($sb -and $n -lt 10 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv prepare*') { $n++ }   # lane paths only ({cache}, {env}, {dir}, {wt})
-  $tree = "$(git -C $wt rev-parse "HEAD~$n^{tree}" 2>$null)".Trim(); if ($LASTEXITCODE -or -not $tree) { return $null }
+  $tree = Get-InputsHash $wt "HEAD~$n" @(Get-SvcInputs $e $s); if (-not $tree) { return $null }
   $cfg = [ordered]@{ tree = $tree; dir = "$($s.dir)"; build = "$($s.build)"; artifact = "$($s.artifact)"; static = "$($s.static)"; unpack = "$($s.unpack)"; prepare = "$($s.prepare)"; reactor = @($s.reactor); env = $s.env }
   if (-not $sb) { $cfg.lane = $e }
   if ($s.classpathFile) { $cfg.classpathFile = "$($s.classpathFile)" }   # only when set: switched-off keys stay as they were
   (Get-KitHash ($cfg | ConvertTo-Json -Depth 8 -Compress) SHA1).ToLower()
+}
+# services[].inputs: repo paths whose content decides the build (+ root files, always); unset: a Maven module = the top folder
+# of services[].dir + the in-repo modules it depends on, else the whole tree (other stacks' imports are not known). A change
+# elsewhere neither builds nor restarts it
+function Get-SvcInputs([string]$e, $s) {
+  if ($s.inputs) { return @($s.inputs | ForEach-Object { $p = "$_".Replace('\', '/').Trim('/'); if ($p) { $p } else { '.' } }) }
+  $rel = "$($s.dir)".Replace('\', '/').Trim('/'); $dir = SvcDir $e $s
+  if (-not $rel -or $rel -eq '.' -or -not (Test-Path -LiteralPath (Join-Path $dir 'pom.xml')) -or -not ($me = Get-KitPomInfo (Join-Path $dir 'pom.xml'))) { return @('.') }
+  $wt = (EnvRepos $e)[(RepoOf $e $s)].wt
+  @(@(($rel -split '/')[0]) + @((Get-KitReactorNeeds $me (Get-KitReactorPoms $dir).all).Values | ForEach-Object { [IO.Path]::GetRelativePath($wt, $_.dir).Replace('\', '/') } | Where-Object { $_ -notmatch '^\.\.' }) | Select-Object -Unique)
+}
+# a hash of $paths at $rev (+ the root's files: build config, lock files); $null: no such commit
+function Get-InputsHash([string]$wt, [string]$rev, [string[]]$paths) {
+  $tree = "$(git -C $wt rev-parse -q --verify "$rev^{tree}" 2>$null)".Trim(); if (-not $tree) { return $null }
+  if ('.' -in $paths) { return $tree }
+  $ids = @($paths | Sort-Object -Unique | ForEach-Object { "$_=$("$(git -C $wt rev-parse -q --verify "${tree}:$_" 2>$null)".Trim())" })
+  if (-not @($ids | Where-Object { $_ -notmatch '=$' }).Count) { Write-Warning "services[].inputs $($paths -join ', '): no such path at $rev - keyed by the whole tree"; return $tree }   # a typo never pins the key
+  $parts = @($ids) + @(git -C $wt ls-tree $tree | Where-Object { $_ -match '^\d+ blob ' })
+  (Get-KitHash ($parts -join "`n") SHA1).ToLower()
+}
+# the train's per-service skip: names of repo $rn's managed services whose live release was built from the same inputs + build
+# config (BuildKey; reuseBuilds / shareBuild) and is still on disk; Run-Train skips the repo when that is all of them
+function Get-SameInputs([string]$e, [string]$rn, $st) {
+  foreach ($s in @(EnvServices $e | Where-Object { (Managed $_) -and $_.repo -and (RepoOf $e $_) -eq $rn })) {
+    $live = "$($st.services[$s.name].artifact)"; if (-not (Test-ReleaseArtifact $s $live)) { continue }
+    $k = try { BuildKey $e $s } catch { $null }; if (-not $k) { continue }
+    if (@(@(if ($st.builds -is [hashtable]) { $st.builds[$s.name] }) | Where-Object { $_ -and $_.key -eq $k -and "$($_.path)" -eq $live }).Count) { $s.name }
+  }
 }
 # -> @{ lane; dir; path } of a recorded copy with this key (this lane first), else nothing; never throws
 function Find-SharedBuild([string]$e, $s, [string]$key) {
@@ -150,6 +178,50 @@ function Get-LanesOpen([string]$e) {
   $names = @(LaneNames $e); if ($names.Count -lt 2) { return $null }
   $open = @($names | Where-Object { $l = Get-LaneLoad $_; $l.up -or $l.train }); $p = (Read-State $names[0]).lanePick
   [pscustomobject]@{ open = $open.Count; of = $names.Count; lanes = $open; why = $(if ($p) { "$(([datetime]$p.at).ToString('HH:mm')) $($p.agent) -> $($p.env): $($p.why)" } else { 'no pick yet' }) }
+}
+# ---- start room: a start waits for RAM (keep-free) and, past cpuMaxPct, its turn in the machine-wide CPU queue (envy.ps1 Start-Svc)
+# a start's predicted cost: its slowest measured start (s), 120 until one is measured
+function StartCostSec([string]$e, $s) { $xs = @((Get-LocalEnvHistory)["$e/$($s.name)/startSec"] | Where-Object { $_ }); if ($xs.Count) { [double]($xs | Measure-Object -Maximum).Maximum } else { 120.0 } }
+# CPU queue (machine-wide, one ticket per start waiting for CPU): shortest predicted start first, each waited second takes one
+# second off (aging: a big start never starves); only the head may start on a busy CPU
+function StartQueueDir { $d = Join-Path (Get-KitPath localenv -Create) 'start-queue'; New-Item -ItemType Directory -Force $d | Out-Null; $d }
+function Get-StartQueueHead {
+  $now = Get-Date
+  $ts = @(Get-ChildItem (StartQueueDir) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { $_ -and (Test-KitPid $_.pid $_.pstart) })
+  @($ts | Sort-Object @{ e = { [double]$_.cost - ($now - [datetime]$_.since).TotalSeconds } }, @{ e = { [datetime]$_.since } })[0]
+}
+function Wait-Room([string]$e, $s) {
+  $need = Need-GB $e $s; $keep = KeepFreeGB; $cost = StartCostSec $e $s; $small = $cost -le [double](Get-KitParam 'localEnv.cpuSmallStartSec')
+  $t0 = Get-Date; $until = $t0.AddMinutes($script:RoomWaitMin); $said = $t0.AddMinutes(-5); $marked = $false; $roomOk = $false; $cpu0 = $null; $tk = $null; $by = 'room'
+  try {
+    while ($true) {
+      $m = Get-SysMem; $cpu = if ($small) { 0 } else { Get-SysCpu }; $avail = Get-GateAvailGB $m   # a small start (localEnv.cpuSmallStartSec) never waits for CPU
+      $ramOk = Test-GateStart ($avail - $need) $keep ((Get-Date) - $t0).TotalMinutes $m.TotalGB; $cpuOk = $cpu -lt $script:CpuMax
+      if ($ramOk -and $cpuOk) { $roomOk = $true; return }
+      $for = if ($ramOk) { 'CPU' } else { 'RAM' }
+      if ($ramOk) { if (-not $cpu0) { $cpu0 = Get-Date } } else { $cpu0 = $null }   # CPU only delays: cpuWaitMinutes of busy CPU in a row, then it starts
+      if (-not $cpu0 -and $tk) { Remove-Item -LiteralPath $tk -Force -ErrorAction SilentlyContinue; $tk = $null }   # waiting for RAM: out of the CPU queue
+      if ($cpu0 -and -not $tk) { $tk = Join-Path (StartQueueDir) "$PID-$($s.name).json"; Write-KitAtomic $tk (@{ pid = $PID; pstart = "$(Get-KitPidStart $PID)"; env = $e; service = $s.name; cost = $cost; since = (Get-KitStamp stored $cpu0) } | ConvertTo-Json -Compress) }
+      $head = if ($tk) { Get-StartQueueHead }; $mine = -not $head -or ("$($head.pid)" -eq "$PID" -and $head.service -eq $s.name)
+      $lastF = Join-Path (StartQueueDir) 'last.admit'; $last = try { Get-Content -LiteralPath $lastF -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+      $spaced = -not $last -or ((Get-Date) - [datetime]$last.at).TotalSeconds -ge [math]::Min(60.0, [double]$last.cost)   # busy CPU: one big start at a time
+      if ($cpu0 -and $mine -and $spaced -and ((Get-Date) - $cpu0).TotalMinutes -ge $script:CpuWaitMin) {
+        Write-KitAtomic $lastF (@{ at = (Get-KitStamp stored (Get-Date)); cost = $cost } | ConvertTo-Json -Compress)
+        "$(Get-Date -Format 'HH:mm:ss') [$e] CPU $cpu% for $($script:CpuWaitMin) min (localEnv.cpuWaitMinutes), first in the CPU queue (start ~$([int]$cost) s): starting $($s.name) anyway"; $roomOk = $true; $by = 'cpu-queue'; return }
+      $eta = if ($cpu0) { $cpu0.AddMinutes($script:CpuWaitMin) } else { $until }
+      if ($marked -ne $for) { Update-State $e { param($x) $v = $x.services[$s.name]; $v.status = 'waiting'; $v.waitFor = $for; $v.waitPid = $PID; $v.waitStart = Get-KitPidStart $PID; $v.waitSince = (Get-KitStamp stored $t0); $v.waitUntil = (Get-KitStamp stored $eta) }; $marked = $for }
+      if (-not $ramOk -and (Get-Date) -gt $until) {
+        $top = Get-SysProcs -NoCommandLine | Group-Object Name | ForEach-Object { [pscustomobject]@{ n = $_.Name; gb = [math]::Round(($_.Group | Measure-Object WorkingSet -Sum).Sum / 1GB, 1) } } | Sort-Object gb -Descending | Select-Object -First 6
+        Update-State $e { param($x) $x.services[$s.name].status = 'failed'; $x.services[$s.name].why = 'no room to start' }; $marked = ''
+        throw "[$e] no room to start $($s.name) after $($script:RoomWaitMin) min: needs $need GB + keep-free $keep GB, available $avail GB. Biggest: $(($top | ForEach-Object { "$($_.n) $($_.gb)G" }) -join ', ')"
+      }
+      if (((Get-Date) - $said).TotalSeconds -ge 60) { "$(Get-Date -Format 'HH:mm:ss') [$e] waiting for $for to start $($s.name): RAM avail $avail GB (need $need + keep $keep; after 20 min a 5% floor), CPU $cpu% (max $($script:CpuMax)%); $(if ($cpu0 -and -not $mine) { "behind $($head.env)/$($head.service) in the CPU queue" } elseif ($cpu0) { 'starts' } else { 'gives up' }) by $($eta.ToString('HH:mm'))"; $said = Get-Date }
+      Start-Sleep 10
+    }
+  } finally {
+    if ($tk) { Remove-Item -LiteralPath $tk -Force -ErrorAction SilentlyContinue }
+    $ws = [int]((Get-Date) - $t0).TotalSeconds; if ($ws -ge 10) { Event $e 'start-wait' @{ service = $s.name; sec = $ws; for = $(if ($cpu0) { 'CPU' } else { 'RAM' }); cost = [int]$cost; started = $roomOk; by = $by } }   # wait per start, timestamped (kitlog at)
+    if ($marked) { Update-State $e { param($x) $v = $x.services[$s.name]; if ($v.status -eq 'waiting') { if ($roomOk) { $v.waitFor = 'lock' } else { $v.status = 'down' } } } } }   # room got: still claimed while it waits for the start lock
 }
 # ---- thin artifacts: services[].classpathFile, a thin artifact + the build's classpath file -> <release>/classpath.txt and java.args (-cp "<artifact>;<libraries>"),
 # so a restart or rollback starts what that release built; libraries stay in the Maven local repository, the repo's own module jars are copied

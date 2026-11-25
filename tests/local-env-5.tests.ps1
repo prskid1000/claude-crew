@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 local-env-5.tests.ps1: envy.ps1 thin artifacts (services[].classpathFile): per-release classpath.txt + java.args, {javaArgs};
-a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers; lanes -Sync; down without -Env / -All; deploy -Dir a,b; layer reactor builds.
+a QA tester's lease needs its run.json item's localParts / localEnv; an open PAUSE on an agent's run keeps its layers; lanes -Sync; down without -Env / -All; deploy -Dir a,b; layer reactor builds; the start CPU queue.
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-5.tests.ps1 (tests/kit-tests.ps1 -Area local-env-5 runs it with the other areas).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -19,6 +19,19 @@ $ud = Kd; $wtd = Join-Path $ud 'wt'
 # train log lines carry the clock (rechy-5: lane time was not measurable from the train log)
 $tph = & { $e = 't'; $Train = 'ab12'; function Update-State { }; Invoke-Expression ([Management.Automation.Language.Parser]::ParseFile($L5, [ref]$null, [ref]$null).Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Phase' }, $true).Extent.Text); Phase 'merging and building' }   # a daemon-only function
 Expect "train phase line starts with HH:mm:ss ($tph)" ($tph -match '^\d\d:\d\d:\d\d \[t\] train ab12 : merging and building$')
+# owner 2026-11-25 (time to promoted): a small start (slowest measured <= localEnv.cpuSmallStartSec) never waits for CPU; bigger
+# ones queue machine-wide, shortest predicted start first with aging: a big start waits behind a smaller one, logs who it waits for
+$cq = & { . $L5; Update-State cq { param($x) $x.services = @{ api = @{ status = 'down' }; search = @{ status = 'down' } } }; $script:clk = [datetime]'2026-11-25T10:00:00'; $script:n = 0
+  function Get-Date { if ($args.Count) { Microsoft.PowerShell.Utility\Get-Date @args } else { $script:clk } }
+  function Get-SysMem { [pscustomobject]@{ AvailGB = 40; CacheGB = 0; TotalGB = 64 } }; function Get-SysCpu { 95 }; function Need-GB { 3 }; function KeepFreeGB { 6 }
+  function StartCostSec([string]$e, $s) { if ($s.name -eq 'search') { 10 } else { 120 } }
+  function Start-Sleep { $script:n++; $script:clk = $script:clk.AddSeconds(30) }
+  $small = @(Wait-Room cq @{ name = 'search' }) -join ' '; $n0 = $script:n
+  $script:cqOther = Join-Path (StartQueueDir) 'other.json'; Write-KitAtomic $script:cqOther (@{ pid = $PID; pstart = "$(Get-KitPidStart $PID)"; env = 'dp2'; service = 'web'; cost = 60; since = (Get-KitStamp stored $script:clk) } | ConvertTo-Json -Compress)
+  function Start-Sleep { $script:n++; $script:clk = $script:clk.AddSeconds(30); if ($script:n -eq 8) { Remove-Item -LiteralPath $script:cqOther } }
+  $o = @(Wait-Room cq @{ name = 'api' }) -join ' '; $ev = @(Read-KitLog env (Get-Date).AddDays(-1) | Where-Object event -eq 'start-wait')[-1]
+  "$n0|$script:n|$($o -match 'behind dp2/web in the CPU queue')|$($o -match '^\d\d:\d\d:\d\d \[cq\]')|$($ev.service)/$($ev.for)/$($ev.by)|$(@(Get-ChildItem (StartQueueDir) -Filter *.json).Count)|$(Test-Path (Join-Path (StartQueueDir) 'last.admit'))" }
+Expect "start: a small start skips the CPU wait; a big one queues behind a smaller start past cpuWaitMinutes, starts when it leaves, timestamped lines + event start-wait, ticket removed, admission time kept (next big start spaced) ($cq)" ($cq -eq '0|8|True|True|api/CPU/cpu-queue|0|True')
 $tj = & { . $L5; function RepoOf { 'r' }; function EnvRepos { @{ r = [pscustomobject]@{ wt = $wtd } } }; function EnvServices { [pscustomobject]$api }; $sep = [IO.Path]::PathSeparator
   $tgt = Join-Path $wtd 'api/target'; $cpf = Join-Path $tgt 'classpath.txt'
   $repoJar = Join-Path $ud 'm2/org/x/1.0/x-1.0.jar'; $modJar = Join-Path $wtd 'lib/m1/target/m1-1.jar'
