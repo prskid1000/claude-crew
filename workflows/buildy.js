@@ -245,7 +245,7 @@ function reviewPrompt(a, r) {
  return `Kind mr: review devy ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}; run ${RUN}) per your agent definition.${ENV(`review-${a.id}`)}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
 Testing-goals doc: ${ltOf(r).goalsDoc || '(none reported)'}; local test: ${ltOf(r).status || '?'} on ${ltOf(r).env || '?'}.
-Rules: ${K}/SKILL.md Rules, your step 3 goals vs testing doc. Only real problems; "blocking" = must be fixed before it ships.
+Rules: ${K}/SKILL.md Rules, your steps 3 and 5 (precheck runs the mechanical rules: review logic). Only real problems; "blocking" = must be fixed before it ships.
 No code changes; a suggested change per finding; scope: the brief + these MRs.`
 }
 function migrationPrompt(a, r) {
@@ -265,7 +265,7 @@ function fixPrompt(a, r, findings) {
  return continuePrompt(a, r, `Review or CI found these problems in your MRs (blocking, should-fix): fix each, or CONTEST one you can
 disprove in disputes[] (evidence: file:line, a test, a measurement; revy answers once, then the owner); never skip one silently:
 ${findings.map((f) => `- ${f.mr} ${fkey(f)}: ${f.problem} -> ${f.fix}`).join('\n')}
-Then ${SW} FIX round.`)
+Then ${SW} FIX round; devtools.py precheck <task> --dir <wt> = 0 problems before you report.`)
 }
 function ciPrompt(r, a) {
  return `STEP: run exactly this PowerShell command (tool timeout 600000) and return its JSON output (fields done, mrs). Nothing else.${PATHS}
