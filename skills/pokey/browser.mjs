@@ -3,10 +3,10 @@
 // Logins shared via the locked session file (storage + cookies); never log out.
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web); adapters/: sso-steps, script,
 // storageState, totp; browser.engine chromium | firefox | webkit.
-//   import { session, go, clickText, shot, saveNet, relogin, record, matrix } from 'file:///<kit>/skills/pokey/browser.mjs'
+//   import { session, go, clickText, shot, saveNet, relogin, record, matrix, testerScreen, hitTest } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L250 session · L302 actions · L401 ui checks · L408 evidence
+// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L250 session · L302 actions · L401 ui checks · L411 evidence
 import puppeteer from 'puppeteer-core'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -404,6 +404,9 @@ export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix |
 // layoutIssues(page, { scope, ignore }): covered controls, overlapping / clipped text; contrast(page, selector, { min }): WCAG
 export const layoutIssues = async (...a) => (await adapter('ui-checks.mjs')).layoutIssues(...a)
 export const contrast = async (...a) => (await adapter('ui-checks.mjs')).contrast(...a)
+// testerScreen(s, fn, { mobile }): fn at qa.testerViewport (web 1366x768, mobile 390x844); hitTest(page, [sel | { text }]): elementFromPoint
+export const testerScreen = async (s, fn, { mobile = false } = {}) => { const v = { web: '1366x768', mobile: '390x844', ...readJson(KLF, {}).qa?.testerViewport }; return matrix(s, fn, { matrix: { viewports: [v[mobile ? 'mobile' : 'web']] } }) }
+export const hitTest = async (...a) => (await adapter('ui-checks.mjs')).hitTest(...a)
 
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names: same literal as pokey.ps1 $script:EvidenceName

@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L289 stack · L388 gate · L720 check · L1050 pipes · L1115 guard · L2043 dir · L2053 checkpoint ·
-  L2093 prior · L2132 tracker · L2154 task spec · L2360 scope · L2408 host
+Sections: L25 init · L34 wt · L292 stack · L391 gate · L723 check · L1053 pipes · L1118 guard · L2046 dir · L2056 checkpoint ·
+  L2096 prior · L2135 tracker · L2157 task spec · L2363 scope · L2411 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -198,6 +198,9 @@ switch ($Action) {
     }
     # merge subjects name branches
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
+    # testing.md "Impact map": a task branch's code commit needs the map first (adapters/proof.py; WIP passes)
+    if (-not $isMerge -and $Message -notmatch '^(wip|chore\(wip\))[:(]' -and (Test-Path (Join-Path $PSScriptRoot 'adapters/proof.py')) -and -not (Test-Path (Join-Path $Dir 'skills/crafty/crafty.ps1'))) {
+      $im = @(& (Get-Python) -X utf8 $KitCmd.devtools proof --branch "$(git -C $Dir rev-parse --abbrev-ref HEAD)" --impact 2>&1); if ($LASTEXITCODE -and ($im -match '^GAP ')) { [Console]::Error.WriteLine("commit refused: $($im -join ' · ')"); exit 1 } elseif ($LASTEXITCODE) { Write-Warning "impact check failed: $($im -join ' · ')" } }
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
     $pf = @($pf | Where-Object { $_ -notmatch 'missing: conv' })   # subject style is the repo's commit hook's; WIP commits pass
     if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { [Console]::Error.WriteLine("commit refused: $($pf.Count) prose finding(s): rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes: $($pf -join '; ')"); exit 1 }   # stderr: a chained call shows it

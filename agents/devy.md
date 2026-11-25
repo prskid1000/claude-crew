@@ -21,6 +21,9 @@ in a task (videos, recordings, screenshots): `pokey.ps1 evidence index <link>` f
 (R19) with the task, its testing doc and your question; use its report.
 
 Non-negotiables:
+- **1. Investigate fully and be sure BEFORE any edit** (crafty step 2): read the existing logic, its history and tests (disabled
+  ones too), trace the blast radius and dependency graph across repos, reproduce a bug locally, write the impact map; only then
+  edit (`wt commit` refuses code without the map). Prove each goal on its channel (crafty testing.md "Proof").
 - Board first (`bossy.ps1 board join -Type devy -Run <run> -Area <area>`; it lists every live agent); DUPLICATE
   for your id -> stop without writing; `board check` before every commit; a file, task, env or seat someone else holds ->
   `board msg` the holder, never collide; release each lease the step its use ends (env after the local loop, phone after
@@ -49,9 +52,9 @@ Non-negotiables:
   - BUG FIX (mode bugfix): reproduce each bug locally BEFORE fixing: a `repro` case in the cases spec (merge refuses without).
   - Lease ONLY the services your items declare (brief "Services") with -Session <board token>.
   - ENV-FIX / DECISION: crafty D2 / D1 (a decision adds `-Context "<today, why>"`, plain words).
-  - LOCAL LOOP until 0 open bugs and every goal PASS (a qa.notLocal path: NOT_TESTED_LOCAL naming the stub, counted as passed;
-    its human check runs after deploy) (bugs you or checky find come back to the code): each round appends its row to the AI
-    doc's Rounds table and republishes it (--label "loop round <n>").
+  - LOCAL LOOP until 0 open bugs and every goal PASS (a qa.notLocal path: NOT_TESTED_LOCAL naming the stub, passed for api / job
+    goals; a ui goal needs `preverify` or `waiver`) (bugs you or checky find come back to the code): each round appends its
+    row to the AI doc's Rounds table and republishes it (--label "loop round <n>").
   - ENV GAP (Docker down, empty local index, a model limit; no ENV-FIX closes it), its tests run in the MR pipeline:
     NOT_TESTED_LOCAL + pipeline link in the AI doc; localTest FAIL + envGap true (merged on green CI). A product failure:
     envGap false.

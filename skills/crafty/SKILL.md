@@ -12,7 +12,7 @@ description: "Load when: you write, fix, test or ship code in a repo of this wor
 |---|---|
 | `<kit>/LESSONS.md` | step 0 (`bossy.ps1 learn -Read -Skill crafty`) |
 | `templates.md` | "Writing standards" whenever you write; steps 4 and 6, D1 |
-| `testing.md` | steps 4-5 (Rules > Tests: what to test, how, where, when) |
+| `testing.md` | steps 2, 4-5 (impact map, proof per channel, tests: what, how, where, when) |
 | `ship.md` | steps 6-9 (MR, docs, tracker, merge, deploy batch; rules Ship, Tracker, Publish) |
 | `crafty.ps1` | steps 1-5, CI wait (`pipes`), the PreToolUse hook (`guard`) |
 | `guard_client.mjs`, `guard_server.ps1` | the PreToolUse hook: a warm `guard` (~0.1 s a call); `KIT_GUARD_WARM=0`: the plain path; a guard crash blocks the call (fail-closed), `KIT_GUARD_BYPASS=1` (owner only) lets it through; never by hand |
@@ -34,8 +34,9 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $O board join -Type <role> -Run <run> -Area "<area>" -Items "<ids>" -Claims <worktrees> -Contracts <brief>.contracts.md
 & $D tracker status <task> inProgress
 & $D wt lease -Repo <repo> -Task <task> -Agent <id> [-Target <t>] [-Scope '<globs>']; & $D wt sync -Dir <wt>   # 1. a pool slot (<wt> = its "worktree:" line), latest target
-#   2. bugs: REPRODUCE on the local env first (envy SKILL.md "Debug locally"); record it as the cases spec `repro`; no brief
-#      (a direct fix): impact first (callers, settings that enable it, rows hit, code of the deployed branch); gone -> stop, report
+#   2. INVESTIGATE, be sure, THEN edit (testing.md "Impact map"): logic, history, tests (disabled too), callers across repos,
+#      screens / record types / states, the tester's path; a bug: REPRODUCE it locally (envy "Debug locally"; cases `repro`;
+#      fixed on the deployed branch -> stop, report); `cases add` the map (wt commit refuses code without it)
 #   3. code (Rules > Scope; a choice the task did not make -> D1 decision request)
 #   4. FIRST (templates.md "Test cases"): the task's cases spec, human checks from the request (never the code), UI-driven:
 #      devtools.py cases add <task> cases.json; automated tests (`testing.md`); each loop round: cases result / round, then
@@ -44,7 +45,8 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 & $D check -Dir <wt>/<module> -Step test -Tests "<names>" -Touched   #    targeted + every test of the touched files
 & $D check -Dir <wt>/<module> -Step migrations   #    if you touched migrations: ISSUES 0
 & $D wt commit -Dir <wt> -Spec mr.json   #    hooks run
-#   5. LOCAL TEST LOOP (envy SKILL.md "Local testing"): deploy, lease, run every goal; a failed goal or bug (yours, checky's)
+#   5. LOCAL TEST LOOP (envy SKILL.md "Local testing"): deploy, lease, run each goal on its channel (testing.md "Proof";
+#      `devtools.py proof <task>` = 0 gaps); a failed goal or bug (yours, checky's)
 #      -> back to 3 until 0 open bugs (max 3 rounds; then FAIL + failing goals: a stronger round, then the
 #      coordinator); never BLOCKED for an env reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting,
 #      pause" -> stop checks there until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
@@ -103,8 +105,8 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
   `decide record -Gate scope` id, `-ScopeOk`/`--scope-ok`); additive (optional fields, new params, flags); never
   remove features or inputs; DTOs not entities in APIs; foreign files: listed one-line hooks in `paths`;
   decisions in the brief are final, a NEW one -> D1.
-- **Shared code:** before changing a shared helper, hook, service, formatter, validator, default or global style, grep every
-  caller; overrides opt-in; key shared formatters by field; a round-trip test; list callers in the MR and the testing goals.
+- **Shared code:** a shared helper, hook, service, formatter, validator, default or global style: every caller in the impact
+  map; overrides opt-in; key shared formatters by field; a round-trip test; callers listed in the MR.
   A fix on one path: grep every other path that writes, serves or proxies the same data (sibling services, other products,
   every render path) and fix them in the same MR. An API status-code change: grep the API / e2e specs for the
   endpoint and delete stale known-bug blocks in the same MR.

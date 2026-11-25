@@ -1743,7 +1743,7 @@ function Invoke-Decide {
     [string]$Gate = '',   # record: one of $kitGates; check -Id: a non-gate word is ignored
     [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use,
     [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish, [switch]$Propose, [string]$Approve, [string]$Revoke, [string]$Context)
-  $dir = Get-KitPath decisions -Create; $kitGates = @('deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'data', 'scope', 'other')
+  $dir = Get-KitPath decisions -Create; $kitGates = @('deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'data', 'scope', 'proof', 'other')
   # a gate word is a person's: an agent or the coordinator as -By is none
   $crewNames = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue | ForEach-Object BaseName)
   $crewRx = "(?i)^($(@($crewNames | ForEach-Object { [regex]::Escape($_) }) -join '|'))([-_ :]|$)"

@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L268 ship-prompt · L285 plan · L304 spike ·
-//   L316 local-loop · L409 stages · L563 ship · L603 debate · L712 deploy · L727 learn
+// Sections: L18 args · L146 record-args · L165 budget · L183 build-prompt · L269 ship-prompt · L286 plan · L305 spike ·
+//   L317 local-loop · L410 stages · L564 ship · L604 debate · L713 deploy · L728 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -231,6 +231,7 @@ function continuePrompt(a, r, why) {
 You are devy ${a.id} again (items ${a.items}, area ${a.area}).${ENV(a.id)}
 Follow ${K}/SKILL.md and ${A.brief}. Your slots were released: lease your branch again (crafty.ps1 wt lease -Repo <repo> -Branch <branch> -Agent ${a.id}; last in ${(r.worktrees || []).join(', ') || 'see the board'}). Testing-goals doc: ${(r.localTest || {}).goalsDoc || '(yours)'}.
 ${why}
+Before any edit: crafty step 2 (investigate, impact map).
 ${areaNote(a)}${FLOW}${HOLD_NOTE}
 Return the full report (every MR, all items done so far).`
 }
@@ -238,8 +239,8 @@ function reviewPrompt(a, r) {
  return `Kind mr: review devy ${a.id}'s MRs (items ${a.items}, area ${a.area}; brief ${A.brief}; run ${RUN}) per your agent definition.${ENV(`review-${a.id}`)}
 ${r.mrs.map((m) => `- ${m.url} (${m.repo}${m.merged ? ', merged' : ''})`).join('\n')}
 Testing-goals doc: ${(r.localTest || {}).goalsDoc || '(none reported)'}; local test: ${(r.localTest || {}).status || '?'} on ${(r.localTest || {}).env || '?'}.
-Rules: ${K}/SKILL.md Rules (scope, tests, migrations). Only real problems; "blocking" = must be fixed before it ships (an unasked
-user-visible behaviour change is; same behaviour, other internals is not). No code changes; a suggested change per finding; scope: the brief + these MRs.`
+Rules: ${K}/SKILL.md Rules, your step 3 goals vs testing doc. Only real problems; "blocking" = must be fixed before it ships.
+No code changes; a suggested change per finding; scope: the brief + these MRs.`
 }
 function migrationPrompt(a, r) {
  return `Kind migration: review the migrations in devy ${a.id}'s MRs (brief ${A.brief}; run ${RUN}) per your agent definition; findings only.${ENV(`migration-review-${a.id}`)}

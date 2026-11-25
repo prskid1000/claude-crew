@@ -32,6 +32,9 @@ You never change code, branches, docs or tracker state;
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
    boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none"). A weakened,
    skipped or deleted existing test or assert, or code special-casing a test input: **blocking** unless the brief allows it.
+   **Goals vs testing doc** (kind mr, blocking): `python -X utf8 <kit>/skills/crafty/devtools.py proof <task>` = 0 gaps; `cases
+   render <task> goals`: every human doc check has a goal and a case, failure paths included (negative / edge); each impact map
+   item (callers, screens, record types, states) touched by the diff or excluded with a reason (crafty testing.md "Impact map").
    Missed before: a proxy / relay endpoint allow-lists its methods and paths; no lock or transaction held across an external
    call; ids from model or user output validated (format, ownership) before use.
 4. A change to existing user-visible behaviour the task did not ask for is **blocking** ("needs decision"); internal logic with

@@ -1,7 +1,9 @@
 // ui-checks.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
-// ui-checks.mjs: layout faults and contrast for any web UI, selector-free, and the qa.matrix loop; browser.mjs re-exports them.
+// ui-checks.mjs: layout faults, contrast, hit tests for any web UI, selector-free, and the qa.matrix loop; browser.mjs re-exports them.
 //   const b = await import('file:///<kit>/skills/pokey/browser.mjs'); await b.layoutIssues(s.page); await b.contrast(s.page, '.icon')
+// Sections: L6 checks · L80 matrix
 
+// ---- checks: layout, contrast, hit test
 // controls another element covers (hit test at the centre of the first line box), text boxes overlapping, text cut by an overflow
 // hidden / clip box (its own, e.g. an ellipsis, or an ancestor's; scroll boxes only crop); ignore: selectors skipped (a carousel).
 // -> { count, covered, overlaps, clipped } (each <= 30)
@@ -61,6 +63,21 @@ export async function contrast(page, selector, { min = null } = {}) {
   return { ...r, min: m, pass: r.ratio != null && r.ratio >= m }
 }
 
+// hitTest(page, [selector | { text }]): each control a change touches is shown and on top at its centre (elementFromPoint), as a
+// tester clicks it (crafty testing.md "Proof"). -> { pass, rows: [{ target, ok, by }] } (by: what covers it, 'not found', 'off screen')
+export async function hitTest(page, targets) {
+  const rows = await page.evaluate((ts) => ts.map((t) => {
+    const own = (x) => [...x.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim() === t.text)
+    const e = typeof t === 'string' ? document.querySelector(t) : [...document.querySelectorAll('body *')].find(own)
+    if (!e) return { target: t, ok: false, by: 'not found' }
+    e.scrollIntoView({ block: 'center', inline: 'center' }); const r = e.getBoundingClientRect(), h = r.width > 0 && r.height > 0 ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null
+    const ok = !!h && (h === e || e.contains(h) || h.contains(e))
+    return { target: t, ok, by: ok ? '' : h ? `${h.tagName.toLowerCase()}${h.id ? '#' + h.id : ''}` : 'off screen' }
+  }), [].concat(targets))
+  return { pass: rows.length > 0 && rows.every((x) => x.ok), rows }
+}
+
+// ---- matrix: qa.matrix variants
 // browser.mjs matrix(): fn per qa.matrix variant (m = qa.matrix), the viewport restored after
 export async function matrix(s, fn, m) {
   const ax = (k) => (m[k]?.length ? m[k] : [null]), out = [], v0 = s.page.viewport()

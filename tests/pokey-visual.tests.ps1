@@ -44,9 +44,11 @@ await page.setContent(`<body style="margin:0;font:14px sans-serif"><div style="p
 const li = await m.layoutIssues(page), t = await m.contrast(page, '#ok'), i = await m.contrast(page, '#icon')
 console.log(`layout:${li.count === 3 && li.covered[0]?.el.includes('#next') && li.covered[0].by.includes('#fab') && li.overlaps[0]?.a.includes('#h1') && li.clipped[0]?.includes('#chip')}`)
 console.log(`contrast:${t.ratio === 21 && t.pass && i.ratio === 1.36 && i.min === 3 && !i.pass}`)
+const h = await m.hitTest(page, ['#next', '#ok', { text: 'fine' }, '#none']), vw = await m.testerScreen({ page }, async () => page.viewport().width)
+console.log(`hit:${!h.pass && h.rows.map((r) => r.ok).join() === 'false,true,true,false' && h.rows[0].by === 'div#fab' && h.rows[3].by === 'not found' && vw[0].result === 1366 && page.viewport().width === 800}`)
 await br.close()
 '@
-  if ("$res" -match 'nochrome') { 'SKIP ui-checks (no Chrome or Edge)' } else { Expect-Each $res 'ui-checks #' 'layout', 'contrast' }
+  if ("$res" -match 'nochrome') { 'SKIP ui-checks (no Chrome or Edge)' } else { Expect-Each $res 'ui-checks (hit: hitTest covered / found / missing, testerScreen 1366 then restored) #' 'layout', 'contrast', 'hit' }
 } else { 'SKIP ui-checks (no puppeteer-core in skills/pokey)' }
 # ---- web-login-types
 if ($bk) {

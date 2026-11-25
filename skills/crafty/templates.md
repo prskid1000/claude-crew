@@ -69,8 +69,9 @@ tasks; a draft spec refuses the wave brief.
 `bossy.ps1 bugbrief -Task <id>` writes it (failed checks, evidence, repos), added to the wave brief:
 ```markdown
 1. Read the bug: crafty.ps1 tracker view <id> + comments (the QA comment lists failed and untested checks).
-2. Reproduce LOCALLY first (envy SKILL.md "Debug locally"): the checks' steps, logs, DB state, debugger -> goals doc + AI doc
-   `repro` row. Not reproducible locally -> say why, reproduce on the test env.
+2. Investigate before any edit (crafty step 2): reproduce LOCALLY (envy SKILL.md "Debug locally": the checks' steps, logs, DB
+   state, debugger -> `repro` case; not reproducible locally -> say why, reproduce on the test env); read the logic, its history
+   and tests (disabled too), trace callers, screens and the tester's path -> the impact map.
 3. Classify each check: real bug (root cause + regression test red before, green after) · stale deploy (name the missing commit)
    · expected (cite the decision) · config/data (what to set where).
 4. Fix, then re-run the same reproduction as the first local check; then the full testing goals.
@@ -94,20 +95,13 @@ solution.md review --ai cases`.
 ```json
 { "title": "", "change": "<one line, user terms>", "repos": ["<refs>"], "env": "<env> r<n>", "services": "<leased>", "setup": "<data via the API, prefixed; cleanup>",
   "data": "", "repro": "<bugs: steps, logs, DB state>", "plan": { "unit": "", "regression": "", "api": "", "ui": "", "run": "" }, "matrix": "<qa.matrix line>",
-  "checks": [{ "id": "T1", "area": "<screen>", "steps": "1. <click / type> 2. ...", "expected": "<exact text on screen>", "noUi": "<only: no UI trigger (job, inbound feed); steps = where its effect shows>" }],
+  "impact": { "logic": "<what changes, why it is so: log / blame, tests>", "callers": ["<symbol> <- <consumers>"], "renders": [{ "item": "<screen / record type / state>", "result": "<case PASS | excluded: why>" }], "path": "<UI -> API -> DB / AI -> UI>" },
+  "checks": [{ "id": "T1", "channel": "ui|api|job|ai", "mobile": false, "area": "<screen>", "steps": "1. <click / type> 2. ...", "expected": "<exact text on screen>", "noUi": "<job: where its effect shows>", "guard": "<ai: unit test>", "preverify": "<staging link>", "waiver": "<decision id>" }],
   "qualities": [{ "id": "Q1", "goal": "<'prominent', '< 10 s'>", "how": "<contrast(), 5 timings>", "rule": "<p95 <= 10 s>" }], "unchanged": [{ "id": "U1", "goal": "" }],
-  "cases": [{ "id": "A1", "type": "positive|negative|edge|regression|repro", "check": "T1", "steps": "<API call + payload / screen, selector>", "expected": "", "result": "", "evidence": ["<link>"] }],
+  "cases": [{ "id": "A1", "type": "positive|negative|edge|regression|repro", "check": "T1", "steps": "<API call + payload / screen, selector>", "expected": "", "result": "", "evidence": ["<link>"], "viewport": "", "hit": "" }],
   "switches": [{ "setting": "", "where": "", "value": "" }], "outOfScope": [{ "item": "", "why": "" }], "tasks": "", "environment": "", "logins": "<keys>", "testData": "", "whatChanged": "" }
 ```
-The gates judge the rendered text: `checks` = the human doc (`| # | UI steps | Expected on screen | Screenshot | Extra evidence |
-Result |`), POSITIVE only, from the request (task, acceptance, stated qualities), never the code; driven from the UI (owner
-2026-11-20): what a person clicks or types and sees, a backend change through the UI action that triggers it, no endpoints, payloads
-or code names (refused); a screenshot per check, request / response JSON only from that action (network or app log) as extra;
-Screenshot / Extra evidence / Result empty (an env run fills them: pokey finalize or a person, a dated "<env> run" section); `cases` = every
-positive, negative, edge and regression case (invalid input, role denials, boundaries, empty data, concurrency, nearby features,
-impact edges), each human check run by a case naming it (`check`); a bug fix: a `repro` case (`process.gates.bugFix` `builtin:reproRow`: merge refuses without); UI cases at
-every `qa.matrix` variant (`matrix`); a failing case is FAIL, never "pre-existing"; a `qa.notLocal` stub path NOT_TESTED_LOCAL,
-never PASS; a result needs an evidence link (screenshot, request / response JSON, run output: `devtools.py evidence`).
+Rules (what the gates judge): `testing.md` "Impact map", "Proof", "Test cases".
 
 ## MR spec (title, body, commit)
 One spec renders the MR title (`mrTitleFormat`), body (Summary, Changes, How tested table, Risks, Links) and the commit

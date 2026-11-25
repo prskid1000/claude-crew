@@ -65,8 +65,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      ONE stronger retry (`models.retest`, told your blocker); still NOT_TESTED -> failedTesting; never for "no time".
    - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
-   - **LLM-driven checks** are intermittent: warm-up turn, 5+ runs in fresh sessions, each answer's UTC time; set
-     `attempts`, `window`; a verifier recreates them to refute.
+   - **LLM-driven checks:** ONE run in a fresh session, its answer's UTC time, `window` set; the code guard the dev proved
+     (crafty testing.md "Proof") carries the variance; never N reruns (owner 2026-11-25); a verifier recreates it to refute.
    - **Flaky**: a FAIL no re-test reproduces stays FAIL, `flaky: true` (own -> failedTesting, new -> [Bug] tagged
      flaky); no PASS_WITH_NOTE.
    - **OUT_OF_SCOPE**: only a `qa.outOfScope` channel (run.json `outOfScope` wins), its in-app part tested. A part with no

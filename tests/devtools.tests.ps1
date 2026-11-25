@@ -153,5 +153,38 @@ if ($IsWindows) {
   try { $env:PATH = "$shimDir;$oldPath"; $gpR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); & (Get-Python) -c 'import sys; print(sys.argv[1])' $tq 2>&1 | Out-String } } finally { $env:PATH = $oldPath }
   Expect "Get-Python: the real python.exe behind a .bat shim keeps an arg with a quote and ( ) ($gpR)" ("$gpR".Trim() -eq $tq)
 }
+# ---- proof (owner 2026-11-25: 48% came back, ui goals proven by API / stubs): adapters/proof.py gates finish, mr, wt commit
+Copy-Item (Join-Path $src 'skills/crafty/adapters/proof.py') (Join-Path $k 'skills/crafty/adapters')
+$pfSelf = & $py -X utf8 $DT proof selftest 2>&1 | Out-String
+Expect "proof selftest: channel gaps (API-only ui, NOT_TESTED_LOCAL, viewport, hit test, ai guard), impact map, happy path, Draft, finish wrap, goals doc ($(@([regex]::Matches($pfSelf, '(?m)^PASS')).Count) PASS)" ($LASTEXITCODE -eq 0 -and $pfSelf -notmatch '(?m)^FAIL' -and @([regex]::Matches($pfSelf, '(?m)^PASS')).Count -ge 13)
+$pfOld = if (Test-Path $pdF) { Get-Content -Raw $pdF } else { $null }; $pfC = if ($pfOld) { $pfOld | ConvertFrom-Json -AsHashtable } else { @{} }
+$pfC.process = @{ gates = @{ finish = 'builtin:testingDocs' } }; $pfC.tracker = @{ branchRx = '(?<id>PF\d+)' }; Set-JsonFile $pdF $pfC
+$pfChk = @{ id = 'T1'; area = 'Orders'; steps = '1. open Orders 2. click Save'; expected = 'Saved shows' }
+Set-JsonFile (Join-Path (Kd) 'pf1.json') @{ title = 'Save order'; checks = @($pfChk); cases = @(@{ id = 'A1'; type = 'positive'; check = 'T1'; steps = 'Orders, Save'; expected = 'Saved' }) }
+$pfAdd = & $py -X utf8 $DT cases add PF1 (Join-Path (Kd) 'pf1.json') 2>&1 | Out-String
+$pfGap = & $py -X utf8 $DT proof PF1 2>&1 | Out-String; $pfGapc = $LASTEXITCODE
+$pfRepo = Join-Path (Kd) 'pf-repo'; New-Item -ItemType Directory -Force $pfRepo | Out-Null; 'a' | Set-Content "$pfRepo/a.txt"; Save-GitRepo $pfRepo i; git -C $pfRepo checkout -q -b feat/PF1-save
+'b' | Set-Content "$pfRepo/b.ts"; $pfNo = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $pfRepo -Message 'feat: save the order' 2>&1 | Out-String; $pfNoc = $LASTEXITCODE
+$null = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $pfRepo -Message 'wip: save' 2>&1; $pfWip = $LASTEXITCODE
+Expect "proof: cases add warns, proof PF1 lists the gaps, wt commit refuses the code commit without the impact map, a WIP passes ($pfGapc $pfNoc $pfWip)" ($pfAdd -match 'WARN cases PF1: no impact map' -and $pfGapc -eq 1 -and $pfGap -match "check T1: channel 'unset'" -and
+  $pfGap -match 'happy path only' -and $pfNoc -eq 1 -and $pfNo -match 'commit refused: .*no impact map' -and $pfWip -eq 0)
+Set-JsonFile (Join-Path (Kd) 'pf1.json') @{ checks = @($pfChk + @{ channel = 'ui' }); impact = @{ logic = 'save since abc1; disabled SaveTest expects it'; callers = @('web Orders', 'app sync'); path = 'UI -> API -> DB -> UI'; renders = @(@{ item = 'Orders list'; result = 'A1 PASS' }) }
+  cases = @(@{ id = 'A2'; type = 'negative'; check = 'T1'; steps = 'Orders, Save empty'; expected = 'Required shows' }) }
+$null = & $py -X utf8 $DT cases add PF1 (Join-Path (Kd) 'pf1.json') --replace 2>&1
+$pfApi = & $py -X utf8 $DT cases result PF1 A1 PASS 'put.json=https://h/put' 2>&1; $pfApiG = & $py -X utf8 $DT proof PF1 2>&1 | Out-String
+$null = & $py -X utf8 $DT cases result PF1 A1 PASS 'a1.png=https://h/a1' viewport=1366x768 hit=PASS 2>&1; $null = & $py -X utf8 $DT cases result PF1 A2 PASS 'a2.png=https://h/a2' 2>&1
+$pfOk = & $py -X utf8 $DT proof PF1 2>&1 | Out-String; $pfOkc = $LASTEXITCODE; $pfGoals = Get-Content -Raw (& $py -X utf8 $DT cases render PF1 goals 2>$null)
+'c' | Set-Content "$pfRepo/c.ts"; $null = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') wt commit -Dir $pfRepo -Message 'feat: save the order' 2>&1; $pfYes = $LASTEXITCODE
+if ($null -ne $pfOld) { [IO.File]::WriteAllText($pdF, $pfOld) } else { Remove-Item -LiteralPath $pdF }
+Expect "proof: an API-only PASS on a ui goal stays a gap; a screenshot at 1366x768 + hit PASS closes it; the goals doc shows proof and impact map; the code commit goes in ($pfOkc $pfYes)" (
+  $pfApiG -match 'T1 \(ui\): no PASS case with UI evidence' -and $pfOkc -eq 0 -and $pfGoals -match '## Impact map' -and $pfGoals -match 'A1 PASS viewport 1366x768 hit PASS' -and $pfYes -eq 0)
+# owner 2026-11-25 ("it will take soooo much time, never do this"): an ai goal = a code guard + ONE local run; no kit text asks for N reruns
+$aiRx = @'
+(\bai\b|\bmodel|\bllm|\bprompt|llm-driven).{0,80}([0-9]+\+?|\bN) (times|runs|reruns|attempts)
+'@.Trim()
+$aiHits = @(git -C $src grep -n -i -E $aiRx -- '*.md' '*.js' '*.mjs' ':!.codex' ':!.agents' 2>&1); $aiCode = $LASTEXITCODE
+$aiHits = @($aiHits | Where-Object { "$_" -notmatch 'never (rerun|N reruns)' })
+$aiSelf = @("LLM-driven checks: 5+ runs in fresh sessions", "never rerun a model N times") | Where-Object { $_ -match "(?i)$aiRx" -and $_ -notmatch 'never (rerun|N reruns)' }
+Expect "no kit text tells an agent to rerun an AI flow N times (grep exit $aiCode, $($aiHits.Count): $($aiHits | Select-Object -First 2))" ($aiCode -le 1 -and $aiHits.Count -eq 0 -and @($aiSelf).Count -eq 1 -and $pfSelf -match 'PASS proof: a goal per channel')
 Remove-TestKit $k
 Complete-Tests
