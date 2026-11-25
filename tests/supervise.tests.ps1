@@ -20,13 +20,13 @@ $hs = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); $bd = Tk
 function New-Entry($agent, $run, $min, $status = 'working') { & $J @{ session = "s-$agent"; agent = $agent; run = $run; type = 'revy'; status = $status; beat = (Get-Date).AddMinutes(-$min).ToString('o'); joined = (Get-Date).AddHours(-1).ToString('o'); holderPid = $PID; holderStart = $hs } (Join-Path $bd "s-$agent.json") }
 New-Journal wf_r1 @(@{ type = 'started'; agentId = 'a1'; label = 'review:PY-RET' }, @{ type = 'result'; agentId = 'a1'; result = @{ findings = @() } }, @{ type = 'started'; agentId = 'a2'; label = 'build:X2' }, @{ type = 'started'; agentId = 'a3'; label = 'decide:SD' }, @{ type = 'result'; agentId = 'a3'; result = @{} }, @{ type = 'started'; agentId = 'a4'; label = 'resume:SD' })
 New-Journal wf_r3 @(@{ type = 'started'; agentId = 'b1'; label = 'learn' }, @{ type = 'result'; agentId = 'b1'; result = @{ signals = 1 } }, @{ type = 'finished' })
-New-Journal wf_f1 @('started f1 close:F1', 'failed f1', 'started f2 test:F2', 'failed f2', 'started f3 test:F2~retry1', 'result f3', 'started f4 prep', 'failed f4', 'started f5 prep-retry', 'result f5' | ForEach-Object { $fjT, $fjI, $fjL = $_ -split ' '; @{ type = $fjT; agentId = $fjI; label = $fjL } })
-New-Entry 'review-PY-RET' r1 49; New-Entry 'revy-1400' kit-fix 40; New-Entry 'kitty' kit-fix 41 'left'; New-Entry 'H9' r2 30; New-Entry 'SD' r1 49; New-Entry 'QB' r4 0; New-Entry 'QB-2' r4 49   # QB-2: a pre-pause copy of QB, which beats
+New-Journal wf_f1 @('started f1 close:F1', 'failed f1', 'started f2 test:F2', 'failed f2', 'started f3 test:F2~retry1', 'result f3', 'started f4 prep', 'failed f4', 'started f5 prep-retry', 'result f5', 'started f6 ship:F3', 'failed f6', 'started f7 ship:F3@redo', 'result f7' | ForEach-Object { $fjT, $fjI, $fjL = $_ -split ' '; @{ type = $fjT; agentId = $fjI; label = $fjL } })
+New-Entry 'review-PY-RET' r1 49; New-Entry 'revy-1400' kit-fix 40; New-Entry 'kitty' kit-fix 41 'left'; New-Entry 'H9' r2 30; New-Entry 'SD' r1 49; New-Entry 'QB' r4 0; New-Entry 'QB-2' r4 49   # QB-2: a pre-pause copy of QB (it beats)
 $qbRow = pwsh -NoProfile -Command ". '$O'; @(Get-KitStatusRows (Get-Date) '' | Where-Object name -like 'QB-2 *' | ForEach-Object { `"`$(`$_.state) `$(`$_.done)`" })"
 $null = pwsh @np $O launch -RunId wf_r3 -Script buildy.js -ArgsJson '{"brief":"C:/b/r3.md","run":"r3"}' 2>&1
 $sj = pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json; $sw = @($sj.flags | ForEach-Object { "[$($_.level)] $($_.what)" }) -join "`n"
 for ($wi = 0; $wi -lt 60; $wi++) { $lr3 = Read-Json (Join-Path (TkPath $k launches) 'wf_r3.json'); if ($lr3.completed) { break }; Start-Sleep 1 }   # closed in the background (K20)
-Expect 'supervise: a failed workflow step is ACT, unless its retry has a result' ($sw -match '\[ACT\] step failed: run wf_f1 step close:F1' -and $sw -notmatch 'step (test:F2|prep)')
+Expect 'supervise: a failed workflow step is ACT, unless its retry has a result' ($sw -match '\[ACT\] step failed: run wf_f1 step close:F1' -and $sw -notmatch 'step (test:F2|prep|ship)')
 $left = { param($a) $e = Read-Json (Join-Path $bd "s-$a.json"); $e.status -eq 'left' -and $e.finished }
 Expect 'supervise -AutoFix: stale entries with a journal result (not one running again) or a finished parent leave (INFO), so does a quiet <agent>-<n> whose base agent beats; a silent one = STUCK (WATCH); a finished run''s record closes' ((& $left 'review-PY-RET') -and (& $left 'revy-1400') -and -not (& $left 'H9') -and -not (& $left 'SD') -and (& $left 'QB-2') -and -not (& $left 'QB') -and $sw -notmatch 'STUCK QB' -and "$qbRow" -eq 'FINISHED stale duplicate of QB (it beats)' -and
   $sw -match '\[INFO\] auto-fixed: board entry QB-2 \(r4\) left: a stale duplicate of QB, which beats' -and
@@ -55,7 +55,7 @@ $wj = { param($id, $run, [object[]]$L, $m, $x = @{}) New-Journal $id $L; (Get-It
 & $wj wf_s3 sq @(@{ type = 'started'; agentId = 'z1'; label = 'build:Q1' }, @{ type = 'result'; agentId = 'z1'; result = @{} }) 5 @{ paused = (& $ago 4) }
 & $se S9 @{ beat = (& $ago 30) }; $null = & $tx (Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/agent-a9.jsonl') '{"message":{"content":[{"type":"tool_result","content":"SESSION s-S9   (pass -Session s-S9 to beat / check / leave)"}]}}'   # an Agent-tool subagent no beat mapped
 & $wj wf_s4 sv @(@{ type = 'launched' }) 30
-# progress past the beat (a long phase): a fresh file in its agent dir, its worktree or its QA run dir keeps it ACTIVE; S3 (all idle) stays STUCK
+# past the beat (a long phase): a fresh file in its agent dir, worktree or QA run dir keeps it ACTIVE; S3 (all idle) stays STUCK
 $pw = Join-Path (Kd) 'pw-wt'; git init -q $pw; 'x' | Set-Content "$pw/edit.txt"; & $se P10 @{ beat = (& $ago 30); worktrees = @($pw) }
 & $se P11 @{ beat = (& $ago 30) }; $null = New-Item -ItemType Directory -Force (Join-Path (TkPath $k agents -Create) 'P11'); 'n' | Set-Content (Join-Path (TkPath $k agents) 'P11/notes.md')
 & $se P12 @{ beat = (& $ago 30); run = 'qa-p12'; items = 'T1' }; $null = New-Item -ItemType Directory -Force (Join-Path (TkPath $k qa-runs -Create) 'qa-p12/T1'); '{}' | Set-Content (Join-Path (TkPath $k qa-runs) 'qa-p12/T1/results.json')
@@ -80,7 +80,7 @@ Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& 
   (& $sv 'S6 (devy)' 'WAITING: GPU, held by vision x') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_ command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
   @($st -match '^transcripts read: claude 2\.9, codex 0\.157\.0$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 3[0-2] min').Count -and
   @(pwsh @np $O status -Json | ConvertFrom-Json | Where-Object { $_.name -eq 'S2 (devy)' -and $_.state -eq 'WAITING' }).Count)
-# Doing · next with no agent report: workflow phase (journal) + next phase (script meta), checkpoint step / round / evidence + next, the newest tool's file; tail cached by size + time
+# Doing · next, no agent report: journal phase + script meta next phase, checkpoint step / round / evidence + next, newest tool's file; tail cached (size + time)
 & $wj wf_s4 sph @(@{ type = 'started'; agentId = 'p1'; label = 'build:PH1'; phase = 'Build' }) 0 @{ script = (Join-Path $src 'workflows/buildy.js') }
 $null = & $tx "$(Split-Path $wd)/wf_s4/agent-p1.jsonl" '{"type":"assistant","message":{"content":[{"type":"text","text":"Fixing the gate.\nmore"},{"type":"tool_use","name":"Edit","input":{"file_path":"D:\\r\\skills\\crafty\\lib.ps1"}}]}}' 0
 & $se PH1 @{ run = 'sph' }; foreach ($ckN in 1, 2) { $null = pwsh @np (Join-Path $k 'skills/crafty/crafty.ps1') checkpoint -Agent PH1 -Run sph -Step loop -Item PH1 -Evidence 'PASS 7/9' }

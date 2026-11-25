@@ -58,7 +58,7 @@ run(args, agentLost, _n, _n, pipeline).then(() => {
  console.log(`follow-ups:${calls.some((c) => c.label === 'followups:X1' && /rename y/.test(c.prompt) && / followups \S+ https:\/\/h\/g\/api/.test(c.prompt))}`)
  console.log(`wt-dedup:${calls[si].prompt.includes('last: C:/wt/x1)')}`)
  console.log(`steps-ref:${/skills\/crafty\/SKILL\.md/.test(calls.find((c) => c.label === 'build:X1').prompt)}`)
- console.log(`hold:${lost === 1 && ti >= 0 && /^No report came back[\s\S]*-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)   // track redone once
+ console.log(`hold:${lost === 1 && ti >= 0 && /^STEP: No report came back[\s\S]*-HoldPromotion 'deferred items: A2'/.test(calls[ti].prompt)}`)   // track redone once
  const m = /-Run '([^']+)'/.exec(calls.find((c) => c.label === 'record-args').prompt)
  console.log(`run:${m ? m[1] : 'none'}`)
 }).catch(_err)
@@ -110,7 +110,7 @@ Expect-Each (Invoke-Js dw-args $jso $wfd) 'buildy: #' 'mode-refused', 'removed-a
 # buildy: rechy spike first, open -> no devy; datay reviews migrations twice, none = no merge
 $jssp = @'
 const M = 'migration-review:X1', ok = (p, o) => /^(build|ship|fix):/.test(o.label) ? _rep({ status: 'PASS' }, /^sh/.test(o.label) ? _merged(1) : {}) : /review:/.test(o.label) ? { findings: [] } : undefined
-const go = async (x, f = ok, no) => { const m = _mock(f), ty = {}; const r = await run({ brief: 'w.md', ..._kl, agents: [{ id: 'X1', migrations: 1 }], ...x }, (p, o) => { ty[o.label] = o.agentType; return o.label === M && no ? null : m.agent(p, o) }, _n, _n, pipeline); return { r, ty, L: m.calls.map((c) => c.label) } }
+const go = async (x, f = ok, no) => { const m = _mock(f), ty = {}; const r = await run({ brief: 'w.md', ..._kl, agents: [{ id: 'X1', migrations: 1 }], ...x }, (p, o) => { ty[o.label] = o.agentType; return o.label.startsWith(M) && no ? null : m.agent(p, o) }, _n, _n, pipeline); return { r, ty, L: m.calls.map((c) => c.label) } }
 const n = (L, l) => L.filter((x) => x === l).length, a = await go({ openQuestions: ['q'] })
 const b = await go({ openQuestions: ['q'] }, (p, o) => o.label === 'spike' ? { ok: false, output: 'D-7' } : ok(p, o)), z = await go({}, ok, 1)
 let k = 0; const f = await go({}, (p, o) => o.label === M && !k++ ? { findings: [{ mr: '1', file: 'm', severity: 'blocking', problem: 'p', fix: 'f' }] } : ok(p, o))

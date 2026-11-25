@@ -240,6 +240,7 @@ const _n = () => {}
 // every sim's args share these; a testy item on lane `lane`, subtask T1
 const _kl = { kitDir: 'C:/kit', learn: false }
 const _item = (code, lane = 'api', x = {}) => ({ code, title: code, guideFile: 'g.md', lane, subtasks: [{ id: 'T1' }], ...x })
+const setTimeout = (f) => f()   // a step retry's wait is instant in sims
 const run = async (args, agent, log, phase, pipeline, parallel) => { __BODY__ }
 const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
 '@

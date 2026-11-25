@@ -1193,8 +1193,8 @@ foreach ($w in $wfDirs) {
   $silentH = ($now - (Get-Item $j).LastWriteTime).TotalHours
   if ($done -and $silentH -gt 2) { continue }
   if (-not $done) { $sr = Get-KitSilentRun $w.Name $silentH $state.quietRuns $now; if ($sr.flag) { Flag $sr.flag.level $sr.flag.what $sr.flag.action }; if ($sr.skip) { continue } }
-  # a failed step with no later result
-  $lb = @{}; foreach ($stx in $started) { $lb[$stx.agentId] = $stx.label -replace '~retry\d+$|-retry(?=:|$)' }; $okS = $lb[@($res.Keys)]
+  # failed, not redone
+  $lb = @{}; foreach ($stx in $started) { $lb[$stx.agentId] = $stx.label -replace '~retry\d+$|-retry(?=:|$)|@redo$' }; $okS = $lb[@($res.Keys)]
   foreach ($fs in @($ev | Where-Object type -eq 'failed')) { $fl = $lb[$fs.agentId]; if ($fl -and $fl -notin $okS) { Flag 'ACT' "step failed: run $($w.Name) step $fl" "Redo: bossy.ps1 report -Run $($w.Name)" } }
   $running = @(Get-JournalRunning $started @($res.Keys)); if (-not $done) { $wfOpen++ }   # open even paused or between agents: no retro
   if ($w.Name -notin $pausedRuns) { $runTotal += $running.Count }

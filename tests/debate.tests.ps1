@@ -2,7 +2,7 @@
 <#
 debate.tests.ps1: bossy.ps1 decide ask / answer / envfix (a bare ask refused: specs.tests), debate (1 per run, -Owner, A/B options, each role's
 Character, the owner's table + decide ask) and the
-buildy sims of the review rebuttal (disputes), the trigger debates and the phases (code, loop, docs; a handoff before the loop) (brief, dispute, rejected twice, low confidence); board join of
+buildy sims of the review rebuttal (disputes), the trigger debates and the phases (code, loop, docs; a handoff before the loop), a step with no result (one <label>@redo) (brief, dispute, rejected twice, low confidence); board join of
 one id spawned twice (PARALLEL, REJOIN only with claims or -Session); bugbrief (repos from MRs, else configured; Migration range).
 Usage: pwsh -NoProfile -File <kit>/tests/debate.tests.ps1 (or tests/kit-tests.ps1 -Area debate).
 Exit codes: 0 pass · 1 a check failed.
@@ -198,5 +198,17 @@ run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }
 })).catch(_err)
 '@
 Expect-Each (Invoke-Js dw-phases $jsph $wfd) 'buildy phases: # (code, loop, docs as fresh devy; phases:false = one devy)' 'order', 'prompts', 'kept', 'off', 'handoff', 'held', 'loopfirst', 'goon' -Show 8
+# buildy: review, fix, ship with no result run once more as <label>@redo (fix: state check first; ship: never merge twice); learn never
+$jsBr = @'
+const lt = { status: 'PASS', env: 'e', rounds: 1, failing: [], goalsDoc: 'g' }, all = [], lost = new Set()
+const m = _mock((p, o) => /^review:/.test(o.label) ? { findings: m.calls.filter((c) => /^review:/.test(c.label)).length === 1 ? [{ mr: '1', file: 'a.ts', severity: 'blocking', problem: 'p', fix: 'f' }] : [] } : /^ship:/.test(o.label) ? _rep(lt, _merged(1)) : /^(build|fix):/.test(o.label) ? _rep(lt) : undefined)
+const drop = (p, o) => { all.push(o.label); if (o.label === 'learn' || (/^(review|fix|ship):X1$/.test(o.label) && !lost.has(o.label) && lost.add(o.label))) return null; return m.agent(p, o) }
+run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl, learn: true }, drop, _n, _n, pipeline).then(() => {
+ const n = (l) => all.filter((x) => x === l).length, pr = (l) => (m.calls.find((c) => c.label === l) || {}).prompt || ''
+ console.log(`br-redo:${n('review:X1@redo') === 1 && n('fix:X1@redo') === 1 && /^No report came back: first find what is done/.test(pr('fix:X1@redo')) && n('ship:X1') === 1 && n('ship:X1@redo') === 1 && /first find what is done[\s\S]*never merge twice/.test(pr('ship:X1@redo'))}`)
+ console.log(`br-never:${n('learn') === 1 && !all.some((l) => /learn@|@redo@|~retry/.test(l))}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js bw-stepretry $jsBr $wfd) 'buildy step retry: #' 'br-redo', 'br-never' -Show 8
 Remove-TestKit $k
 Complete-Tests

@@ -62,7 +62,7 @@ const RESULT = {
  },
  required: ['applied', 'proposedForApproval', 'rejected', 'report'],
 }
-const res = await agent(`Kind retro (judge): you maintain the kit (${C}). The script step did the counting and the upkeep; you only judge.${PATHS}${A.mandate && [].concat(A.mandate).length ? `\nWHY: the owner asked, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}` : ''}
+const JP = `Kind retro (judge): you maintain the kit (${C}). The script step did the counting and the upkeep; you only judge.${PATHS}${A.mandate && [].concat(A.mandate).length ? `\nWHY: the owner asked, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}` : ''}
 Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line needs its source to decide).
 
 0. Worktree (${C} is the live clone: a changed tracked file there blocks the coordinator's pull): & ${C}/skills/crafty/crafty.ps1 wt new -Repo ${C} -Branch kit/${RUN} -Target main -Name ${RUN}; W = its dir. Steps 1-3 and 5 use W's copies (W/skills/bossy/bossy.ps1 learn, W/skills/bossy/kitbag.py, edits in W), never ${C}'s.
@@ -81,7 +81,11 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
  ${C}/skills/crafty/devtools.py render retro retro.json ${rp('retros')}/${RUN}.md.
 5. python -X utf8 W/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report. Ship W: & ${C}/skills/crafty/crafty.ps1 wt commit -Dir W, git -C W rebase origin/main, git -C W push origin HEAD:main (fast-forward only), & ${C}/skills/crafty/crafty.ps1 wt remove -Dir W; a refused push goes in the report, never into ${C}.
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
-Return the lists and the report path.`, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
+Return the lists and the report path.`
+let res = await agent(JP, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
+// no result (2026-11-25 login race): one retry after a wait that checks what is done first: never a second worktree, edit or push
+if (!res) { log('apply: redo'); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
+ res = await agent(`No report came back: first find what is done: ${rp('retros')}/${RUN}.md exists -> return its lists, edit nothing, run step 6 if its signals are not marked reviewed; a kit/${RUN} worktree (git -C ${C} worktree list) -> continue in it, never a second; a pushed commit is never redone.\n${JP}`, { label: 'apply@redo', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' }) }
 
 if (res) res.proposedForApproval = [].concat(res.proposedForApproval || [], PN)
 log(`applied ${res ? res.applied.length : 0}, awaiting approval ${res ? res.proposedForApproval.length : 0}`)
