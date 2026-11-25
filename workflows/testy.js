@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L63 record-args · L84 prepare · L114 config · L146 prompts · L239 local · L267 app · L297 test-prompt ·
-//   L355 verify · L417 run-item · L601 pool · L623 budget · L655 run · L709 learn
+// Sections: L16 args · L65 record-args · L86 prepare · L116 config · L148 prompts · L241 local · L269 app · L299 test-prompt ·
+//   L357 verify · L419 run-item · L603 pool · L625 budget · L657 run · L711 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -31,20 +31,22 @@ export const meta = {
 } */
 // kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tasks": "tasks/"}}
+// a tester step, no result (2026-11-25 login race): one retry, <label>~retry1; close/hold never
+const agent1 = agent, TRY2 = /^([\w-]*test|retest-strong|handoff|verify|audit):/
+try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agent1(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
-// an unknown arg is refused, never dropped (a coordinator's notes reached no tester): forms 1-3 above + run.json keys (STATE.md qa-runs:run)
+// an unknown arg is refused, never dropped: forms 1-3 + run.json keys (STATE.md qa-runs:run)
 const ARG_KEYS = 'select name label started only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent'.split(' ')
 const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
 if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
-// a relative runDir is from the workspace root, never the kit folder agents run in (one made <kit>/.claude/.runtime, 2026-11-23)
+// a relative runDir is from the workspace root, never the kit folder (2026-11-23)
 const ABS0 = /^([A-Za-z]:|[\\/])/
-// agents run in the kit folder: a relative kitDir made every step path wrong (testers fixed '.claude/skills/pokey/pokey.ps1' by hand, 2026-11-23)
+// a relative kitDir broke every step path (2026-11-23)
 if (!ABS0.test(K0)) throw new Error(`testy.js args.kitDir '${K0}': the absolute <workspace>/.claude path (bossy SKILL "Launch")`)
 if (R.runDir && !ABS0.test(R.runDir) && ABS0.test(K0)) R = { ...R, runDir: `${K0.replace(/[\\/][^\\/]+$/, '')}/${String(R.runDir).replace(/^\.[\\/]/, '')}` }
-// test = sonnet, never the session model; close, hold, steps, learn = haiku. models.<phase> wins (kit.local.json, CONFIG line of launch -Self)
-// tier (fast | balanced | strong | inherit) -> model; CONFIG tiers + models.<phase> win
+// tier (fast | balanced | strong | inherit) -> model, never the session model; CONFIG tiers + models.<phase> win
 const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
 const MT = { test: TB, verify: TB, audit: TB, close: TF, hold: TF, learn: TF, retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
@@ -295,7 +297,7 @@ function laneBlock(it, L) {
 LANE "${laneOf(it)}" (kind ${k}): drive it with the tools ${QA}/SKILL.md names for this kind; save evidence for every check.`
 }
 // ---- test-prompt: test and audit prompts
-// finalize -Check publishes nothing: it renames off-standard evidence to <CODE>-<checkId>_<nn>_<what> and rewrites the results file
+// finalize -Check publishes nothing: renames evidence to <CODE>-<checkId>_<nn>_<what>, rewrites the results file
 const CHECK = (it, extra = '') => `& '${Q}' finalize -RunDir '${R.runDir}' -Code ${it.code} -Check -FixNames${extra}`
 const CHECK_FAILS = 'It prints EXIT=1 (plus a FAILED line: it crashed, read the error) =evidence named in it is missing, a name it could not fix, duplicate check ids, a human testing doc row no check covers (give a check its row id or case), or a doc check without a screenshot (run it from the UI and capture it)'
 
@@ -383,7 +385,7 @@ first tester's UTC window first. Keep or correct each FAIL's defect class (own /
 tracks the same defect: check its text and signature; never a tested task).`
 }
 
-// results.json holds what the last unscoped tester wrote; close and hold send only the workflow's changes (pokey.ps1 results patch)
+// results.json = the last unscoped tester's; close and hold send only this run's changes (pokey.ps1 results patch)
 const uniq = (checks) => { const seen = new Set(); return checks.map((c0) => { const c = { ...c0 }, id0 = String(c.id || 'check'); let id = id0, k = 1
  while (seen.has(id)) id = `${id0}${String.fromCharCode(97 + k++)}`
  if (id !== id0) c.guideId = id0
@@ -537,7 +539,7 @@ async function runItem(it, idx, L) {
   adoptRetry(res, r3, `after ENV-FIX ${id}`)
   retried = true
  }
- // still mostly NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict (a local item has ENV-FIX instead)
+ // still mostly NOT_TESTED after the stronger retry, shared env: a broken run, not a verdict (local items: ENV-FIX)
  const broken = ntShare(res) > 0.5 && !LOCALENV(it) ? `${Math.round(ntShare(res) * 100)}% NOT_TESTED after the stronger retry on a shared env: a broken run, not a verdict - results held, the coordinator decides (retest or close)` : ''
  if (broken) log(`${it.code}: ${broken}`)   // held below (held.json: supervise asks), never dropped unpublished
  const envFixOpen = !!LOCALENV(it) && res.checks.some(retryable)
@@ -609,7 +611,7 @@ async function pool(list, size, offset, deviceOf) {
    if (!(await gate('Test'))) { STOPPED.push(list[k].code); continue }
    out[k] = await runItem(list[k], offset + k, deviceOf ? deviceOf(w) : null).catch((e) => ({ code: list[k].code, error: String(e) }))
   }
-  // app lane done: every lease of its id (phone shuts down unless someone waits; env, GPU, builds, tabs), logged in leases.jsonl
+  // app lane done: every lease of its id goes (phone unless someone waits, env, GPU, builds, tabs; leases.jsonl)
   const L = deviceOf ? deviceOf(w) : null
   if (L && L.name) {
    await runStep(`& ${ORCH} release -Agent '${LEASE(L)}' -Reason 'agent finished'`, `release-${L.name}`, 'Close').catch(() => null)
@@ -621,7 +623,7 @@ async function pool(list, size, offset, deviceOf) {
 }
 
 // ---- budget: batch, plan cap, stop line
-// BUDGET (README "Configuration" budget): cap = the plan's budgets; over it -> refused + split; at stopAt no new item, rest -> next
+// BUDGET (README "Configuration"): over the plan's cap -> refused + split; at stopAt no new item, rest -> next
 const BATCH = R.batch > 0 && R.items.length > R.batch ? R.batch : 0
 const LATER = BATCH ? R.items.slice(BATCH).map((it) => it.code) : [], STOPPED = []
 if (BATCH) R = { ...R, items: R.items.slice(0, BATCH) }
@@ -657,7 +659,7 @@ const LN = Object.keys(QL)
 const odd = R.items.filter((it) => !(laneOf(it) in QL))
 if (odd.length) throw new Error(`testy.js: unknown lane(s) ${[...new Set(odd.map(laneOf))].join(', ')} (items ${odd.map((it) => it.code).join(', ')}): qa.lanes has ${LN.join(', ')}`)
 const lanes = LN.map((n, i) => ({ n, i, c: QL[n], items: R.items.filter((it) => laneOf(it) === n) }))
-// a lane's cap: args <lane>Parallel, else qa.lanes.<lane>.parallel, else what free RAM allows now (seat capacity: gate floor / seat size), never login count
+// a lane's cap: args <lane>Parallel, else qa.lanes.<lane>.parallel, else free RAM (seat capacity), never login count
 const CAP = {}
 for (const l of lanes.filter((x) => x.items.length > 1 && !x.c.devices && !R[`${x.n}Parallel`] && !x.c.parallel)) {
  const r = await runStep(`& ${Q} seat capacity -Kind ${l.n}`, `capacity-${l.n}`, 'Test').catch(() => null)

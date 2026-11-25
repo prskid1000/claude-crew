@@ -33,8 +33,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L250 budget · L280 launch · L523 recover · L610 pause · L621 resume · L688 program · L716 param ·
-  L722 track · L1112 supervise · L1461 report · L1541 audit · L1601 storage · L1604 bugbrief · L1606 cleanup · L1693 learn ·
-  L1731 decide · L1897 debate · L1941 health · L2009 setup · L2104 guard-sendmessage
+  L722 track · L1112 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
+  L1734 decide · L1900 debate · L1944 health · L2012 setup · L2107 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1193,6 +1193,9 @@ foreach ($w in $wfDirs) {
   $silentH = ($now - (Get-Item $j).LastWriteTime).TotalHours
   if ($done -and $silentH -gt 2) { continue }
   if (-not $done) { $sr = Get-KitSilentRun $w.Name $silentH $state.quietRuns $now; if ($sr.flag) { Flag $sr.flag.level $sr.flag.what $sr.flag.action }; if ($sr.skip) { continue } }
+  # failed step, no later result: ACT
+  $lb = @{}; foreach ($stx in $started) { $lb[$stx.agentId] = "$($stx.label)" -replace '~retry\d+$|-retry(?=:|$)' }; $okS = $res.Keys | ForEach-Object { $lb[$_] }
+  foreach ($fs in @($ev | Where-Object type -eq 'failed')) { $fl = $lb[$fs.agentId]; if ($fl -and $fl -notin $okS) { Flag 'ACT' "workflow step failed: run $($w.Name) step $fl (agent $($fs.agentId))" "Redo it (bossy.ps1 report -Run $($w.Name))." } }
   $running = @(Get-JournalRunning $started @($res.Keys)); if (-not $done) { $wfOpen++ }   # open even paused or between agents: no retro
   if ($w.Name -notin $pausedRuns) { $runTotal += $running.Count }
   $errs = @($res.Values | Where-Object { $_.result.error }).Count; $toolErr += $errs; if ($errs) { $errRun = $w.Name }

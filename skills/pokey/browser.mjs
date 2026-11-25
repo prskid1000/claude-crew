@@ -277,7 +277,7 @@ export async function session({ target, tenant, as } = {}) {
       try { return await conn() } catch {}
       let b; const dir = (await adapter('engine-playwright.mjs')).quietProfile(`${PROFILES}/${keyFile(key)}`)
       spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, ...QUIET_ARGS,
-        ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'], { detached: true, stdio: 'ignore' }).unref()
+        ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
       for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }
       if (!b) throw new Error(`could not start Chrome on port ${port}`)
       return b

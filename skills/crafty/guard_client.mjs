@@ -67,7 +67,7 @@ function plain(start) {
   if (start && noload()) start = false   // a crafty.ps1 that did not load: no server per call until it changes (K67r)
   if (start && process.env.KIT_GUARD_WARM !== '0') {
     try {
-      if (process.platform !== 'win32') spawn('pwsh', srv, { detached: true, stdio: 'ignore' }).unref()
+      if (process.platform !== 'win32') spawn('pwsh', srv, { detached: true, stdio: 'ignore', windowsHide: true }).unref()
       else {
         const cl = ['pwsh', '-WindowStyle', 'Hidden', ...srv].map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(' ').replace(/'/g, "''")
         starter = spawn('pwsh', ['-NoProfile', '-NonInteractive', '-Command', `$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }; $null = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${cl}'; ProcessStartupInformation = $si }`], { stdio: 'ignore', windowsHide: true })

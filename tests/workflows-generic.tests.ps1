@@ -170,6 +170,18 @@ run({ runDir: 'C:/runs/R9', ..._kl, verify: false, items: [_item('E1')] }, agent
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-empty $jsE (Join-Path $src 'workflows/testy.js')) 'testy retest: #' 'empty-full' -Show 8
+# step retry (2026-11-25 login race): a tester step with no result runs once more as <label>~retry1; close (publishes) never
+$jsSr = @'
+const labels = []
+const agent = async (p, o) => { labels.push(o.label)
+ if (/^record-args/.test(o.label)) return _rec()
+ if (o.label === 'test:S1' || /^close:S2/.test(o.label)) return null
+ return /^test:/.test(o.label) ? _res(o.label.slice(5, 7), [_ck('C1', 'PASS')]) : _ok('published') }
+run({ runDir: 'C:/runs/R8', ..._kl, verify: false, items: [_item('S1'), _item('S2')] }, agent, _n, _n, null).then(() => {
+ console.log(`sr-once:${labels.includes('test:S1~retry1') && labels.includes('close-retry:S2') && !labels.some((l) => /close.*~retry|~retry2/.test(l))}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js tc-stepretry $jsSr (Join-Path $src 'workflows/testy.js')) 'workflow step retry: #' 'sr-once' -Show 8
 # K70 (K7 fix): one area over the cap is refused as unsplittable, with no next (a batch of 1 changed nothing: endless refusal)
 $js1a = @'
 const calls = [], agent = async (p, o) => { calls.push(o.label); return /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":100000,"estimate":500000,"stopAt":0.8}') : _ok('[]') }

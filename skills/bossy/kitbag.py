@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L466 load · L959 lint ·
-  L1373 README graph · L1491 lint command · L1773 audit · L1921 registry · L1981 tools · L2069 parity · L2670 arch lint ·
-  L2943 prose · L3126 sections · L3258 budget · L3276 migrate · L3424 plugins · L3481 state lint · L3669 main
+  L1380 README graph · L1498 lint command · L1780 audit · L1928 registry · L1988 tools · L2076 parity · L2677 arch lint ·
+  L2950 prose · L3133 sections · L3265 budget · L3283 migrate · L3431 plugins · L3488 state lint · L3676 main
 """
 import ast, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1210,13 +1210,20 @@ def lint(k, g=None, org_terms=None):
             if not re.search(r'--open|\$Open\b|open_it|opts\.open', '\n'.join(ls[max(0, i - 5):i + 1])):
                 bad('DESKTOP-OPEN', f'{f}:{i + 1}', 'opens a file, browser or app on the desktop without an explicit --open / -Open flag (kit-admin.md "Shapes")')
     # ---- a shell started without a hidden window opens a console on the owner's screen
+    # (Windows Terminal hosts every new visible console); a detached child, or a scheduled task's action, has no console to inherit
+    rx_win = {'.ps1': (r'Start-Process\s+(?:-FilePath\s+)?(?:\S*(?:pwsh|powershell|cmd)|\$\w+)|New-ScheduledTaskAction\b|\bschtasks(?:\.exe)?\s+/create\b',
+                       r'WindowStyle|NoNewWindow|@\w*hid|--headless|-Verb\s+RunAs'),
+              '.py': (r'creationflags\s*=.*(?:DETACHED_PROCESS|CREATE_NEW_CONSOLE)|\bstart_new_session\s*=\s*True', r'CREATE_NO_WINDOW|STARTF_USESHOWWINDOW'),   # arch-ok: flag names
+              '.mjs': (r'\bdetached:\s*true', r'windowsHide:\s*true'), '.js': (r'\bdetached:\s*true', r'windowsHide:\s*true')}   # arch-ok: Windows window flags
     for f in counted:
-        if not f.endswith('.ps1') or f.startswith(GENERATED):
+        ext = osp.splitext(f)[1]
+        if ext not in rx_win or f.startswith(GENERATED):
             continue
-        for i, line in enumerate(k.texts.get(f, '').splitlines()):
-            if re.search(r'Start-Process\s+(?:-FilePath\s+)?\S*(?:pwsh|powershell|cmd)', line, re.I) and not re.search(r'WindowStyle|NoNewWindow|@hide', line) \
-                    and not re.match(r"\s*(#|@\(\s*')", line):
-                bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a shell without -WindowStyle Hidden / -NoNewWindow: a console window opens on the desktop')   # arch-ok: message text
+        ls = k.texts.get(f, '').splitlines()
+        for i, line in enumerate(ls):
+            if re.search(rx_win[ext][0], line, re.I) and not re.match(r"\s*(#|//|@\(\s*')", line) \
+                    and not re.search(rx_win[ext][1], '\n'.join(ls[max(0, i - 2):i + 1]), re.I):   # a splat or flags set up to 2 lines above
+                bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a program without a hidden window (-WindowStyle Hidden / -NoNewWindow, windowsHide: true, CREATE_NO_WINDOW, a scheduled task via conhost --headless): a console window opens on the desktop')   # arch-ok: message text
     # ---- waste guards (2026-11-18 audit): a short fixed sleep in a loop that calls the host, ssh or re-reads files polls
     # forever at full rate; a bossy -Recurse over the runtime trees walks ~140k files per sweep
     rx_call = r'Invoke-HostVerb|Invoke-BoundedSsh|\bssh\b|\bglab\b|\bgh\s|ConvertFrom-Json|Get-Content'
