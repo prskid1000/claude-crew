@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/tracker-adapters-2.tests.ps1: the linear, youtrack and azure tracker adapters' K54 moves and native caps (dependencies, labels,
-statuses, azure checklist), the dec-60 kit table through every adapter's description path, on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
+statuses, azure checklist), clickup tags prune, the dec-60 kit table through every adapter's description path, on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
 Usage: pwsh -NoProfile -File tests/tracker-adapters-2.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -126,5 +126,18 @@ $sCm = @([pscustomobject]@{ id = 'c1'; user = 'u'; date = ''; text = 'Started wo
 Register-KitAdapter 'tracker' 'fks' @{ caps = @{ commentEdit = $true }; comments = { $sCm }; 'comment-edit' = { param($a) ($sCm | Where-Object id -eq $a.comment).text = $a.text; 'edited' }; comment = { 'new' }; url = { param($a) $a.id } }
 $__trType = 'fks'; Update-KitSolutionMrs 'T9'; $sMg = "$($sCm[1].text)"
 $pass = $sMg -match 'web!4 \(MERGED\) · api!7 \(MERGED\)' -and $sMg -match 'Deferred:\*\* flag \(OPEN\)' -and $sMg -notmatch 'MRs:.*OPEN' -and $sCm[0].text -eq 'Started work'; if (-not $pass) { $global:failed++; "  $sMg" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) solution comment: MRs (OPEN) -> (MERGED) once every MR merged, the MRs line only, the same comment edited"
+# ---- clickup tags prune (moved from tracker-adapters: file cap; its own Invoke-KitHttp mock)
+. (Join-Path $Kit 'skills/crafty/adapters/tracker-clickup.ps1'); $global:http = [Collections.Generic.List[string]]::new()
+# tags prune (owner 2026-11-25): each space tag counted live (closed, archived too) before its delete; used or uncounted: skipped
+$global:http.Clear(); function Invoke-KitHttp([string]$Method, [string]$Uri, $Body, [hashtable]$Headers = @{}) { $global:http.Add("$Method $Uri $($Body | ConvertTo-Json -Compress)")
+  if ($Uri -match '/list/L1$') { return @{ space = @{ id = 'S1' } } }; if ($Uri -match '/space/S1/tag$') { return @{ tags = @(@{ name = 'old one' }, @{ name = 'used' }, @{ name = 'flaky' }) } }
+  if ($Uri -match 'tags%5B%5D=flaky') { return $null }; if ($Uri -match 'tags%5B%5D=used&.*archived=true') { return @{ tasks = @(@{ id = 'T1' }) } }; if ($Uri -match '/team/W1/task') { return @{ tasks = @() } }; @{} }
+$env:CLICKUP_API_TOKEN = 'tk-test'; $__cfg = [pscustomobject]@{ tracker = [pscustomobject]@{ workspace = 'W1' } }
+try { Initialize-KitTracker -Type clickup -DryRun; $pd = @(__TrA 'tag-prune' @{ names = @(); lists = @('L1') }); $dDel = @($global:http -match '^DELETE').Count   # the verb: a count failure makes the CLI exit 1
+  Initialize-KitTracker -Type clickup; $pa = @(Invoke-KitTagPrune @('OLD ONE', 'missing') L1 -Unused -Json | ConvertFrom-Json) } finally { Remove-Item Env:CLICKUP_API_TOKEN; $__cfg = $null }
+$pRes = ($pd | ForEach-Object { "$($_.tag)=$($_.result)" }) -join ','; $aRes = ($pa | ForEach-Object { "$($_.tag)=$($_.result)" }) -join ','
+$pass = $pRes -match '^old one=would delete,used=skipped \(in use\),flaky=skipped \(count failed' -and $dDel -eq 0 -and $aRes -eq 'old one=deleted,missing=not in space' -and @($global:http -match 'tags%5B%5D=old%20one&').Count -ge 2 -and
+  @($global:http -match '^DELETE').Count -eq 1 -and @($global:http -match '^DELETE https://api.clickup.com/api/v2/space/S1/tag/old%20one ').Count -eq 1 -and @($global:http -match 'include_closed=true&subtasks=true&archived=true').Count -ge 2; if (-not $pass) { $global:failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker clickup tags prune: dry run deletes nothing; a tag on any task (archived too) or a failed count is skipped; -Name prunes only those ($pRes | $aRes)"
 Remove-Item $trRt -Recurse -Force -ErrorAction SilentlyContinue
 exit [int]($global:failed -gt 0)

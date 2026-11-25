@@ -219,15 +219,15 @@ TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, broad 
     'kind': (True, ('feature', 'bug', 'chore', 'spike', 'docs', 'test')),   # tracker create (the old [Type]), a QA bug
     'area': (True, None), 'product': (True, None),                         # tracker create: the key's broad area (naming.tags.areaMap) and PRODUCT name
     'wave': (True, r'wave-\d+'),                                            # RETIRED (owner 2026-11-25: no numbers): any wave= clears; old wave-N tags go
-    'phase': (True, ('spec', 'build', 'review', 'qa')),                     # by hand: tracker tags <id> phase=qa
+    'phase': (True, ('spec', 'build', 'review', 'qa')),                     # RETIRED (owner 2026-11-25: unused): the status says it
     'repo': (False, None),                                                  # by hand / brief repos: api-code -> api
     'env': (True, r'needs-deploy|on-[a-z0-9]+(?:-[a-z0-9]+)*'),           # RETIRED: the status and deploys.jsonl say it
-    'risk': (False, ('migration', 'security', 'breaking', 'feature-flag-off')),   # by hand / brief
+    'risk': (False, ('migration', 'security', 'breaking', 'feature-flag-off')),   # RETIRED (owner 2026-11-25: unused): the brief and MR Risks say it
     'decision': (True, ('needs-owner', 'blocked')),                         # RETIRED: the Decisions checklist and decisions.jsonl say it
     'origin': (True, ('qa-found', 'tester-report', 'retro')),               # RETIRED: the QA run record says it
-    'test': (False, ('ui', 'api', 'mobile')),                               # by hand / testing doc
+    'test': (False, ('ui', 'api', 'mobile')),                               # RETIRED (owner 2026-11-25: unused): the testing doc says it
 }
-RETIRED = ('wave', 'env', 'decision', 'origin')   # owner 2026-11-25: no numbers; dec-keep-kit: no kit state tags (known, so a retag removes them)
+RETIRED = ('wave', 'env', 'decision', 'origin', 'phase', 'risk', 'test')   # owner 2026-11-25: no numbers, unused hand groups; dec-keep-kit: no kit state tags (known, so a retag removes them)
 LEVEL_DROP = {'parent': 'area', 'sub': 'product'}   # the group a parent / a subtask never carries
 KIND_TAG = {'feat': 'feature', 'fix': 'bug', 'refactor': 'chore', 'perf': 'chore'}
 

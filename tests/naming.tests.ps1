@@ -63,10 +63,12 @@ Expect "rename: dry-run rows G3 -> SHOP-CAT-001, G5 -> SHOP-ORD-001, G4 -> SHOP-
   $rn.out -match '\| G4 \| t-3 \|.*\| SHOP-CAT-002 \|' -and $rn.out -match 'unknown AREA BAD' -and $rn.out -match 'DRY RUN' -and $rn.out -match 'naming seed SHOP-CAT 2' -and
   $rn.out -match '\| G9 \| t-5 \|.*\| SHOP-PAY-003 \| Payments refunds \(was G9\) \| no kind tag, no area tag, no product tag \| feature, payments, shop \| — \| — \|')
 # ---- tags: one vocabulary; an exclusive group keeps one value; -value drops one; off-vocabulary refused
-$tg1 = Kb naming tags key=SHOP-CAT-004 kind=Bug wave=2 --have 'wave: v2 wave 1,urgent'; $tg2 = Kb naming tags env=needs-deploy origin=qa-found --have 'on-stg,needs-owner,bug'; $tg3 = Kb naming tags risk=nope
-$tj1 = $tg1.out | ConvertFrom-Json; $tj2 = $tg2.out | ConvertFrom-Json
+$tg1 = Kb naming tags key=SHOP-CAT-004 kind=Bug wave=2 --have 'wave: v2 wave 1,urgent'; $tg2 = Kb naming tags env=needs-deploy origin=qa-found --have 'on-stg,needs-owner,bug'; $tg3 = Kb naming tags kind=nope
+$tgR = Kb naming tags phase=qa risk=migration test=ui --have 'review,security,api,urgent'
+$tj1 = $tg1.out | ConvertFrom-Json; $tj2 = $tg2.out | ConvertFrom-Json; $tjR = $tgR.out | ConvertFrom-Json
 Expect "tags (owner 2026-11-25): kind, area, product, own last; a wave tag retired (the old label goes); state tags (env, decision, origin) never set, old ones go; unknown value exit 1 ($($tj1.tags -join ',') | $($tj2.tags -join ','))" (($tj1.tags -join ',') -eq 'bug,catalogue,shop,urgent' -and
   ($tj1.remove -join ',') -eq 'wave: v2 wave 1' -and ($tj2.tags -join ',') -eq 'bug' -and ($tj2.remove -join ',') -eq 'on-stg,needs-owner' -and $tg3.code -eq 1 -and $tg3.out -match 'not in the vocabulary')
+Expect "tags: phase, risk, test groups retired (owner 2026-11-25): never set, old ones go, a person's own tag stays ($($tgR.out -replace '\s+', ' '))" ($tgR.code -eq 0 -and ($tjR.tags -join ',') -eq 'urgent' -and ($tjR.remove -join ',') -eq 'review,security,api' -and -not @($tjR.add).Count)
 # review: a re-run keeps a bug; a repo word equal to an AREA code is a repo tag; a person's label stays
 Set-JsonFile "$wd/plan2.json" @{ items = @(@{ id = 't-9'; title = 'SHOP-CAT-007 crash on save'; tags = @('bug', 'shop') }) }; $rn2 = Kb naming rename --plan "$wd/plan2.json" --json
 $tg4 = Kb naming tags key=SHOP-CAT-004 repo=cat-svc --have 'team=core'; $tg5 = Kb naming tags 'wave=1,2'

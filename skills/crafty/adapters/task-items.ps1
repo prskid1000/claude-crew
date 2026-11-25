@@ -4,7 +4,7 @@
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
 # Sections: L8 items · L98 move · L142 status roles · L298 task text · L315 naming · L319 meta (dec-60, owner 2026-11-25) ·
-#   L486 track lines · L491 task ids · L507 tags · L590 order
+#   L486 track lines · L491 task ids · L507 tags · L601 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -551,8 +551,9 @@ function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fal
 }
 # tracker tags <id> <group=value> ... | tracker retag <parent>[,<parent>] [-DryRun]: the backfill (dec-60) of keyed tasks of the trees: plain
 # title, the kit table, tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md), then the parents' Items; -DryRun: counts + table
-function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
-  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product phase repo risk test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
+function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest, [hashtable]$Opt = @{}) {
+  if ($Verb -eq 'tags' -and $Id -eq 'prune') { return Invoke-KitTagPrune @("$($Opt.Name)" -split ',') "$($Opt.List)" -Unused:([bool]$Opt.Unused) -Json:([bool]$Opt.Json) }   # a tag name may hold spaces: comma-split only
+  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product repo) | tracker tags prune -Unused [-DryRun]'; exit 2 }; return Set-KitTaskTags $Id $Rest }
   if (-not $Id) { 'usage: tracker retag <parent>[,<parent>] [-DryRun]'; exit 2 }
   $Out = Join-Path (Get-KitPath cache -Create) "retag-$((Split-KitList $Id)[0] -replace '[^\w.-]', '_').md"
   $dry = $__trDry; $script:__trDry = $false   # the reads run for real; the writes below only without -DryRun
@@ -586,6 +587,16 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
     "RETAGGED $($r.id): $($r.title) · Code $($r.key) · $(@($r.tags) -join ', ')" }
   foreach ($r in @($rows | Where-Object { @($_.problems).Count })) { "SKIPPED $($r.id): $(@($r.problems) -join '; ')" }
   foreach ($p in @($seen.Keys | Where-Object { @($seen[$_].subtasks).Count })) { try { Update-KitParentItems $p } catch { "parent items ${p}: $($_.Exception.Message)" } }   # their Items lines name the new titles
+}
+# tracker tags prune -Unused [-Name <tag,tag>] [-List <id>] [-DryRun] [-Json]: delete the catalogue tags no task carries (adapter verb
+# tag-prune re-counts each live right before its delete; used or uncounted: skipped); no caps tagPrune: parity.json fallback (by hand)
+function Invoke-KitTagPrune([string[]]$Names, [string]$List, [switch]$Unused, [switch]$Json) {
+  if (-not $Unused) { 'usage: tracker tags prune -Unused [-Name <tag,tag>] [-List <id>] [-DryRun] [-Json] (deletes only tags no task carries)'; exit 2 }
+  if (-not (__TrCan tagPrune)) { "UNSUPPORTED tracker ($__trType) tags prune: no tag catalogue verb; delete the unused tags in the tool's label settings by hand (parity.json fallback tagPrune)"; exit 1 }
+  $ls = @(@(if ($List) { $List } else { Get-KitSetting 'tracker.list' ''; @(Get-KitValue 'trackerLists' @()) }) | Where-Object { $_ } | Select-Object -Unique)
+  $rows = @(__TrA 'tag-prune' @{ names = @($Names | Where-Object { "$_".Trim() } | ForEach-Object { "$_".Trim() }); lists = $ls })
+  if ($Json) { ConvertTo-Json -InputObject $rows -Depth 4 } else { foreach ($r in $rows) { "$($r.result.ToUpper()): $($r.tag) · space $($r.space) · $($r.uses) task(s)" }; "tags prune: $(@($rows | Where-Object { $_.result -match '^(deleted|would delete)' }).Count) of $($rows.Count) $(if ($__trDry) { 'would go (DRY RUN)' } else { 'deleted' })" }
+  if (@($rows | Where-Object { $_.result -match '^failed|count failed' }).Count) { exit 1 }   # a failed delete or count is no success
 }
 # ---- order: waits-on links and wave tags (owner 2026-11-23: order and parallel work readable without titles)
 # native when the tracker can (caps dependencies; wave: Set-KitTaskTags), else a <!-- kit:order --> description section; titles never change

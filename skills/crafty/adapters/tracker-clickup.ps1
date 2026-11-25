@@ -4,7 +4,7 @@
 # new tasks; tracker.statuses = the list's status names; tracker.workspace = the workspace id for a list move, else the CLI's
 # config). Dot-sourced by lib.ps1 before the tracker type is resolved. HTTP 429 (100 calls / min): lib.ps1 Invoke-KitRetry (CLI)
 # and Invoke-KitHttp (REST) wait it out per Retry-After / X-RateLimit-Reset, writes too: the same for every tracker adapter.
-# Sections: L8 helpers · L22 tracker
+# Sections: L8 helpers · L27 tracker
 # ---- helpers: member ids, the stored token
 function __TrClickupMemberId([string]$Who) {
   if (-not $Who) { return $null }
@@ -19,11 +19,16 @@ function __TrClickupToken {
   if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { throw 'tracker (clickup): no CLICKUP_API_TOKEN (the CLI keyring is read on Windows only)' }
   $t = & (Join-Path $script:KitLibDir 'flagged.ps1') credread -Text 'clickup-cli:api_token'; if (-not $t) { throw 'tracker (clickup): no stored token (clickup auth status; the owner logs in, never an agent)' }; $t
 }
+# the workspace (team) id: tracker.workspace, else the CLI's config
+function __TrClickupWorkspace([string]$Verb) {
+  $ws = Get-KitSetting 'tracker.workspace' ''; if (-not $ws) { $cf = Join-Path $HOME '.config/clickup/config.yml'; if (Test-Path -LiteralPath $cf) { $ws = @((Get-Content -LiteralPath $cf) -match '^workspace:' -replace '^workspace:\s*', '' -replace '["'']')[0] } }
+  if (-not $ws) { throw "tracker (clickup) ${Verb}: no workspace id (tracker.workspace in kit.local.json)" }; $ws
+}
 # ---- tracker: the adapter verbs
 # comments: the CLI posts plain text (Markdown shows as typed) -> lib.ps1 ConvertTo-KitPlainText; descriptions render Markdown
 # adapter:tracker/clickup: clickup CLI
 Register-KitAdapter 'tracker' 'clickup' @{
-  'caps' = @{ checklist = $true; subtasks = $true; commentEdit = $true; commentDelete = $true; statuses = $true; move = $true; attach = $true; dependencies = $true; labels = $true }
+  'caps' = @{ checklist = $true; subtasks = $true; commentEdit = $true; commentDelete = $true; statuses = $true; move = $true; attach = $true; dependencies = $true; labels = $true; tagPrune = $true }
   # waits on (REST v2 dependency: task_id waits on depends_on); on = ids to add (missing only); returns what it waits on now
   'dependencies' = { param($a)
     $have = @(@((__TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json'))).dependencies) | Where-Object { "$($_.task_id)" -eq $a.id } | ForEach-Object { "$($_.depends_on)" })
@@ -36,6 +41,25 @@ Register-KitAdapter 'tracker' 'clickup' @{
   'labels' = { param($a) foreach ($op in @(@('POST', @($a.add)), @('DELETE', @($a.remove)))) { foreach ($l in $op[1] | Where-Object { $_ }) { $u = "https://api.clickup.com/api/v2/task/$($a.id)/tag/$([uri]::EscapeDataString("$l".ToLower()))"
       if ($__trDry) { Write-Host "DRYRUN: $($op[0]) $u"; continue }
       $o = @(Invoke-KitHttp $op[0] $u @{} @{ Authorization = (__TrClickupToken) } 3>&1); $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { throw "tracker (clickup) tag $($op[0]) ${l}: $($w[0].Message)" } } } }
+  # tag-prune (task-items.ps1 Invoke-KitTagPrune): the space tags of the lists' spaces; each counted live (filtered team tasks: closed,
+  # subtasks, archived too) right before its delete; any task or a failed count: skipped, never deleted; names: only these
+  'tag-prune' = { param($a)
+    $au = @{ Authorization = (__TrClickupToken) }; $ws = __TrClickupWorkspace 'tags prune'; $api = 'https://api.clickup.com/api/v2'
+    $sps = @(foreach ($l in @($a.lists)) { "$((Invoke-KitHttp 'GET' "$api/list/$l" $null $au).space.id)" }) | Where-Object { $_ } | Select-Object -Unique
+    if (-not $sps) { throw 'tracker (clickup) tags prune: no space (tracker.list, trackerLists or -List)' }
+    foreach ($sp in $sps) {
+      $have = @((Invoke-KitHttp 'GET' "$api/space/$sp/tag" $null $au).tags | ForEach-Object { "$($_.name)" })
+      foreach ($t0 in @(if (@($a.names).Count) { $a.names } else { $have })) {
+        $t = @($have | Where-Object { $_.ToLower() -eq "$t0".ToLower() })[0]   # the catalogue's spelling; the filter goes lower case like task tags
+        if (-not $t) { [pscustomobject]@{ space = $sp; tag = "$t0"; uses = 0; result = 'not in space' }; continue }
+        $n = 0; $err = ''
+        foreach ($ar in 'false', 'true') {   # a filter the API ignores returns tasks: counted as uses, so it skips
+          $global:KitHostError = ''; $r = Invoke-KitHttp 'GET' "$api/team/$ws/task?space_ids%5B%5D=$sp&tags%5B%5D=$([uri]::EscapeDataString($t.ToLower()))&include_closed=true&subtasks=true&archived=$ar&page=0" $null $au 3>$null
+          if ($null -eq $r -or $null -eq $r.tasks) { $err = "count failed: $global:KitHostError".Trim(); break }; $n += @($r.tasks).Count }
+        $res = if ($err) { "skipped ($err)" } elseif ($n) { 'skipped (in use)' } elseif ($__trDry) { 'would delete' } else {
+          $o = @(Invoke-KitHttp 'DELETE' "$api/space/$sp/tag/$([uri]::EscapeDataString($t))" @{ tag = @{ name = $t } } $au 3>&1)
+          $w = @($o | Where-Object { $_ -is [Management.Automation.WarningRecord] }); if ($w) { "failed ($($w[0].Message))" } else { 'deleted' } }
+        [pscustomobject]@{ space = $sp; tag = $t; uses = $n; result = $res } } } }
   'url' = { param($a) "https://app.clickup.com/t/$($a.id)" }
   'view' = { param($a)
     $j = __TrJson (__TrCli 'clickup' @('task', 'view', $a.id, '--json')); if (-not $j.id) { return }
@@ -88,8 +112,7 @@ Register-KitAdapter 'tracker' 'clickup' @{
     $plid = if ($a.parent) { [string](__TrJson (__TrCli 'clickup' @('task', 'view', $a.parent, '--json'))).list.id }
     if ($plid -and $tl -and $plid -ne $tl) { throw "tracker (clickup) move: $($a.id) is in list $tl, $($a.parent) in list ${plid}: a subtask lives in its parent's list (-List $plid moves it first; to keep its list, link it in the parent's Items)" }
     $calls = @(if ($a.list -and $a.list -ne $lid) {
-        $ws = Get-KitSetting 'tracker.workspace' ''; if (-not $ws) { $cf = Join-Path $HOME '.config/clickup/config.yml'; if (Test-Path -LiteralPath $cf) { $ws = @((Get-Content -LiteralPath $cf) -match '^workspace:' -replace '^workspace:\s*', '' -replace '["'']')[0] } }
-        if (-not $ws) { throw 'tracker (clickup) move: no workspace id (tracker.workspace in kit.local.json)' }
+        $ws = __TrClickupWorkspace 'move'
         , @('PUT', "https://api.clickup.com/api/v3/workspaces/$ws/tasks/$($a.id)/home_list/$($a.list)", $null) }
       if ($a.parent) { , @('PUT', "https://api.clickup.com/api/v2/task/$($a.id)", @{ parent = $a.parent }) })
     foreach ($c in $calls) {

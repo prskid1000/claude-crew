@@ -357,7 +357,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 <!-- kit-graph:start table-adapters -->
 | Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Not native (adapters) | Code |
 |---|---|---|---|---|---|---|
-| tracker | `tracker.type` | view url status comment comments create describe rename list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | fallback: checklist (1), dependencies (1) · gap: checklist (4) | `skills/crafty/adapters/tracker-local.ps1` |
+| tracker | `tracker.type` | view url status comment comments create describe rename list owner; caps: checklist commentEdit commentDelete statuses move attach dependencies labels tagPrune | command, none | clickup, github, gitlab, jira, jira-server, linear, youtrack, azure | fallback: checklist (1), dependencies (1), tagPrune (8) · gap: checklist (4) | `skills/crafty/adapters/tracker-local.ps1` |
 | git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect; caps: mr.labels | command | github, gitlab, bitbucket, azure, gitea | gap: mr.labels (1) | `skills/crafty/lib.ps1` |
 | report | `reports.type` | publish selftest; caps: evidence tags | markdown, html, command | gdocs, pdf, confluence, notion |  | `skills/crafty/devtools.py` |
 | ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins |  | `skills/crafty/lib.ps1` |

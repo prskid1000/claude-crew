@@ -6,12 +6,13 @@
       "config": "tracker.type",
       "file": "skills/crafty/adapters/tracker-local.ps1",
       "verbs": "view url status comment comments create describe rename list owner",
-      "caps": "checklist commentEdit commentDelete statuses move attach dependencies labels",
+      "caps": "checklist commentEdit commentDelete statuses move attach dependencies labels tagPrune",
       "names": "command none",
       "vendors": "clickup github gitlab jira jira-server linear youtrack azure",
       "fallback": {
         "checklist": "an Items block in the description (<!-- kit:<name> -->): a markdown task list, the tool's own checklist form where it has no checklist API (Linear, YouTrack: a checklist lives in the description)",
-        "dependencies": "a **Waits on:** line in the description"
+        "dependencies": "a **Waits on:** line in the description",
+        "tagPrune": "by hand: tracker tags prune says UNSUPPORTED; a person deletes the labels no task carries in the tool's label settings (Jira labels have no catalogue: an unused one is gone on its own)"
       },
       "gaps": {
         "linear/checklist": "no such feature: https://linear.app/docs/parent-and-sub-issues an issue has sub-issues, no checklist entity; a checklist is description markdown, which the Items block is (fallback = Linear's own form)",
