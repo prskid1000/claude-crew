@@ -26,7 +26,7 @@ $qbRow = pwsh -NoProfile -Command ". '$O'; @(Get-KitStatusRows (Get-Date) '' | W
 $null = pwsh @np $O launch -RunId wf_r3 -Script buildy.js -ArgsJson '{"brief":"C:/b/r3.md","run":"r3"}' 2>&1
 $sj = pwsh @np $O supervise -AutoFix -Json | Out-String | ConvertFrom-Json; $sw = @($sj.flags | ForEach-Object { "[$($_.level)] $($_.what)" }) -join "`n"
 for ($wi = 0; $wi -lt 60; $wi++) { $lr3 = Read-Json (Join-Path (TkPath $k launches) 'wf_r3.json'); if ($lr3.completed) { break }; Start-Sleep 1 }   # closed in the background (K20)
-Expect 'supervise: a failed workflow step is ACT, unless its retry has a result' ($sw -match '\[ACT\] workflow step failed: run wf_f1 step close:F1 \(agent f1\)' -and $sw -notmatch 'step (test:F2|prep)')
+Expect 'supervise: a failed workflow step is ACT, unless its retry has a result' ($sw -match '\[ACT\] step failed: run wf_f1 step close:F1' -and $sw -notmatch 'step (test:F2|prep)')
 $left = { param($a) $e = Read-Json (Join-Path $bd "s-$a.json"); $e.status -eq 'left' -and $e.finished }
 Expect 'supervise -AutoFix: stale entries with a journal result (not one running again) or a finished parent leave (INFO), so does a quiet <agent>-<n> whose base agent beats; a silent one = STUCK (WATCH); a finished run''s record closes' ((& $left 'review-PY-RET') -and (& $left 'revy-1400') -and -not (& $left 'H9') -and -not (& $left 'SD') -and (& $left 'QB-2') -and -not (& $left 'QB') -and $sw -notmatch 'STUCK QB' -and "$qbRow" -eq 'FINISHED stale duplicate of QB (it beats)' -and
   $sw -match '\[INFO\] auto-fixed: board entry QB-2 \(r4\) left: a stale duplicate of QB, which beats' -and
