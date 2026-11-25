@@ -7,23 +7,23 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
 - A layer also leaves when merged, gone from origin, its agent finished (`bossy.ps1 release`) or no live holder past the
   grace (supervise); never a paused or handed-off agent's. An env without lease or hold drops at the next lease (`status`,
   leases.jsonl kind env-layer).
-- A lease keeps services up while its holder is live (README "Leases") and uses them (calls, traffic); unused
+- A lease keeps services up while its holder is live (README "Leases") and uses them; unused
   `leaseIdleMinutes` (default `idle.graceMinutes`): released. Only a person's `-Owner` lease ends at a time.
-- A train waits for leases on what it changes at most `leaseMinutes` (30), then tells the holders ("deploy of <svc> starting,
-  pause"; board inbox + `status -Agent` NOTICE), deploys, tells them "deploy done, re-run your checks"; their leases stay.
-- A train whose worker is gone (pid + start time: a reused pid is not it) or whose phase and log stay quiet
-  `trainStallMinutes` (45): killed, its requests requeue (supervise ACT TRAIN STALLED).
+- A train waits for leases on what it changes up to `leaseMinutes` (30), then tells holders ("deploy of <svc> starting,
+  pause"; board inbox + `status -Agent` NOTICE), deploys, then "deploy done, re-run your checks"; leases stay.
+- A train whose worker is gone (pid + start time) or whose phase and log stay quiet `trainStallMinutes` (45): killed,
+  its requests requeue (supervise ACT TRAIN STALLED).
 - Only leases and holds start (or crash-restart) services, each in a start worker. No holder: stop after the idle grace; at
   once under memory pressure (a start waiting for RAM; a CPU wait is none).
-- A dependency of a waiting, starting or train-switched service is never idle. An out-of-memory line in a running service's
-  log restarts it. Idle services all stop in one tick, also while a train waits for leases.
+- A dependency of a waiting, starting or train-switched service is never idle. An out-of-memory log line restarts a
+  service. Idle services stop in one tick, also while a train waits.
 - Starts wait for RAM (`roomWaitMinutes` 30: fails; keep-free floor learned or `keepFreeGB`) and CPU over `cpuMaxPct` 90
   (`cpuWaitMinutes` 2: starts; `status` waiting CPU until HH:mm): up to `cpuSmallStartSec` 30 none, bigger ones in one
   machine-wide queue, shortest first with aging.
-- A start starts a down `dependsOn` nobody starts, then waits for it to be healthy (one waiting for room: that wait more); one
-  failing on a dependency connection waits again and retries once.
-- A dependency still down: the release stays, no rollback (it starts once that is up).
-- Restarts count only real starts (backoff 3 / 30 min).
+- A start starts a down `dependsOn` nobody starts, waits for it to be healthy; one failing on a dependency connection
+  waits again and retries once.
+- A dependency still down: the release stays (it starts once that is up).
+- Restarts count only real starts (backoff 3/30 min).
 
 ## Lanes
 - `envs.<env>.lanes` { max, portStep 100 }: copies of an env side by side, each its own state, controller, train, worktrees,
