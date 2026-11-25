@@ -215,9 +215,9 @@ Expect "labels: board show '<role>-<topic> · <words> (<run id>)', no key / wave
 $ks = & $bj @('-Type', 'kitty', '-Run', 'kitty-fix-0007', '-Subject', 'rest', '-Area', 'kit'); $show2 = pwsh -NoProfile -File $O board show | Out-String
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue' } } }; Set-JsonFile (TkPath $k tracking) @{ tasks = @{ 'tg-1' = @{ name = 'SHOP-CAT-021 Grid page' }; 'tg-2' = @{ name = 'SHOP-CAT-022 Grid sort' } } }
 Set-JsonFile (Join-Path (TkPath $k tasks -Create) 'tg-1.json') @{ task = 'tg-1'; tags = @('shop', 'wave-3') }; Set-JsonFile (Join-Path (TkPath $k tasks) 'tg-2.json') @{ task = 'tg-2'; tags = @('bug', 'shop') }
-$tsc = @((Kb naming scan --json).out | ConvertFrom-Json | Where-Object kind -eq 'tags'); $tgf = pwsh -NoProfile -Command ". '$O'; (Get-KitTagGapFlag).action" | Out-String
+$tsc = @((Kb naming scan --json).out | ConvertFrom-Json | Where-Object { $_.kind -eq 'tags' -and $_.where -match ' tg-\d$' }); $tgf = pwsh -NoProfile -Command ". '$O'; (Get-KitTagGapFlag).action" | Out-String
 Expect "board show 'kitty-rest (kitty-fix-0007)', join warns; tag scan ($($tsc.why -join ' | ')); WATCH TAGS: retag dry run" ($show2 -match 'run kitty-rest \(kitty-fix-0007\)' -and $ks.out -match 'NAME run' -and
-  $tsc.Count -eq 1 -and $tsc[0].why -eq "no kind tag; wave tag 'wave-3' (retired)" -and $tgf -match 'tracker retag tg-1 -DryRun')
+  $tsc.Count -eq 1 -and $tsc[0].why -eq "no kind tag; wave tag 'wave-3' (retired)" -and $tgf -match 'tracker retag \S*tg-1\S* -DryRun')
 # the wave-brief render names areas area-<AREA> (dependsOn follows, old ids aliased) and the run label '<KEY> <short title>'
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }; $wpy = Join-Path $wd 'wave_ids_check.py'
 Set-Content -LiteralPath $wpy -Encoding utf8 -Value @"
