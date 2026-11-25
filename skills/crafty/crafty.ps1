@@ -1646,7 +1646,7 @@ foreach ($seg in DeleteSegments $raw) {
 }
 # a bare remove leaves junction skeletons no repo lists, and the branch
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+("[^"]*"|\S+)\s+)*worktree\s+remove\b') { Deny "kit guard: use & $($KitCmd.dev) wt remove -Dir <worktree>: it unlinks shared folders first, prunes and deletes the branch once nothing is lost (a bare git worktree remove leaves junctions behind)" }
-# host CLIs from the git-host adapters (lib.ps1 Get-KitHostCli), not literals
+# host CLIs from the git-host adapters (Get-KitHostCli), not literals
 $hostClis = @(Get-KitHostCli); $hcExe = (@($hostClis.exe | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }) -join '|'); $hcNoun = (@($hostClis.noun | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }) -join '|')
 # an MR fetched into a local branch (mr8520) outlives its reader
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*fetch\b[^;&|\n]*\b(merge-requests|pull)/\d+/head:(?!refs/remotes/)\S' -or ($hcExe -and $raw -match "(?m)(^|[;&|(\n])\s*(\S*[\\/])?($hcExe)(\.exe)?\s+($hcNoun)\s+checkout\b")) {
@@ -1703,7 +1703,7 @@ if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?
 # retro tidy-3: download.<ext> in the kit root
 if ($cmd -match '\bgws\b[^|;&\r\n]*\bfiles\s+(export|delete)\b' -and $cmd -notmatch '\s(-o|--output)[\s=]') { Deny "gws: add --output <& $($KitCmd.dev) dir -Agent <id> -Name <file>> (else download.<ext> lands in the cwd)" }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
-# a whole-drive search outlives its agent at full CPU (an orphaned find / starved every local-env start)
+# a whole-drive search outlives its agent at full CPU (an orphaned find starved local-env starts)
 function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
   if ($depth -gt 3) { return }
   $rootRx = '^(/+(\.\.?/*)*\*?|/+(mnt/|cygdrive/)?[a-zA-Z]/*(\.\.?/*)*\*?|[a-zA-Z]:[\\/]*|[a-zA-Z]:[\\/]+[^\\/]*[*?][^\\/]*|\\+)$'
@@ -1861,7 +1861,7 @@ function Get-KitScriptRewrite([string]$text) {   # the first script in command p
   $envSet = @(@(if ($tn -eq 'Bash') { [regex]::Matches($pre, '(?:\bexport\s+|\$env:)(?<n>\w+)\s*=\s*(?<v>''[^'']*''|"[^"]*"|[^\s;]+)') }) | ForEach-Object { "$($_.Groups['n'].Value)=$($_.Groups['v'].Value) " }) -join ''
   " Rewrite: $envSet$(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$hit.x] ?? 'node') $($hit.s)$($hit.r.TrimEnd())"
 }
-# a heredoc fed to pwsh -Command - is PowerShell, where & x.ps1 runs in place (2026-11-17..21: 50+ false blocks of & pokey.ps1)
+# a heredoc fed to pwsh -Command - is PowerShell, where & x.ps1 runs in place (50+ false blocks of & pokey.ps1)
 $script:psBodies = @(); $bashText = $raw
 if ($tn -eq 'Bash') { foreach ($hd in @([regex]::Matches($raw, '(?ms)^(?<open>[^\r\n]*(?<!<)<<(?!<)-?\s*(?<q>[''"]?)(?<tag>\w+)\k<q>[^\r\n]*)\r?\n(?<body>.*?)\r?\n[ \t]*\k<tag>[ \t]*(?=\r?\n|$)'))) {
   if ($hd.Groups['open'].Value -match '\b(pwsh|powershell)(\.exe)?\s.*-(c|Command)\s+-(\s|$)') { $script:psBodies += $hd.Groups['body'].Value; $bashText = $bashText.Replace($hd.Value, $hd.Groups['open'].Value) } } }
@@ -2030,7 +2030,7 @@ $bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {
     $(if ($raw -match '(?m)(^\s*|[;&(]\s*)cat\s*(>\s*\S+\s*)?($|[;&|)])') { 'cat with no file reads stdin' }),
     $(if ($raw -match '\bpython\d*(\.exe)?\s+-(\s|$)' -and $raw -notmatch '\bpython\d*(\.exe)?\s+-\s*<|\|\s*python') { 'python - reads its script from stdin' }) | Where-Object { $_ })
   if ($bgWhy) { $bgNote = @("kit guard: this background shell may never end ($($bgWhy -join '; ')): bound it (timeout <s> <cmd>, a loop counter), no stdin reads; supervise flags hung shells (Shells table)") } }
-# adapter rules last (script-faults after the bans): notes only follow commands that run
+# adapter rules last (script-faults after bans): notes only follow commands that run
 $notes = foreach ($rule in @($KitAdapters.guard.Keys | Sort-Object { $_ -eq 'script-faults' } | ForEach-Object { $KitAdapters.guard[$_] })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
 LayoutCheck; $notes = @(@($notes) + $script:layoutNote + $bgNote | Where-Object { $_ })
 if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
