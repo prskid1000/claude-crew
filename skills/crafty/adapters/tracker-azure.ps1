@@ -20,7 +20,7 @@ function __TrHttp([string]$Method, [string]$Uri, $Body, [hashtable]$H, [string]$
 function __TrAz([string]$Method, [string]$Path, $Body, [string]$CType, [string]$File) {
   if (-not $__trDry -and -not $env:AZURE_DEVOPS_EXT_PAT) { throw 'tracker (azure): set AZURE_DEVOPS_EXT_PAT' }
   $u = "https://dev.azure.com/$(Get-KitSetting 'tracker.org' '<tracker.org>')/$(if ($Path -notmatch '^/') { [uri]::EscapeDataString((Get-KitSetting 'tracker.project' '<tracker.project>')) + '/' })_apis/$($Path.TrimStart('/'))"
-  __TrHttp $Method "$u$(if ($u -match '\?') { '&' } else { '?' })api-version=7.1$(if ($Path -match '/comments') { '-preview.4' })" $Body (Get-KitAuth AZURE_DEVOPS_EXT_PAT basic) $File $CType
+  __TrHttp $Method "$u$(if ($u -match '\?') { '&' } else { '?' })api-version=7.1$(if ($Path -match '/comments') { '-preview.4' } elseif ($Path -match '^wit/tags') { '-preview.1' })" $Body (Get-KitAuth AZURE_DEVOPS_EXT_PAT basic) $File $CType
 }
 function __TrAzSet($Id, $F) { __TrAz 'PATCH' "wit/workitems/$Id" @(foreach ($k in @($F.Keys)) { @{ op = 'add'; path = "/fields/$k"; value = $F[$k] } }) 'application/json-patch+json' }
 # a checklist item (child Task tagged kit-checklist): no subtask, no listed task
@@ -106,6 +106,10 @@ Register-KitAdapter 'tracker' 'azure' @{
     if ($ids) { (__TrAz 'GET' "wit/workitems?ids=$($ids -join ',')&fields=System.Title,System.AssignedTo" $null).value | ForEach-Object { [pscustomobject]@{ id = "$($_.id)"; name = [string]$_.fields.'System.Title'; status = $a.status; assignees = @($_.fields.'System.AssignedTo' | Where-Object { $_ } | ForEach-Object { __TrWho $_.uniqueName $_.displayName }) } } }
   }
   'owner' = { param($a) if ($a.name) { $a.name } else { [string](__TrAz 'GET' '/connectionData' $null).authenticatedUser.providerDisplayName } }
+  # tag-prune (task-items.ps1 Invoke-KitTagPrune): the project's work item tags (wit/tags), each counted live by WIQL (any state); kit-checklist* kept
+  'tag-prune' = { param($a) $pj = Get-KitSetting 'tracker.project' '<tracker.project>'
+    $have = @((__TrAz 'GET' 'wit/tags' $null).value.name | Where-Object { $_ -and $_ -notlike 'kit-checklist*' })
+    Get-KitTagPruneRows $pj $have @($a.names) { param($t) $w = __TrAz 'POST' 'wit/wiql?$top=1' @{ query = "SELECT [System.Id] FROM workitems WHERE [System.TeamProject] = @project AND [System.Tags] CONTAINS '$($t -replace "'", "''")'" }; if ($null -ne $w.workItems) { @($w.workItems).Count } } { param($t) __TrAz 'DELETE' "wit/tags/$([uri]::EscapeDataString($t))" $null } }
   # the board checklist = child Task work items (learn.microsoft.com/azure/devops/boards/boards/add-task-checklists): one per item, tagged
   # kit-checklist + kit-checklist-<name>, keyed by the text before the first ' · '; tick = Task's Completed state, untick = its Proposed one;
   # prune: unwanted kit lines ('<key> · ...') and repeats deleted (keepDone: a done one stays); the old description section goes

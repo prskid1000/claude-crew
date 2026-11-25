@@ -126,6 +126,10 @@ $sCm = @([pscustomobject]@{ id = 'c1'; user = 'u'; date = ''; text = 'Started wo
 Register-KitAdapter 'tracker' 'fks' @{ caps = @{ commentEdit = $true }; comments = { $sCm }; 'comment-edit' = { param($a) ($sCm | Where-Object id -eq $a.comment).text = $a.text; 'edited' }; comment = { 'new' }; url = { param($a) $a.id } }
 $__trType = 'fks'; Update-KitSolutionMrs 'T9'; $sMg = "$($sCm[1].text)"
 $pass = $sMg -match 'web!4 \(MERGED\) · api!7 \(MERGED\)' -and $sMg -match 'Deferred:\*\* flag \(OPEN\)' -and $sMg -notmatch 'MRs:.*OPEN' -and $sCm[0].text -eq 'Started work'; if (-not $pass) { $global:failed++; "  $sMg" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) solution comment: MRs (OPEN) -> (MERGED) once every MR merged, the MRs line only, the same comment edited"
+# azure tags prune (parity next 2026-11-25): wit/tags (preview api), each counted by WIQL; a used one skipped, kit-checklist tags never listed
+Cap azure tag-prune ([ordered]@{ 'GET .*_apis/wit/tags\?api-version=7\.1-preview\.1' = '{"value":[{"name":"old"},{"name":"used"},{"name":"kit-checklist-Items"}]}'
+ 'POST .*wit/wiql.*CONTAINS ''old''' = '{"workItems":[]}'; 'POST .*wit/wiql.*CONTAINS ''used''' = '{"workItems":[{"id":7}]}'; 'DELETE .*_apis/wit/tags/old\?api-version=7\.1-preview\.1' = '' }) @{ names = @(); lists = @() } {
+ param($r, $l) (@($r | ForEach-Object { "$($_.tag)=$($_.result)" }) -join ',') -eq 'old=deleted,used=skipped (in use)' -and @($l -split "`n" -match '^DELETE').Count -eq 1 } 'wit/tags + WIQL counts, only an unused tag deleted'
 # ---- clickup tags prune (moved from tracker-adapters: file cap; its own Invoke-KitHttp mock)
 . (Join-Path $Kit 'skills/crafty/adapters/tracker-clickup.ps1'); $global:http = [Collections.Generic.List[string]]::new()
 # tags prune (owner 2026-11-25): each space tag counted live (closed, archived too) before its delete; used or uncounted: skipped

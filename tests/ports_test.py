@@ -333,7 +333,8 @@ cells = [(f, n, v) for _, f, n, v, s, _ in nx]
 fn = json.loads(json.dumps(m0)); fn['adapters']['tracker']['gaps'] = {'jira/checklist': 'no such feature: https://example.org/doc no checklist API'}
 fn['adapters']['tracker']['accepted'] = {'youtrack/checklist': 'description markdown is its checklist'}; nf = [(f, n, v) for _, f, n, v, s, _ in kt.parity_next(kn, fn, {})]
 fn['adapters']['tracker']['gaps'] = {'jira/checklist': 'no such feature (no link)'}; fn['adapters']['tracker']['accepted'] = {'clickup/checklist': 'x', 'linear/checklist': ' '}; p8 = par(kn, fn)
-print(f'parity-next:{cells[0][:2] == ("tracker", "linear") and "linear" not in [n for f, n, v in cells[1:] if f == "tracker"]}'
+nLin = sum(1 for f, n, v in cells if (f, n) == ("tracker", "linear"))   # every org cell first (checklist, tagPrune), none later
+print(f'parity-next:{nLin > 0 and all(c[:2] == ("tracker", "linear") for c in cells[:nLin])}'
       f'|{not [c for c in cells if c[1] == "none"]}|{all(s in ("fallback", "gap") for *_, s, _ in nx)}'
       f'|{("tracker", "jira", "checklist") in cells and ("tracker", "jira", "checklist") not in nf}'
       f'|{("tracker", "youtrack", "checklist") in cells and ("tracker", "youtrack", "checklist") not in nf and ("tracker", "linear", "checklist") in nf}'

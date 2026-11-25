@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L471 code · L482 migrations ·
-  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L633 shared builds · L764 hooks · L838 marks · L1022 seed ·
-  L1094 processes · L1458 daemon · L1936 cleanup · L2008 verbs
+  L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L634 shared builds · L765 hooks · L839 marks · L1023 seed ·
+  L1090 processes · L1454 daemon · L1935 cleanup · L2007 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -616,6 +616,7 @@ function Sync-Repo([string]$e, $r, [object[]]$layers, [switch]$NoFetch, [string]
     $out = git -C $d -c "core.hooksPath=$nh" -c user.name=localenv -c user.email=localenv@localhost merge -q --no-ff --no-edit -m "localenv layer $($l.branch) ($($l.agent))" $sha 2>&1
     if ($LASTEXITCODE) {
       $files = @(git -C $d diff --name-only --diff-filter=U 2>$null)
+      if (Resolve-LaneKeepBoth $e $r $d $files $nh) { Write-Host "[$e] $($l.branch): append-only conflict in $($files -join ', '): both sides kept"; $l.sha = $sha; $kept += $l; continue }
       git -C $d merge --abort 2>$null | Out-Null; git -C $d reset -q --hard HEAD 2>$null | Out-Null
       $dropped += @{ layer = $l; why = "conflicts with $($r.target) + earlier layers: $(($files | Select-Object -First 8) -join ', ')$(if (-not $files) { "$out" })"; files = $files }; continue
     }
@@ -1046,11 +1047,6 @@ function Get-MissingRoutines([string]$e) { $tool = Get-MigTool $e; if (Test-MigV
 # rerunRoutines: a scope's missing routines made pending -> notes
 function Reset-MissingRoutines([string]$e, [string]$s) { $tool = Get-MigTool $e; if (Test-MigVerb $tool 'rerunRoutines') { Invoke-MigVerb $tool 'rerunRoutines' @{ e = $e; schema = $s } } }
 
-# a failed create while a managed service is not healthy (a deploy restarting it: HTTP 000 on a seed upload) -> the hint, else ''
-function Get-SeedDownHint([string]$e) {
-  $st = Read-State $e; $down = @(EnvServices $e | Where-Object { (Managed $_) -and "$($st.services["$($_.name)"].status)" -notin '', 'down', 'stopped' -and -not (Healthy $e $_) } | ForEach-Object { "$($_.name)" })
-  if ($down.Count) { "; $($down -join ', ') not up yet ($(@($down | ForEach-Object { "$($st.services[$_].status)" }) -join ', ')): re-run seed when envy.ps1 status shows it up" } else { '' }
-}
 # -Tables (a restore's fallback): the items naming one (schema.table or table) + their needs; none named: all
 function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
   $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { throw "[$e] no seed file $f (envs.$e.seed)" }
@@ -1510,7 +1506,10 @@ function Run-Train {
     $r = $envRepos[$rn]
     $prevKeys = @($cur[$rn] | ForEach-Object { Key $_ })
     $isNew = { param($l) (Key $l) -notin $prevKeys }
-    $res = Sync-Repo $e $r @($want[$rn])
+    # warm lane (owner 2026-11-25): its layers unchanged, no refresh -> it stays on its live target commit, so a target move alone
+    # (another MR merged) rebuilds nothing; refresh or a changed layer of this repo move it
+    $pinBase = Get-TrainPinBase $st $rn @($want[$rn] | ForEach-Object { Key $_ }) $prevKeys @($reqs.kind)
+    $res = if ($pinBase) { Sync-Repo $e $r @($want[$rn]) -Base $pinBase } else { Sync-Repo $e $r @($want[$rn]) }
     foreach ($d in $res.dropped) {
       $rid = $byBranch["$rn|$($d.layer.branch)"]
       if (-not $dropWhy.ContainsKey("$rn|$($d.layer.branch)")) { $dropWhy["$rn|$($d.layer.branch)"] = $d.why }
@@ -1521,7 +1520,7 @@ function Run-Train {
     $live = $st.release.repos[$rn]
     $missing = @(EnvServices $e | Where-Object { $_.artifact -and (RepoOf $e $_) -eq $rn -and -not (Test-ReleaseArtifact $_ $st.services[$_.name].artifact) })
     if ([int]$st.release.n -gt 0 -and $live -and $live.targetSha -eq $targetSha -and -not $missing.Count -and (@($kept | ForEach-Object { Key $_ }) -join '|') -eq ($prevKeys -join '|')) {
-      "[$e] $rn unchanged (same target commit and layers): no build"
+      "[$e] $rn unchanged (same target commit and layers$(if ($pinBase) { "; kept on $("$pinBase".Substring(0, [math]::Min(9, "$pinBase".Length))), not the moved $($r.target): refresh moves it" })): no build"
       foreach ($l in $kept) { if ($l.request -and $results[$l.request].outcome -eq 'live') { $results[$l.request].message = 'already live' } }
       continue
     }

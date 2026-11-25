@@ -18,7 +18,9 @@
         "linear/checklist": "no such feature: https://linear.app/docs/parent-and-sub-issues an issue has sub-issues, no checklist entity; a checklist is description markdown, which the Items block is (fallback = Linear's own form)",
         "youtrack/checklist": "no such feature: https://www.jetbrains.com/help/youtrack/devportal/resource-api-issues.html the issue API has no checklist field; checklists are description markdown (https://www.jetbrains.com/help/youtrack/cloud/youtrack-markdown-syntax-issues.html#checklists), which the Items block is (fallback = YouTrack's own form)",
         "jira-server/checklist": "no such feature: https://docs.atlassian.com/software/jira/docs/api/REST/9.17.0/ Jira Data Center REST has no checklist resource, only sub-tasks (Marketplace apps add one); the Items block stands",
-        "jira/checklist": "no such feature: https://developer.atlassian.com/platform/framework/adf-builder/reference/nodes/taskList/ ADF taskList is not supported in Jira issue fields (Marketplace apps only); the Items block stands"
+        "jira/checklist": "no such feature: https://developer.atlassian.com/platform/framework/adf-builder/reference/nodes/taskList/ ADF taskList is not supported in Jira issue fields (Marketplace apps only); the Items block stands",
+        "jira/tagPrune": "no such feature: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-labels/ labels have no catalogue entity (a GET list only, no delete): a label no issue carries is gone on its own",
+        "jira-server/tagPrune": "no such feature: https://docs.atlassian.com/software/jira/docs/api/REST/9.17.0/ Jira Data Center has no label resource to delete: labels live on issues only, an unused one is gone on its own"
       }
     },
     "git-host": {
@@ -155,7 +157,7 @@
     "migration": {
       "config": "migrations.tool",
       "file": "skills/crafty/adapters/liquibase.ps1",
-      "verbs": "check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes",
+      "verbs": "check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes appendOnly",
       "names": "",
       "vendors": "liquibase"
     },

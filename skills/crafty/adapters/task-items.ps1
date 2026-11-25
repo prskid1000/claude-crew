@@ -4,7 +4,7 @@
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
 # Sections: L8 items · L98 move · L142 status roles · L298 task text · L315 naming · L319 meta (dec-60, owner 2026-11-25) ·
-#   L486 track lines · L491 task ids · L518 tags · L612 order
+#   L486 track lines · L491 task ids · L518 tags · L622 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -608,6 +608,16 @@ function Invoke-KitTagPrune([string[]]$Names, [string]$List, [switch]$Unused, [s
   $rows = @(__TrA 'tag-prune' @{ names = @($Names | Where-Object { "$_".Trim() } | ForEach-Object { "$_".Trim() }); lists = $ls })
   if ($Json) { ConvertTo-Json -InputObject $rows -Depth 4 } else { foreach ($r in $rows) { "$($r.result.ToUpper()): $($r.tag) · space $($r.space) · $($r.uses) task(s)" }; "tags prune: $(@($rows | Where-Object { $_.result -match '^(deleted|would delete)' }).Count) of $($rows.Count) $(if ($__trDry) { 'would go (DRY RUN)' } else { 'deleted' })" }
   if (@($rows | Where-Object { $_.result -match '^failed|count failed' }).Count) { exit 1 }   # a failed delete or count is no success
+}
+# a tracker's tag-prune rows over one catalogue ($Have names): $Count = { param($t) uses | $null (failed) } live right before $Delete
+# = { param($t) }; status labels (tracker.statusLabelPrefix) never; any use or a failed count: skipped, never deleted
+function Get-KitTagPruneRows([string]$Space, [string[]]$Have, [string[]]$Names, [scriptblock]$Count, [scriptblock]$Delete, [string]$Keep = '') {
+  foreach ($t0 in @(if (@($Names).Count) { $Names } else { $Have })) { $t = @($Have | Where-Object { "$_".ToLower() -eq "$t0".ToLower() })[0]
+    if (-not $t) { [pscustomobject]@{ space = $Space; tag = "$t0"; uses = 0; result = 'not in catalogue' }; continue }
+    if ($Keep -and $t -like "$Keep*") { [pscustomobject]@{ space = $Space; tag = $t; uses = 0; result = 'skipped (status label)' }; continue }
+    $n = try { & $Count $t } catch { $null }
+    $res = if ($null -eq $n) { 'skipped (count failed)' } elseif ([int]$n) { 'skipped (in use)' } elseif ($__trDry) { 'would delete' } else { try { $null = & $Delete $t; 'deleted' } catch { "failed: $($_.Exception.Message)" } }
+    [pscustomobject]@{ space = $Space; tag = $t; uses = [int]$n; result = $res } }
 }
 # ---- order: waits-on links and wave tags (owner 2026-11-23: order and parallel work readable without titles)
 # native when the tracker can (caps dependencies; wave: Set-KitTaskTags), else a <!-- kit:order --> description section; titles never change

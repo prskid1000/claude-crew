@@ -213,11 +213,6 @@ $sdr = & { . $lkL; $sd = Join-Path $laneKit 'seedfix'; New-Item -ItemType Direct
   $run = @(Invoke-Seed shop2) -join "`n"; Remove-Item -LiteralPath $sf, $sd -Recurse -Force
   "$chkPart|$($chk -match 'DRIFT\s+part - 6')|$($run -match 'OK\s+part \(created\)')|$($run -match 'DRIFT\s+extra - has 3, expects 1')|$($run -match 'DRIFT\s+plain - create.upsert not set')|$($run -match 'MISSING\s+none - no create.cmd; how: by hand')|$($run -match 'BLOCKED\s+later - needs none first')|$($run -match 'could not create 4: extra .+; plain .+; none .+; later ')" }
 Expect "seed: a DRIFT item with an upsert create runs it (script-created, re-checked); -Check creates nothing; the rest named with why ($sdr)" ($sdr -eq '6|True|True|True|True|True|True|True')
-# coordinator 2026-11-25: a seed upload got HTTP 000 while a deploy restarted the api: the failed create names the service, not a port
-$sdh = & { . $lkL; function Read-State { [pscustomobject]@{ services = @{ api = @{ status = 'starting' }; db = @{ status = 'up' }; mcp = @{ status = 'down' } } } }
-  function EnvServices { @([pscustomobject]@{ name = 'api' }, [pscustomobject]@{ name = 'db' }, [pscustomobject]@{ name = 'mcp' }) }; function Healthy($he, $hs) { $hs.name -eq 'db' }
-  $h1 = Get-SeedDownHint shop2; function Healthy($he, $hs) { $true }; "$h1|$(Get-SeedDownHint shop2)" }
-Expect "seed: a failed create while a started service is not healthy names it (a deliberately stopped one never); all healthy: no hint ($sdh)" ($sdh -match '^; api not up yet \(starting\): re-run seed when envy\.ps1 status shows it up\|$')
 # status of every env: one process snapshot and one lease-log read for the call (supervise ran both per env: 7-17 s)
 $stKit = New-LocalEnvKit lestat; Set-JsonFile (Join-Path $stKit 'skills/crafty/kit.local.json') @{ localEnv = @{ envs = @{ a = @{ services = @(@{ name = 'w'; port = 7001; start = 'echo' }) }; b = @{ services = @(@{ name = 'v'; port = 7002; start = 'echo' }) } } } } 8
 $ss = & { . (Join-Path $stKit 'skills/envy/envy.ps1'); $global:snapN = 0; function Get-KitProcSnap { $global:snapN++; @{ kids = @{}; procs = @{} } }

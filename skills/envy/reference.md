@@ -26,8 +26,7 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
 - Restarts count only real starts (backoff 3/30 min).
 
 ## Lanes
-- `envs.<env>.lanes` { max, portStep 100 }: copies of an env side by side, each its own state, controller, train, worktrees,
-  logs and release dirs.
+- `envs.<env>.lanes` { max, portStep 100 }: env copies side by side, each its own state, controller, train, dirs.
 - Lane 1 = `<env>`, lane k = `<env><k>` (laneIds: "Names"), all derived alike: ports of services the env runs + (k-1) x portStep; in every string
   `{lane}` ('' / k), `{port:<svc>}` and `:<old port>` follow.
 - `envs.<lane id>` (or an older id) keys override that lane (e.g. its own DB service; `db.port` follows its port); env file `<env>.env`, then
@@ -36,9 +35,9 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
   busy; a deploy skips one others lease for a free one with room); a cold one opens when warm queue wait reaches
   `localEnv.lanes.openAfterMinutes` (learned) and free RAM minus the keep-free floor holds its services; `-Env <lane id>` /
   `-Lane <k>` opens or pins one; owner verbs: the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
-  N of M (why)`.
+  N of M (why)`. Same layers: no target move (`refresh`).
 - API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
-- `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first; `Unknown column` = a guessed name (`uuid`).
+- `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first (`Unknown column` = a guessed name).
 - `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).
 - A lane's own DB service (port = `db.port`) down: marks wait for its start (an init's fresh copy marks `baseline-<nnnn>`; no
   baseline yet: a green SQL-only seed check at its start marks one); db checks, pool, mark expiry and the temp watchdog rest.

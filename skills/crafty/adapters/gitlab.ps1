@@ -117,4 +117,8 @@ Register-KitAdapter 'tracker' 'gitlab' @{
     $have }
   'labels' = { param($a) $null = __TrGl 'PUT' (__TrGlPath $a.id) @{ add_labels = (@($a.add) -join ','); remove_labels = (@($a.remove) -join ',') } }
   'owner' = { param($a) [string](__TrGl 'GET' 'user' $null).username }
+  # tag-prune (task-items.ps1 Invoke-KitTagPrune): the project's labels with counts, each re-read live (issues any state + open MRs)
+  'tag-prune' = { param($a) $r = $__trRepo; if (-not $r) { throw 'tracker (gitlab) tags prune: set tracker.repo' }; $p = "projects/$([uri]::EscapeDataString($r))/labels"
+    $have = @(@(__TrGl 'GET' "$($p)?per_page=100" $null) | ForEach-Object { "$($_.name)" } | Where-Object { $_ })
+    Get-KitTagPruneRows $r $have @($a.names) { param($t) $l = __TrGl 'GET' "$p/$([uri]::EscapeDataString($t))?with_counts=true" $null; if ($null -ne $l.open_issues_count) { [int]$l.open_issues_count + [int]$l.closed_issues_count + [int]$l.open_merge_requests_count } } { param($t) __TrGl 'DELETE' "$p/$([uri]::EscapeDataString($t))" $null } $__trLp }
 }

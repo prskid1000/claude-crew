@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L293 stack · L392 gate · L708 check · L1039 pipes · L1104 guard · L2041 dir · L2051 checkpoint ·
-  L2091 prior · L2130 tracker · L2152 task spec · L2358 scope · L2406 host
+Sections: L25 init · L34 wt · L293 stack · L392 gate · L708 check · L1035 pipes · L1100 guard · L2037 dir · L2047 checkpoint ·
+  L2087 prior · L2126 tracker · L2148 task spec · L2354 scope · L2402 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -328,7 +328,7 @@ function TsProject($d) {
   $null
 }
 
-# tests.fallbackRunner: a TS project with no test runner; unset / 'none' = no test step, 'spec' = the kit's spec.mjs (opt-in), else a command with {tests}
+# tests.fallbackRunner (TS, no runner): unset / none = no test step, spec = spec.mjs, else a command with {tests}
 function NodeSpecCmd { $f = "$(Get-KitSetting 'tests.fallbackRunner' '')".Trim(); if (-not $f -or $f -eq 'none') { $null } elseif ($f -eq 'spec') { "node `"$($KitCmd.spec)`" {tests}" } else { $f } }
 
 function Get-NodeTools($d) {
@@ -915,11 +915,7 @@ if ($Step -eq 'e2e') {
   if ($Show) { if ($envs.Count) { "e2e env: $(@($envs.Keys | ForEach-Object { "$_=$($envs[$_])" }) -join ' ')" }; foreach ($r in $runs) { "e2e : $r" }; exit 0 }
   foreach ($ek in $envs.Keys) { [Environment]::SetEnvironmentVariable($ek, $envs[$ek]) }
   $env:KIT_E2E_ALL = if ($AllTests) { '1' } else { '' }
-  $rc = 0; $n = 0
-  foreach ($r in $runs) {
-    $n++; if ($runs.Count -gt 1) { Write-Host "[check] e2e run $n/$($runs.Count): $r" }
-    & $KitCmd.dev gate -Dir $st.dir -Cmd $r -Log (Get-CheckLog $st.dir "e2e-$n"); if ($LASTEXITCODE) { $rc = $LASTEXITCODE }
-  }
+  $rc = Invoke-KitE2eRuns $st.dir $runs @(if ($ln) { $recipe.portFiles }) $lnFix
   Write-Host "[check] e2e $(if ($rc) { "FAILED (exit $rc)" } else { 'ok' })"; exit $rc
 }
 
@@ -2002,7 +1998,7 @@ if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitComm
   }
 }
 $gated = $cmd -match 'crafty\.ps1["'']?\s+(gate|check)\b|phoney\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'
-# pytest / docker at a command's start (a grep or a message is no run): quoted tool paths unwrapped, other quotes emptied, wrappers skipped
+# pytest / docker at a command's start (a grep or a message is no run): quoted tool paths unwrapped, quotes emptied, wrappers skipped
 $hv = [regex]::Replace([regex]::Replace((StripDocs $raw), '"[^"]*[\\/]((?:python[\d.]*|py|pytest|docker(?:-compose)?)(?:\.exe)?)"', '$1'), '"(?:[^"\\]|\\.)*"|''[^'']*''', '""')
 $hvAt = '(^|[;&|(\n]|\bthen\b|\bdo\b)\s*(&\s*)?((\w+=\S*|sudo|env|time|nohup|exec|setsid|timeout\s+\S+)\s+)*(\S*[\\/])?'
 $heavy =$cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)?\s(compile|test|package|install|verify)\b' -or
@@ -2048,7 +2044,7 @@ New-Item -ItemType Directory -Force $d | Out-Null
 if ($Name) { Join-Path $d "$(if ($Kind -eq 'evidence' -and $Agent) { "$(& $slug $Agent)-" })$(& $slug $Name)" } else { $d.TrimEnd('\', '/') }
 }
 
-# ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic; -Brief: a hand-written brief is never overwritten (<name>.generated.md)
+# ---- checkpoint: resume point per step: resume-<run>.json + .md, atomic; -Brief: a hand-written brief is kept (<name>.generated.md)
 $script:KitSteps = 'worktree', 'commit', 'goals', 'loop', 'mr', 'review', 'ci', 'doc', 'tracker', 'merge', 'done'
 function Invoke-Checkpoint {
 param([string]$Agent, [string]$Run = '', [string]$Step, [string]$Evidence = '', [string]$Item = '', [string]$Next = '', [string]$Dir = '', [string[]]$Leases, [switch]$Read, [string]$Notes = '', [string]$Brief = '')
@@ -2074,7 +2070,7 @@ $md = @("# Checkpoint: $Agent (run ``$($c.run)``)", "**Result:** Next: $($c.next
   @(Format-KitMdTable 'At', 'Step', 'Item', 'Evidence', 'Head' @($ckRows | Select-Object -Skip $ckOld | ForEach-Object { , @($(if ($_.at -is [datetime]) { $_.at.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) } else { "$($_.at)".Substring(0, [Math]::Min(16, "$($_.at)".Length)).Replace('T', ' ') }), $_.step, $_.item, $_.evidence, $_.head) })) +
   @('', '## Open', '', "**Worktrees:** $(@($c.worktrees) -join ', ')", "**Leases:** $(@($c.leases) -join ', ')", "**Decisions pending:** $(@($c.decisions) -join ', ')") +
   @(if ($ckNotes) { '', "## Notes$(if ($ckNoteOld) { " (last 6)" })", ''; @($ckNotes | Select-Object -Skip $ckNoteOld | ForEach-Object { "- $_" }) })
-# hand-written text above <!-- checkpoint --> is kept; the generated part always follows the marker (a hand-written brief was overwritten, 2026-11-23)
+# hand-written text above <!-- checkpoint --> is kept; the generated part follows it
 $ckPrev = if (Test-Path -LiteralPath $mf) { [IO.File]::ReadAllText($mf) } else { '' }
 $own0 = if ($ckPrev -match '<!-- checkpoint -->') { ($ckPrev -split '<!-- checkpoint -->')[0] } elseif ($ckPrev -notmatch '^# Checkpoint: ') { $ckPrev }
 Write-KitAtomic $mf ("$(if ("$own0".Trim()) { "$("$own0".TrimEnd())`n`n" })<!-- checkpoint -->`n" + ($md -join "`n") + "`n")
@@ -2151,7 +2147,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 }
 # ---- task spec: agents pass facts (JSON), never task markdown; tracker create|update <id>|render -Spec <json> renders the
 # description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
-# (lib.ps1 Format-KitDecisionItems), parent items (adapters/task-items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (its item code on the parent), parent, list,
+# (lib.ps1 Format-KitDecisionItems), parent items (adapters/task-items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
 # { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<n>' (task-items.ps1 order), proseOk }.
 # what a spec lacks (bug: name + problem), a link or MR no full URL
@@ -2193,7 +2189,7 @@ function ConvertTo-KitTaskRender($Spec, [string]$Task) {
     decisions = @(if ($dec.Count) { Format-KitDecisionItems $dec '' $Task }) }
 }
 # create (no -Task) or update by key (-Task: merged into its stored spec); refused on gaps or prose findings (a local path is one);
-# -ReplaceItems: items not in this spec leave the spec and the Items checklist (kept out of rollups like track forget-item), a done one stays unless -Force
+# -ReplaceItems: items not in this spec leave the spec and the Items checklist (no rollup), a done one stays unless -Force
 function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$ReplaceItems, [switch]$Force) {
   $old = if ($Task) { (Read-KitState (Get-KitTaskFile $Task)).spec }; $sp = if ($old -is [Collections.IDictionary]) { Merge-KitTaskSpec $old $Spec } else { $Spec }
   $drop = @(); if ($ReplaceItems) {
@@ -2238,7 +2234,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
   if ($sp.waitsOn -or $sp.wave) { $o | Add-Member order (Set-KitTaskOrder $id @($sp.waitsOn) "$($sp.wave)") }
   if ($ReplaceItems) { $o | Add-Member dropped $drop; $o | Add-Member checklist "$cl" }; if ($bkp) { $o | Add-Member backup $bkp }; $o
 }
-# a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy nobody updates; "Decision needed for X" passes
+# a hand-written decision record ("Decision(s) (owner ...): ..." / "Decisions:"), a stale copy; "Decision needed for X" passes
 function Test-KitDecisionText([string]$Text) { "$Text".Trim() -match '^\W{0,3}decisions?\W*(\(|:|\r?\n|$)' }
 # one-per-task comment kinds: edited in place (Set-TrackerKitComment)
 function Test-KitKeyedComment([string]$Kind) { $Kind -in 'comment-solution', 'qa-result', 'comment-intest' -or $Kind -like 'mrs-*' -or $Kind -like 'watch-*' }
@@ -2427,6 +2423,7 @@ function Invoke-Host([Parameter(Mandatory)][string]$Verb, [string]$ArgJson = '{}
 }
 
 if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
+  if ($__verb -in 'wt', 'check', 'checkpoint') { try { Show-KitVerbInbox @($__rest) } catch { } }
   switch ($__verb) {
     'wt' { Invoke-KitVerb Invoke-Wt $__rest }
     'dir' { Invoke-KitVerb Invoke-Dir $__rest }

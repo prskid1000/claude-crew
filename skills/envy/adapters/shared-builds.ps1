@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L133 lane pick · L183 start room · L227 thin artifacts
+# Sections: L4 shared builds · L144 lane pick · L194 start room · L238 thin artifacts
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -58,6 +58,17 @@ function Get-SameInputs([string]$e, [string]$rn, $st) {
     $k = try { BuildKey $e $s } catch { $null }; if (-not $k) { continue }
     if (@(@(if ($st.builds -is [hashtable]) { $st.builds[$s.name] }) | Where-Object { $_ -and $_.key -eq $k -and "$($_.path)" -eq $live }).Count) { $s.name }
   }
+}
+# envy seed: a failed create while a started managed service is not healthy (a deploy restarting it: HTTP 000) -> the hint, else ''
+function Get-SeedDownHint([string]$e) {
+  $st = Read-State $e; $down = @(EnvServices $e | Where-Object { (Managed $_) -and "$($st.services["$($_.name)"].status)" -notin '', 'down', 'stopped' -and -not (Healthy $e $_) } | ForEach-Object { "$($_.name)" })
+  if ($down.Count) { "; $($down -join ', ') not up yet ($(@($down | ForEach-Object { "$($st.services[$_].status)" }) -join ', ')): re-run seed when envy.ps1 status shows it up" } else { '' }
+}
+# warm lane (owner 2026-11-25): the live target commit a train keeps a repo on (a release exists, its wanted layers = the live
+# ones, no refresh in the train): a target move alone rebuilds nothing; else '' (Sync-Repo takes origin/<target>)
+function Get-TrainPinBase($st, [string]$rn, [string[]]$wantKeys, [string[]]$liveKeys, [string[]]$kinds) {
+  $lv = $st.release.repos[$rn]
+  if ([int]$st.release.n -gt 0 -and $lv.targetSha -and 'refresh' -notin $kinds -and (@($wantKeys) -join '|') -eq (@($liveKeys) -join '|')) { "$($lv.targetSha)" } else { '' }
 }
 # -> @{ lane; dir; path } of a recorded copy with this key (this lane first), else nothing; never throws
 function Find-SharedBuild([string]$e, $s, [string]$key) {

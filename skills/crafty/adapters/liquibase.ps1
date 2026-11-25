@@ -6,7 +6,7 @@
 #   discover @{ e; dirs; registry } -> one set (several masters: ambiguous) · pendingSql @{ e; set; out } -> $null | error
 #   tag / rollback @{ e; set; tag } -> $null | error · resetEdited @{ e; envRepos; cur; newLayers } -> notes
 #   missingRoutines @{ e; schema } -> { schema, names, files, changeSets } · rerunRoutines @{ e; schema } -> notes (their history rows deleted)
-#   historyScopes @{ e } -> the env scopes holding DATABASECHANGELOG
+#   historyScopes @{ e } -> the env scopes holding DATABASECHANGELOG · appendOnly @{ file } -> a conflict of includes only (lane train keepboth)
 # A set: { name, tool, repo, base, changelog, dir, searchPath, schemas, registry, ambiguous }; searchPath default: the nearest
 # 'resources' folder above the changelog (classpath-relative includes), else the changelog's folder.
 # Sections: L15 crafty.ps1 check · L49 local env (envy.ps1)
@@ -204,7 +204,15 @@ function Reset-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
     "routines $(@($g.names | Where-Object { $_ -notin @($g.kept.Keys) }) -join ', ') missing in $($g.schema): $($w.Count) changeSet row(s) deleted from DATABASECHANGELOG; the next migration run creates them"
   }
 }
+# a lane train's append-only conflict (envy lane-standard.ps1 Resolve-LaneKeepBoth): a changelog master whose every conflict
+# line (both sides, the diff3 base) is an include, a comment or blank -> $true
+function Test-LiquibaseAppendOnly([string]$File) {
+  if ((Split-Path $File -Leaf) -notmatch '(?i)master\.(xml|ya?ml)$' -or $File -notmatch '(?i)liquibase|changelog' -or -not (Test-Path -LiteralPath $File)) { return $false }
+  $bl = [regex]::Matches((Get-Content -LiteralPath $File -Raw -Encoding utf8), '(?s)<<<<<<< [^\r\n]*\r?\n(.*?)>>>>>>> '); if (-not $bl.Count) { return $false }
+  -not @($bl | ForEach-Object { $_.Groups[1].Value -split '\r?\n' } | Where-Object { $_ -notmatch '^\s*$|^(=======|\|{7}( .*)?)$|^\s*<include(All)?\s[^>]*/>\s*$|^\s*<!--.*-->\s*$|^\s*-\s*include(All)?:\s*$|^\s*(file|path|relativeToChangelogFile):' }).Count
+}
 Register-KitAdapter migration liquibase @{
+  appendOnly      = { param($a) Test-LiquibaseAppendOnly $a.file }
   check           = { param($a) Invoke-LiquibaseRepoCheck $a }
   discover        = { param($a) Get-LiquibaseDiscoveredSet $a }
   pendingSql      = { param($a) Invoke-EnvLiquibase $a.e $a.set @(@($a.set.schemas)[0]) 'update-sql' $a.out }

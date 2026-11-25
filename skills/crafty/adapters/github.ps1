@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # github: GitHub / GitHub Enterprise as git host (gh), CI (Actions, check runs, commit statuses) and tracker (issues).
 # Dot-sourced by lib.ps1 from skills/crafty/adapters/; uses its shared helpers (__Cli, __Mr, __GhMr, __Files, __Ci*, __Tr*).
-# Sections: L6 gh · L17 tracker · L85 git-host · L124 ci
+# Sections: L6 gh · L17 tracker · L89 git-host · L128 ci
 # ---- gh: host, env, CLI and API calls
 function __GhHost { [string](Get-KitValue 'githubHost' $(if ($script:HostType -eq 'github' -and $KitConf.GitHost -notmatch 'gitlab') { $KitConf.GitHost } else { 'github.com' })) }   # GHE: the origin host
 # gh reads GH_HOST: a GitHub Enterprise origin sets it before the first call
@@ -80,6 +80,10 @@ Register-KitAdapter 'tracker' 'github' @{
     $have }
   'labels' = { param($a) $r, $n = __TrRef $a.id; foreach ($l in @($a.add | Where-Object { $_ })) { $null = __GhCli @('label', 'create', $l, '-R', $r, '--force', '--color', 'ededed'); $null = __GhCli @('issue', 'edit', $n, '-R', $r, '--add-label', $l) }
     foreach ($l in @($a.remove | Where-Object { $_ })) { $null = __GhCli @('issue', 'edit', $n, '-R', $r, '--remove-label', $l) } }
+  # tag-prune (task-items.ps1 Invoke-KitTagPrune): the repo's labels, each counted live (issues + PRs, any state) by search
+  'tag-prune' = { param($a) $r = $__trRepo; if (-not $r) { throw 'tracker (github) tags prune: set tracker.repo' }
+    $have = @((__TrJson (__GhCli @('label', 'list', '-R', $r, '--limit', '1000', '--json', 'name'))).name | Where-Object { $_ })
+    Get-KitTagPruneRows $r $have @($a.names) { param($t) $sq = [uri]::EscapeDataString('repo:' + $r + ' label:"' + $t + '"'); (__TrJson (__GhCli @('api', "search/issues?q=$sq&per_page=1"))).total_count } { param($t) __GhCli @('label', 'delete', $t, '-R', $r, '--yes') } $__trLp }
   'owner' = { param($a) [string](__GhCli @('api', 'user', '--jq', '.login')) }
 }
 # ---- git-host: pull requests, repos, branch protection

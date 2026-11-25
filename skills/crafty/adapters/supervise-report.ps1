@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L162 transcript tails · L230 supervise sweep · L310 status rows
+# Sections: L6 supervise report · L179 transcript tails · L247 supervise sweep · L327 status rows
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -127,9 +127,20 @@ function Write-KitSuperviseReport($d, [string[]]$Md, [string[]]$Sweep, [string]$
 # board messages (bossy.ps1 board msg | inbox): one jsonl per agent; the unread ones as lines, then marked read (inbox, board beat and
 # every gated build print them: a workflow step between beats still gets the coordinator's rule); -All: the read ones too
 function Get-InboxFile([string]$Agent) { Join-Path (Get-KitPath board -Create) "inbox/$($Agent.ToLower() -replace '[^\w.-]', '_').jsonl" }
+# an agent with no live row -> the one live row of its run, area and type (a restarted workflow agent joins under a new id: 9 TASK
+# CLOCK nudges sat in a left id's inbox, 2026-11-25); else as addressed (read at its next join or verb call)
+function Resolve-KitMsgTarget([string]$To) {
+  $rows = @(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-2) | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { $_.agent })
+  if (@($rows | Where-Object { "$($_.agent)" -eq $To -and $_.status -ne 'left' }).Count) { return $To }
+  $was = @($rows | Where-Object { "$($_.agent)" -eq $To -and $_.run -and $_.area } | Sort-Object { "$($_.beat)" })[-1]; if (-not $was) { return $To }
+  $live = @($rows | Where-Object { $_.status -ne 'left' -and "$($_.agent)" -ne $To -and "$($_.run)|$($_.area)|$($_.type)" -eq "$($was.run)|$($was.area)|$($was.type)" })
+  if ($live.Count -eq 1) { "$($live[0].agent)" } else { $To }
+}
 function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind = 'note', [string]$Ref = '') {
+  $asked = $To; $To = Resolve-KitMsgTarget $To; $script:KitMsgTo = $To
   $f = Get-InboxFile $To; New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null
-  $line = [ordered]@{ at = (Get-KitStamp); from = $From; to = $To; kind = $Kind; text = $Text; ref = $Ref; read = $false } | ConvertTo-Json -Compress
+  $msgRow = [ordered]@{ at = (Get-KitStamp); from = $From; to = $To; kind = $Kind; text = $Text; ref = $Ref; read = $false }; if ($asked -ne $To) { $msgRow.addressed = $asked }
+  $line = $msgRow | ConvertTo-Json -Compress
   Invoke-KitLocked $f { Add-Content -LiteralPath $f $line -Encoding utf8 }
 }
 function Read-KitInboxNew([string]$Agent, [switch]$All) {
@@ -142,6 +153,12 @@ function Read-KitInboxNew([string]$Agent, [switch]$All) {
 # crafty.ps1 gate: the build owner's unread messages first (a workflow step beats only between steps; it builds all the time); only a
 # named agent (CLAUDE_AGENT) or one live on the board: a worktree-name owner never drains another agent's inbox
 function Test-KitBoardAgent([string]$Agent) { [bool]@(Get-ChildItem (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddDays(-1) | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { "$($_.agent)" -eq $Agent -and $_.status -ne 'left' }).Count }
+# crafty.ps1 wt / check / checkpoint: the caller's unread messages on stderr (-Agent, KIT_AGENT, CLAUDE_AGENT): a workflow agent that
+# never beats still gets a TASK CLOCK / BUILDS nudge at its next kit call
+function Show-KitVerbInbox([string[]]$VerbArgs) {
+  $ai = [array]::IndexOf(@($VerbArgs | ForEach-Object { "$_".ToLower() }), '-agent'); $own = @(@($(if ($ai -ge 0 -and $ai + 1 -lt @($VerbArgs).Count) { @($VerbArgs)[$ai + 1] }), $env:KIT_AGENT, $env:CLAUDE_AGENT) | Where-Object { "$_".Trim() } | ForEach-Object { "$_" } | Select-Object -Unique)
+  foreach ($o in $own) { if ($o -ne $env:CLAUDE_AGENT -and -not (Test-KitBoardAgent $o)) { continue }; foreach ($m in @(try { Read-KitInboxNew $o } catch { })) { [Console]::Error.WriteLine("[inbox] MESSAGE for $o (do what it says): $m") } }
+}
 function Show-KitGateInbox([string]$Owner) { if (-not $env:CLAUDE_AGENT -and -not (Test-KitBoardAgent $Owner)) { return }; foreach ($m in @(try { Read-KitInboxNew $Owner } catch { })) { Write-Host "[gate] MESSAGE for $Owner (follow it for this and every later build): $m" } }
 # -Brief stdout (supervise.output): html = link, ACT / WATCH / fix lines, counts; chat = tables; both
 function Format-KitSuperviseOut($d, $Shown, [string]$Path) {

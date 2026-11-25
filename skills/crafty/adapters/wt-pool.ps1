@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L191 names · L284 slots · L328 lease · L444 release · L490 lanes · L611 sync · L713 pool · L756 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L328 lease · L444 release · L490 lanes · L636 sync · L738 pool · L781 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -591,6 +591,31 @@ function Invoke-LaneResync([switch]$DryRun) {
   if (-not $DryRun) { Write-KitAtomic (Get-KitLaneSyncFile) (ConvertTo-Json @($rows) -Depth 4) }
 }
 # wt-slots/lanes/lanes.json: its own folder (wt-slots/*.json are slot leases only)
+# tests.e2e.run[].portFiles (coordinator 2026-11-25: a suite reading its URLs from a source file, devys hand-edited it): on a lane run
+# each file's lane-1 ports and {port:<svc>} are rewritten for the run ($Fix), then put back with git checkout; a file with its own
+# edits: refused (never mixed into a commit); a killed run: the next e2e in that tree restores it first (work/e2e-portfiles-<hash>.json)
+function Get-KitPortFilesMark([string]$Dir) { Join-Path (Get-KitPath work -Create) "e2e-portfiles-$((Get-KitHash ([IO.Path]::GetFullPath($Dir).ToLower()) MD5).Substring(0, 12)).json" }
+function Restore-KitLanePortFiles([string]$Dir) {
+  $mf = Get-KitPortFilesMark $Dir; if (-not (Test-Path -LiteralPath $mf)) { return }
+  $o = try { Get-Content -LiteralPath $mf -Raw | ConvertFrom-Json } catch { $null }
+  foreach ($rel in @($o.files | Where-Object { $_ })) { git -C $Dir checkout -q -- $rel 2>$null }; Remove-Item -LiteralPath $mf -Force -ErrorAction SilentlyContinue
+}
+# crafty.ps1 check -Step e2e: each run through the gate (its own log), the lane's portFiles written around them -> the last failing exit
+function Invoke-KitE2eRuns([string]$Dir, [string[]]$Runs, [string[]]$PortFiles, [scriptblock]$Fix) {
+  $rc = 0; $n = 0; if (@($PortFiles | Where-Object { $_ }).Count -and $Fix) { Use-KitLanePortFiles $Dir $PortFiles $Fix } else { Restore-KitLanePortFiles $Dir }
+  try { foreach ($r in $Runs) { $n++; if ($Runs.Count -gt 1) { Write-Host "[check] e2e run $n/$($Runs.Count): $r" }
+      & $KitCmd.dev gate -Dir $Dir -Cmd $r -Log (Get-CheckLog $Dir "e2e-$n") | Out-Host; if ($LASTEXITCODE) { $rc = $LASTEXITCODE } } } finally { Restore-KitLanePortFiles $Dir }
+  $rc
+}
+function Use-KitLanePortFiles([string]$Dir, [string[]]$Files, [scriptblock]$Fix) {
+  Restore-KitLanePortFiles $Dir; $done = @()
+  foreach ($rel in @($Files | Where-Object { $_ })) { $p = Join-Path $Dir $rel
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { Write-Host "[check] e2e: portFiles $rel not in $Dir`: skipped"; continue }
+    if (@(git -C $Dir status --porcelain -- $rel).Count) { throw "e2e: portFiles $rel has edits of its own: commit or revert them (the lane ports are written for the run and put back with git checkout)" }
+    $was = [IO.File]::ReadAllText($p); $new = & $Fix $was; if ($new -eq $was) { continue }
+    [IO.File]::WriteAllText($p, $new); $done += $rel; Write-KitAtomic (Get-KitPortFilesMark $Dir) (@{ files = $done } | ConvertTo-Json -Compress) }
+  if ($done.Count) { Write-Host "[check] e2e: lane ports in $($done -join ', ') for this run (put back after it)" }
+}
 # crafty.ps1 check -Step e2e: -Lane <id>, else the local-env lane whose release holds the branch (envy state, newest): @{ env; why; ports (svc -> port); map (lane-1 port -> lane port) }
 function Get-KitBranchLane([string]$Lane, [string]$Branch) {
   $why = 'named -Lane'

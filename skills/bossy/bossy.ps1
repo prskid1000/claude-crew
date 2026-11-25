@@ -235,7 +235,7 @@ switch ($Action) {
     if ($Kind -notin $script:KitMsgKinds) { "board msg: -Kind '$Kind' unknown ($($script:KitMsgKinds -join ', '))"; exit 2 }
     if ($Text.Length -gt 2000) { "board msg: text over 2000 chars: a file, -Ref it"; exit 2 }
     $ids = @(Active | Where-Object type -eq $To | ForEach-Object agent); if ($ids -and $To -notin $ids) { "board msg: $To is a type: to $($ids -join ', ')"; exit 2 }
-    Send-BoardMsg $Agent $To $Text $Kind $Ref
+    Send-BoardMsg $Agent $To $Text $Kind $Ref; if ($script:KitMsgTo) { $To = $script:KitMsgTo }
     $held = @(Active | Where-Object { $_.agent -eq $To }); "sent to $To$(if (-not $held) { ' (not on the board now: it reads it when it joins)' })"
   }
   'inbox' {
@@ -1810,7 +1810,7 @@ function Invoke-Decide {
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
-      # a scope ask (-Gate scope, naming `decide record -Gate scope`, or its wording: dec-37) answered by a pick: the scope word (wt commit -ScopeOk)
+      # a scope ask (-Gate scope, `decide record -Gate scope` or its wording: dec-37) answered by a pick: the scope word (wt commit -ScopeOk)
       $isScope = $o.gate -eq 'scope' -or "$($o.question) $(@($o.options | ForEach-Object label) -join ' ')" -match '(?i)\boutside\b[^.?]{0,60}\b(area|paths?|scope)\b|\bscope[- ]?(ok|word|record)\b'
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($isScope) { "$($o.item)" }
       $scBr = @(if ($scItem -or $isScope) { Get-KitAgentBranches $o.agent $o.run }); if (-not $scItem -and $scBr.Count) { $scItem = $scBr[0] }
@@ -2027,7 +2027,7 @@ exit 0
 
 
 # ---- setup: install / repair (idempotent)
-# vendor CLI + OS-only allows: generated into settings.local.json from the configured adapters (settings.json stays generic)
+# vendor CLI + OS-only allows: into settings.local.json from the configured adapters
 function Get-KitAllowCatalogue {
   # host:<type>: a host CLI's allow, else <noun> * + auth status*
   $cat = [ordered]@{}; $own = @($script:KitHostCli.Values)

@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L461 leases · L903 status · L1115 tracker · L1443 prior ·
-  L1462 ask bugs · L1647 deploy words · L1691 git-host · L1879 kitlog · L1990 params · L2295 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L461 leases · L903 status · L1115 tracker · L1444 prior ·
+  L1463 ask bugs · L1648 deploy words · L1692 git-host · L1880 kitlog · L1991 params · L2296 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1231,7 +1231,8 @@ foreach ($__plugin in $script:KitAdapterFiles) { . $__plugin }
 Initialize-KitTracker
 
 # ----- verbs: dispatch to the tracker.type backend
-function __TrA([string]$Verb, [hashtable]$A) { if ($A -and $A.id) { $A.id = Resolve-TrackerId "$($A.id)" -Soft:($Verb -eq 'url') }; if ($A -and $A.parent) { $A.parent = Resolve-TrackerId "$($A.parent)" }; Invoke-KitAdapter 'tracker' $__trType $Verb $A }
+# labels: a missing add / remove key is @() (else $a.remove = the hashtable's Remove method: a DELETE of tag "void remove(...)")
+function __TrA([string]$Verb, [hashtable]$A) { if ($Verb -eq 'labels' -and $A) { foreach ($lk in 'add', 'remove') { if (-not $A.ContainsKey($lk)) { $A[$lk] = @() } } }; if ($A -and $A.id) { $A.id = Resolve-TrackerId "$($A.id)" -Soft:($Verb -eq 'url') }; if ($A -and $A.parent) { $A.parent = Resolve-TrackerId "$($A.parent)" }; Invoke-KitAdapter 'tracker' $__trType $Verb $A }
 $script:KitTrUrl = @{}   # an id's URL once per process (98 adapter calls in one supervise beat)
 function Get-TrackerUrl([string]$Id) { $k = "$__trType|$Id"; if (-not $script:KitTrUrl.ContainsKey($k)) { $script:KitTrUrl[$k] = __TrA 'url' @{ id = $Id } }; $script:KitTrUrl[$k] }
 

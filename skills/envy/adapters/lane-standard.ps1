@@ -3,7 +3,7 @@
 # lane-standard.ps1: Test-PortClash (one port, one owner) and the lane service standard (and, with localEnv.laneIds "bird" / "nn", no older lane ids in the config) (reference.md "Lane service standard"), checked per env by doctor: every service
 # (mysql, search, api, web, any new one) runs per lane and per product, keeps its data and logs under the kit, off the system drive, starts at a lease and stops
 # when idle. Rows: level `localEnv.laneStandard` (default WARN; FAIL stops a deploy), one per breach.
-# Sections: L7 lane standard · L56 lane worktrees · L144 doctor
+# Sections: L7 lane standard · L56 lane worktrees · L156 doctor
 # ---- lane standard: doctor rows, port clashes, env aliases
 function Get-LanePathArgs([string]$Text) {
   @([regex]::Matches($Text, '(?i)(path\.data|path\.logs|datadir|data[-_]dir|log[-_]dir|log-error|defaults-file)[= ]\s*"?([^\s"]+)') | ForEach-Object { [pscustomobject]@{ key = $_.Groups[1].Value.ToLower(); path = $_.Groups[2].Value.Replace('\', '/').TrimEnd('/') } })
@@ -92,6 +92,18 @@ function Ensure-Worktree([string]$e, $r) {
   if (-not (Test-LaneWorktree $r.wt)) { throw "[$e] lane worktree $($r.wt) ($($r.name) @ $($r.target)) not created: $(if ($out) { $out[-1] } else { "wt new exit $wx, no output" })" }
 }
 function Test-LaneWorktree([string]$d) { $top = "$(git -C $d rev-parse --show-toplevel 2>$null)".Trim(); [bool]($top -and [string]::Equals([IO.Path]::GetFullPath($top).TrimEnd('\', '/'), [IO.Path]::GetFullPath($d).TrimEnd('\', '/'), $(if ($KitIsWindows) { 'OrdinalIgnoreCase' } else { 'Ordinal' }))) }
+# a layer merge conflicting only in append-only files (owner 2026-11-25: two layers each adding a changelog include) -> both sides
+# kept (devtools.py keepboth), the merge committed, $true; a file must match repos[].appendOnly globs or the migration tool's
+# appendOnly verb (Liquibase: a changelog master whose conflict holds include lines only); any other conflict: $false, merge untouched
+function Resolve-LaneKeepBoth([string]$e, $r, [string]$d, [string[]]$Files, [string]$HooksDir) {
+  if (-not @($Files).Count) { return $false }
+  $globs = @(Get-RepoConf $r.name 'appendOnly' @() | Where-Object { $_ }); $tool = Get-MigTool $e
+  foreach ($f in $Files) { $rel = "$f".Replace('\', '/')
+    if (-not (@($globs | Where-Object { $rel -like "$_".Replace('\', '/') }).Count -or ((Test-MigVerb $tool 'appendOnly') -and (Invoke-MigVerb $tool 'appendOnly' @{ file = (Join-Path $d $f) })))) { return $false } }
+  $null = & (Get-Python) -X utf8 $KitCmd.devtools keepboth @(@($Files) | ForEach-Object { Join-Path $d $_ }) 2>&1; if ($LASTEXITCODE) { return $false }
+  git -C $d add -- @($Files) 2>$null | Out-Null
+  $null = git -C $d -c "core.hooksPath=$HooksDir" -c user.name=localenv -c user.email=localenv@localhost commit -q --no-edit 2>&1; -not $LASTEXITCODE
+}
 # no .git, or a .git file whose gitdir is gone: safe to move aside; a live .git (another tree, a git error) never is
 function Test-DeadLaneDir([string]$d) {
   $g = Join-Path $d '.git'; if (-not (Test-Path -LiteralPath $g)) { return $true }; if (Test-Path -LiteralPath $g -PathType Container) { return $false }
