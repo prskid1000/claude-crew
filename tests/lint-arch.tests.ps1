@@ -123,5 +123,11 @@ Expect "naming norm: owner examples ($($nBad -join ' | ')); a clash keeps the ti
 Remove-Item (Join-Path $kc 'skills/bossy/lint-vocab.json')
 $l2 = & $py -X utf8 $KT3 lint --no-flow 2>&1 | Out-String
 Expect 'ARCH-VOCAB: a missing lint-vocab.json is a counted problem' ($l2 -match '(?m)^ARCH-VOCAB\s+skills/bossy/lint-vocab\.json: missing')
+# lint --reuse (pre-commit): the same files as a clean lint within 30 min -> no second lint, a changed byte -> a full one; the pwsh AST
+# scans are cached per file (the lints above wrote it)
+$null = & $py -X utf8 -c "import sys, json, time, os; sys.path.insert(0, sys.argv[1]); import kitbag; k = kitbag.load(sys.argv[1] + '/../..'); json.dump({'key': kitbag.lint_key(k, {}), 'at': time.time()}, open(os.path.join(kitbag.kit_path('cache', create=True), 'lint-clean.json'), 'w'))" (Split-Path $KT3)
+$ru1 = & $py -X utf8 $KT3 lint --no-flow --reuse 2>&1 | Out-String; $ruc = $LASTEXITCODE; Add-Content (Join-Path $kc 'README.md') ' '; $ru2 = & $py -X utf8 $KT3 lint --no-flow --reuse 2>&1 | Out-String
+$astc = & $py -X utf8 -c "import sys, json, os; sys.path.insert(0, sys.argv[1]); import kitbag; print(len(json.load(open(os.path.join(kitbag.kit_path('cache'), 'lint-pwsh-ast.json')))))" (Split-Path $KT3)
+Expect "lint --reuse: an unchanged clean tree is not linted twice, a changed one is; AST cache has entries ($ru1 | $astc)" ($ruc -eq 0 -and $ru1 -match '\(--reuse\)' -and $ru2 -notmatch '\(--reuse\)' -and $ru2 -match 'problem\(s\) in' -and [int]"$astc".Trim() -gt 0)
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 Complete-Tests

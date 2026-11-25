@@ -27,14 +27,14 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
-  deploy plan|request|record|intest|schedule|watch ... · decide ask|list|answer|wait|record|check|publish|rules ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist; standing rules
+  deploy plan|request|record|intest|schedule|watch ... · decide ask|list|answer|wait|watch|record|check|publish|rules ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist; standing rules
   debate start -Item -Question -Options "A: ..","B: .." [-Run] [-Why] [-Owner] | brief -File -Side A|B|revy -Round <n> | ask -File   a written debate (1 per run; rechy kind debate), its table + decide ask
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L251 budget · L281 launch · L524 recover · L611 pause · L622 resume · L689 program · L717 param ·
   L723 track · L1113 supervise · L1465 report · L1545 audit · L1605 storage · L1608 bugbrief · L1610 cleanup · L1697 learn ·
-  L1735 decide · L1901 debate · L1945 health · L2013 setup
+  L1735 decide · L1917 debate · L1961 health · L2029 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1734,7 +1734,7 @@ function Invoke-Learn {
 
 # ---- decide: decision pauses; only that item waits
 function Invoke-Decide {
-  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check', 'publish', 'rules')][string]$Action = 'list',
+  param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'watch', 'record', 'check', 'publish', 'rules')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
     [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 8, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
@@ -1841,7 +1841,23 @@ function Invoke-Decide {
         $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }
         if ($o.status -eq 'answered') { "ANSWERED $Id`: $($o.answer)$(if ($o.rationale) { " [Rationale: $($o.rationale)]" })$(if ($o.scopeId) { " [scope word: wt commit -ScopeOk $($o.scopeId)]" })"; return }
         if ((Get-Date) -ge $until) { "PENDING $Id (no answer within $MaxMinutes min; wait again)"; exit 1 }
-        Wait-KitPoll 30
+        Wait-KitPoll 3   # one small file read: back within 3 s of the answer (30 s before)
+      }
+    }
+    'watch' {
+      # the coordinator's push (Claude Code Monitor, <= 30 min, re-armed): a line per new blocking ask / ENV-FIX at once, not at the
+      # next sweep; on start the last 30 min's (a re-arm gap); other harnesses: the sweep's ACT
+      $until = (Get-Date).AddMinutes([math]::Min($MaxMinutes, 29)); $seen = @{}; $from = (Get-Date).AddMinutes(-30)
+      while ($true) {
+        foreach ($f in @(Get-ChildItem $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $from -and -not $seen[$_.Name] })) {
+          $d = try { [IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch { $null }
+          if (-not $d) { continue }; $seen[$f.Name] = 1   # a half-written file: next round
+          if ($d.status -ne 'pending' -or ($d.kind -ne 'envfix' -and $d.blocking -eq $false)) { continue }
+          if ($d.kind -eq 'envfix') { "ACT ENV-FIX $($d.id) ($($d.run)/$($d.agent), item $($d.item)): $($d.question) -> fix it, then decide answer -Id $($d.id) -By coordinator -Answer 'done: <what>'" }
+          else { "ACT DECISION $($d.id) ($($d.run)/$($d.agent), item $($d.item)): $($d.question) -> ONE AskUserQuestion from decide list -Ask -Json, then decide answer per pick" }
+        }
+        if ((Get-Date) -ge $until) { return }
+        Wait-KitPoll 5   # poll-ok: one local folder listing
       }
     }
     'record' {

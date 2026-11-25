@@ -36,6 +36,23 @@ $pend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $
 $null = Px $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
 $w = Px $O decide wait -Id $eid -MaxMinutes 1 | Out-String
 Expect 'decide envfix: no context needed, pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')
+# board reads: one batched parse (a broken / empty file skipped, an array's items, a "File" key overwritten); a bare beat's session
+# lookup reads its transcript once (join lines + the persisted outputs it names)
+$rjs = @'
+. $args[0]; $d = Join-Path $args[1] 'rj'; $null = New-Item -ItemType Directory -Force $d; $i = 0
+foreach ($t in '{"a":1}', '{}', '{"File":"x","b":2}', '[{"c":3}]', '{"a":', '') { $i++; Set-Content (Join-Path $d "$i.json") $t }
+$r = @(Read-KitJsonFiles $d); "json:$((@($r | ForEach-Object { Split-Path $_.file -Leaf }) -join ',') -eq '1.json,2.json,3.json,4.json' -and $r[0].a -eq 1 -and $r[2].b -eq 2 -and $r[3].c -eq 3)"
+$tx = Join-Path $args[1] 'sess1.jsonl'; $trd = Join-Path $args[1] 'sess1/tool-results'; $null = New-Item -ItemType Directory -Force $trd
+'{"t":"(pass -Session a-1 to beat"}', '{"t":"x (pass -Session b-2 to beat"}', '{"t":"see tool-results/p1.txt"}' | Set-Content $tx
+$mc = '(pass -Session c-3 to beat'; $md = '(pass -Session d-4 to beat'; $mc | Set-Content (Join-Path $trd 'p1.txt'); $md | Set-Content (Join-Path $trd 'p2.txt')
+"sess:$(((@(Get-KitTranscriptSessions $tx) | Sort-Object) -join ',') -eq 'a-1,b-2,c-3' -and (Test-KitTranscriptMarker $tx $mc) -and -not (Test-KitTranscriptMarker $tx $md) -and (Test-KitTranscriptMarker $tx 'tool-results/p1'))"
+'@
+Expect-Each (Invoke-PsTest 'board-reads' $rjs @($O, (Kd))) 'board reads: # (one parse, broken / empty skipped; transcript sessions in one read)' 'json', 'sess'
+# decide watch (the coordinator's Monitor): each new blocking ask and ENV-FIX once, at once; FYI and answered ones never
+$wq = pwsh @np $O decide ask -Run w2 -Agent X2 -Item A4 -Context 'today: x' -Question 'Show the old price?' -Options 'A: yes — shown','B: no — hidden' -Recommend A | Out-String
+$wi = if ($wq -match 'DECISION (\S+) pending') { $Matches[1] }; $we = if ((pwsh @np $O decide ask -Kind envfix -Run w2 -Agent X2 -Item A6 -Question 'restart the api' | Out-String) -match 'ENV-FIX (\S+) pending') { $Matches[1] }
+$null = pwsh @np $O decide ask -Run w2 -Agent X2 -Item A5 -Context 'today: y' -Question 'Round the totals?' -Options 'A: yes — rounded','B: no — exact' -Recommend A -Fyi; $ww = @(pwsh @np $O decide watch -MaxMinutes 0)
+Expect "decide watch: one ACT per pending blocking ask / ENV-FIX, FYI and answered none ($($ww -join ' | '))" ($wi -and $we -and @($ww -match "^ACT DECISION $wi ").Count -eq 1 -and @($ww -match "^ACT ENV-FIX $we ").Count -eq 1 -and -not ($ww -match ('Round the totals|' + [regex]::Escape($id) + ' |' + [regex]::Escape($eid) + ' ')))
 # buildy sims, one body, variant V: q = brief debate beside the build + a dispute; k = rejected twice; p = moderator fails, answer pending; d = low confidence
 $jsq = @'
 const V = '__V__', lt = (status = 'PASS') => ({ status, env: 'e r1', rounds: 1, failing: status === 'PASS' ? [] : ['G1'], goalsDoc: 'g.md' }), F = (file, line) => ({ mr: '1', file, line, severity: 'blocking', problem: `p ${file}`, fix: `f ${file}` })

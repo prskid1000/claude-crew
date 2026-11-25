@@ -4,7 +4,7 @@
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L88 parts · L173 control · L346 parse · L648 link · L882 cycles · L958 pack · L1095 page · L1566 command
+Sections: L17 rules · L88 parts · L173 control · L346 parse · L648 link · L889 cycles · L965 pack · L1102 page · L1573 command
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
@@ -837,8 +837,15 @@ def link(k, parsed, problems):
 
     def handled(v):
         q = re.escape(v)
-        return bool(re.search(r"(?:===?|!==?|==|!=|-c?eq|-c?ne|-c?in|-notin|\bin\b|includes\(|\bcase|has\()\s*[\[(]?\s*['\"]" + q + r"['\"]|"
-             r"['\"]" + q + r"['\"]\s*(?::|=>|\)\s*\{|\s*\{)|^\|\s*`?" + q + r"`?\s*\||(?<![\w-])" + q + r"(?![\w-])[^\n]{0,40}?(?:->|→)", alltext, re.M))
+        rx = re.compile(r"(?:===?|!==?|==|!=|-c?eq|-c?ne|-c?in|-notin|\bin\b|includes\(|\bcase|has\()\s*[\[(]?\s*['\"]" + q + r"['\"]|"
+             r"['\"]" + q + r"['\"]\s*(?::|=>|\)\s*\{|\s*\{)|^\|\s*`?" + q + r"`?\s*\||(?<![\w-])" + q + r"(?![\w-])[^\n]{0,40}?(?:->|→)", re.M)
+        # every match holds v: search only around its occurrences (pos / endpos keep ^ and look-behind exact; 5 s of lint before)
+        i = alltext.find(v)
+        while i >= 0:
+            if rx.search(alltext, max(0, i - 400), i + len(v) + 400):   # a match spans <= 400 chars around v
+                return True
+            i = alltext.find(v, i + 1)
+        return False
     for f in k.files:
         for r in parsed[f]['refs']:
             if r[0] == 'enum':

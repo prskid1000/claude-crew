@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L931 status · L1134 tracker · L1462 prior ·
-  L1481 ask bugs · L1666 deploy words · L1710 git-host · L1898 kitlog · L2008 params · L2313 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L461 leases · L903 status · L1115 tracker · L1443 prior ·
+  L1462 ask bugs · L1647 deploy words · L1691 git-host · L1879 kitlog · L1989 params · L2294 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -418,35 +418,7 @@ function Read-KitSpendLines([string[]]$t) {
     return [pscustomobject]@{ spend = [int]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens + $u.output_tokens); model = "$($o.message.model)" }
   }
 }
-function Find-KitTranscript([string]$Marker, [string]$Filter = '*.jsonl', [string]$Root) {
-  $root = if ($Root) { $Root } else { (Invoke-KitAdapter transcript claude root).dir }; $sid = "$env:CLAUDE_CODE_SESSION_ID"
-  foreach ($f in @(Get-ChildItem $root -Recurse -Filter $Filter -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-24) } | Sort-Object { -not $sid -or $_.FullName -notmatch [regex]::Escape($sid) }, { -$_.LastWriteTime.Ticks })) {
-    if (Test-KitTranscriptMarker $f.FullName $Marker) { return $f.FullName }
-  }
-}
-# a marker in the transcript, or in a persisted tool output it names (Claude Code: output over the limit -> <session>/tool-results/*.txt, a 2 KB preview)
-function Test-KitTranscriptMarker([string]$File, [string]$Marker) {
-  if (Select-String -LiteralPath $File -SimpleMatch $Marker -Quiet) { return $true }
-  $sd = if ($File -match '^(.*?)[\\/]subagents[\\/]') { $Matches[1] } else { $File -replace '\.jsonl$' }; $trd = Join-Path $sd 'tool-results'
-  if ($Marker -notmatch '^\(pass -Session (\S+) to beat$' -or -not (Test-Path -LiteralPath $trd)) { return $false }; $tok = $Matches[1]
-  if ($null -eq $script:KitPersistIdx) { $script:KitPersistIdx = @{} }   # file + write time -> the sessions its join lines name: each file read once
-  $names = foreach ($p in @(Get-ChildItem -LiteralPath $trd -Filter '*.txt' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt (Get-Date).AddHours(-24))) {
-    $k = "$($p.FullName)|$($p.LastWriteTime.Ticks)"; if (-not $script:KitPersistIdx.ContainsKey($k)) { $script:KitPersistIdx[$k] = @(Select-String -LiteralPath $p.FullName -Pattern '\(pass -Session (\S+) to beat' -AllMatches | ForEach-Object { $_.Matches.Groups[1].Value }) }
-    if ($tok -in $script:KitPersistIdx[$k]) { $p.Name } }
-  foreach ($n in @($names)) { if (Select-String -LiteralPath $File -SimpleMatch "tool-results\\$n", "tool-results/$n" -Quiet) { return $true } }
-  $false
-}
-# a bare board verb (its join output unseen): the caller's transcript = the one of this session written in the last 2 min whose tail runs $Verb; one row whose join line it holds
-function Find-KitCallerSession([string]$Verb = 'board leave', $Rows = @(Read-KitJsonFiles (Get-KitPath board))) {
-  $r = Invoke-KitAdapter transcript claude root; $sid = "$env:CLAUDE_CODE_SESSION_ID"; if (-not $r.dir -or -not $sid) { return }
-  $sd = Join-Path $r.dir $sid; $since = (Get-Date).AddMinutes(-2)
-  $tx = @(@(Get-Item -LiteralPath "$sd.jsonl" -ErrorAction SilentlyContinue) + @(Get-ChildItem -LiteralPath (Join-Path $sd 'subagents') -Recurse -Filter 'agent-*.jsonl' -File -ErrorAction SilentlyContinue) |
-    Where-Object { $_ -and $_.LastWriteTime -gt $since -and "$(Get-Content -LiteralPath $_.FullName -Tail 2)" -match [regex]::Escape($Verb) })
-  if ($tx.Count -ne 1) { return }   # none, or two callers at once: never guess
-  $hit = @($Rows | Where-Object { -not $_.takenOverBy -and $_.session -and ("$($_.transcript)" -eq $tx[0].FullName -or (Test-KitTranscriptMarker $tx[0].FullName "(pass -Session $($_.session) to beat")) })
-  if ($hit.Count -eq 1) { $hit[0].session }
-}
-
+# Find-KitTranscript, Test-KitTranscriptMarker, Find-KitCallerSession, Get-KitTranscriptSessions: adapters/supervise-report.ps1
 $script:KitShells = '^(pwsh|powershell|bash|sh|zsh|dash|fish|cmd|conhost|env|timeout|sudo|python\d*(\.\d+)?|py)$'
 function Get-KitHolder {
   $p = Get-Process -Id $PID -ErrorAction SilentlyContinue
@@ -973,12 +945,21 @@ function Get-KitClaudeStarts { @(Get-Process -ErrorAction SilentlyContinue | Whe
 function Read-KitJsonFiles([string]$Dir, [string]$Filter = '*.json') {
   if (-not $Dir) { return }
   $memo = $script:KitJsonMemo; $was = if ($null -ne $memo) { $memo["$Dir|$Filter"] }; $now = if ($null -ne $memo) { @{} }
-  foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter $Filter -File -ErrorAction SilentlyContinue)) {
-    $m = if ($was) { $was[$f.FullName] }
-    if ($m -and $m.t -eq $f.LastWriteTimeUtc.Ticks -and $m.n -eq $f.Length) { $now[$f.FullName] = $m; $m.o.PSObject.Copy(); continue }   # a copy: callers set fields on it
-    $o = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { $null }
-    if ($o) { $o | Add-Member -Force NoteProperty file $f.FullName; if ($null -ne $now) { $now[$f.FullName] = @{ t = $f.LastWriteTimeUtc.Ticks; n = $f.Length; o = $o }; $o.PSObject.Copy() } else { $o } }
+  $fl = @(Get-ChildItem -LiteralPath $Dir -Filter $Filter -File -ErrorAction SilentlyContinue); $got = [object[]]::new($fl.Count); $ri = [Collections.Generic.List[int]]::new(); $rt = [Collections.Generic.List[string]]::new()
+  for ($fi = 0; $fi -lt $fl.Count; $fi++) { $f = $fl[$fi]; $m = if ($was) { $was[$f.FullName] }
+    if ($m -and $m.t -eq $f.LastWriteTimeUtc.Ticks -and $m.n -eq $f.Length) { $now[$f.FullName] = $m; $got[$fi] = $m; continue }
+    $t = (& { try { [IO.File]::ReadAllText($f.FullName) } catch { '' } }).Trim()   # its path as the last key (Add-Member: 1 ms a file)
+    if ($t -match '^\{[\s\S]*\}$' -and $t -notmatch '(?i)"file"\s*:') { $b = $t.Substring(0, $t.Length - 1).TrimEnd(); $t = $b + $(if ($b -ne '{') { ',' }) + '"file":"' + $f.FullName.Replace('\', '\\').Replace('"', '\"') + '"}' }
+    if ($t) { $ri.Add($fi); $rt.Add($t) } }
+  # one parse for all (1.1k board files: 1.9 s -> 0.4 s); a broken file: each alone, it skipped
+  $all = if ($rt.Count) { try { ConvertFrom-Json -InputObject ("[`n" + ($rt -join "`n,`n") + "`n]") -NoEnumerate } catch { $null } }
+  for ($j = 0; $j -lt $ri.Count; $j++) { $f = $fl[$ri[$j]]
+    $o = if ($null -ne $all -and $all.Count -eq $ri.Count) { $all[$j] } else { try { $rt[$j] | ConvertFrom-Json } catch { $null } }
+    if (-not $o) { continue }
+    if ($o -is [array] -or "$($o.file)" -ne $f.FullName) { $o | Add-Member -Force NoteProperty file $f.FullName }
+    $got[$ri[$j]] = @{ t = $f.LastWriteTimeUtc.Ticks; n = $f.Length; o = $o }; if ($null -ne $now) { $now[$f.FullName] = $got[$ri[$j]] }
   }
+  foreach ($m in $got) { if ($m) { if ($null -ne $now) { $m.o.PSObject.Copy() } else { $m.o } } }   # memo: a copy, callers set fields on it
   if ($null -ne $memo) { $memo["$Dir|$Filter"] = $now }   # only this listing's files: deleted ones drop out
 }
 # one supervise sweep: Read-KitJsonFiles parses a file again only when its time or size changed (the board was read 6+ times a

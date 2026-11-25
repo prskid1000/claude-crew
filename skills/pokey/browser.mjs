@@ -4,9 +4,9 @@
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web); adapters/: sso-steps, script,
 // storageState, totp; browser.engine chromium | firefox | webkit.
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix, testerScreen, hitTest } from 'file:///<kit>/skills/pokey/browser.mjs'
-//   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
+//   s = await session({ target, tenant, as, path: '/x' }); waitFor(s.page, 'Saved'); shot(s.page, f); sheet(s, [f, g], out); saveNet(s, f): s.net.failed; s.done(); waits <= 20 s, no sleeps
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L16 config · L48 login · L117 browsers · L160 tabs · L249 session · L302 actions · L401 ui checks · L408 evidence
+// Sections: L16 config · L48 login · L117 browsers · L160 tabs · L249 session · L303 actions · L402 ui checks · L406 evidence
 import puppeteer from 'puppeteer-core'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path'
@@ -254,7 +254,7 @@ export function defaultUser(t, name = '') {
 }
 // a user create login keeps its tenant
 export const tenantOf = (t, as, tenant) => tenant ?? t.created?.[as]?.tenant ?? t.defaultTenant ?? ''
-export async function session({ target, tenant, as } = {}) {
+export async function session({ target, tenant, as, path } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
   if (pin.length && !pin.includes(tn)) throw new Error(`target '${tn}' is not this QA run's target (${pin.join(', ')})`)
   const t0 = CFG.targets[tn] || (await adapter('web-login.mjs')).laneTarget(tn, CFG.targets) || targetOf(tn)
@@ -293,7 +293,8 @@ export async function session({ target, tenant, as } = {}) {
   page.__qa = { t, tenant, as, key, agent: agentId }
   page.setDefaultTimeout(20000); page.setDefaultNavigationTimeout(90000)
   const net = watch(page, t.apiPattern)
-  if (t.webLogin) { try { await nav(page, t.web + '/'); await ensureLogin(page, t, tenant, as, key) } catch (e) { await done(); throw e } }
+  const p0 = path ? url(path, t.web) : t.web + '/'   // path: one app load, not root + go
+  if (t.webLogin || path) { try { await nav(page, p0); const u0 = page.url(); if (t.webLogin) await ensureLogin(page, t, tenant, as, key); if (path && page.url() !== u0) await nav(page, p0); if (path) await settle(page) } catch (e) { await done(); throw e } }
   return { browser, page, net, target: t, tenant, as, key, port, engine: eng, done }
 }
 // a Playwright server (pwServed) exits within 5 s once its .used file is gone
@@ -308,7 +309,7 @@ export async function settle(page, ms = 1200) {
   await Promise.race([page.waitForNetworkIdle({ idleTime: 700, timeout: 8000 }).catch(() => {}), new Promise((r) => { tick = setInterval(() => errs > 100 && r(), 200) })])
   clearInterval(tick); page.off('pageerror', onErr)
   if (errs > 100) return console.error(`[browser] settle: ${errs} page errors, stopped waiting`)
-  await sleep(ms)
+  await quiet(page, ms)
 }
 
 const TIMED_OUT = Symbol('timed out')
@@ -398,12 +399,9 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
-// ---- ui checks: qa.matrix variants, layout, contrast (adapters/ui-checks.mjs)
-// matrix(s, fn, { parallel }): fn per qa.matrix variant (adapters/ui-checks.mjs matrix)
+// ---- ui checks: adapters/ui-checks.mjs (matrix per qa.matrix variant, layout, contrast, waits)
 export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {}, ...o } = {}) => (await adapter('ui-checks.mjs')).matrix(s, fn, m, o)
-// layoutIssues(page, { scope, ignore }), contrast(page, sel, { min }), hitTest(page, [sel | { text }])
-// testerScreen(s, fn, { mobile }): fn at qa.testerViewport (web 1366x768, mobile 390x844)
-export const [layoutIssues, contrast, hitTest, testerScreen] = ['layoutIssues', 'contrast', 'hitTest', 'testerScreen'].map((n) => async (...a) => (await adapter('ui-checks.mjs'))[n](...a))
+export const [layoutIssues, contrast, hitTest, testerScreen, quiet, waitFor, sheet] = ['layoutIssues', 'contrast', 'hitTest', 'testerScreen', 'quiet', 'waitFor', 'sheet'].map((n) => async (...a) => (await adapter('ui-checks.mjs'))[n](...a))
 
 // ---- evidence: marks, network logs, screenshots, token
 // evidence names: same literal as pokey.ps1 $script:EvidenceName

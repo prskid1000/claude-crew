@@ -37,8 +37,9 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
 3. **Test each check:** API
    `pokey.ps1 api -Target <t> -As <user> -Method <M> -Path '/...' [-Body '<json>'] [-Save <name> -OutDir <abs dir>]` (exit 1
    on HTTP 0 / >= 400, body still printed);
-   web `browser.mjs` (`session()`, `mark`, `shot`, `saveNet`, `hoverSel`): UI checks
-   at each variant the change needs, all at once in one browser (`node matrix.mjs --task <id> --case <id> --script
+   web `browser.mjs` (`session({ path })`: its screen first; `waitFor(page, text | { selector, gone, url })`, never a fixed
+   sleep; `mark`, `shot`, `sheet` (many shots, one Read); `saveNet`, `hoverSel`; independent checks: parallel node runs): UI
+   checks at each variant the change needs, all at once in one browser (`node matrix.mjs --task <id> --case <id> --script
    <case.mjs> --out <dir> --agent <you>`: a context per variant, per-variant results + the `Matrix:` line; a narrow
    variant opens its collapsed nav first: `ui.openNav(page)`; `devtools.py matrix-scope <task> --dir <wt>` first) +
    `layoutIssues()`; stated qualities measured (`contrast()`, timings);

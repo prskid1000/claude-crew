@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """kitbag.py: the kit's own tooling in one file - lint, README graph, audit stamp, prose, budget; plugins (kitbag_<name>.py) add commands.
 
-  python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn (+ the uncounted warnings, exit 0)] [--no-flow] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
+  python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn (+ the uncounted warnings, exit 0)] [--no-flow [--reuse: skip when the same files passed within 30 min]] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
   python -X utf8 kitbag.py flow --readme [<kit>]       # README graph sections (the interactive page: kitbag_flow.py)
   python -X utf8 kitbag.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (kitbag_ports.py)
   python -X utf8 kitbag.py tools [--days 14] [--json]  # crew allowlists vs real tool use; MCP servers no role grants (exit 1: a used tool not allowed)
@@ -24,8 +24,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L467 load · L960 lint ·
-  L1382 README graph · L1500 lint command · L1782 audit · L1930 registry · L1990 tools · L2078 parity · L2684 arch lint ·
-  L2957 prose · L3140 sections · L3272 budget · L3290 migrate · L3438 plugins · L3495 state lint · L3683 main
+  L1382 README graph · L1500 lint command · L1813 audit · L1961 registry · L2021 tools · L2109 parity · L2715 arch lint ·
+  L3034 prose · L3217 sections · L3349 budget · L3367 migrate · L3515 plugins · L3572 state lint · L3760 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1514,13 +1514,44 @@ def org_terms_of(value):
         sys.exit(f'kitbag lint: {value}: {err}')
     return data.get('orgTerms') or []
 
+LINT_REUSE_MIN = 30   # pre-commit right after the agent's own clean lint: one full lint, not two (33 s a kit commit)
+
+def lint_key(k, flags):
+    """Hash of everything lint reads: tracked file list + texts, local-only list, the org-terms input."""
+    import hashlib
+    h = hashlib.sha1()
+    for f in sorted(k.files):
+        h.update(f.encode('utf-8') + b'\0' + (k.texts.get(f) or '').encode('utf-8', 'replace') + b'\0')
+    ot = flags.get('--org-terms') or ''
+    h.update(json.dumps([k.local_only, ot, read(ot) if ot and osp.isfile(ot) else '']).encode('utf-8', 'replace'))
+    return h.hexdigest()
+
+def lint_reused(stamp, key):
+    try:
+        with open(stamp, encoding='utf-8') as fh:
+            s = json.load(fh)
+        return s.get('key') == key and time.time() - float(s.get('at', 0)) < LINT_REUSE_MIN * 60
+    except (OSError, ValueError, TypeError):
+        return False
+
 def cmd_lint(a):
     flags, rest = parse_opts(a, {'--org-terms', '--json'})
     kit = osp.abspath(rest[0] if rest else KIT_DIR)
     k = load(kit)
+    key, stamp = lint_key(k, flags), osp.join(kit_path('cache', create=True, kit=kit), 'lint-clean.json')
+    if '--reuse' in flags and '--no-flow' in flags and lint_reused(stamp, key):
+        if '--json' in flags:
+            with open(flags['--json'], 'w', encoding='utf-8') as fh:
+                fh.write('[]')
+        print(f'kitbag lint: 0 problem(s) in {kit}: the same {len(k.files)} files passed a lint in the last {LINT_REUSE_MIN} min (--reuse)')
+        for c, w, m in ui_check_warns(kit):
+            print(f'WARN {c:10} {w}: {m}', file=sys.stderr)
+        return 0
     problems = lint(k, graph(k), org_terms_of(flags['--org-terms']) if '--org-terms' in flags else None)
     for hook in LINT_HOOKS:   # plugins (kitbag_flow.py: FLOW-* issues)
         hook(k, problems, flags)
+    if not problems:
+        save_json_atomic(stamp, {'key': key, 'at': time.time()})
     if '--json' in flags:
         with open(flags['--json'], 'w', encoding='utf-8') as fh:
             json.dump([{'code': c, 'where': w, 'problem': m} for c, w, m in problems], fh, indent=1)
@@ -2546,7 +2577,8 @@ def registry_lint(k, bad):
     def snake_rx(o):
         st, ext = (re.escape(x) for x in osp.splitext(o))
         return re.compile(rf'(?<![\w.-]){st}(?:\\?{ext}(?![\w-])|(?<=adapters/{st})(?![\w.-]))')
-    pats = [(o, old_name_rx(o)) for o in olds] + [(o, snake_rx(o)) for o in snake]
+    # the literal each regex needs: a substring test skips the scan (22 s of a 54 s lint without it)
+    pats = [(o, old_name_rx(o), o) for o in olds] + [(o, snake_rx(o), osp.splitext(o)[0]) for o in snake]
     olds = {**olds, **snake}
     for f in k.files:
         if '.local.' in f or any(f == x or f.startswith(x + '/') for x in k.local_only):
@@ -2554,8 +2586,8 @@ def registry_lint(k, bad):
         t = k.texts.get(f) or ''
         if f == PATHS_JSON:
             t = re.sub(r'"(renamed|moved)":\s*\{[^}]*\}', '', t)   # the migration notes themselves
-        for o, rx in pats:
-            m = next((x for x in rx.finditer(t) if x.group(0) not in live), None)
+        for o, rx, lit in pats:
+            m = lit in t and next((x for x in rx.finditer(t) if x.group(0) not in live), None)
             if m:
                 bad('OLD-NAME', f'{f}:{t.count(chr(10), 0, m.start()) + 1}', f'old name "{o}" (now "{olds[o]}"): no aliases, update the reference')
         if TODO in t and f not in ('skills/bossy/kitbag.py', 'skills/bossy/kitbag_scaffold.py'):   # the templates live here
@@ -2651,10 +2683,9 @@ def literal_sites(k):
     pw = shutil.which('pwsh')
     if ps and pw:
         import base64
-        r = subprocess.run([pw, '-NoProfile', '-NonInteractive', '-EncodedCommand', base64.b64encode(PS_LITERALS.encode('utf-16-le')).decode()],
-          capture_output=True, text=True, encoding='utf-8', timeout=120, env=dict(os.environ, KIT_LIT_FILES='|'.join(ps)))
+        argv = [pw, '-NoProfile', '-NonInteractive', '-EncodedCommand', base64.b64encode(PS_LITERALS.encode('utf-16-le')).decode()]
         try:
-            for h in json.loads(r.stdout or '[]'):
+            for h in pwsh_scan(argv, PS_LITERALS, 'KIT_LIT_FILES', ps):
                 hits[osp.relpath(h['file'], k.dir).replace('\\', '/')].add(int(h['line']))
         except (ValueError, KeyError, TypeError):
             pass
@@ -2891,17 +2922,63 @@ def sblog_inline(t):
                         out[(c.lineno, c.col_offset)] = c.value   # several pieces can share a line (f-string parts, 'a' + 'b')
     return [(p[0], v) for p, v in sorted(out.items())]
 
+def pwsh_scan(argv, script, env_name, paths):
+    """[hit dicts with 'file'] of argv (pwsh running the AST script, built at the call site: SBLOG reads it there) over paths
+    ('|'-joined in env_name); per file cached by path + mtime + size + script (<runtime>/cache/lint-pwsh-ast.json): only changed
+    files are parsed (11 s of every lint before)."""
+    import hashlib
+    cf = osp.join(kit_path('cache', create=True), 'lint-pwsh-ast.json')
+    sk = hashlib.sha1(script.encode('utf-8')).hexdigest()[:12]
+    try:
+        with open(cf, encoding='utf-8') as fh:
+            cache = json.load(fh)
+    except (OSError, ValueError):
+        cache = {}
+    stamp = lambda p: [os.stat(p).st_mtime_ns, os.stat(p).st_size] if osp.exists(p) else None
+    key = lambda p: f'{sk}|{osp.normcase(osp.abspath(p))}'
+    todo = [p for p in paths if (cache.get(key(p)) or {}).get('at') != stamp(p)]
+    if todo:
+        was = {p: stamp(p) for p in todo}   # before the scan: an edit during it is scanned next time
+        r = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8', timeout=120, env=dict(os.environ, **{env_name: '|'.join(todo)}))
+        try:
+            got = json.loads(r.stdout) if not r.returncode and (r.stdout or '').strip() else None   # the scripts print [] at least
+        except ValueError:
+            got = None
+        if got is None:
+            return []   # a failed scan is never cached
+        got = [got] if isinstance(got, dict) else got
+        by = defaultdict(list)
+        for h in got:
+            by[osp.normcase(osp.abspath(h.get('file', '')))].append(h)
+        for p in todo:
+            cache[key(p)] = {'at': was[p], 'hits': by.get(osp.normcase(osp.abspath(p)), [])}
+        cache = {ck: cv for ck, cv in cache.items() if osp.exists(ck.split('|', 1)[1])}   # removed worktrees drop out
+        save_json_atomic(cf, cache)
+    return [dict(h, file=p) for p in paths for h in (cache.get(key(p)) or {}).get('hits', [])]
+
+def save_json_atomic(path, obj):
+    """Write via a pid-named temp file + replace (concurrent lints share the cache); a failure leaves the old file."""
+    tmp = f'{path}.{os.getpid()}.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(obj, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+
 def sblog_members(k, files):
     """[(file, line, text)] of member accesses with a computed name ($o.$k, $o.($x), $o."$k", [t]::$m): pwsh's own parser (none without pwsh)."""
     pw = shutil.which('pwsh')
     if not files or not pw:
         return []
     import base64
-    r = subprocess.run([pw, '-NoProfile', '-NonInteractive', '-EncodedCommand', base64.b64encode(PS_MEMBERS.encode('utf-16-le')).decode()], capture_output=True,
-                       text=True, encoding='utf-8', timeout=120, env=dict(os.environ, KIT_SB_FILES='|'.join(osp.join(k.dir, f) for f in files)))
+    argv = [pw, '-NoProfile', '-NonInteractive', '-EncodedCommand', base64.b64encode(PS_MEMBERS.encode('utf-16-le')).decode()]
     try:
-        return [(osp.relpath(h['file'], k.dir).replace('\\', '/'), int(h['line']), h['src']) for h in json.loads(r.stdout or '[]')]
-    except (ValueError, KeyError, TypeError):
+        return [(osp.relpath(h['file'], k.dir).replace('\\', '/'), int(h['line']), h['src']) for h in pwsh_scan(argv, PS_MEMBERS, 'KIT_SB_FILES', [osp.join(k.dir, f) for f in files])]
+    except (KeyError, TypeError, ValueError):
         return []
 
 def arch_guarded(f, ls, i, grd):
@@ -3682,7 +3759,7 @@ def collections_counter(items):
 
 # ---- main: argument checks, command dispatch
 # per command: switches, value flags, kit dir positional? (`lint --help` once became a kit dir)
-ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-terms', '--json'}, True),
+ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet', '--reuse'}, {'--org-terms', '--json'}, True),
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'budget': (set(), set(), False), 'migrate': (set(), set(), False), 'sections': ({'--fix'}, set(), False),
   'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False), 'parity': ({'--json'}, {'--n'}, False)}

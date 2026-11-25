@@ -2,7 +2,7 @@
 // ui-checks.mjs: layout faults, contrast, hit tests for any web UI, selector-free, and the qa.matrix loop; browser.mjs re-exports them.
 //   const b = await import('file:///<kit>/skills/pokey/browser.mjs'); await b.layoutIssues(s.page); await b.contrast(s.page, '.icon')
 //   a case at every variant, n contexts at once: node <kit>/skills/pokey/matrix.mjs (never run this module: browser.mjs imports it)
-// Sections: L7 checks · L81 matrix
+// Sections: L7 checks · L81 matrix · L157 waits
 
 // ---- checks: layout, contrast, hit test
 // controls another element covers (hit test at the centre of the first line box), text boxes overlapping, text cut by an overflow
@@ -152,4 +152,41 @@ export async function openNav(page, { toggle = '[aria-label*="menu" i][aria-expa
   for (const el of await page.$$(toggle)) { const b = await el.boundingBox().catch(() => null); if (!b) continue
     await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); await new Promise((r) => setTimeout(r, 600)); return true }
   return false
+}
+
+// ---- waits: DOM quiet, a condition, many shots as one image (browser.mjs settle / waitFor / sheet; never a fixed sleep)
+const nap = (ms) => new Promise((r) => setTimeout(r, ms))
+// quiet(page, maxMs): back once the DOM is unchanged for 250 ms and no animation or transition runs, at most maxMs (settle's old
+// fixed wait); no page context: maxMs
+export async function quiet(page, maxMs, idle = 250) {
+  if (!(maxMs > 0)) return
+  const t0 = Date.now(), ok = await page.evaluate(({ idle, max }) => new Promise((done) => { let t; const t1 = Date.now()
+    const busy = () => (document.getAnimations ? document.getAnimations() : []).some((a) => a.playState === 'running')
+    const end = (force) => { if (force !== true && busy() && Date.now() - t1 < max) { t = setTimeout(end, idle); return }; o.disconnect(); clearTimeout(t); done(true) }
+    const o = new MutationObserver(() => { clearTimeout(t); t = setTimeout(end, idle) })
+    o.observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); t = setTimeout(end, idle); setTimeout(() => end(true), max) }), { idle: Math.min(idle, maxMs), max: maxMs }).catch(() => false)
+  if (!ok) await nap(Math.max(0, maxMs - (Date.now() - t0)))   // a navigation mid-wait: the old wait
+}
+// waitFor(page, 'text' | { text, gone, selector (visible), url (regex), fn (page function) }, { timeout }): its ms, or a throw naming it
+export async function waitFor(page, w, { timeout = 20000, every = 150 } = {}) {
+  const q = typeof w === 'string' ? { text: w } : { ...w }, t0 = Date.now(), url = q.url ? q.url.source || String(q.url) : ''
+  const probe = ({ text, gone, selector, url }) => { const b = document.body ? document.body.innerText : '', el = selector ? document.querySelector(selector) : null
+    return (!text || b.includes(text)) && (!gone || !b.includes(gone)) && (!selector || !!(el && el.getClientRects().length)) && (!url || new RegExp(url).test(location.href)) }
+  for (;;) {
+    if (await page.evaluate(probe, { text: q.text || '', gone: q.gone || '', selector: q.selector || '', url }).catch(() => false) && (!q.fn || await page.evaluate(q.fn).catch(() => false))) return Date.now() - t0
+    if (Date.now() - t0 > timeout) throw new Error(`waitFor ${JSON.stringify({ ...q, fn: q.fn ? 'fn' : undefined })}: not within ${timeout} ms`)
+    await nap(every)
+  }
+}
+// sheet(s, files, out, { cols }): up to ~6 shots as one labelled image in a short-lived tab: one Read instead of n (each shot stays evidence)
+export async function sheet(s, files, out, { cols = 2, width = 1600 } = {}) {
+  const fs = await import('node:fs'), path = await import('node:path'), p = await s.browser.newPage()
+  const cell = (f) => `<figure style="margin:0"><figcaption>${path.basename(f)}</figcaption><img style="width:100%" src="data:image/${/\.png$/i.test(f) ? 'png' : 'jpeg'};base64,${fs.readFileSync(f).toString('base64')}"></figure>`
+  try {
+    await (p.setViewport ? p.setViewport({ width, height: 800 }) : p.setViewportSize({ width, height: 800 }))   // puppeteer | playwright
+    await p.setContent(`<body style="margin:0;font:16px sans-serif"><div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:8px;padding:8px">${files.map(cell).join('')}</div></body>`, { waitUntil: 'load' })
+    fs.mkdirSync(path.dirname(out), { recursive: true }); const png = /\.png$/i.test(out)
+    await p.screenshot({ path: out, fullPage: true, type: png ? 'png' : 'jpeg', ...(!png && { quality: 80 }) })
+  } finally { await p.close().catch(() => {}) }
+  return out
 }

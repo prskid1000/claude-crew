@@ -322,7 +322,7 @@ function Invoke-PreCommit {
     Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and staged'
   }
   $out = Join-Path (Get-KitTemp) "kit-precommit-$PID.json"
-  & $py -X utf8 $KitCmd.kitbag lint $root --no-flow --json $out | Out-Null
+  & $py -X utf8 $KitCmd.kitbag lint $root --no-flow --reuse --json $out | Out-Null
   if ($LASTEXITCODE -gt 1 -or -not (Test-Path $out)) { Write-Host "pre-commit: BLOCKED - kitbag lint did not run (exit $LASTEXITCODE, no JSON)" -ForegroundColor Red; exit 1 }
   $probs = @(if (Test-Path $out) { Get-Content $out -Raw | ConvertFrom-Json }); Remove-Item $out -Force -ErrorAction SilentlyContinue
   if ($probs.Count) { Write-Host "pre-commit: BLOCKED - kit-lint: $($probs.Count) problem(s):" -ForegroundColor Red; $probs | Select-Object -First 25 | ForEach-Object { Write-Host "  $($_.code) $($_.where): $($_.problem)" }; exit 1 }

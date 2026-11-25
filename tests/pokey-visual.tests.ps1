@@ -46,9 +46,15 @@ console.log(`layout:${li.count === 3 && li.covered[0]?.el.includes('#next') && l
 console.log(`contrast:${t.ratio === 21 && t.pass && i.ratio === 1.36 && i.min === 3 && !i.pass}`)
 const h = await m.hitTest(page, ['#next', '#ok', { text: 'fine' }, '#none']), vw = await m.testerScreen({ page }, async () => page.viewport().width)
 console.log(`hit:${!h.pass && h.rows.map((r) => r.ok).join() === 'false,true,true,false' && h.rows[0].by === 'div#fab' && h.rows[3].by === 'not found' && vw[0].result === 1366 && page.viewport().width === 800}`)
+// waits: waitFor returns once the text shows (a miss throws naming it); quiet = a still DOM, not the full max; sheet = one image of n shots
+const fs = await import('node:fs'), { fileURLToPath } = await import('node:url'), dir = new URL('./sheet-t/', BM); fs.mkdirSync(dir, { recursive: true }); const f = (n) => fileURLToPath(new URL(n, dir))
+await page.screenshot({ path: f('a.jpeg') }); await page.setContent(`<body><p id="s">wait</p><script>setTimeout(() => { s.textContent = 'Saved' }, 300)</script></body>`)
+const wf = await m.waitFor(page, 'Saved', { timeout: 3000 }); let miss = ''; try { await m.waitFor(page, { gone: 'Saved' }, { timeout: 300 }) } catch (e) { miss = e.message }
+const q0 = Date.now(); await m.quiet(page, 1500); const qd = Date.now() - q0; await page.screenshot({ path: f('b.jpeg') }); const sh = await m.sheet({ browser: br }, [f('a.jpeg'), f('b.jpeg')], f('ab-sheet.jpeg'), { width: 800 })
+console.log(`waits:${wf >= 200 && wf < 2500 && /gone.*not within 300 ms/.test(miss) && qd < 1000 && fs.statSync(sh).size > fs.statSync(f('b.jpeg')).size}`)
 await br.close()
 '@
-  if ("$res" -match 'nochrome') { 'SKIP ui-checks (no Chrome or Edge)' } else { Expect-Each $res 'ui-checks (hit: hitTest covered / found / missing, testerScreen 1366 then restored) #' 'layout', 'contrast', 'hit' }
+  if ("$res" -match 'nochrome') { 'SKIP ui-checks (no Chrome or Edge)' } else { Expect-Each $res 'ui-checks (hit: hitTest covered / found / missing, testerScreen 1366 then restored; waits: waitFor, quiet, sheet) #' 'layout', 'contrast', 'hit', 'waits' }
 } else { 'SKIP ui-checks (no puppeteer-core in skills/pokey)' }
 # ---- web-login-types
 if ($bk) {
