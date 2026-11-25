@@ -3,7 +3,7 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L382 context · L730 waste (owner 2026-11-23 · L800 split · L874 budget · L942 handoffs
+Sections: L9 usage · L384 context · L732 waste (owner 2026-11-23 · L802 split · L876 budget · L944 handoffs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -176,8 +176,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
       cs = $(if ($null -ne $c4) { @($c4 | ForEach-Object { [math]::Round($_, 4) }) }); tm = $(if ($tn) { @($t6 | ForEach-Object { [math]::Round($_, 1) }) }); tmN = $tn; tmAll = $ss.Count; cx = (Join-KitContext @($ss | ForEach-Object { $_.cx })) } }
   $withSplit = { param($o, $ss) foreach ($kv in (& $split $ss).GetEnumerator()) { $o | Add-Member -Force NoteProperty $kv.Key $kv.Value }; $o }
   $atOf = { param($u, [string]$f) Get-KitStamp stored $(if ($u.t1) { ([datetimeoffset]$u.t1).UtcDateTime } else { [IO.File]::GetLastWriteTime($f) }) }
-  # empty = a result whose every field but ok is empty (a missing mrs is no MR)
-  $isEmpty = { param($r) -not @((Get-KitProps $r) | Where-Object { $_.Name -ne 'ok' -and $_.Value -and "$($_.Value)".Trim() }).Count }
+  $isEmpty = { param($r) Test-KitStepEmpty $r }
   $launch = @(Read-KitJsonFiles (Get-KitPath launches)); $stuck = [double](Get-KitParam 'supervise.stuckMinutes')
   $runs = [Collections.Generic.List[object]]::new(); $steps = [Collections.Generic.List[object]]::new(); $bg = @{}; $coord = [Collections.Generic.List[object]]::new()
   $toBg = { param([string]$k, $st, [string]$rl) if (-not $bg[$k]) { $bg[$k] = [ordered]@{ session = $k; n = 0; tok = 0L; cost = $null; roles = @{}; at = ''; ss = [Collections.Generic.List[object]]::new() } }   # agents outside workflows, by session (or tool)
@@ -379,6 +378,9 @@ function Format-KitUsageHtml($U) {
     pages = $pages
     usageN = "$(& $tk $td.tok) tokens today" }
 }
+# empty step = a result with no field but ok, or only null / blank-text fields; an array (even []), a number or a bool is an answer
+# (219 of 219 "empty" steps were clean reviews / audits ({findings: []}) or verdict lists: object arrays stringify blank, 2026-11-25)
+function Test-KitStepEmpty($R) { -not @((Get-KitProps $R) | Where-Object { $_.Name -ne 'ok' -and $null -ne $_.Value -and ($_.Value -isnot [string] -or $_.Value.Trim()) }).Count }
 # ---- context: what fills each agent's context (owner 2026-11-22), per model call, from Claude, Codex and Antigravity transcripts
 # tokens = UTF-8 bytes / 4 (kitbag budget); call 1's measured size minus its prompt = kit instructions (system prompt, tools, CLAUDE.md /
 # AGENTS.md, rules); at each call the categories in context are scaled to the call's size (input + cache read + cache write) and added to

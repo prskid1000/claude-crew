@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L104 summary · L253 patterns · L290 rules · L368 retro due · L379 tidy · L481 collisions · L491 decisions
+Sections: L14 outcomes · L105 summary · L254 patterns · L291 rules · L369 retro due · L380 tidy · L482 collisions · L492 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -91,7 +91,8 @@ function Get-KitMrSpreadFlags {
   if (-not $op.flagged) { $op.flagged = @() }; $lim = [double](Get-KitParam 'track.mrSpreadMinutes'); $new = 0
   foreach ($o in @((Read-KitTracking).tasks.Values | Where-Object { $_ -and -not $_.done -and "$($_.task)" -notin $op.flagged -and @($_.mrs | Where-Object { $_ }).Count -ge 2 })) {
     $first = @{}; $cut = $false
-    foreach ($ref in @($o.mrs | Where-Object { "$_" -match '^[\w./-]+!\d+$' })) { $rp, $n = "$ref" -split '!', 2
+    # a repo's lowest iid is its first MR: one host call per repo (27 refs over 3 tasks took 3 sweeps of 10 calls, 2026-11-25)
+    foreach ($ref in @($o.mrs | Where-Object { "$_" -match '^[\w./-]+!\d+$' } | Group-Object { ("$_" -split '!')[0] } | ForEach-Object { @($_.Group | Sort-Object { [long](("$_" -split '!')[1]) })[0] })) { $rp, $n = "$ref" -split '!', 2
       if (-not $op.ContainsKey("$ref")) { if ($new -ge 10) { $cut = $true; continue }; $new++; $m = try { Invoke-HostVerb 'mr.get' @{ repo = (Get-HostProject $rp -Raw); n = $n } } catch { $null }; if (-not $m.created_at) { continue }; $op["$ref"] = ConvertTo-KitOutcomeIso $m.created_at }
       $ra = [datetimeoffset]$op["$ref"]; $rn = ($rp -split '/')[-1]; if (-not $first[$rn] -or $ra -lt $first[$rn]) { $first[$rn] = $ra } }
     $at = @($first.Values | Sort-Object)

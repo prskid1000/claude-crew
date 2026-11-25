@@ -195,4 +195,10 @@ $s.tf = Join-Path $args[1] 'other.jsonl'; '{}' | Set-Content $s.tf; "h $(@(Get-K
 $sj = $sc -join "`n"
 Expect "context self-check: none at 150k, once at 180k, next 380k; none for a subagent with no transcript, a workflow agent's own; one record with the beat; <kit>/.rtw runtime ($sj)" ($sj -match '(?m)^a $' -and $sj -match '(?m)^b .*CONTEXT-CHECK: context 185k \(self-check at 180k, next at 380k\).*board check -Decision continue\|handoff .*-Ctx sess1' -and $sj -match '(?m)^c $' -and $sj -match '(?m)^d .*self-check at 380k, next at 580k' -and $sj -match '(?m)^e $' -and $sj -match '(?m)^k\[\]$' -and $sj -match '(?m)^l .*self-check at 380k.*-Ctx agent-ab' -and $sj -match '(?m)^m True$')
 Expect "context self-check: board check records it; supervise INFO, not the design-window WATCH; unanswered -> WATCH; beat line once; HANDOFF checks first (RT1) ($sj)" ($sj -match 'f context check recorded: continue at 380k \(phase ends soon\) continue' -and $sj -match 'j HANDOFF: why: code changed .* crafty\.ps1 check -Dir <worktree> first' -and $sj -match '(?m)^g INFO context: devy b1 self-check continue at 380k => phase ends soon$' -and $sj -match '(?m)^h .*WATCH context: devy b1 past the 200k design window' -and $sj -match '(?m)^i CONTEXT-CHECK: context 200k \(self-check at 180k.* \| $')
+# an answered step is no EMPTY step: [] findings, object lists (they stringify blank), 0 and false are answers
+$se = Invoke-PsTest stepempty @'
+$null = . $args[0] 6>$null
+(@('{"findings":[]}', '{"verdicts":[{"id":"1","outcome":"confirmed"}]}', '{"signals":0}', '{"ok":true}', '{"ok":true,"summary":"  "}', '{"summary":null}') | ForEach-Object { Test-KitStepEmpty ($_ | ConvertFrom-Json) }) -join ','
+'@ @($O) | Out-String
+Expect "an answered step is not EMPTY: [] / object lists / 0 count; ok alone, blank or null text is ($($se.Trim()))" (@($se.Trim() -split "`r?`n")[-1] -eq 'False,False,False,True,True,True')
 Remove-TestKit $k

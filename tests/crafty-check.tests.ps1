@@ -115,9 +115,9 @@ New-Item -ItemType Directory -Force "$sd/src" | Out-Null; 'a' | Set-Content "$sd
 git -C $sd init -q; git -C $sd add -A; git -C $sd -c user.name=t -c user.email=t@t commit -q -m init
 $stampRun = { param([string[]]$More) $o = pwsh @np $D check -Dir $sd -Step test @More 2>&1 | Out-String; "${LASTEXITCODE}:$((Get-Content $runs -Raw -ErrorAction SilentlyContinue).Length):$([int]($o -match 'not rerun'))" }
 $sr = @(& $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A'; ('doc 2' | Set-Content "$sd/README.md"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A', '-Force'
-  ('b' | Set-Content "$sd/src/b.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'B'; (New-Item -Force $failFlag | Out-Null); ('c' | Set-Content "$sd/src/a.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A')
-Expect "check stamps: rerun skipped on the same sources, doc edit kept, -Force / source edit / other tests / failed run rerun ($($sr -join ' '))" (
-  ($sr -join ' ') -eq '0:1:0 0:1:1 0:1:1 0:2:0 0:3:0 0:4:0 1:5:0 1:6:0')
+  ('b' | Set-Content "$sd/src/b.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'B'; (New-Item -Force $failFlag | Out-Null); ('c' | Set-Content "$sd/src/a.txt"); & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A'; & $stampRun '-Tests', 'A', '-Force')
+Expect "check stamps: rerun skipped on the same sources, doc edit kept, -Force / source edit / other tests rerun; a failure on unchanged sources refused with its exit until -Force ($($sr -join ' '))" (
+  ($sr -join ' ') -eq '0:1:0 0:1:1 0:1:1 0:2:0 0:3:0 0:4:0 1:5:0 1:5:1 1:6:0')
 # tests.ciRuns (owner 2026-11-25: time to promoted): a module whose MR pipeline runs the full build + suite skips them locally
 # (exit 0, says why); named / touched tests, -Force and a module CI does not cover run
 $cid = Join-Path (Kd) 'ci-repo'; $cim = Join-Path $cid 'mod'; $cin = Join-Path $cid 'own'; $ciRuns = Join-Path (Kd) 'ci-runs.txt'; $ciCnt = Join-Path (Kd) 'ci-count.js'
@@ -173,6 +173,15 @@ $dgr = foreach ($c in @(@('fail', 200, 1), @('pass', 200, 0), @('short', 5, 0)))
   $o = pwsh @np $D check -Dir $dg -Step test -Tests DigestTest -Force 2>&1 | Out-String
   "$($c[0]):$LASTEXITCODE,$($o -match 'ERROR boom in Foo'),$($o -match 'noise 101\b'),$($o -match 'noise [15]0\b'),$($o -match 'noise (200|5)\b'),$($o -match 'the full log: \S+\.log')" }
 Expect "check digest: failure line + 2 after, the last 10, the log path; a pass only the tail; a short run whole ($($dgr -join ' '))" (($dgr -join ' ') -eq 'fail:1,True,True,False,True,True pass:0,False,False,False,True,True short:0,False,False,False,True,False')
+# first failures last (agents | tail -N): compile errors before test failures; zero counts and warnings are no failure
+@'
+1..40 | ForEach-Object { "[WARNING] deprecated API: errors may fail $_" }; '[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0'
+'[ERROR]   FooTest.bar:42 expected: <1> but was: <2>'; '[ERROR] Tests run: 5, Failures: 1, Errors: 0, Skipped: 0'; 1..30 | ForEach-Object { "noise $_" }
+'[ERROR] /w/src/main/java/a/Foo.java:[12,5] cannot find symbol'; 'BUILD FAILURE'; exit 1
+'@ | Set-Content "$dg/gen2.ps1"
+'{ "stack": "java-maven", "commands": { "test": "pwsh -NoProfile -File gen2.ps1 {tests}" } }' | Set-Content "$dg/.claude-stack.json"
+$ff = @((pwsh @np $D check -Dir $dg -Step test -Tests DigestTest -Force 2>&1 | Out-String).Trim() -split "`r?`n"); $fi = [array]::IndexOf($ff, '[gate] first failures:')
+Expect "check digest: first failures last, compile error first, no zero counts or warnings ($fi $($ff[$fi + 1]))" ($fi -gt 0 -and $ff[$fi + 1] -match 'Foo\.java:\[12,5\] cannot find symbol' -and $ff[$fi + 2] -match 'FooTest\.bar:42' -and $ff[$fi + 3] -match 'Failures: 1' -and -not @($ff | Select-Object -Skip $fi | Where-Object { $_ -match 'Failures: 0|WARNING' }).Count -and $ff[-1] -match 'FAILED \(exit 1\)')
 Expect "container-tests: an IT test with no answering engine exits 4 ($c1)" ($c1 -eq 4 -and $out -match 'need a container engine')
 Expect "container-tests: a plain unit test runs ($c2)" ($c2 -eq 0 -and $out2 -notmatch 'container engine')
 Expect "container-tests: a configured engine that is down is leased and started for an IT test, a failing docker info aside ($c3)" ($c3 -eq 0 -and $out3 -match 'runtime docker: started by the kit' -and $ls[0].leases[0].agent -and $ls[0].startedByKit)

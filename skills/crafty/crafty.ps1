@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L293 stack · L392 gate · L724 check · L1055 pipes · L1120 guard · L2048 dir · L2058 checkpoint ·
-  L2098 prior · L2137 tracker · L2159 task spec · L2365 scope · L2413 host
+Sections: L25 init · L34 wt · L293 stack · L392 gate · L708 check · L1039 pipes · L1104 guard · L2041 dir · L2051 checkpoint ·
+  L2091 prior · L2130 tracker · L2152 task spec · L2358 scope · L2406 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -704,22 +704,6 @@ if ($peak -gt 0.2 -and $kind -ne 'emulator' -and -not $why) {
 if ($Log) { Write-KitRunDigest $Log $code }
 exit $code
 }
-# a gated run's log -> what an agent reads (owner 2026-11-22: 60 agents pasted whole build / test logs): a short log whole; else the
-# failure lines (+ the next 2 lines each) up to check.printLines, the last 10 lines (the summary), the log path
-function Write-KitRunDigest([string]$Path, [int]$Code) {
-  $ls = @(try { Get-Content -LiteralPath $Path -Encoding utf8 -ErrorAction Stop } catch { })
-  $cap = [int](Get-KitParam 'check.printLines')
-  if ($ls.Count -le $cap) { foreach ($l in $ls) { Write-Host $l }; return }
-  $tail = 10; $keep = [Collections.Generic.SortedSet[int]]::new()
-  if ($Code) {
-    $rx = '(?i)\b(error|errors|fail(ed|ure|ures|ing)?|exception|assert\w*|traceback|panic|fatal|expected|not ok)\b|^\s*[✗×✖]|(?-i:^E\s)'
-    for ($i = 0; $i -lt $ls.Count - $tail -and $keep.Count -lt $cap - $tail; $i++) { if ($ls[$i] -match $rx) { for ($j = $i; $j -le [math]::Min($i + 2, $ls.Count - $tail - 1); $j++) { $null = $keep.Add($j) } } }
-  }
-  $prev = -1; foreach ($i in $keep) { if ($prev -ge 0 -and $i -gt $prev + 1) { Write-Host '  ...' }; Write-Host $ls[$i]; $prev = $i }
-  if ($keep.Count) { Write-Host '  ...' }
-  foreach ($l in @($ls | Select-Object -Last $tail)) { Write-Host $l }
-  Write-Host "[gate] $($ls.Count) lines, $(if ($Code) { "$($keep.Count) failure line(s) and " })the last $tail shown; the full log: $Path (read a range: never the whole file)"
-}
 
 # ---- check: gated stack steps; exit = failing step's code (3 gate / test lock, 4 no container engine, 5 UNRUN)
 # failed python test: top-level packages its "No module named" lines (no output: the test files' imports) name that find_spec
@@ -762,9 +746,7 @@ function Write-PyStaleEnv([string]$Dir, [string]$Py, [string[]]$Stale) {
   $cons = Join-Path (Get-KitPath logs -Create) "constraints-$((Get-KitHash ($Dir.ToLower()) MD5).Substring(0, 12)).txt"; $pins -replace '\[[^\]]*\]' | Set-Content -LiteralPath $cons -Encoding utf8
   Write-Host "[check] ENV-FIX to kitty (shared venv, when no build uses it; never run it from a worktree): `"$venvPy`" -m pip install -c `"$cons`" $quoted"
 }
-# check builds and stamps: adapters/check-stamps.ps1
-# a step's log: per dir, step and run (parallel checks of one dir); cleanup drops it after keep.check-logs hours
-function Get-CheckLog([string]$Dir, [string]$Step) { Join-Path (Get-KitPath check-logs -Create) "$((Get-KitHash $Dir.ToLower() MD5).Substring(0, 12))-$Step-$PID.log" }
+# check builds, stamps, step logs, the run digest (Write-KitRunDigest): adapters/check-stamps.ps1
 function Invoke-Check {
 param(
   [string]$Dir = (Get-Location).Path,
@@ -1024,7 +1006,7 @@ foreach ($s in $steps) {
   if ($cmd -match 'gradlew' -and $cmd -notmatch 'build-cache') { $cmd += ' --build-cache' }
   if ($Show) { "$s : $cmd"; continue }
   $unrun = $false; $slot = if ($s -in 'compile', 'typecheck', 'test') { "$s|$(Hash12 $cmd)" }   # build: its output may be gone
-  if ($slot -and (Test-CheckStamp $st.dir $slot -Force:$Force)) { $ran++; continue }
+  $was = if ($slot) { Test-CheckStamp $st.dir $slot -Force:$Force } else { -1 }; if ($was -eq 0) { $ran++; continue }; if ($was -gt 0) { exit $was }
   $runLog = $runText = $null   # adapters/ts-typecheck.ps1: a huge tsc baseline = unrun (exit 5)
   $tc = if ($s -eq 'typecheck' -and $cmd -match '\btsc\b') { Get-Command Invoke-Typecheck -ErrorAction SilentlyContinue }
   if ($tc) { $r = @(& $tc $cmd)[-1]; if ($r -eq 'unrun') { $unrun = $true; $script:anyUnrun = $true; $rc = 0 } else { $rc = [int]$r } }
@@ -1041,7 +1023,9 @@ foreach ($s in $steps) {
   $ran++
   $stale = if ($rc -and $pyRun -and $s -eq 'test') { @(Get-PyStaleModules $st.dir $pyRun $runText $tl) } else { @() }   # 24 of 39 python builds failed on the env, not the code
   if ($stale.Count) { Write-PyStaleEnv $st.dir $pyRun $stale; Write-Host "[check] exit 5: $s UNRUN (stale-env, test exit $rc)"; exit 5 }
-  if ($rc) { Write-Host "[check] $s FAILED (exit $rc)"; exit $rc }
+  # a code failure (not gate / unrun / kill) is kept
+  if ($rc) { if ($slot -and $runLog -and $rc -gt 0 -and $rc -notin 3, 4, 5, 124, 130, 137, 143) { Save-CheckStamp $st.dir $slot $rc $runLog @(Get-KitRunFailures @(Get-Content -LiteralPath $runLog -Encoding utf8 -ErrorAction SilentlyContinue)) }
+    Write-Host "[check] $s FAILED (exit $rc)$(if ($runLog) { "; log $($runLog) (read a range, never rerun to see more)" })"; exit $rc }
   if ($s -eq 'build' -and -not $unrun) { Save-CheckBuild $st.dir $cmd $bt0 }
   if ($slot -and -not $unrun) { Save-CheckStamp $st.dir $slot }
   }
@@ -1307,6 +1291,7 @@ if ($SelfTest) {
   @('B', '"{KIT}/skills/bossy/SKILL.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
   @('B', 'start {CR}/NOTICE', $true, $rt), @('B', '& "{CR}\NOTICE"', $true, $rt), @('B', 'cd x; "./tool.ps1" -A', $true, $rt),
   @('B', 'cd "{CR}" && ./run; bash .githooks/pre-push; cat "{KIT}/README.md"; echo "a; ./x.md"; ls {KIT}', $false, $rt),
+  @('B', 'f=$(ls -d */wf_1)/journal.jsonl; grep -c x $f', $false, $rt), @('B', '(ls){ ./NOTICE.md; }', $true, $rt),
   @('P', '& "{CR}/NOTICE"', $true, $rt), @('P', '& "{KIT}"', $true, $rt), @('P', 'Set-Location "{CR}"; .\NOTICE', $true, $rt),
   @('P', '$g = Join-Path "{KIT}" ''skills/bossy/SKILL.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
   @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('G', '{CR}\NOTICE', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
@@ -1320,6 +1305,8 @@ if ($SelfTest) {
   @('B', 'grep -rn pytest requirements.txt; pytest --version; pytest -h; docker ps; docker compose logs api', $false, $mg),
   @('B', 'rg "foo|pytest" src; grep -E "(pytest|docker run)" a; git commit -m "fix; pytest runs"; echo x | grep -n "; docker build" f', $false, $mg),
   @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''docker compose up -d''', $false, $mg),
+  @('B', 'pwsh -File {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ".\mvnw.cmd -o -q test -pl a -am" 2>&1 | tail -25', $true, 'needs -Log'),
+  @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''yarn test'' -Log {KRTB}/work/agents/a/b.log', $false, 'needs -Log'), @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir D:/x/mvn-app -Cmd ''git status''', $false, 'needs -Log'),
   # whole-drive searches denied; scoped paths pass
   @('B', 'find / -ipath "*backend-test-reconciler*" 2>/dev/null', $true, $dr), @('B', 'find /c -name SKILL.md', $true, $dr), @('B', 'sudo find -L /d/ -type f | head', $true, $dr),
   @('B', 'find C:\ -name x', $true, $dr), @('B', 'grep -rn reconciler /', $true, $dr), @('B', 'rg -l -g "*.md" reconciler C:/', $true, $dr), @('B', 'ls -R /c | grep x', $true, $dr),
@@ -1702,7 +1689,9 @@ function Split-CommandSegments([string]$text, [string]$tool) {
     }
     if ($ch -eq '"' -or $ch -eq "'") { $quote = $ch; [void]$sb.Append($ch); continue }
     if ($ch -eq '#' -and $tool -eq 'Bash' -and ($sb.Length -eq 0 -or [char]::IsWhiteSpace($sb[$sb.Length - 1]))) { $nl = $text.IndexOf("`n", $i); $i = if ($nl -lt 0) { $text.Length } else { $nl - 1 }; continue }   # a shell comment runs nothing
-    if ($ch -in ';', '|', '&', "`n", '(', ')' -or ($tool -eq 'Bash' -and $ch -eq '`')) { $segs.Add($sb.ToString()); [void]$sb.Clear(); continue }
+    if ($ch -in ';', '|', '&', "`n", '(', ')' -or ($tool -eq 'Bash' -and $ch -eq '`')) { $segs.Add($sb.ToString()); [void]$sb.Clear()
+      if ($ch -eq ')' -and $i + 1 -lt $text.Length -and "$($text[$i + 1])" -match '[/\\.\w-]') { [void]$sb.Append('_=') }   # $(x)/a.md: data
+      continue }
     [void]$sb.Append($ch)
   }
   $segs.Add($sb.ToString())
@@ -2027,6 +2016,10 @@ $heavy =$cmd -match '(^|[\s;&|(''"])(\.[\\/])?(mvn|mvnd|mvnw(\.cmd)?)(\s[^|;&]*)
 $e2eRx = '\b(cypress\s+run|playwright\s+test)\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?(e2e|cypress|playwright)\b(?![:-](open|verify|install|lint)\b)(?!\s+(install|verify|info|cache|open|codegen|show-report)\b)' + (@(@(Get-KitSetting 'guard.e2ePatterns' @()) | Where-Object { $_ } | ForEach-Object { "|(?:$_)" }) -join '')
 if (@($cmd -split '\r?\n|;|&&|\|\||\|' | Where-Object { $_ -match $e2eRx -and $_ -notmatch 'crafty\.ps1["'']?\s+check\b' }).Count) {
   Deny "e2e runs go through & $($KitCmd.dev) check -Dir <module> -Step e2e: only the specs related to the change (the whole suite: -AllTests, on the owner's word)."
+}
+# gate + build tool, no -Log: whole log in context (11k-token reads)
+if ($cmd -match 'crafty\.ps1["'']?\s+gate\b' -and $cmd -notmatch '\s-Log\s' -and $raw -match '-Cmd\s+("[^"]*"|''[^'']*''|\S+)' -and $Matches[1] -notmatch '>' -and $Matches[1] -match '(^|[\s"''\\/.])(mvnw?|mvnd|gradlew?|pytest|jest|vitest)(\.cmd|\.bat)?(\s|$)|\b(dotnet|ng)\s+(test|build)\b|\b(npm|yarn|pnpm)\s+(run\s+)?(test|build)\b') {
+  Deny "crafty.ps1 gate + a build / test tool needs -Log <file>: it prints a digest + first failures, not the whole log."
 }
 if ($heavy -and -not $gated) {
   Deny "Heavy builds/tests go through the memory gate: & $($KitCmd.dev) check -Dir <module> [-Step test -Tests X | -Step build], else crafty.ps1 gate -Dir <dir> -Cmd '<cmd>' -Log <crafty.ps1 dir file> (prints a digest, not the whole log)."

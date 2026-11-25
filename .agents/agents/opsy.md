@@ -44,8 +44,10 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    picks parallel / serial / staggered / mixed from p50 / p90 history, edges and `deploy.schedule` limits; its SHAPE, plan
    and WHY lines go in the report. Start each `start now` target (a deploy branch only through a deploy MR, never a push:
    `bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr -Mrs <refs> -Decision <id>`, squash off, merged on green), then
-   `bossy.ps1 deploy watch -Env <env> -Started <name>=<merge sha>` in the background: one loop polls them all and ends
-   itself; START -> start it, watch again with it added; DONE -> step 5 for that target while the rest run (no CI run:
+   `bossy.ps1 deploy watch -Env <env> -Started <name>=<merge sha>` as ONE background command (its exit wakes you; never a
+   Monitor on a log, never a turn ended on "waiting" without one running): one loop polls them all and ends itself; a target
+   added mid-run: stop the old watch, start one with every target; START -> start it, watch again with it added; DONE ->
+   step 5 for that target while the rest run (no CI run:
    `-Finished <name>=success|failed`); FAILED -> step 6 for that target only (its dependents HELD); never a self-written
    log or until loop. A restart by hand only via `bossy.ps1 deploy restart -Env <target>` (re-checks busy right before
    it; REFUSED -> `decide ask`), never a bare one.

@@ -183,5 +183,12 @@ git -C $soRepo checkout -q -b b2; Set-Content "$soRepo/.git/claude-scope" 'specs
 $soId = "$(pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') decide record -Gate scope -Item 'G7-account' -Question 'src in a spec area?' -Answer yes -Source chat 2>&1)" -replace '(?s)^.*RECORDED (\S+).*$', '$1'
 $null = pwsh @np $D wt commit -Dir $soRepo -Message 'fix: four' -ScopeOk $soId 2>&1; $soCodes += "/$LASTEXITCODE"
 Expect "wt commit -ScopeOk: an item-keyed scope word lets the commit through, none refuses ($soCodes)" ($soCodes -eq '1/0' -and (git -C $soRepo log -1 --format=%s) -eq 'fix: four')
+# a source edited while the step runs: its result is not kept (the next run on that tree reruns)
+$sd = Join-Path (Kd) 'race-repo'; New-Item -ItemType Directory -Force "$sd/src" | Out-Null; 'r' | Set-Content "$sd/src/r.txt"
+$raceJs = Join-Path (Kd) 'stamp-race.js'; "require('fs').appendFileSync(process.argv[2] === 'A' ? String.raw``$sd/src/r.txt`` : String.raw``$sd.out``, 'x')" | Set-Content $raceJs
+(@{ stack = 'custom'; commands = @{ test = "node `"$raceJs`" {tests}" } } | ConvertTo-Json) | Set-Content "$sd/.claude-stack.json"; git -C $sd init -q; git -C $sd add -A; git -C $sd -c user.name=t -c user.email=t@t commit -q -m init
+$slotsOf = { @((Get-Content (pwsh -NoProfile -Command ". '$(Lib)'; Get-CheckStampFile '$sd'") -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -AsHashtable).Values | Where-Object { $_ -and -not $_.rc }).Count }
+$rc1 = pwsh @np $D check -Dir $sd -Step test -Tests A 2>&1 | Out-String; $rs1 = & $slotsOf; $null = pwsh @np $D check -Dir $sd -Step test -Tests B 2>&1; $rs2 = & $slotsOf
+Expect "check stamps: an edit during the run is said and not stamped; a clean run is ($([int]($rc1 -match 'changed during')) $rs1 $rs2)" ($rc1 -match 'sources changed during the run' -and $rs1 -eq 0 -and $rs2 -eq 1)
 Remove-TestKit $k
 Complete-Tests

@@ -8,6 +8,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/dashboard-2.tests.ps1 (or tests/kit-tes
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
+$TestKitFiles = @('skills/bossy/adapters/waits.ps1', 'skills/bossy/adapters/deploys.ps1')   # DEPLOY IDLE / STALLED
 $k = New-TestKit dashboard2; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 # no parity panel (owner 2026-11-24: parity stays internal, kitbag.py parity): an old report's stats.parity renders nothing, no kitbag.py call
 $pq = & { . $O; $global:pqx = 0; function Invoke-KitExe { $global:pqx++; [pscustomobject]@{ code = 0; out = '{}'; err = '' } }
@@ -85,11 +86,11 @@ console.log(JSON.stringify(o))
   Expect "an idle-row fold keeps its state when a fold above it comes (key: section + row name) ($($kr.shift))" ($kr.shift -eq 'kinds:false,rows:true')
 }
 # MR-SPREAD (outcomes sweep, lead-time dashboard): an open task's first MRs per repo opened 95 min apart -> one WATCH, then cached
-# (no host call, no second WATCH); a fix MR in the same repo and a 10 min spread do not count
+# (no host call, no second WATCH); a fix MR in the same repo (never fetched: a repo's lowest iid only) and a 10 min spread do not count
 $msp = & { . $O; $global:msc = 0; function Read-KitTracking { @{ tasks = @{ T1 = @{ task = 'T1'; mrs = @('api!1', 'web!2', 'api!3') }; T2 = @{ task = 'T2'; mrs = @('api!4', 'web!5') } } } }
   function Get-HostProject($r, [switch]$Raw) { $r }; function Invoke-HostVerb($v, $p) { $global:msc++; @{ created_at = @{ '1' = '2026-01-01T10:00:00Z'; '2' = '2026-01-01T11:35:00Z'; '3' = '2026-01-01T15:00:00Z'; '4' = '2026-01-01T10:00:00Z'; '5' = '2026-01-01T10:10:00Z' }["$($p.n)"] } }
   $w1 = @(Get-KitMrSpreadFlags | ForEach-Object what); $c1 = $global:msc; $w2 = @(Get-KitMrSpreadFlags).Count; "$($w1 -join ';')|$c1|$w2|$global:msc" }
-Expect "MR-SPREAD: one WATCH per task whose repos' first MRs opened over track.mrSpreadMinutes apart, cached ($msp)" ($msp -match '^MR-SPREAD T1: its repos'' first MRs opened 95 min apart \(over 30; api, web\)\|5\|0\|5$')
+Expect "MR-SPREAD: one WATCH per task whose repos' first MRs opened over track.mrSpreadMinutes apart, cached ($msp)" ($msp -match '^MR-SPREAD T1: its repos'' first MRs opened 95 min apart \(over 30; api, web\)\|4\|0\|4$')
 # hour head (ui-check 900 px clipped 2-cell labels): labels span 3 cells and end before "now" (cols 21-24)
 $hh = & { . $O; Format-KitHourHead ([datetime]'2026-01-01T06:00'); '|'; Format-KitHourHead ([datetime]'2026-01-01T01:00') -Clock }
 $hw = "<b style='grid-column:1/span 3'>06</b><b style='grid-column:7/span 3'>12</b><b style='grid-column:13/span 3'>18</b><b class=nw style='grid-column:21/span 4'>now</b> | <b style='grid-column:6/span 3'>06</b><b style='grid-column:12/span 3'>12</b><b style='grid-column:18/span 3'>18</b>"
@@ -104,5 +105,19 @@ $hnm = & { . $O; $e = { param($x) [Net.WebUtility]::HtmlEncode("$x") }; $h0 = [d
   $g = Format-KitHeatCells $hs $h0 'g' { 'tip' }; $s = Format-KitHeatCells $hs $h0 's' { 'tip' } { param($hv) @(42, '5', 100, '1.5') } 'sp'
   "$((@(0, 0.04, 3.26, 12.6 | ForEach-Object { Format-KitHeatNum $_ }) -join '/') -eq '/0.1/3.3/13') $($g -match "<i class=hi style='--a:78%' title='03:00 &#183; tip'>30</i><i style='--a:\d+%' title='04:00 &#183; tip'>2</i><i style='--a:0%'[^>]*></i>") $($s -match "<i style='--a:42%;--b:100%' title='[^']*'><span class='t'>5</span><span class='u hi'>1.5</span></i>")" }
 Expect "heatmap cells: a number in every non-empty cell (one renderer), blank at 0, hi on a dark shade, split CPU over RAM ($hnm)" ($hnm -eq 'True True True')
+# DEPLOY IDLE: a target done 10+ min ago (a running CI target: its run asked) with no deploy record since; STALLED: a turn ended on a
+# wait whose background commands all ended (opsy 2026-11-25 never armed its watch3 waker)
+$dw = & { . $O; $n = Get-Date; $iso = { param($m) $n.AddMinutes(-$m).ToString('o') }
+  function Get-HostProject($r, [switch]$Raw) { $r }; function Invoke-HostVerb($v, $p) { @{ sha = 'abc1'; status = 'success'; updated_at = (& $iso 20) } }
+  Set-JsonFile (Join-Path (Get-KitPath deploys -Create) 'schedule-x.json') @{ items = @(@{ name = 'A'; target = 'stg'; status = 'success'; finishedAt = (& $iso 30) }, @{ name = 'B'; target = 'prd'; status = 'success'; finishedAt = (& $iso 30) },
+    @{ name = 'C'; target = 'stg2'; status = 'running'; kind = 'ci-job'; branch = 'main'; sha = 'abc1'; repo = 'r' }, @{ name = 'D'; target = 'stg3'; status = 'failed'; finishedAt = (& $iso 5) }) }
+  Write-KitLog deploy-log record @{ target = 'prd' }
+  $bd = Get-KitPath board -Create; foreach ($a in @(@('opsy-1', 'opsy', 'x1', 'completed'), @('devy-9', 'devy', 'x2', ''))) {
+    $tf = Join-Path (Kd) "$($a[2]).jsonl"; @((@{ type = 'user'; message = @{ content = @(@{ type = 'tool_result'; content = "Command running in background with ID: $($a[2])." }) } } | ConvertTo-Json -Compress -Depth 6),
+      $(if ($a[3]) { @{ type = 'user'; message = @{ content = "<task-id>$($a[2])</task-id>`n<status>$($a[3])</status>" } } | ConvertTo-Json -Compress -Depth 6 }),
+      (@{ type = 'assistant'; message = @{ content = @(@{ type = 'text'; text = "The old watch goes quiet; I'll follow watch3.log and verify once both finish." }) } } | ConvertTo-Json -Compress -Depth 6)) | Where-Object { $_ } | Set-Content $tf
+    (Get-Item $tf).LastWriteTime = $n.AddMinutes(-20); Set-JsonFile (Join-Path $bd "$($a[0]).json") @{ agent = $a[0]; type = $a[1]; status = 'working'; transcript = $tf } }
+  "$(@(Get-KitDeployIdle $n 10 | ForEach-Object { "$($_.name)/$($_.agent)" }) -join ',')|$(@(Get-KitStalledWaits $n 10 | ForEach-Object agent) -join ',')|$(@(Get-KitSuperviseFlagsWaits -At $n | Where-Object level -eq 'ACT' | ForEach-Object kind) -join ',')" }
+Expect "waits: DEPLOY IDLE (done, or its CI run done, no record) names the live opsy; STALLED = a wait with no open background command ($dw)" ($dw -eq 'A/opsy-1,C/opsy-1|opsy-1|DEPLOY IDLE,DEPLOY IDLE,STALLED')
 Remove-TestKit $k
 Complete-Tests
