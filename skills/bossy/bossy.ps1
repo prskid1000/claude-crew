@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L250 budget · L280 launch · L523 recover · L610 pause · L621 resume · L688 program · L716 param ·
-  L722 track · L1112 supervise · L1464 report · L1544 audit · L1604 storage · L1607 bugbrief · L1609 cleanup · L1696 learn ·
-  L1734 decide · L1900 debate · L1944 health · L2012 setup · L2107 guard-sendmessage
+Sections: L40 init · L51 board · L251 budget · L281 launch · L524 recover · L611 pause · L622 resume · L689 program · L717 param ·
+  L723 track · L1113 supervise · L1465 report · L1545 audit · L1605 storage · L1608 bugbrief · L1610 cleanup · L1697 learn ·
+  L1735 decide · L1901 debate · L1945 health · L2013 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -229,7 +229,8 @@ switch ($Action) {
     "left ($Session)$(if ($Handoff) { ": handoff brief $Handoff (a fresh agent continues: board join prints CONTINUE)" })"; $global:LASTEXITCODE = 0   # a release's git call left its code (no exit: dot-sourced callers)
   }
   'msg' {
-    if (-not ($Agent -and $To -and $Text)) { "usage: board msg -Agent <me> -To <id> -Text '<message>' [-Kind $($script:KitMsgKinds -join '|')] [-Ref <id>]"; exit 2 }
+    $sf = Join-Path $dir "$Session.json"; if (-not $Agent) { $Agent = if ($Session -and (Test-Path -LiteralPath $sf)) { (Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json).agent } else { "$env:KIT_AGENT$(if (-not $env:KIT_AGENT) { $env:CLAUDE_AGENT })" } }   # sender: -Session, else env
+    if (-not ($Agent -and $To -and $Text)) { "usage: board msg -Agent <me> | -Session <token> -To <id> -Text '<message>' [-Kind $($script:KitMsgKinds -join '|')] [-Ref <id>]"; exit 2 }
     $To = Resolve-KitAgentAlias $To
     if ($Kind -notin $script:KitMsgKinds) { "board msg: -Kind '$Kind' unknown ($($script:KitMsgKinds -join ', '))"; exit 2 }
     if ($Text.Length -gt 2000) { "board msg: text over 2000 chars: a file, -Ref it"; exit 2 }
@@ -1160,7 +1161,7 @@ $kitSweep = New-KitSweep $deadline $state; function Within($name) { $lastWithin.
 function Phase($name) { Start-KitSweepPhase $kitSweep $name }   # ungated work, timed apart
 Phase 'prefetch'; $null = @(Invoke-KitHooks Start-KitSupervisePrefetch)   # slow children start now, their sections read them
 function Invoke-Bounded([string]$Script, [string[]]$A) { $bn = "$(Split-Path $Script -Leaf) $($A[0..1] -join ' ')"; $md = Get-KitSweepMode $A; Invoke-KitSweepCall $kitSweep $bn $Script $A -Background:($md -eq 'background') -Detached:($md -eq 'detached') -Job "$bn$(if ("$($A[1])".StartsWith('-')) { " $($A[2])" })" }   # budget -Run: 90 s; plan, deployed, intest, scope timed out inline
-Phase 'budget usage'; $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget (gated); own phase, else the last prefetch hook pays for it
+Phase 'budget usage'; $null = Invoke-Bounded $KitCmd.orch @('budget', '-Usage')   # detached first, outside the budget; own phase (else the last prefetch pays)
 Phase 'param learn'
 if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRuns) { $state.closedRuns = @{} }
 # learned params: 3 s, when due (d-20261029173533)
@@ -1735,7 +1736,7 @@ function Invoke-Learn {
 function Invoke-Decide {
   param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'record', 'check', 'publish', 'rules')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
-    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 50, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
+    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 8, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
     [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
     [string]$Gate = '',   # record: one of $kitGates; check -Id: a non-gate word is ignored
@@ -1885,9 +1886,9 @@ function Invoke-Decide {
         }
         "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt)$(Format-KitWordPin $d) | question: $($d.question)"; exit 0
       }
-      # deploy.triggers {<env | repo>: auto}: the owner's standing word in config (every env named and every MR's repo is auto)
+      # deploy.triggers {<env | repo>: auto}: the owner's standing word (every env named and every MR's repo auto)
       $tgs = if (-not $Id -and $gates -contains 'deploy') { Get-KitSetting 'deploy.triggers' $null }
-      # a key covers its env group (<key>-*) and the repos whose repos[].deploys target such an env (coordinator 2026-11-23: NO-WORD on <repo>-staging)
+      # a key covers its env group (<key>-*) and the repos whose repos[].deploys target such an env
       if ($tgs) { $tgH = $tgs | ConvertTo-Json -Depth 3 | ConvertFrom-Json -AsHashtable; $tgOn = @($tgH.Keys | Where-Object { "$($tgH[$_])".ToLower() -eq 'auto' })
         $tgEnv = { param($e) @($tgOn | Where-Object { $e -eq $_ -or $e -like "$_-*" }).Count -gt 0 }
         $auto = { param($k) (& $tgEnv $k) -or @(@(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq $k } | ForEach-Object { @($_.deploys).target } | Where-Object { $_ -and (& $tgEnv $_) }).Count -gt 0 }; $rps = @($wantMrs | ForEach-Object { (("$_" -split '!')[0] -split '/')[-1] } | Select-Object -Unique)
@@ -2102,29 +2103,6 @@ foreach ($k in $want.Keys) {
 }
 if (Test-Path "$kit/../.codex") { Say 'codex: approve the kit hooks once (/hooks)' }
 Say 'kit ready.'
-}
-
-# ---- guard-sendmessage: a send RESUMES a second copy on the same worktree
-function Invoke-GuardSendMessage {
-$ErrorActionPreference = 'SilentlyContinue'
-$in = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() | ConvertFrom-Json }  # by hand: no stdin wait
-$to = "$($in.tool_input.to)".Trim()
-# crew -> crew goes through the board so supervise and the dashboard see it; agent_id is set only inside a subagent
-if ("$($in.agent_id)".Trim()) {
-  $why = "Blocked: crew agents never SendMessage ('$to'). Use: bossy.ps1 board msg -To <agent> -Kind <kind> -Text '<message>' (supervise and the dashboard see every board message); only the coordinator (main session) may SendMessage."
-  [Console]::Error.WriteLine($why)
-  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
-  exit 0
-}
-if ($to -notmatch '^(?<id>a[0-9a-f]{12,})$') { exit 0 }
-$id = $Matches.id
-$meta = Invoke-KitAdapter transcript claude agent-meta @{ id = $id }   # SendMessage: a Claude Code tool
-if (-not $meta) { exit 0 }
-$label = (Get-Content $meta.FullName -Raw | ConvertFrom-Json).description
-$why = "Blocked: '$to' ($label) is an agent inside workflow $($meta.Directory.Name). SendMessage would resume a SECOND copy of it that writes the same worktree. Relay through the wave's <brief>.contracts.md (agents re-read it before every push) and, if needed, let the running agent's report come back to you."
-[Console]::Error.WriteLine($why)
-@{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
-exit 0
 }
 
 # SessionStart hooks: one warning line, detail in the hook log

@@ -43,7 +43,17 @@ $sfCases = @(
   @('W', "$sfAgents/A.java", "class A { String r = `"\\d+`"; char c = '\n'; String t = `"`"`"`n  a \d`n  `"`"`"; } // \d", 'java-escape', '0'),
   @('W', "$sfAgents/B.java", "class B { String r = `"\\d+\\s`"; /* \d */ char c = '\''; }", '', '0'),
   @('E', "$sfAgents/Old.java", 'class Old>>final class Old', '', '0'),
-  @('E', "$sfAgents/Old.java", 'String a>>String b = "\w"; String a', 'java-escape', '0')
+  @('E', "$sfAgents/Old.java", 'String a>>String b = "\w"; String a', 'java-escape', '0'),
+  @('B', 'node read.mjs D:/k/.state/tracking.json', '', 'state-moved', '0'),
+  @('B', 'git log -S .state/tracking.json; node a.mjs D:/k/.state/tracking.json.migrated', '', '', '0'),
+  @('W', "$sfAgents/keyed.py", "d = open(r'D:/k/.state/tracking.json').read()", 'state-moved', '0'),
+  @('W', "$sfAgents/notes.md", 'old path: .state/tracking.json (moved)', '', '0'),
+  @('B', 'timeout 300 pwsh -NoProfile -Command "& bossy.ps1 decide wait -Id d1"', '', 'decide-wait-timeout', '0'),
+  @('B', 'pwsh -NoProfile -File bossy.ps1 decide wait -Id d1 -MaxMinutes 8', '', '', '0'),
+  @('B', "git show HEAD:a.js > /tmp/a.js; cat > x.py <<'EOF'`nd = open('/tmp/a.js').read()`nEOF`npython -X utf8 x.py", '', 'posix-path', '0'),
+  @('B', "pwsh -NoProfile -Command `"python -X utf8 -c 'print(1)'`"", '', 'py-shell-source', '0'),
+  @('B', 'sed -i "s/x/\\n/" gen.py', '', 'py-shell-source', '0'),
+  @('B', 'sed -i "s/x/y/" gen.py; sed -i "s/a/\\n/" notes.md', '', '', '0')
 )
 $sfOut = Invoke-PsTest 'sf-guard' @'
 $d, $here, $rows = $args[0], $args[1], ($args[2] | ConvertFrom-Json)
@@ -90,6 +100,20 @@ $logged = Get-Content (Join-Path $k ".state/audit/$day/faults.jsonl") -Raw
 Expect "faults: 3 harnesses, 3 agents, one due signature (no prevention), secrets masked (=, spaced), no read of quoted fault text, no other Codex project ($($frob.hits) $($frob.agents) $($frob.harness -join ',') due=$($frob.due))" ($frob.hits -eq 3 -and $frob.agents -eq 3 -and @($frob.harness).Count -eq 3 -and $frob.due -and $logged -notmatch 'secret456|zzz999|agy777|hunter2|other project|notes\.md' -and $logged -match 'token=\[redacted\]' -and $logged -match 'Password \[redacted\]')
 Expect "faults: a guarded class (py-shim-quote) is due only after its since day; a second scan reads nothing new ($($shim.hits) due=$($shim.due) new=$($f2.new))" ($shim.hits -eq 3 -and $shim.due -eq ($day -gt '2026-11-25') -and $shim.prevent -match 'guard' -and $f1.new -eq 7 -and $f2.new -eq 0)
 Expect "faults next: the top item and the open count ($($nx.Trim() -replace '\s+', ' '))" ($nx -match 'frobnicate' -and $nx -match 'faults next: [1-9]\d* open')
+# records scanned before a class shipped are relabelled from their first error line: a prevented class, never due on its day
+$rl = foreach ($n in 1..3) { @{ at = $at; harness = 'claude'; agent = "rl$n"; tool = 'Bash'; rc = 2; cls = 'kit-usage'; sig = 'kit-usage usage: board msg'; line = "usage: board msg -Agent <me> -To <id>"; cmd = 'pwsh -File bossy.ps1 board msg -To x -Text y'; prevent = '' } | ConvertTo-Json -Compress }
+Add-Content (Join-Path $k ".state/audit/$day/faults.jsonl") $rl -Encoding utf8
+$env:KIT_TRANSCRIPTS = Join-Path $tx 'claude'; $env:KIT_TRANSCRIPTS_CODEX = Join-Path $tx 'codex'; $env:KIT_TRANSCRIPTS_ANTIGRAVITY = Join-Path $tx 'agy'   # the fixtures only, never real transcripts
+$f3 = python -X utf8 $kb faults --json --days 7 | Out-String | ConvertFrom-Json; Remove-Item Env:KIT_TRANSCRIPTS, Env:KIT_TRANSCRIPTS_CODEX, Env:KIT_TRANSCRIPTS_ANTIGRAVITY; $bm = @($f3.items | Where-Object { $_.sig -like '*usage: board msg*' })
+Expect "faults: older records relabelled to a shipped class (board-msg-sender), not due on its day ($($bm.cls -join ',') due=$($bm.due -join ','))" ($bm.Count -eq 1 -and $bm[0].cls -eq 'board-msg-sender' -and $bm[0].hits -eq 3 -and $bm[0].due -eq ($day -gt '2026-11-25'))
+# board msg without -Agent: the sender is -Session's agent, else KIT_AGENT / CLAUDE_AGENT; neither = usage, exit 2
+$bmEnv = @($env:KIT_AGENT, $env:CLAUDE_AGENT); $env:KIT_AGENT = $null; $env:CLAUDE_AGENT = $null
+$bmJ = pwsh -NoProfile -File $O board join -Agent bm-a -Run bm | Out-String; $bmS = if ($bmJ -match 'SESSION (\S+)') { $Matches[1] }
+$null = pwsh -NoProfile -File $O board msg -Session $bmS -To bm-b -Text 'by session'
+$env:CLAUDE_AGENT = 'bm-env'; $null = pwsh -NoProfile -File $O board msg -To bm-b -Text 'by env'; $env:CLAUDE_AGENT = $null
+$bmU = pwsh -NoProfile -File $O board msg -To bm-b -Text 'nobody' | Out-String; $bmUc = $LASTEXITCODE; $bmI = pwsh -NoProfile -File $O board inbox -Agent bm-b | Out-String
+$null = pwsh -NoProfile -File $O board leave -Session $bmS; $env:KIT_AGENT, $env:CLAUDE_AGENT = $bmEnv
+Expect "board msg: sender from -Session, else the env; neither = usage exit 2 ($($bmI.Trim() -replace '\s+', ' '))" ($bmI -match 'from bm-a: by session' -and $bmI -match 'from bm-env: by env' -and $bmUc -eq 2 -and $bmU -match 'usage: board msg -Agent <me> \| -Session')
 # supervise SCRIPT-FAULTS: open items and no fault kitty live = one ACT; a live kitty (subject script-faults) = none; cached per
 # scriptFaults.scanMinutes (one kitbag run); 0 open = none
 $sfl = & { . $O; $global:sfx = 0; $global:sfo = "exit Error: x · 3 hit(s)`nfaults next: 2 open script-fault(s) (0 new failed call(s) captured)"; function Invoke-KitExe { $global:sfx++; [pscustomobject]@{ code = 0; out = $global:sfo; err = '' } }

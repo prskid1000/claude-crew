@@ -172,7 +172,7 @@ $fgK = 'zq' + 'key'; $fgJ = Join-Path $fgD 'c.json'; [IO.File]::WriteAllText($fg
 $jo = & $fgRun --target $fgJ --to 1
 Expect "forget: a config key is the top-level one, never a nested key of the same name ($($jo.Trim()))" ($jo -match "CONFIRM fg/c\.json:6 `"$fgK`"" -and $jo -notmatch 'c\.json:3 ')
 $fgQ = '```'; $fgM = Join-Path $fgD 'fence.md'; [IO.File]::WriteAllText($fgM, "# F`n## A`n$fgQ`n## never cut: not a heading`n$fgQ`n`n## Zq bee`nb text`n`n## Zq sea`nc text`n")
-$fo = & $fgRun --target $fgM --to 1 --apply --unused-days 0; $fgC = [regex]::Matches($fo, 'doc-\d+\b') | ForEach-Object Value
+$fo = & $fgRun --target $fgM --to 1 --apply --unused-days 0; $fgC = @([regex]::Matches($fo, '(?<=archived: (?:[\w-]+, )*)doc-[\w-]+') | ForEach-Object Value)   # readable ids (doc-bee), not numbers
 $null = & $fgRun --restore $fgC[0]; $fgT = [IO.File]::ReadAllText($fgM) -split "`n"
 Expect "forget --restore with a repeated anchor line (a code fence) lands after the nearest one, never inside the block ($($fgT -join '|'))" ($fgT[4] -eq '```' -and ($fgT[5..7] -join '|') -match '## Zq (bee|sea)')
 $fgA = Join-Path (TkPath $kc forgotten) 'doc'; $null = New-Item -ItemType Directory -Force $fgA; 'x' | Set-Content (Join-Path $fgA '2026-01-01.md')

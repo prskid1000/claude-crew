@@ -497,6 +497,7 @@ flowchart LR
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_bugbrief_ps1["bugbrief.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_deploy_merge_ps1["deploy-merge.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_deploys_ps1["deploys.ps1"]
+  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_guard_sendmessage_ps1["guard-sendmessage.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_heartbeat_ps1["heartbeat.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_kit_admin_ps1["kit-admin.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_localenv_supervise_ps1["localenv-supervise.ps1"]

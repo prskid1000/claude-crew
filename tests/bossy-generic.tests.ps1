@@ -248,6 +248,6 @@ Expect "supervise prefetch: env status cached by its state files minus clocks an
 # guard-sendmessage: a crew agent (hook input has agent_id) is sent to board msg; the coordinator (no agent_id) may send
 $gsCrew = (@{ tool_name = 'SendMessage'; agent_id = 'a1b2c3'; agent_type = 'devy'; tool_input = @{ to = 'revy-18'; message = 'x' } } | ConvertTo-Json -Compress | & $pwshExe -NoProfile -File (Join-Path $k 'skills/bossy/bossy.ps1') guard-sendmessage 2>$null) -join ''
 $gsLead = (@{ tool_name = 'SendMessage'; tool_input = @{ to = 'revy-18'; message = 'x' } } | ConvertTo-Json -Compress | & $pwshExe -NoProfile -File (Join-Path $k 'skills/bossy/bossy.ps1') guard-sendmessage 2>$null) -join ''
-Expect "guard-sendmessage: crew -> crew denied with the board msg command; the coordinator's send allowed (crew: $gsCrew; lead: $gsLead)" ($gsCrew -match '"permissionDecision":"deny"' -and $gsCrew -match 'board msg -To' -and -not $gsLead)
+Expect "guard-sendmessage: crew -> crew denied with the board msg command; the coordinator's send allowed (crew: $gsCrew; lead: $gsLead)" ($gsCrew -match '"permissionDecision":"deny"' -and $gsCrew -match 'board msg -Agent <you> -To' -and -not $gsLead)
 Remove-TestKit $k
 Complete-Tests

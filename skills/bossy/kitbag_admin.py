@@ -862,6 +862,14 @@ FAULT_CLASSES = [
     ('wrapper-path', r"(mvnw|gradlew)(\.cmd|\.bat)?['\"]?:? (No such file|not found|is not recognized|command not found)|there is no POM in this directory", None, FAULT_GUARD + './mvnw or ./gradlew run from a folder without it', '2026-11-25'),
     ('sh-quote', r'unexpected EOF while looking for matching|syntax error near unexpected token|syntax error: unexpected end of file', None, FAULT_GUARD + 'bash -n before every Bash call', '2026-11-25'),
     ('ps-parse', r'ParserError|Unexpected token|Missing closing|string is missing the terminator|Missing expression', None, FAULT_GUARD + 'PowerShell calls and bash pwsh -Command payloads parsed first; backticks in a double-quoted payload', '2026-11-25'),
+    ('state-moved', r'[\\/]\.state[\\/]+tracking\.json', None, FAULT_GUARD + 'a command or work/agents file naming .state/tracking.json (tasks/<id>.json, bossy.ps1 track show)', '2026-11-25'),
+    ('posix-path', r"No such file or directory: '/(tmp|[A-Za-z])/", None, FAULT_GUARD + 'a /tmp path inside python or node code (a /c/... from a $(...) expansion: not seen)', '2026-11-25'),   # arch-ok: matches agents' /tmp, writes none
+    ('py-shell-source', r'SyntaxError: (unterminated string literal|unexpected character after line continuation)', None, FAULT_GUARD + 'python -c inside pwsh -Command, sed -i with escaped backslashes on a .py (heredocs: not checked)', '2026-11-25'),
+    ('decide-wait-timeout', r'^Terminated\b', r'\bdecide\s+wait\b', FAULT_GUARD + 'a shell timeout around decide wait; its default -MaxMinutes 8 fits the tool cap', '2026-11-25'),
+    ('shell-timeout', r'^Terminated\b', r'(^|[;&|(]\s*)timeout\s', 'accepted: the caller\'s own shell timeout ended its own script (the limit it chose; crafty SKILL.md: the tool timeout or run_in_background)', ''),
+    ('replace-miss', r'^Exception:( miss)?\s*$', r'ReadAllText', 'accepted: the caller\'s scripted replace stopped on its own miss check, nothing written (the Edit tool reports a miss itself)', ''),
+    ('data-shape', r"^(KeyError: |TypeError: Cannot read properties of (undefined|null)|json\.decoder\.JSONDecodeError: Expecting value)", None, 'doc: AGENTS.md "Multi-agent work": code reading JSON checks the exit code and prints its first 200 chars first', '2026-11-25'),
+    ('board-msg-sender', r'^usage: board msg', FAULT_KIT, 'script: board msg takes the sender from -Session or KIT_AGENT / CLAUDE_AGENT; the SendMessage deny names -Agent', '2026-11-25'),
     ('kit-usage', r'^usage:', FAULT_KIT, '', ''),
     ('kit-verb', r'.', FAULT_KIT, 'accepted: a kit verb refusing by design (calls.jsonl rc; friction: bossy.ps1 learn)', ''),
     ('file-locked', r'being used by another process|Device or resource busy|Text file busy', None, '', ''),
@@ -1009,6 +1017,7 @@ def fault_items(days=7):
     """Signatures of the last `days` days: [{sig, cls, hits, agents, days, open, prevent, examples}], most hits first. Recurring =
     scriptFaults.minHits hits from scriptFaults.minAgents agents or on 2+ days; open = recurring with no prevention, or a hit after it."""
     groups, mh, ma = {}, kit_param('scriptFaults.minHits'), kit_param('scriptFaults.minAgents')
+    known = {c[0]: c[3] for c in FAULT_CLASSES}
     for i in range(days):
         f = log_file('faults', datetime.date.today() - datetime.timedelta(days=i))
         for line in open(f, encoding='utf-8') if osp.isfile(f) else []:
@@ -1016,6 +1025,10 @@ def fault_items(days=7):
                 r = json.loads(line)
             except ValueError:
                 continue
+            if not known.get(r['cls']):   # a class shipped after the scan relabels older records (from their first error line)
+                c2 = fault_class(r.get('cmd', ''), r.get('line', ''))[0]
+                if known.get(c2):
+                    r.update(cls=c2, sig=f"{c2} {fault_norm(r.get('line', ''))}", prevent=known[c2])
             g = groups.setdefault(r['sig'], {'sig': r['sig'], 'cls': r['cls'], 'hits': 0, 'agents': set(), 'days': set(), 'harness': set(), 'last': '', 'examples': []})
             g['hits'] += 1; g['agents'].add(r.get('agent')); g['days'].add(r['at'][:10]); g['harness'].add(r.get('harness'))
             if r.get('harness', 'claude') == 'claude' or not str(r.get('prevent') or '').startswith(FAULT_GUARD):   # Bash-only guard checks skip the others
