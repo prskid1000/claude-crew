@@ -123,11 +123,13 @@ Expect "waits: DEPLOY IDLE (done, or its CI run done, no record) names the live 
 $ip = & { . $O; $s = (Get-Date).AddSeconds(-40); @((Get-KitInTestProbeSec 50 240 $s), (Get-KitInTestProbeSec 300 100 $s), (Get-KitInTestProbeSec 0 100 $s) | ForEach-Object { [int][math]::Round($_ / 10) * 10 }) -join ',' }
 Expect "deploy intest: probe seconds = budget left, at least -TimeoutSec + 10; no budget 10 x ($ip)" ($ip -eq '250,260,1000')
 # TS-STORED: writers store UTC ...Z; a fresh ...Z beat reads as local (board HH:mm local, age ~0, never stale)
-$tsOut = Px $O board join -Type devy -Agent tsz-01 -Run tsr | Out-String; $tsFile = @(Get-ChildItem (TkPath $k board) -Filter 'tsz-01*.json')[0].FullName
-$tsRaw = Get-Content -LiteralPath $tsFile -Raw; $tsLocal = ([datetimeoffset]($tsRaw | ConvertFrom-Json -DateKind String).beat).LocalDateTime.ToString('HH:mm'); $tsShow = Px $O board show | Out-String
+$tsK = New-TestKit tsstored; $tsO = Join-Path $tsK 'skills/bossy/bossy.ps1'   # its own kit: no other agents on its board
+$tsOut = Px $tsO board join -Type devy -Agent tsz-01 -Run tsr | Out-String; $tsFile = @(Get-ChildItem (TkPath $tsK board) -Filter 'tsz-01*.json')[0].FullName
+$tsRaw = Get-Content -LiteralPath $tsFile -Raw; $tsLocal = ([datetimeoffset]($tsRaw | ConvertFrom-Json -DateKind String).beat).LocalDateTime.ToString('HH:mm'); $tsShow = Px $tsO board show | Out-String
 $tsRead = pwsh -NoProfile -Command ". '$(Lib)'; `$e = Get-Content -LiteralPath '$tsFile' -Raw | ConvertFrom-Json; [int][math]::Abs(((Get-Date) - [datetime]`$e.beat).TotalMinutes); ([datetime]`$e.beat).ToString('HH:mm')"
-$tsLeft = Px $O board leave -Agent tsz-01 | Out-String
+$tsLeft = Px $tsO board leave -Agent tsz-01 | Out-String
 Expect "TS-STORED: board beat stored as UTC ...Z, read back local ($($tsRead -join ' ')) and shown as local $tsLocal, not stale" ($tsRaw -match '"beat":\s*"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"' -and
-  [int]$tsRead[0] -le 1 -and $tsRead[1] -eq $tsLocal -and $tsShow -match "tsz-01.*\| beat $tsLocal" -and $tsShow -notmatch 'STALE|QUIET')
+  [int]$tsRead[0] -le 1 -and $tsRead[1] -eq $tsLocal -and $tsShow -match "tsz-01.*\| beat $tsLocal" -and "$(@($tsShow -split "`n") -match 'tsz-01')" -notmatch 'STALE|QUIET')   # its own row: this kit's earlier cases leave other agents
+Remove-TestKit $tsK
 Remove-TestKit $k
 Complete-Tests
