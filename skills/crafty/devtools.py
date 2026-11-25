@@ -2473,7 +2473,7 @@ naming_on = lambda: bool((n := naming()) and n.naming_cfg()['areas'])
 
 
 def task_key(tid):
-    """A task's kit key (naming on): its spec's, its kit table (dec-60), an old name prefix; '' when none or naming is off."""
+    """Kit key (naming on): spec, kit table (dec-60), old name prefix; '' if none."""
     if not tid or not naming_on():
         return ''
     if tid not in _KEYS:
