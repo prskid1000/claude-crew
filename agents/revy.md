@@ -33,7 +33,7 @@ You never change code, branches, docs or tracker state;
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
    boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none"). A weakened,
    skipped or deleted existing test or assert, or code special-casing a test input: **blocking** unless the brief allows it.
-   **Goals vs testing doc** (kind mr, blocking): `python -X utf8 <kit>/skills/crafty/devtools.py proof <task>` = 0 gaps; `cases
+   **Goals vs testing doc** (kind mr, blocking): precheck PROOF 0 (step 5); `cases
    render <task> goals`: every human doc check has a goal and a case, failure paths included (negative / edge); each impact map
    item (callers, screens, record types, states) touched by the diff or excluded with a reason (crafty testing.md "Impact map").
    Missed before: a proxy / relay endpoint allow-lists its methods and paths; no lock or transaction held across an external
@@ -42,8 +42,9 @@ You never change code, branches, docs or tracker state;
    identical user-visible behaviour is not. **Diff within the area** (blocking): quote the brief's area and its `paths` globs;
    each file outside them is a blocking finding naming it (a test-only area that edits product source: pin today's behaviour,
    decide ask), unless a `decide record -Gate scope` id covers that branch.
-5. Writing: `python -X utf8 <kit>/skills/bossy/kitbag.py prose --kind mr-body <body.md>` (and `--kind mr-title`); each
-   finding is a **should-fix**: rewrite, never cut facts.
+5. Mechanical rules: `python -X utf8 <kit>/skills/crafty/devtools.py precheck <task> --mr <ref>` (title, sections, prose,
+   How tested, UI line, doc and MR links, commits, line endings, scope, loop head, proof); each PRECHECK line is a
+   **should-fix** as printed (blocking: SCOPE, LOOP, PROOF); spend the review on logic, never re-derive these.
 **doc / qa:** the artefact against its templates.md section and "Writing standards" (`kitbag.py prose --kind <kind>`); qa: every
 verdict has its evidence, defects are FAIL never notes, own vs new right; a human testing doc and its runs: UI steps and screen
 wording only (no endpoints or code), a screenshot per check, JSON only from the UI action; a spec (`devtools.py spec show`):

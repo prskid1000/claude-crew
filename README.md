@@ -558,6 +558,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_ps1["liquibase.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_py["liquibase.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_module_audit_py["module_audit.py"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_precheck_py["precheck.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_process_gates_ps1["process-gates.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_proof_py["proof.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_report_confluence_py["report_confluence.py"]

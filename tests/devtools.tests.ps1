@@ -192,6 +192,14 @@ $aiHits = @(git -C $src grep -n -i -E $aiRx -- '*.md' '*.js' '*.mjs' ':!.codex' 
 $aiHits = @($aiHits | Where-Object { "$_" -notmatch 'never (rerun|N reruns)' })
 $aiSelf = @("LLM-driven checks: 5+ runs in fresh sessions", "never rerun a model N times") | Where-Object { $_ -match "(?i)$aiRx" -and $_ -notmatch 'never (rerun|N reruns)' }
 Expect "no kit text tells an agent to rerun an AI flow N times (grep exit $aiCode, $($aiHits.Count): $($aiHits | Select-Object -First 2))" ($aiCode -le 1 -and $aiHits.Count -eq 0 -and @($aiSelf).Count -eq 1 -and $pfSelf -match 'PASS proof: a goal per channel')
+# ---- precheck (owner 2026-11-25): the mechanical review rules before review (adapters/precheck.py)
+Copy-Item (Join-Path $src 'skills/crafty/adapters/precheck.py') (Join-Path $k 'skills/crafty/adapters')
+$pcSelf = & $py -X utf8 $DT precheck selftest 2>&1 | Out-String
+Expect "precheck selftest: every rule fires on its input, a clean MR passes ($(@([regex]::Matches($pcSelf, '(?m)^PASS')).Count) PASS)" ($LASTEXITCODE -eq 0 -and $pcSelf -notmatch '(?m)^FAIL' -and @([regex]::Matches($pcSelf, '(?m)^PASS')).Count -ge 21)
+Set-JsonFile (Join-Path (Kd) 'pc-mr.json') @{ task = 'PF1'; type = 'fix'; scope = ''; change = 'save the order'; summary = 'Orders save'; changes = @(@{ text = 'Save works' }); checksRun = @(@{ name = 'tests'; result = 'PASS' }); notRun = 'nothing'; risks = @(@{ text = 'none: one field' }) }
+$pcOut = & $py -X utf8 $DT precheck PF1 --dir $pfRepo --spec (Join-Path (Kd) 'pc-mr.json') --json 2>$null | Out-String; $pcCode = $LASTEXITCODE
+$pcCodes = @(($pcOut | ConvertFrom-Json) | ForEach-Object code)
+Expect "precheck --dir --spec: the branch's wip commit and the missing loop checkpoint fail it, the rendered title passes ($pcCode; $($pcCodes -join ','))" ($pcCode -eq 1 -and 'COMMITS' -in $pcCodes -and 'LOOP' -in $pcCodes -and 'TITLE' -notin $pcCodes)
 # ---- promote on merge: MERGED runs track run for the MR's open task at once; SCHEDULED and a done task do not
 $pmPy = Join-Path (Kd) 'promote-merge.py'
 [IO.File]::WriteAllText($pmPy, "import sys; sys.path.insert(0, sys.argv[1]); import devtools as d`nruns = []`nd._run = lambda c, **kw: runs.append(c[-1]) or ''`nd.remote = lambda w: ('gitlab', 'grp/api')`nd.read_tracking = lambda: {'tasks': {'T1': {'mrs': ['api!7']}, 'T2': {'mrs': ['api!8'], 'done': True}}}`nfor iid, word in (('7', 'MERGED'), ('8', 'MERGED'), ('9', 'SCHEDULED')):`n    d.auto_merge = lambda w, i, word=word: 'x\n' + word`n    sys.argv = ['devtools.py', 'merge', '.', iid]`n    try: d._cli()`n    except SystemExit: pass`nprint('RUNS', runs)`n")

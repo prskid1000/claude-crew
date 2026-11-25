@@ -37,7 +37,7 @@
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck, keepboth: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
 Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L996 merge · L1329 docs ·
-  L1566 publish · L2125 render · L2735 spec · L3280 plugins · L3294 selftest · L4043 CLI
+  L1566 publish · L2126 render · L2736 spec · L3281 plugins · L3295 selftest · L4044 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs: shutil.which.
@@ -1616,8 +1616,8 @@ def _at_time(step):
 
 
 def local_pass(task):
-    """The newest `crafty.ps1 checkpoint -Step loop -Item <task>` evidence across agents: (True|False|None, evidence); an item
-    sharing a tracked MR with the task counts too (one loop for a shared MR's items, retro 1124)."""
+    """Newest `crafty.ps1 checkpoint -Step loop -Item <task>` evidence of any agent: (True|False|None, evidence), the step in .last;
+    an item sharing a tracked MR with the task counts (retro 1124)."""
     last, tr = None, read_tracking().get('tasks') or {}
     mrs = set((tr.get(task) or {}).get('mrs') or [])
     ids = {task} | {t for t, o in tr.items() if mrs & set((o or {}).get('mrs') or [])}
@@ -1630,6 +1630,7 @@ def local_pass(task):
         for s in steps:
             if str(s.get('step', '')).lower() == 'loop' and ids & set(re.split(r'[\s,;]+', str(s.get('item', '')))) and (not last or _at_time(s) >= _at_time(last)):
                 last = s
+    local_pass.last = last
     if not last:
         return None, ''
     ev = str(last.get('evidence', ''))

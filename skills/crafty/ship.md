@@ -5,6 +5,7 @@
 & $D wt sync -Dir <wt>; & $D check -Dir <wt>/<module>; python $P mr <wt> --spec mr.json --check; git -C <wt> push -u origin <branch>
 python $P mr <wt> --spec mr.json   # 6. MR (templates.md "MR spec"); after finish: again, both links
 python $P finish <task> cases solution.json review --ai cases   # human doc, links block, comment, status; lists each MR's tester guide (an open one without: refused)
+python $P precheck <task> --dir <wt>   # before review (report done, a fix round): 0 problems; its fix per line
 #   7. merge: inside /buildy the workflow merges after review (never you). One small change by yourself:
 python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WAIT|...
 & $O track add -Task <task> -Mrs <repo>!<iid>,...   #    promoted once all merge (automatic); no task: & $D tracker create -Spec <json> ("task spec"; 2+ related: parent first, or tracker group)
