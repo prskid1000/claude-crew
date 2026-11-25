@@ -65,7 +65,8 @@ Non-negotiables:
    **Debate** (launch arg `agents[].debate: { item, question, options: ["A: ..", "B: .."] }`, one per run; `owner: true` only
    when the owner asked for it): 2 valid designs that differ in user-visible behaviour, cost or risk, or a risky change
    (migration, money / pricing, auth, a cross-repo contract) with a real choice; a test that can answer it -> a goal, no debate.
-6. Write the brief data (JSON, templates.md "Wave brief" fields; `specs`: the task ids, refused while one is draft;
+6. Write the brief data (JSON, templates.md "Wave brief" fields; `today`: what the code, data and docs do now, read by you,
+   required; `specs`: the task ids, refused while one is draft;
    `run`: the /buildy run), never the brief: `python -X utf8 <kit>/skills/crafty/devtools.py render wave-brief
    <data.json> <brief>` (`<brief>` = `crafty.ps1 dir -Agent briefy -Item <run> -Name wave-brief.md`)
    writes the brief, `<brief>.contracts.md` and `<brief>.args.json` (the /buildy launch args); check the brief with

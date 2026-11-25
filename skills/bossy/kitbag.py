@@ -2947,7 +2947,7 @@ REQ_RX = {'link': r'https?://\S+|\b[\w.-]+[!#]\d+\b|\b(?:MR|PR)\s*!?#?\d+',
   'cmd': r'`[^`]*\b(?:pwsh|python|node|git|crafty\.ps1|bossy\.ps1|pokey\.ps1|phoney\.ps1|envy\.ps1|kitbag\.py|devtools\.py|npm|&)\b[^`]*`',
   'evidence': r'\.(?:png|jpe?g|json|log|txt|html?)\b|https?://\S+',
   'expected': r'(?i)\bexpected\b', 'options': r'(?m)^\s*[-*|]?\s*(?:Option\s+)?A(?:[:)]|\s+(?:\||\())', 'recommended': r'(?i)\brecommended\b',
-  'verdict': r'\b(?:PASS|FAIL|BLOCKED|PASS_WITH_NOTE|NOT_TESTED)\b',
+  'verdict': r'\b(?:PASS|FAIL|BLOCKED|PASS_WITH_NOTE|NOT_TESTED)\b', 'today': r'(?m)^[^\w\n]*Today:[^\w\n]*\w',   # owner 2026-11-25: understand first
   'conv': r'^(?:feat|fix|refactor|perf|docs|test|chore|build|ci|style|revert)(?:\([^)]+\))?!?: \S'}
 
 def writing_standards(kit):

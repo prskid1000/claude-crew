@@ -2573,7 +2573,7 @@ def comment_template(kind, default, vals):
 
 SPEC_NEEDS = {'mr-body': ('type', 'change', 'summary'), 'mr-title': ('type', 'change'), 'commit': ('type', 'change'),
               'comment-solution': ('solution',), 'comment-status': ('status', 'why'), 'final-report': ('role',), 'retro': ('date',),
-              'wave-brief': ('name', 'agents', 'mandate')}
+              'wave-brief': ('name', 'today', 'agents', 'mandate')}
 
 
 def spec_gaps(s, kind):
@@ -2685,10 +2685,12 @@ def render_wave_brief(s):
     s = wave_ids(s)
     yn = lambda v: f'yes: {v}' if isinstance(v, str) and v else ('yes' if v else 'no')
     rows = lambda keys, xs: [[str(x.get(k) or '') for k in keys] for x in xs]
+    wrap = lambda t: __import__('textwrap').wrap(t, 128, break_long_words=False, break_on_hyphens=False)   # the 130ch prose cap
     qs = [f'{q.get("question", "")} · blocks {q.get("blocks") or "—"} · answers: {q.get("answers") or "owner"}' for q in map(_oq, s.get('openQuestions') or [])]
     return '\n'.join([
         f'# Wave brief: {s["name"]}, {s.get("date") or time.strftime("%Y-%m-%d")}',
         f'**Read first:** `{s.get("kitDir") or "<kit>"}/skills/crafty/SKILL.md`; this brief wins where they differ.',
+        *wrap(f'**Today:** {s.get("today") or "—"}'),
         f'**Items:** {s.get("items") or "—"} · **Decisions:** {s.get("decisions") or "none"}; final, don\'t re-ask (a NEW choice -> crafty D1).',
         '**User-visible change** the items do not ask for -> `bossy.ps1 decide ask` first (crafty D1); that item waits.',   # retro tidy-3: shipped unasked
         f'**Local env:** {s.get("localEnv") or "none"} · **Test env after deploy:** {s.get("testEnv") or "—"} (never production).',
@@ -2700,10 +2702,8 @@ def render_wave_brief(s):
         *([f'**Specs** (build against their S-ids; `devtools.py spec show <task>`): ' + ' · '.join(
             f'{t} v{r.get("version")} {r.get("url")}' for t in s['specs'] if (r := spec_rec(t)).get('url') and not r.get('retired'))] if s.get('specs') else []),
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
-        # the limits where devy reads first (retro 2026-11-22: 13 mr prose refusals)
-        # wrapped: a 340-char line failed the 130ch prose check
-        *__import__('textwrap').wrap(f'**MR limits** (`devtools.py mr` refuses over them; `devtools.py mr <worktree> --spec <mr.json> --check` first: the same gates, nothing opened): {prose_limits("mr-title") or "mr-title"}; '
-                                     f'{prose_limits("mr-body") or "mr-body"}', 128, break_long_words=False, break_on_hyphens=False),
+        *wrap(f'**MR limits** (`devtools.py mr` refuses over them; `devtools.py mr <worktree> --spec <mr.json> --check` first: the same gates, nothing opened): {prose_limits("mr-title") or "mr-title"}; '
+                                     f'{prose_limits("mr-body") or "mr-body"}'),   # where devy reads first (retro 2026-11-22)
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
         '## Order (waves: a row runs in parallel; `crafty.ps1 tracker order <parent> -Apply <brief>.order.json` links the tasks)', _table(['Wave', 'Areas (parallel)', 'Tasks', 'Waits on'], [[str(w), ', '.join(g), ', '.join(sorted({a.get('task') or s.get('task') or '—' for a in s['agents'] if a['id'] in g})), ', '.join(sorted({d for x in g for d in wo[x]})) or '—'] for wv in [wave_order(s)] for wo in [wv[1]] for w, g in wv[0]]),
         '## openQuestions', *(qs or ['n/a — no open question']), '## Findings (rechy)', 'n/a — no spike yet (the Spike phase appends here)',
@@ -3339,7 +3339,7 @@ def selftest():
            scope_of(td, '', 'api!5', lg, branch='f/area-m') == ['web/site/**'] and scope_of(td, '', 'api!5', lg, branch='fix/other') == spec_only
            and scope_of(td, '', 'api!6', lg, branch='fix/other') == [])
     shutil.rmtree(td, ignore_errors=True)
-    wb = {'name': 'w', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
+    wb = {'name': 'w', 'today': 'specs live in specs/', 'mandate': ['m'], 'agents': [{'id': 'W2c', 'items': 'A1', 'area': 'specs', 'paths': spec_only}]}
     expect('wave brief: an area\'s paths are in the brief and the /buildy args', 'svc/api/cypress/**' in render_wave_brief(wb)
            and json.loads(wave_files(wb, 'b.md')['b.args.json'])['agents'][0]['paths'] == spec_only)
     expect('wave brief: the MR title and body limits from "Writing standards" (retro 2026-11-22)', ' '.join(f'; {prose_limits("mr-body") or "mr-body"}'.split()) in ' '.join(render_wave_brief(wb).split())

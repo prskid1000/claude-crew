@@ -125,7 +125,7 @@ Set-JsonFile "$wd/sub4.json" @{ change = 'back in use'; goal = 'a revived goal' 
 Expect 'spec write after retire: a new version is live again (not retired)' ((Dt spec show orders-list).out -match 'orders-list:spec v5 (ready|draft)')
 
 # ---- thin brief: spec links per task; the args file is what buildy accepts (`run`, never `name`)
-Set-JsonFile "$wd/wb.json" @{ name = 'orders-sort'; run = 'buildy-20261123-01'; mandate = @('sort orders'); specs = @('T1'); agents = @(@{ id = 'area-01'; items = 'T1'; area = 'Orders'; repos = 'web'; kind = 'foundation' })
+Set-JsonFile "$wd/wb.json" @{ name = 'orders-sort'; today = 'orders list sorts by id only (OrderList.ts)'; run = 'buildy-20261123-01'; mandate = @('sort orders'); specs = @('T1'); agents = @(@{ id = 'area-01'; items = 'T1'; area = 'Orders'; repos = 'web'; kind = 'foundation' })
   openQuestions = @('Which index serves the sort?', @{ question = 'Page size?'; answers = 'owner' }, @{ question = 'Is the lib licensed?'; answers = 'rechy' }) }
 $wb = Dt render wave-brief "$wd/wb.json" "$wd/brief.md"; $wa = Get-Content -Raw "$wd/brief.args.json" | ConvertFrom-Json -AsHashtable
 $ok = ([regex]::Match((Get-Content -Raw (Join-Path $PSScriptRoot '../workflows/buildy.js')), "unk\(A0, '([^']+)'\)").Groups[1].Value -split ' ')
@@ -135,6 +135,15 @@ Expect "wave-brief: Specs line with version; args carry run (no name), agents' k
 Set-JsonFile "$wd/wb2.json" @{ name = 'totals'; mandate = @('fix totals'); specs = @('T9'); agents = @(@{ id = 'area-01'; items = 'T9'; area = 'Totals' }) }
 $w2 = Dt render wave-brief "$wd/wb2.json" "$wd/brief2.md"
 Expect 'wave-brief: a draft spec refuses the brief (spec before build)' ($w2.code -ne 0 -and $w2.out -match 'spec of T9 not ready' -and -not (Test-Path "$wd/brief2.md"))
+# understand first (owner 2026-11-25): no `today` -> refused; a brief file without a Today: line fails prose
+Set-JsonFile "$wd/wb3.json" @{ name = 'totals'; mandate = @('fix totals'); agents = @(@{ id = 'X1'; items = 'T9'; area = 'Totals' }) }
+$w3 = Dt render wave-brief "$wd/wb3.json" "$wd/brief3.md"; $w3Gone = -not (Test-Path "$wd/brief3.md")
+Set-JsonFile "$wd/wb3.json" @{ name = 'totals'; today = 'totals add VAT twice (Totals.ts)'; mandate = @('fix totals'); agents = @(@{ id = 'X1'; items = 'T9'; area = 'Totals' }) }
+$w3Ok = Dt render wave-brief "$wd/wb3.json" "$wd/brief3.md"; $w3Body = Get-Content -Raw "$wd/brief3.md"
+Set-Content -LiteralPath "$wd/brief3b.md" -Value ($w3Body -replace '(?m)^\*\*Today:\*\*.*\r?\n') -Encoding utf8
+Set-Content -LiteralPath "$wd/brief3c.md" -Value ($w3Body -replace '(?m)^\*\*Today:\*\*[^\r\n]*', '**Today:**') -Encoding utf8
+Expect "wave-brief: no today refused, nothing written; prose wave-brief needs the Today: line ($($w3.out))" ($w3.code -ne 0 -and $w3.out -match 'missing today' -and $w3Gone -and $w3Ok.code -eq 0 -and
+  $w3Body -match '(?m)^\*\*Today:\*\* totals add VAT twice' -and (Test-Prose 'wave-brief' "$wd/brief3.md") -and -not (Test-Prose 'wave-brief' "$wd/brief3b.md") -and -not (Test-Prose 'wave-brief' "$wd/brief3c.md"))
 
 # ---- interview questions in plain words (decide ask): today + why, each option's effect, a default; the bare ask kept for rules
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
@@ -152,13 +161,14 @@ $hp = Dt spec --help
 Expect 'spec --help: verbs and the JSON fields, exit 0' ($hp.code -eq 0 -and $hp.out -match 'rules \[\{id: S1, text,' -and $hp.out -match 'spec write T1')
 # ---- wave brief (moved from render.tests: room): one spec -> brief + contracts + /buildy args; empty sections n/a — <why> (A3)
 function Gold($a, $b) { ("$a" -replace "`r`n", "`n").TrimEnd() -eq ("$b" -replace "`r`n", "`n").TrimEnd() }
-Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13'; items = 'T-1 epic'; decisions = 'none'; localEnv = 'r3'; testEnv = 'stg'; kitDir = 'K'
+Set-JsonFile "$wd/wb.json" ([ordered]@{ name = 'orders-sort'; date = '2026-11-13'; today = 'orders sort by id only'; items = 'T-1 epic'; decisions = 'none'; localEnv = 'r3'; testEnv = 'stg'; kitDir = 'K'
   repos = @([ordered]@{ repo = 'web'; checkout = 'R/web'; target = 'main'; migrations = 'none' }); agents = @([ordered]@{ id = 'X1'; items = 'A1'; area = 'orders screen'; repos = 'web'; services = 'api'; complex = 'new grid' }, [ordered]@{ id = 'X2'; items = 'A2'; area = 'api sort'; repos = 'api'; dependsOn = @('X1'); migrations = $true; debate = [ordered]@{ item = 'A2'; options = 'A: x', 'B: y' } })
   contracts = @([ordered]@{ name = 'GET /orders?sort'; type = 'query'; producer = 'X2'; consumers = 'X1'; order = 'X2 first'; compatible = $true }); openQuestions = @([ordered]@{ question = 'Which index?'; blocks = 'A2'; answers = 'rechy' }); mandate = @('sort orders'); mode = 'feature' })
 $wbo = Dt render wave-brief "$wd/wb.json" "$wd/wb.md"; $wbArgs = Get-Content -Raw "$wd/wb.args.json" | ConvertFrom-Json
 Expect "render wave-brief: golden brief + contracts; args = brief, agents (empty keys dropped, debate kept), mode, mandate, rechy questions ($($wbo.code))" ($wbo.code -eq 0 -and (Gold ((Get-Content -Raw "$wd/wb.md") -creplace '(?s)\*\*MR limits.*?(?=Rule changes during)') @"
 # Wave brief: orders-sort, 2026-11-13
 **Read first:** ``K/skills/crafty/SKILL.md``; this brief wins where they differ.
+**Today:** orders sort by id only
 **Items:** T-1 epic · **Decisions:** none; final, don't re-ask (a NEW choice -> crafty D1).
 **User-visible change** the items do not ask for -> ``bossy.ps1 decide ask`` first (crafty D1); that item waits.
 **Local env:** r3 · **Test env after deploy:** stg (never production).

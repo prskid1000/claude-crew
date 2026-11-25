@@ -10,7 +10,7 @@ order, never empty or bare "none": `n/a — <why>` (prose; `devtools.py doc` / `
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
 `<Section>:` that section (`_` for a space) · `prose:` without table rows (cells: their own kind) and image lines. Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·
-`options` A/B lines · `recommended` · `verdict` PASS / FAIL / BLOCKED · `conv` subject per `commitStyle` (default Conventional Commits).
+`options` A/B lines · `recommended` · `verdict` PASS / FAIL / BLOCKED · `today` a `Today:` line (what exists now) · `conv` subject per `commitStyle` (default Conventional Commits).
 Banned everywhere: greetings, thanks · "I hope" · "please note" · "it is worth noting" · "as mentioned" · "in summary" ·
 "in conclusion" · "basically" · "simply" · "actually" · "really" · "very" · "successfully" · "feel free" · "let me know" ·
 "happy to" · "great job" · "as an AI" · task recap · restating template words.
@@ -26,7 +26,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | reference | a guide inside a SKILL.md / README | `##` per topic, bullets, tables | each:250w 130ch | path |
 | lesson | one LESSONS.md line | `- <when> -> <do this> (<why>)` | 1l 50w 300ch | — |
 | history | one retired lesson (`learn -History`; an older LESSONS.local.md `## History`) | `- <date> <what was retired / merged> -> <where it lives now>` | 1l 50w 300ch | — |
-| wave-brief | what a wave builds, by whom | ## Repos, ## Agents, ## openQuestions, ## Findings (rechy), ## Rule changes during the wave (newest last) | 600w each:12b 130ch | id path |
+| wave-brief | what a wave builds, by whom | ## Repos, ## Agents, ## openQuestions, ## Findings (rechy), ## Rule changes during the wave (newest last) | 600w each:12b 130ch | id path today |
 | spec | a task's or subject's spec ("Spec") | every section always: answered, `n/a — <why>` or its open question; S-id rules + acceptance; change log | 2500w 130ch | id |
 | bug-brief | one bug to fix | the "Bug-fix brief" template + failed checks + evidence | 350w 130ch | id evidence |
 | testing-goals | local goals file, never published (`cases render goals`) | ## Goals, ## Test plan (automated), ## Data needed, ## Reproduction (bugs), ## Rounds | 700w Goals:20b each:8b | id expected |
@@ -52,7 +52,7 @@ Markdown: commands, paths, class names, config keys and ids in `backticks` (mono
 | owner-message | coordinator -> owner | result first, then the ask / next step | 150w 25sw 8b | — |
 ## Wave brief
 Rendered (`devtools.py render wave-brief <spec.json> <brief.md>` + `.contracts.md` `.args.json` `.order.json`). Spec: `{ name, date?,
-items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id (ask-prompts), items, area, paths (globs),
+today (what exists now, read first; refused without), items, decisions, localEnv, testEnv, kitDir, repos: [{ repo, checkout, target, linkFrom, migrations }], agents: [{ id (ask-prompts), items, area, paths (globs),
 repos, migrationRange, services, complex, note?, dependsOn?, migrations?, model?, effort?, debate?, task? }], task?, overlaps, branch, tracker,
 contracts: [{ name, type, producer, consumers, order, compatible }], openQuestions: [{ question, blocks, answers }], mandate, mode,
 holdMerge?, wave? }`.

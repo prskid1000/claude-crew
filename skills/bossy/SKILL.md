@@ -62,6 +62,7 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
    openQuestions? }`; then
    `bossy.ps1 launch -RunId <id> -Script <path> -ArgsJson '<args>'` (the workflow records its args); then E1.
 4. **Relay** (E8): decisions and contracts -> append to `<brief>.contracts.md`; never SendMessage a workflow agent (hook-blocked).
+   Instructing an agent (spawn, `board msg`, addendum): open with `Today: <what exists, read by you>`.
    An addendum fixing another task's defect: `track route` (E6).
 5. **Close** (deploys only on a person's word, E5): reconcile backlog vs merged MRs; list only what is open, each with a reason.
 ~15 devy queue fine on the gate; beside app-lane QA cap `lanes` at 2.
@@ -88,11 +89,9 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
 ## Change the kit (HEAL and extending)
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
   friction in the owner's words; kinds docs / env / retro pass `model: 'sonnet'`. It works in its own kit worktree (never the
-  live clone), keeps the kit generic (org values in `kit.local.json`), prefers a script check over a rule, has `revy` (kind
-  kit) review the diff; its run id (HANDOFF: pass it on). A queued kit item (`- [ ]` in
-  `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.
-- K2. Its checks: kitty step 8. A start over its cap: move
-  detail behind a pointer.
+  live clone), keeps the kit generic (org values in `kit.local.json`), prefers a script check over a rule; its run id
+  (HANDOFF: pass it on). A queued kit item (`- [ ]` in `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.
+- K2. Its checks and `revy` (kind kit) on the diff: kitty step 8.
 - K3. It commits (the pre-commit hook regenerates the README graph and the ports, and blocks on lint), rebases, pushes main
   fast-forward (pre-push blocks org terms and local files) and retires the lesson the change fixes (`learn -Fixed`). You pull the
   live clone once no run uses it and relay its ASK lines.
