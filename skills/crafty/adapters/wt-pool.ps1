@@ -2,14 +2,14 @@
 wt-pool.ps1: fixed worktree slots per repo (crafty.ps1 wt lease / release / pool), leased like phone lanes; a slot is never
 deleted, so its build caches stay warm, and one naming scheme for every pooled resource (member n = the n-th bird).
   & <kit>/skills/crafty/crafty.ps1 wt lease -Repo <r> -Branch <b> -Agent <id> [-Target] [-Scope] [-Session] [-WaitMinutes 60]
-  & <kit>/skills/crafty/crafty.ps1 wt release -Agent <id> [-Repo] | -Dir <slot> [-Reason]   uncommitted work: a WIP commit, else parked
+  & <kit>/skills/crafty/crafty.ps1 wt release -Agent <id> [-Repo] | -Dir <slot> [-Reason]   uncommitted work: a WIP commit, else a patch file, else parked
   & <kit>/skills/crafty/crafty.ps1 wt pool [-Repo] [-Json] [-Sync] | -Migrate [-DryRun]   slots + a repo sync preview (-Sync: run it); per-task worktrees go when nothing is lost
   & <kit>/skills/envy/envy.ps1 lanes -Migrate [-LanesOnly] [-DryRun]   old lane names -> new when idle, orphan / merged branches (Invoke-LaneMigrate)
 Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <runtime>/work/wt-slots/slot-<nn>-<repo>.json (+ wait/).
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L184 names · L277 slots · L310 lease · L421 release · L452 lanes · L573 sync · L675 pool · L718 sweep
+Sections: L15 worktrees · L184 names · L277 slots · L310 lease · L422 release · L467 lanes · L588 sync · L690 pool · L733 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -404,6 +404,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
     if ($Scope) { Meta $p 'scope' (@(Split-KitList $Scope -Sep '\s*,\s*') -join "`n") } elseif (Test-Path -LiteralPath $scf) { Remove-Item -LiteralPath $scf -Force }   # brief agents[].paths
     $depOut = @(Set-WtDeps $p $Repo $Target $LinkFrom)
     $o = Read-KitSlotLease $got.file; if ($o) { $o = $o | Select-Object -Property * -ExcludeProperty creating; Set-KitProp $o branch $Branch; Write-KitAtomic $got.file ($o | ConvertTo-Json -Depth 5) }
+    foreach ($wp in @(Get-ChildItem -LiteralPath (Get-KitPath wip-patches -Create) -Filter "$($Branch -replace '[^\w.-]', '_')~*.patch" -File)) { "WIP patch of ${Branch}: git -C $p apply --3way $($wp.FullName), then delete it (saved when hooks refused the WIP commit)" }
   } catch {
     $err = $_; Invoke-KitLocked $poolLock { $o = Read-KitSlotLease $got.file; if ($o -and $o.agent -eq $Agent) {   # dirty (a resumed parked slot): parked again, never orphaned
         if ((Test-Path -LiteralPath $got.path) -and @(Get-WtDirty $got.path).Count) { $pw = "lease failed, files kept: $($err.Exception.Message)"; Set-KitProp $o parked $true; Set-KitProp $o parkedAt (Get-KitStamp); Set-KitProp $o parkedWhy $pw.Substring(0, [math]::Min(300, $pw.Length)); Write-KitAtomic $got.file ($o | ConvertTo-Json -Depth 5) }
@@ -419,6 +420,16 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
   $depOut
 }
 # ---- release: wt release
+# hooks refused the WIP commit (no hook skip: the guard forbids it): the staged work -> <wip-patches>/<branch>~<head>~<stamp>.patch,
+# checked to reverse-apply, then the tree goes back to HEAD; '' = saved, else the reason the slot stays parked (files kept)
+function Save-WtWipPatch([string]$Path, [string]$Branch, [string]$Refused) {
+  $hd = "$(git -C $Path rev-parse --short=12 HEAD 2>$null)".Trim()
+  $pf = Join-Path (Get-KitPath wip-patches -Create) "$($Branch -replace '[^\w.-]', '_')~$hd~$((Get-Date).ToString('yyyyMMdd-HHmmss')).patch"
+  git -C $Path diff --cached --binary --output="$pf" 2>$null
+  if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $pf) -or -not (Get-Item -LiteralPath $pf).Length) { git -C $Path reset -q 2>$null; Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue; return "$Refused; patch not written" }
+  git -C $Path apply --check -R --cached "$pf" 2>$null; if ($LASTEXITCODE) { git -C $Path reset -q 2>$null; return "$Refused; patch $pf does not reverse-apply: files kept" }
+  git -C $Path reset -q --hard HEAD 2>$null; $script:WtWipPatch = $pf; ''
+}
 function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo) · -Dir: that slot; uncommitted work -> a WIP commit, else parked
   if (-not ($Agent -or $Dir)) { throw 'release needs -Agent <id> or -Dir <slot>' }
   $want = if ($Dir) { [IO.Path]::GetFullPath($Dir).TrimEnd('\', '/').Replace('\', '/').ToLower() }
@@ -433,14 +444,18 @@ function Invoke-WtRelease {   # -Agent: every slot it holds (-Repo: of one repo)
     # pool.wipRestore: tracked files a test run rewrites (fixtures, reports) are restored, never WIP-committed (retro 1709)
     $wipGen = @($dirty | Where-Object { $wf = ($_.Substring(3).Trim('"') -split ' -> ')[-1]; $_.Substring(0, 2) -match 'M' -and @(@(Get-KitSetting 'pool.wipRestore' @()) | Where-Object { $_ -and $wf -like $_ }).Count })
     foreach ($wg in $wipGen) { git -C $p checkout -q HEAD -- (($wg.Substring(3).Trim('"') -split ' -> ')[-1]) 2>$null }; if ($wipGen.Count) { $dirty = @(Get-WtDirty $p) }
-    if ($dirty.Count) {   # never lost: a WIP commit on its branch (hooks run), else parked for that branch
-      $said = 'uncommitted files on a detached HEAD'
-      if ($br) { git -C $p add -A -- @($dirty | ForEach-Object { ($_.Substring(3).Trim('"') -split ' -> ')[-1] }) 2>$null; $said = @(git -C $p commit -q -m "wip: $($o.slot) released with uncommitted work ($why)" 2>&1 | ForEach-Object { "$_" }) -join ' '; $wc = $LASTEXITCODE; if ($wc) { git -C $p reset -q 2>$null; $said = "WIP commit refused (exit $wc) $said".Trim() } else { $said = '' } }
+    # an untracked key / data file named like a secret (log.secretKey: a credentials json) is never WIP-committed or patched: it stays, named
+    $dirty = @($dirty | ForEach-Object { if ($_.StartsWith('??') -and $_.TrimEnd('"').EndsWith('/')) { foreach ($uf in @(git -C $p -c core.quotepath=off ls-files -o --exclude-standard -- ($_.Substring(3).Trim('"')) 2>$null)) { "?? $uf" } } else { $_ } })   # an untracked folder: its files
+    $sk = "$($script:KitLogMap.secretKey)"; $secret = @($dirty | Where-Object { $_.StartsWith('??') -and (($lf0 = Split-Path ($_.Substring(3).Trim('"')) -Leaf) -match '\.(pem|key|p12|pfx|jks|keystore)$|^\.env(\.|$)|^id_(rsa|ed25519|ecdsa)$' -or ($sk -and $lf0 -match $sk -and $lf0 -match '\.(json|ya?ml|propert[i]es)$')) })
+    if ($secret.Count) { "$($o.slot): kept untracked $(@($secret | ForEach-Object { $_.Substring(3).Trim('"') }) -join ', ') (secret-named, never committed): move it out of $p"; $dirty = @($dirty | Where-Object { $_ -notin $secret }) }
+    if ($dirty.Count) {   # never lost: a WIP commit on its branch (hooks run), else a patch file (Save-WtWipPatch), else parked for that branch
+      $said = 'uncommitted files on a detached HEAD'; $script:WtWipPatch = ''
+      if ($br) { git -C $p add -A -- @($dirty | ForEach-Object { ($_.Substring(3).Trim('"') -split ' -> ')[-1] }) 2>$null; $said = @(git -C $p commit -q -m "wip: $($o.slot) released with uncommitted work ($why)" 2>&1 | ForEach-Object { "$_" }) -join ' '; $wc = $LASTEXITCODE; if ($wc) { $said = Save-WtWipPatch $p $br "WIP commit refused (exit $wc) $said".Trim() } else { $said = '' } }
       if ($said) {
         Set-KitProp $o parked $true; Set-KitProp $o parkedAt (Get-KitStamp); $pw = "uncommitted files: $said"; Set-KitProp $o parkedWhy $pw.Substring(0, [math]::Min(300, $pw.Length)); Write-KitAtomic $lf ($o | ConvertTo-Json -Depth 5)
         Write-KitLeaseLog release slot $o.slot $o "$why (parked)"; "PARKED $($o.slot) ($p): $said; wt lease -Branch $(if ($br) { $br } else { '<branch>' }) -Repo $(Split-Path $o.repo -Leaf) -Agent <id> resumes it, nobody else gets it"; continue
       }
-      "$($o.slot): uncommitted work committed on $br as a WIP commit"
+      "$($o.slot): uncommitted work $(if ($script:WtWipPatch) { "saved to $($script:WtWipPatch) (hooks refused the WIP commit; wt lease -Branch $br prints how to apply it)" } else { "committed on $br as a WIP commit" })"
     }
     if ($br) { git -C $p switch -q --detach 2>$null | Out-Null; Meta $p 'lastbranch' $br }   # HEAD stays: no file written
     $scf = Join-Path (GitDir $p) 'claude-scope'; if (Test-Path -LiteralPath $scf) { Remove-Item -LiteralPath $scf -Force }

@@ -61,14 +61,17 @@ $kl | ConvertTo-Json | Set-Content "$kf/kestrel-app.json"; Remove-Item Env:CLAUD
 $o7 = & $lease devE feat/five
 Expect "reaper: a slot with no live holder past the grace is reclaimed by the next lease" ((& $slotOf $o7) -eq $kestrel -and (Get-Content (TkPath $k leases) -Raw) -match '"reclaim".*app·Kestrel.*ghost|ghost.*reclaim')
 
-# parked: a WIP commit the hooks refuse -> the slot keeps the branch and its files, only that branch gets it
-$hd = "$base/hooks"; New-Item -ItemType Directory -Force $hd | Out-Null; "#!/bin/sh`nexit 1" | Set-Content "$hd/pre-commit" -NoNewline; git -C $app config core.hooksPath $hd; 'u' | Set-Content "$kestrel/u.txt"
-$r3 = pwsh @np $D wt release -Agent devE 2>&1 | Out-String; git -C $app config --unset core.hooksPath
-$o8 = & $lease devF feat/six; $o9 = & $lease devG feat/five
-Expect "parked: dirty + refused WIP keeps the files; another branch waits, the same branch resumes it ($($r3 -replace '\s+', ' '))" ($r3 -match 'PARKED app·Kestrel' -and (Test-Path "$kestrel/u.txt") -and $o8 -match 'no app slot free' -and (& $slotOf $o9) -eq $kestrel)
+# a WIP commit the hooks refuse (no hook skip: guard) -> the work goes to a patch file, the slot frees; the branch's next lease prints it
+$hd = "$base/hooks"; New-Item -ItemType Directory -Force $hd | Out-Null; "#!/bin/sh`nexit 1" | Set-Content "$hd/pre-commit" -NoNewline; git -C $app config core.hooksPath $hd; 'u' | Set-Content "$kestrel/u.txt"; 'v2' | Set-Content "$kestrel/a.txt"; 'k' | Set-Content "$kestrel/api-credentials.json"; New-Item -ItemType Directory -Force "$kestrel/cfg" | Out-Null; 'k' | Set-Content "$kestrel/cfg/.env"; 'c' | Set-Content "$kestrel/cfg/c.txt"
+$r3 = pwsh @np $D wt release -Agent devE 2>&1 | Out-String; git -C $app config --unset core.hooksPath; $wpr = Get-ChildItem (TkPath $k wip-patches) -Filter '*.patch' | Get-Content -Raw
+$sec = $r3 -match 'kept untracked api-credentials.json, cfg/.env \(secret-named, never committed\)' -and (Test-Path "$kestrel/api-credentials.json") -and (Test-Path "$kestrel/cfg/.env") -and $wpr -notmatch 'credentials|\.env' -and $wpr -match 'cfg/c\.txt'
+Expect "release: untracked secret-named files (one in a new folder) are never patched or committed, they stay and are named" $sec; Remove-Item "$kestrel/api-credentials.json", "$kestrel/cfg" -Recurse
+$o9 = & $lease devG feat/five; $wpf = if ($o9 -match '(?m)^WIP patch of feat/five: git -C \S+ apply --3way (\S+\.patch)') { $Matches[1] }; git -C $kestrel apply --3way $wpf 2>$null
+Expect "refused WIP: a patch file, the slot released clean; the same branch's lease prints it, it restores both files ($($r3 -replace '\s+', ' '))" ($r3 -match 'saved to \S+feat_five~\w+~[\d-]+\.patch' -and $r3 -notmatch 'PARKED' -and (& $slotOf $o9) -eq $kestrel -and $wpf -and (Get-Content "$kestrel/u.txt") -eq 'u' -and (Get-Content "$kestrel/a.txt") -eq 'v2')
+Remove-Item -LiteralPath $wpf
 
 $br = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') release -Agent devG -Reason 'agent finished' 2>&1 | Out-String
-Expect "bossy.ps1 release -Agent: its slot released too (resumed parked files -> WIP commit) ($($br.Trim()))" ($br -match 'devG slot: released app·Kestrel' -and (git -C $app log -1 --format=%s feat/five) -match '^wip: ' -and -not (Test-Path "$kf/kestrel-app.json"))
+Expect "bossy.ps1 release -Agent: its slot released too (re-applied files -> WIP commit) ($($br.Trim()))" ($br -match 'devG slot: released app·Kestrel' -and (git -C $app log -1 --format=%s feat/five) -match '^wip: ' -and -not (Test-Path "$kf/kestrel-app.json"))
 # migration: a merged per-task worktree goes, one with unpushed work is kept and listed
 $null = pwsh @np $D wt release -Agent devD 2>&1; git -C $app worktree add -q -b old/merged "$base/wt/old1-app" origin/main 2>$null; git -C $app worktree add -q -b old/wip "$base/wt/old2-app" origin/main 2>$null
 'w' | Set-Content "$base/wt/old2-app/w.txt"; git -C "$base/wt/old2-app" add -A; git -C "$base/wt/old2-app" commit -q -m wip
@@ -78,7 +81,7 @@ Expect "pool -Migrate: merged per-task worktree removed, unpushed one kept with 
 $wn = (pwsh @np $D wt new -Repo app -Branch f/T-1-x -Target main -Name z 2>&1 | Out-String) -replace '\s+(\|\s+)?', ' '   # the error view wraps
 Expect "wt new refuses a task branch of a pooled repo (wt lease)" ($wn -match 'has a worktree pool and f/T-1-x is a task branch: .*wt lease -Repo' -and -not (Test-Path "$base/wt/z-app"))
 # a parked slot whose resuming lease fails after the switch (a missing dep source): parked again with its files, never orphaned
-$o10 = & $lease devH feat/seven; $s10 = & $slotOf $o10; 'p' | Set-Content "$(Assert-TestPath $s10)/p.txt"; git -C $app config core.hooksPath $hd; $null = pwsh @np $D wt release -Agent devH 2>&1; git -C $app config --unset core.hooksPath
+$o10 = & $lease devH feat/seven; $s10 = & $slotOf $o10; 'p' | Set-Content "$(Assert-TestPath $s10)/p.txt"; git -C $s10 switch -q --detach; $null = pwsh @np $D wt release -Agent devH 2>&1   # detached + dirty: parked
 & $J @{ repos = @(@{ name = 'app'; checkout = $app; target = 'main'; poolSize = 2; linkFromByTarget = @{ main = "$base/no-deps" } }); tracker = @{ type = 'none' } } "$k/skills/crafty/kit.local.json"
 $o11 = & $lease devI feat/seven; $pf = Get-ChildItem $kf -Filter '*-app.json' | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json } | Where-Object { $_.branch -eq 'feat/seven' }
 Expect "a failed resume of a parked slot parks it again (files kept, parkedAt set), the lease file stays ($($o11 -replace '\s+', ' '))" ($o11 -match 'dep source .* is missing' -and $pf.parked -and $pf.parkedAt -and (Test-Path "$s10/p.txt"))

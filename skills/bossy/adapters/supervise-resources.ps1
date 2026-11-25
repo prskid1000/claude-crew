@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L364 shells · L554 page · L1052 release · L1098 lines · L1125 cleanup · L1192 launch ·
-  L1309 pause · L1428 heartbeat · L1444 sessions · L1503 ci tasks ·
-  L1568 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1046 release · L1092 lines · L1119 cleanup · L1186 launch ·
+  L1303 pause · L1422 heartbeat · L1438 sessions · L1497 ci tasks ·
+  L1562 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -106,16 +106,6 @@ function Get-KitPauseFlags($Pauses, $Active, [int]$WfAgents) {
     $hit = @($Active | Where-Object { -not $_.paused -and (Test-KitPauseCovers $p $_.run) } | ForEach-Object run | Select-Object -Unique)
     if ($hit.Count -or ($p.run -eq '*' -and "$($p.kind)" -ne 'kit' -and $WfAgents)) { [pscustomobject]@{ level = 'ACT'; what = "pause $(Split-Path "$($p.file)" -Leaf) ($($p.reason), since $(([datetime]$p.at).ToString('HH:mm'))) is active while run(s) work: $(if ($hit) { $hit -join ', ' } else { "$WfAgents workflow agent(s)" }); their agents stop at the next beat"; action = "Reason gone: & $($KitCmd.orch) resume -All (or -Run <run>); else pause those runs again." } }
   }
-}
-# a run silent 2+ days with unfinished agents: one WATCH ($Quiet remembers it), then skipped
-function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime]$Now) {
-  if ($SilentHours -lt 48) { $Quiet.Remove($Name); return [pscustomobject]@{ skip = $false; flag = $null } }   # alive again: a later silence flags anew
-  $flag = $null
-  if (-not $Quiet.ContainsKey($Name)) {
-    $Quiet[$Name] = (Get-KitStamp stored $Now)
-    $flag = [pscustomobject]@{ level = 'WATCH'; what = "run $Name silent $([int]($SilentHours / 24)) days with unfinished agents"; action = "Resume it (bossy.ps1 recover -RunId $Name) or let it go: this flag does not repeat" }
-  }
-  [pscustomobject]@{ skip = $true; flag = $flag }
 }
 # flags, sweep lines, report rows, largest waiting build (section 3, before the slow ones)
 function Get-KitSuperviseGuardResources([switch]$AutoFix) {
@@ -232,13 +222,17 @@ function Get-KitSuperviseGuardResources([switch]$AutoFix) {
   foreach ($k in @($lks.held.Keys)) { $h = $lks.held[$k]; $wn = @($lks.waiting | Where-Object { $_.lock -eq $k }); $rows.Add([pscustomobject]@{ name = "lock $k"; by = "$($h.holder) since $(([datetime]$h.at).ToString('HH:mm'))$(if ($wn.Count) { "; waiting: $(@($wn | ForEach-Object { $_.holder }) -join ', ')" })"; gb = 0 }) }
   foreach ($r in $rows) { if ($graceRows.ContainsKey($r.name)) { $r.by = "$($r.by) (grace $($graceRows[$r.name]) min)" }; $r }
   foreach ($x in @(Read-KitLog leases $now | Where-Object { $_.event -eq 'reclaim' -and $_.kind -in 'env', 'tab' })) { & $flag 'INFO' "auto-fixed: reclaimed $($x.kind) $($x.name) of $($x.agent) ($($x.reason))" 'Nothing to do.' }   # the env and tab sweeps above log, not print
-  # idle holders: any leased resource (gpu, local-ai, lock, tab, ...) whose holders all went quiet 3x idle.graceMinutes (the kinds with a reclaim above end sooner)
+  # idle holders: a leased resource whose holders all went quiet 3x idle.graceMinutes
   $quietMin = 3 * [double](Get-KitParam 'idle.graceMinutes')
   # quiet counts from the first beat that saw no live holder (an acquire row has no `seen`: its age alone flagged a holder dead 1 min)
   $idf = Join-Path (Get-KitPath cache -Create) 'idle-holders.json'; $idOld = try { Get-Content -LiteralPath $idf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if (-not $idOld) { $idOld = @{} }; $idNew = @{}
   foreach ($ir in @(Get-KitResourceRows $now.AddHours(-(Get-KitParam 'supervise.windowHours')) | Where-Object { $null -ne $_.quiet })) {
     $idAt = if ($idOld[$ir.resource]) { [datetime]$idOld[$ir.resource] } else { $now }; $idNew[$ir.resource] = (Get-KitStamp stored $idAt)
     $q = [int][math]::Min([double]$ir.quiet, ($now - $idAt).TotalMinutes)
+    # a tab held only by dead script pids (pid-N) past the grace: released like builds (tab closed, log rows ended)
+    $dp = @($ir.agents | Where-Object { $_ -match '^pid-(\d+)$' -and -not (Test-KitPid $Matches[1] $null) })
+    if ($AutoFix -and $ir.key -like 'tab|*' -and $dp.Count -and $dp.Count -eq @($ir.agents).Count -and $q -ge [double](Get-KitParam 'idle.graceMinutes') -and (Within 'tab holds')) {
+      & $flag 'INFO' "auto-fixed: released $($ir.resource) of $($ir.holder) (holder process ended): $(@(Invoke-KitReleaseAgent $dp 'reclaim: holder process ended') -join '; ')" 'Nothing to do.'; $idNew.Remove($ir.resource); continue }
     if ($q -ge $quietMin) { & $flag 'WATCH' "$($ir.resource) held by $($ir.holder): no live holder for $q min" "bossy.ps1 release -Agent $(@("$($ir.holder)" -split ', ')[0]) frees it (README Leases)" } }
   Write-KitAtomic $idf ($idNew | ConvertTo-Json -Compress)
   $need = [double](@(@($queue | ForEach-Object { [double]$_.need }) + 0) | Measure-Object -Maximum).Maximum
@@ -464,7 +458,7 @@ function Get-KitShellSweep($State, [datetime]$Now, [switch]$AutoFix, $Procs = $(
   $gated = @(Read-KitJsonFiles (Get-KitGateLedger) | Where-Object { Test-KitPid $_.pid $_.start } | ForEach-Object { "$($_.pid)" })
   $board = @(Read-KitJsonFiles (Get-KitPath board)); $rows = [Collections.Generic.List[object]]::new(); $flags = [Collections.Generic.List[object]]::new()
   $shells = @(Get-KitAgentShells $Procs); $made0 = { param($p) if ($p.Created) { [datetime]$p.Created } else { $Now } }
-  # Git Bash (MSYS) exec leaves a command's Windows parent dead: a process whose parent is gone joins the one shell whose command holds its arguments
+  # Git Bash exec kills a command's Windows parent: an orphan joins the shell whose command holds its arguments
   $alive = @{}; foreach ($p in $Procs) { $alive[$p.Id] = 1 }; $shCmd = @{}; foreach ($p in $shells) { $shCmd[$p.Id] = (Get-KitShellCommand $p.CommandLine) -replace '\s+', ' ' }
   if ($shCmd.Count) { foreach ($q in $Procs) {
     if ($alive.ContainsKey($q.ParentId) -or $shCmd.ContainsKey($q.Id)) { continue }
@@ -680,7 +674,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   # short-item lists (cards, tiles, bars): one auto-fill grid, min width per item, at most $max across (README "Using it");
   # masonry (data-mas) except the machine row, whose tiles stretch to one height
   $grid = { param([string]$cls, [string]$min, [object[]]$items, [int]$max = 0, [string]$tag = 'div') "<$tag class='cg $cls' style='--cmin:$min$(if ($max) { ";--cmax:$max" })'$(if ($cls -notmatch '\bmach\b') { " data-mas$(if ($cls -match '\b(stats|res)\b') { ' data-fill' })" })>$(@($items | Where-Object { $_ }) -join '')</$tag>" }
-  # task and MR links through the tracker / git host adapters (lib.ps1 Get-KitTaskLink, Get-KitMrLink): text = id or repo!n, no URL = plain text
+  # task and MR links: lib.ps1 Get-KitTaskLink, Get-KitMrLink (no URL = plain text)
   $lnMemo = @{}; $lnk = { param($l) if ($l.url) { "<a class=xl href='$(& $e $l.url)' target=_blank rel=noopener>$(& $e $l.text)</a>" } else { "<span class=xl>$(& $e $l.text)</span>" } }
   $taskA = { param($id) $k = "t|$id"; if (-not $lnMemo.ContainsKey($k)) { $lnMemo[$k] = & $lnk (Get-KitTaskLink $id) }; $lnMemo[$k] }
   $mrA = { param($ref) $k = "m|$ref"; if (-not $lnMemo.ContainsKey($k)) { $lnMemo[$k] = & $lnk (Get-KitMrLink $ref) }; $lnMemo[$k] }
@@ -783,7 +777,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $shRows = @($j.shells | Where-Object { $_ }); $kitDirNorm = "$script:KitRoot".TrimEnd('\', '/') -replace '\\', '/'
   $shDir = { param($s) $dn = "$($s.dir)".TrimEnd('\', '/') -replace '\\', '/'; if ($dn -and $dn -ne $kitDirNorm) { "$($s.dir)" } else { '' } }
   $shDirOn = [bool]@($shRows | Where-Object { & $shDir $_ }).Count; $shNextOn = [bool]@($shRows | Where-Object { "$($_.next)".Trim() }).Count
-  # progress (owner 2026-11-18) under the state: CPU now (the sweep's sample pair), quiet min, output size + age; the output's last line under the command
+  # progress (owner 2026-11-18) under the state: CPU now, quiet min, output size + age; its last line under the command
   $shProg = { param($s) @($(if ($null -ne $s.cpuNow) { "CPU $($s.cpuNow)%" }), $(if ($s.quiet) { "quiet $($s.quiet) min" }), $(if ($null -ne $s.outKB) { "out $($s.outKB) KB $(if ($s.outAge) { "$($s.outAge) min ago" } else { 'now' })" })) | Where-Object { $_ } }
   $shState = { param($s) $pl = @(& $shProg $s); if (-not $pl.Count) { return "$($s.state)" }; @{ h = "$(& $e $s.state)<div class=sm>$(@($pl | ForEach-Object { & $e $_ }) -join '<br>')</div>" } }
   $shCmd = { param($s) $cc = & $cmdCell "$($s.cmd)"; if (-not "$($s.last)".Trim()) { return $cc }; $wb = { param($x) (& $e $x) -replace '([|/\\])', '$1<wbr>' }; @{ h = "$(if ($cc -is [hashtable]) { $cc.h } else { & $wb $cc })<div class=sm>&#8250; $(& $wb $s.last)</div>" } }
@@ -870,9 +864,9 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     # masonry (owner, 2026-11-13): a card grid ([data-mas]) packs cards in order into the shortest column; one column = plain flow
     # heights at the packed width (.msm), inner grids first; run twice (inner grids pack before outer ones)
     # a tile grid ([data-fill], owner 2026-11-14): of up to 3 column counts the one with the least empty area wins, then in each column the lowest
-    # tile ending in a graph (else the last tile) stretches to the tallest column (.msl: that graph takes the room, capped; no gap under a short tile)
+    # tile ending in a graph (else the last tile) stretches to the tallest column (.msl: the graph takes the room, capped)
     "function pk(g,it,n,gp){g.style.setProperty('--mc',n);g.classList.add('msm');var hs=it.map(function(c){return c.getBoundingClientRect().height}),tp=[],pl=[],i;g.classList.remove('msm');for(i=0;i<n;i++)tp.push(0);it.forEach(function(c,j){var h=Math.ceil(hs[j]+gp),k=c.hasAttribute('data-end')&&!tp[n-1]?n-1:tp.indexOf(Math.min.apply(0,tp));pl.push([k,tp[k],h]);tp[k]+=h});" +
-    # balance (owner 2026-11-18): greedy order can leave one column far taller; with few cards try every column split (order kept per column), the lowest tallest column wins
+    # balance (owner 2026-11-18): with few cards every column split is tried (order kept), the lowest tallest column wins
     "var L=it.length,hh=hs.map(function(x){return Math.ceil(x+gp)}),nz=Math.pow(n,L);if(nz<=20000&&!it.some(function(c){return c.hasAttribute('data-end')})){var bm=Math.max.apply(0,tp),ba=null,a=[],t2=[],z,y;for(z=1;z<nz;z++){y=z;for(i=0;i<L;i++){a[i]=y%n;y=Math.floor(y/n)}for(i=0;i<n;i++)t2[i]=0;for(i=0;i<L;i++)t2[a[i]]+=hh[i];var m2=Math.max.apply(0,t2);if(m2<bm-1&&Math.min.apply(0,t2)>0){bm=m2;ba=a.slice()}}" +
     "if(ba){for(i=0;i<n;i++)tp[i]=0;pl=[];for(i=0;i<L;i++){pl.push([ba[i],tp[ba[i]],hh[i]]);tp[ba[i]]+=hh[i]}}}" +
     "var mh=Math.max.apply(0,tp),em=0;tp.forEach(function(t){em+=(mh-t)*(g.clientWidth-(n-1)*gp)/n});return{n:n,pl:pl,tp:tp,mh:mh,em:em}}" +
@@ -898,7 +892,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "var oc0=S.getItem('kc-oc');if(oc0&&d.querySelector('.ocb[data-oc=`"'+oc0+'`"]')){r.dataset.ocf=oc0;d.querySelectorAll('.ocb').forEach(function(o){o.setAttribute('aria-pressed',o.dataset.oc==oc0)})}" +   # kept across the 60 s reload
     "d.addEventListener('click',function(x){var b=x.target.closest('.ocb');if(!b)return;var k=b.dataset.oc,on=r.dataset.ocf!=k;if(on)r.dataset.ocf=k;else delete r.dataset.ocf;try{if(on)S.setItem('kc-oc',k);else S.removeItem('kc-oc')}catch(e){}d.querySelectorAll('.ocb').forEach(function(o){o.setAttribute('aria-pressed',on&&o.dataset.oc==k)});if(on){var s=d.getElementById('sec-runs');if(s){for(var p=s;p;p=p.parentElement&&p.parentElement.closest('details'))p.open=true;s.scrollIntoView({block:'start'})}}ms();ca()});" +   # outcome legend: only the runs with a step in it (inside Kit internals: open the bands around it)
     "d.addEventListener('scroll',function(x){var e=x.target;if(e.matches&&e.matches(SC))cu(e)},true);" +   # hover / focus / tap info: the popover (Get-KitPopoverJs)
-    # [data-ft] = a click or Enter filters the [data-fk] rows of its targets to data-fv (again, Clear or Esc: all); .lgt = a legend button hides its line
+    # [data-ft]: click / Enter filters its targets' [data-fk] rows to data-fv (again, Clear, Esc: all); .lgt hides its line
     "function fca(){d.querySelectorAll('[data-fsel]').forEach(function(g){delete g.dataset.fsel;g.querySelectorAll('.fo').forEach(function(r){r.classList.remove('fo')});g.querySelectorAll('.fclr').forEach(function(c){c.hidden=true})});d.querySelectorAll('[data-ft]').forEach(function(e){e.setAttribute('aria-pressed',false)});ms();ca()}" +
     "function fsel(src){var fv=src.dataset.fv,gs=d.querySelectorAll(src.dataset.ft),on=src.getAttribute('aria-pressed')!='true';fca();if(!on)return;gs.forEach(function(g){g.dataset.fsel=fv;g.querySelectorAll('[data-fk]').forEach(function(r){r.classList.toggle('fo',(' '+r.dataset.fk+' ').indexOf(' '+fv+' ')<0)});g.querySelectorAll('.fclr').forEach(function(c){c.hidden=false;c.querySelector('b').textContent=src.dataset.fl||fv});for(var p=g.closest('details');p;p=p.parentElement&&p.parentElement.closest('details'))p.open=true});src.setAttribute('aria-pressed',true);ms();ca()}" +
     "d.addEventListener('click',function(x){if(x.target.closest('.fclr button')){fca();return}var b=x.target.closest('.lgt');if(b){var k=b.dataset.s,h=b.closest('.lgw').classList.toggle('h'+k);b.setAttribute('aria-pressed',!h);return}var s=x.target.closest('[data-ft]');if(s&&!x.target.closest('a'))fsel(s)});" +
@@ -1031,7 +1025,7 @@ function Get-KitSupervisePageCss {
   '.spt .bar{margin:0;width:56px}.sb.mix{margin:0;height:10px}.sb.mix i{background:var(--c);min-width:3px}.ocl i[class^=t-]{background:var(--c)}.spt tr.spr td:first-child{font-weight:600}.spt tr.sty td{border-top:0;color:var(--mt);font-size:12px}.spt tr.sty td:first-child{padding-left:22px}.spt tbody:not(.op) tr.sty{display:none}' +
   '.spx{all:unset;cursor:pointer}.spx::before{content:"\25B8  ";color:var(--mt)}.spx[aria-expanded=true]::before{content:"\25BE  "}.spx:focus-visible{outline:2px solid var(--sage)}@media(max-width:640px){.spt :is(th,td):is(:nth-child(4),:nth-child(6)){display:none}}.rfl .gn0{overflow-wrap:anywhere;min-width:0}' +
   '.mcol{display:grid;gap:var(--cgap,8px);min-width:0}.cg.mach{align-items:stretch}.mach>.st{display:flex;flex-direction:column}.mach>.st>:last-child{margin-top:auto}' +
-  # one line per kind on every width from 700 px (kind · hourly heatmap · numbers, aligned: .gk is display:contents); the side panel 300 px, wrapping
+  # one line per kind from 700 px (kind · hourly heatmap · numbers; .gk is display:contents); side panel 300 px
   '.gl{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:8px 20px;align-items:start}@media(max-width:900px){.gl{grid-template-columns:minmax(0,1fr)}}.gp{display:grid;gap:4px;margin-top:6px;min-width:0}.gp .s{overflow-wrap:anywhere}' +
   '.gks{display:grid;grid-template-columns:max-content minmax(120px,1fr) repeat(6,max-content);gap:5px 12px;align-items:center;margin-top:6px;font-size:11.5px}.gk{display:contents}.gn{font-weight:600;white-space:nowrap}.gc{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.gc.z,.iv.z{color:color-mix(in srgb,var(--mt) 70%,var(--bg))}.iv.z .ic{color:inherit}.gk:not(.gh)>.gc .ic{display:none}.gc.nw,.gk:not(.gh)>.gc:nth-child(3):not(.z){color:var(--sage2);font-weight:650}.gk:not(.gh)>.gc:nth-child(4):not(.z){color:color-mix(in srgb,var(--watch) 55%,var(--fg));font-weight:650}.gh>*{color:var(--mt);font-size:10.5px;font-weight:600}.gh>.gc{display:inline-flex;justify-content:flex-end;align-items:center;gap:2px}.ic{width:13px;height:13px;flex:none;vertical-align:-2px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--mt)}.ic.i-run{color:var(--sage2)}.ic.i-queue{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.ic.i-stuck{color:color-mix(in srgb,var(--act) 55%,var(--fg))}.iv{display:inline-flex;align-items:center;gap:3px;white-space:nowrap;margin-right:10px}.st .v .ic{width:15px;height:15px}.cnt .iv{margin-right:6px}.tn .iv{float:right;margin:0 0 0 8px;font-size:12px;color:var(--mt)}' +
   # hourly heatmap: 24 cells, shade = busy share of the hour (--a), the current hour outlined; hour labels in the header row
@@ -1149,7 +1143,7 @@ function Invoke-KitCleanupResources {
         [pscustomobject]@{ dir = $_; used = $(if ($ls) { $ls.LastWriteTime } else { $_.LastWriteTime }) } } | Sort-Object used -Descending)
     foreach ($x in @($left | Select-Object -Skip $maxProfiles)) { if ($x.dir.Name -notin $inUse) { Gone $x.dir.FullName "browser profile beyond the newest $maxProfiles (cleanup.maxBrowserProfiles)" } }
   }
-  # cleanup.idleDaemons [{ process, match, label, busyKinds }]: stopped after 10 min while no gate build of busyKinds runs (unset: none)
+  # cleanup.idleDaemons: stopped after 10 min while no gate build of busyKinds runs
   $gl = Get-KitGateLedger
   foreach ($dm in @(Get-KitSetting 'cleanup.idleDaemons' @()) | Where-Object { $_ -and $_.match }) {
     if ($env:KIT_KEEP_DAEMONS) { break }   # tests: their own gate dir cannot see the machine's builds

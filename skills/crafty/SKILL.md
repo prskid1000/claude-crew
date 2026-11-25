@@ -73,8 +73,9 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
   tell the coordinator); `leave` at the end.
 - **Worktrees:** a fixed pool per repo (`pool.size`, `repos[].poolSize`; slots `<repo>·<bird>`, never deleted, caches kept
   warm): `wt lease` one per repo and branch (all busy: it queues), `wt release -Agent <id>` when done (`bossy.ps1 release` does
-  it too; uncommitted work becomes a WIP commit, else the slot parks for that branch). A fix round, resume or handoff
-  leases the same branch again (any free slot; two agents never share one). `wt pool` lists slots; `wt new` only for
+  it too; uncommitted work becomes a WIP commit (hooks refuse it: a patch file, `wt lease -Branch` prints it),
+  else the slot parks for that branch). A fix round, resume or handoff leases the same branch again (any free slot; two
+  agents never share one). `wt pool` lists slots; `wt new` only for
   dedicated worktrees (env, deploy merge, kit). Deps-differ warning -> `-LinkFrom <checkout of the target branch>`; `wt
   sync` before editing, before every push, before merging.
 - **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never a build or test tool

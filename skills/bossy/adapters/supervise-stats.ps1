@@ -7,8 +7,8 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages); the PARITY next batch flag.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L725 flags · L944 bands ·
-  L1107 shells · L1178 reset · L1219 parity
+Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L726 flags · L945 bands ·
+  L1108 shells · L1179 reset · L1220 parity
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -430,7 +430,8 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
 # every heatmap: Format-KitHourHead over a row of Format-KitHeatCells each, rows through Format-KitHeatRows (idle rows folded), the card
 # through $fold (chevron + count, open state kept; busy open, idle closed)
 # the 24 hour labels over a heatmap: every 6th clock hour, "now" over the last cell; -Clock: a calendar day (00-23), no "now"
-function Format-KitHourHead([datetime]$H0, [switch]$Clock) { @(for ($hi = 0; $hi -lt $(if ($Clock) { 23 } else { 21 }); $hi++) { if ($H0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span 2'>$($H0.AddHours($hi).ToString('HH'))</b>" } }) + $(if (-not $Clock) { "<b class=nw style='grid-column:23/span 2'>now</b>" }) -join '' }
+# a label spans 3 cells, "now" the last 4 (2 cells clipped them at 900 px); labels end before "now"
+function Format-KitHourHead([datetime]$H0, [switch]$Clock) { @(for ($hi = 0; $hi -lt $(if ($Clock) { 23 } else { 18 }); $hi++) { if ($H0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span $([math]::Min(3, 24 - $hi))'>$($H0.AddHours($hi).ToString('HH'))</b>" } }) + $(if (-not $Clock) { "<b class=nw style='grid-column:21/span 4'>now</b>" }) -join '' }
 # Disk · 7 days (owner 2026-11-21: one disk section): a row per day (today on top), 24 clock hours, then GB written, kit GB (share) and
 # each drive's free GB at day end with its change; it answers how much is written, by whom (kit or not) and whether a drive fills up.
 # An hour: shade = machine GB (one scale for the week), bottom stripe = kit share, the number only from writes.cellMinGB; no sample
@@ -921,7 +922,7 @@ function Get-KitStatsCss {
   # bands (owner 2026-11-19): flags table, runs timeline, metric heatmaps; D8: every tile one size, a one-line label (ellipsis, its title holds it)
   '.flt{width:100%;table-layout:fixed}.flt col.c-lv{width:84px}.flt col.c-k{width:12%}.flt col.c-w{width:13%}.flt col.c-n{width:30%}.flt col.c-a{width:112px}.flt td{vertical-align:top;overflow-wrap:anywhere}.flt tr.ACT>td:first-child{box-shadow:inset 3px 0 var(--act)}.flt tr.WATCH>td:first-child{box-shadow:inset 3px 0 var(--watch)}.fxn{margin-left:4px;font-size:11px;color:var(--mt)}.chip.fxd{color:color-mix(in srgb,var(--sage2) 70%,var(--fg))}.fxb{all:unset;cursor:pointer;color:var(--mt);font-size:12px}.fxb::before{content:"\25B8  "}.fxb[aria-expanded=true]::before{content:"\25BE  "}.fxr>td{color:var(--mt);font-size:12px}#fl-hist{margin-top:8px}' +
   '@media(max-width:699px){.flt thead,.flt colgroup{display:none}.tw>table.flt tr{display:flex!important;flex-wrap:wrap;gap:2px 8px;padding:6px 0;border-top:1px solid var(--ln)}.tw>table.flt td{border:0;padding:0;flex:0 1 auto}.tw>table.flt td:nth-child(n+4),.tw>table.flt td[colspan]{flex-basis:100%}.tw>table.flt td::before{display:none}.mhw .gks.w0{grid-template-columns:minmax(0,1fr)}.gks.w0 .gk{grid-template-columns:minmax(0,1fr)}}' +
-  '.rtl .gn{max-width:380px}.rtl .rr>.gn{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:baseline}.rtg{all:unset;cursor:pointer;font-weight:600;overflow-wrap:anywhere}.rtg::before{content:"\25B8 ";color:var(--mt)}.rgg:not(.cl)>.rr .rtg::before{content:"\25BE "}.rtl .gk.ag>.gn{padding-left:16px;white-space:normal;overflow-wrap:anywhere}.rtl .gk.ag .chip{margin-left:6px}:is(.rdg,.rkg).cl>.rgg{display:none}.rkh .gn small{font-weight:500}.rtl .rkg>.rgg>.rr>.gn{padding-left:16px}.rtl .rkg .gk.ag>.gn{padding-left:32px}.hm.rn i{--a:0%;background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.rtl .rk{font-size:11px}' +
+  '.rtl .gn{max-width:380px}.rtl .rr>.gn{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:baseline;white-space:normal;min-width:0}.rtg{all:unset;cursor:pointer;font-weight:600;overflow-wrap:anywhere}.rtg::before{content:"\25B8 ";color:var(--mt)}.rgg:not(.cl)>.rr .rtg::before{content:"\25BE "}.rtl .gk.ag>.gn{padding-left:16px;white-space:normal;overflow-wrap:anywhere}.rtl .gk.ag .chip{margin-left:6px}:is(.rdg,.rkg).cl>.rgg{display:none}.rkh .gn small{font-weight:500}.rtl .rkg>.rgg>.rr>.gn{padding-left:16px}.rtl .rkg .gk.ag>.gn{padding-left:32px}.hm.rn i{--a:0%;background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.rtl .rk{font-size:11px}' +
   '.gks.w0{grid-template-columns:minmax(0,max-content) minmax(160px,1fr)}.mhw .gks.w0{min-width:calc(var(--n) * 52px + 110px + var(--xw,0px))}.mhw .hm.dy,.mhw .hrs.dy{grid-template-columns:var(--gt,repeat(var(--n),minmax(48px,1fr)))}:is(.hm.mh,.hm.dy) i[data-t=warn]{background:color-mix(in srgb,var(--watch) 60%,var(--sf2))}:is(.hm.mh,.hm.dy) i[data-t=act]{background:color-mix(in srgb,var(--act) 60%,var(--sf2))}.gn small .rdw{color:color-mix(in srgb,var(--watch) 70%,var(--fg));font-weight:650}.gn small .rdv{color:color-mix(in srgb,var(--act) 70%,var(--fg));font-weight:650}.dyh .dgh>.rgb{margin-top:4px}.mgh b{border-bottom:2px solid var(--sage2);text-align:center;font-weight:650;color:var(--fg);padding-bottom:1px}.mhw [data-g0]{margin-left:6px}' +
   '.tls{align-items:stretch}.tl{min-height:46px;width:136px;display:flex;flex-direction:column;justify-content:space-between}.tl b{line-height:20px;white-space:nowrap}.tl span{display:block;line-height:14px;overflow-wrap:break-word}' +   # a long label wraps (never cut with an ellipsis)
   '.fsm{margin-left:8px;font-size:12px;font-weight:400;color:var(--mt);overflow-wrap:anywhere}' +   # a folded block's one-line summary in its header
@@ -931,7 +932,7 @@ function Get-KitStatsCss {
   '.cxc{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:76px;text-align:right}[data-mk=spend-role] .gs0.dy b{white-space:normal;overflow-wrap:anywhere;line-height:12px}.cxc b{text-align:right;font-size:11px;font-weight:600;line-height:13px;color:var(--fg)}.cxb{display:flex;height:6px;gap:1px;border-radius:2px;overflow:hidden;background:var(--sf2)}.cxb i{display:block;flex:0 1 0;min-width:2px}' +
   ':root{--x-ki:var(--plum);--x-ti:var(--sage2);--x-cd:var(--slate);--x-kd:var(--k3);--x-bt:var(--watch);--x-ot:var(--k4);--x-wd:var(--k2);--x-mo:var(--sage)}.x-ki{background:var(--x-ki)}.x-ti{background:var(--x-ti)}.x-cd{background:var(--x-cd)}.x-kd{background:var(--x-kd)}.x-bt{background:var(--x-bt)}.x-ot{background:var(--x-ot)}.x-wd{background:var(--x-wd)}.x-mo{background:var(--x-mo)}' +
   '.k-out,.k-wk,.k-to,.k-tw{--kc:var(--slate)}.k-to,.k-in{--kx:.85}.k-in,.k-mo{--kc:var(--k2)}.k-cw{--kc:var(--k3);--kx:.75}:is(.k-cr,.k-ca,.k-wa){--kc:var(--k4);--kx:.55}.k-tot{--kc:var(--sage)}.lgk[class*=k-]{background:var(--kc)}.kleg{white-space:normal}.hki{cursor:help;color:var(--mt);font-size:13px;line-height:1;margin-left:2px}.hki:focus-visible{outline:2px solid var(--sage);border-radius:50%}' +
-  '@media(min-width:700px){.gks.w2{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(2,max-content)}.gks.w2 .gk{column-gap:12px}}@media(min-width:1100px){.gks.w2{grid-template-columns:minmax(0,max-content) minmax(120px,1fr) repeat(3,max-content)}}@media(max-width:1099px){.gks.w2 .cxc{display:none}}@media(max-width:699px){.gks.w2 .gk{grid-template-columns:repeat(2,minmax(0,1fr))}}' +
+  '@media(min-width:700px){.gks.w2{grid-template-columns:minmax(0,max-content) minmax(144px,1fr) repeat(2,max-content)}.gks.w2 .gk{column-gap:12px}}@media(min-width:1100px){.gks.w2{grid-template-columns:minmax(0,max-content) minmax(144px,1fr) repeat(3,max-content)}}@media(max-width:1099px){.gks.w2 .cxc{display:none}}@media(max-width:699px){.gks.w2 .gk{grid-template-columns:repeat(2,minmax(0,1fr))}}' +
   '.ks,.kst{container-type:inline-size}.ks{display:block;width:290px;max-width:100%}.ks.kd-time{width:200px}td>.ks{margin-left:auto}.kr4{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px}' +
   '.kq{--a:50%;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;min-width:0;padding:1px 4px 1px 5px;border-radius:3px;background:color-mix(in srgb,var(--kc) calc(var(--a) * var(--kx,1) * var(--kcap)),var(--sf2));box-shadow:inset 2px 0 var(--kc);color:var(--fg);font-size:10.5px;font-weight:500;line-height:13px;white-space:nowrap}.kq small{font-size:9px;font-weight:400;line-height:11px}.kq.kt{--kx:1;font-weight:650}.ks .kq.kt{--a:75%}' +
   '.kr4>.kq.k2,.kb{display:none}.kb{height:4px;margin-top:2px;gap:1px;border-radius:2px;overflow:hidden}.kb i{display:block;flex:0 1 0;min-width:2px;background:var(--kc)}' +
@@ -1226,4 +1227,14 @@ function Get-KitSuperviseFlagsParity([switch]$AutoFix, $Board = $entries) {
   $n = if ($c -and $c.key -eq $key) { [int]$c.n } else { $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kitbag, 'parity', 'next', '--n', '0') 120
     if ("$($r.out)" -notmatch 'parity next: (\d+) open') { return }; Write-KitAtomic $cf (@{ key = $key; n = [int]$Matches[1] } | ConvertTo-Json -Compress); [int]$Matches[1] }
   if ($n) { [pscustomobject]@{ level = 'ACT'; what = "PARITY next batch: $n open cell(s), no parity kitty live"; action = 'Spawn ONE kitty (kind build, subject parity, low priority): kitbag.py parity next --n 5, close those cells, a test each, push (bossy K1).' } }
+}
+# a run silent 2+ days with unfinished agents: one WATCH ($Quiet remembers it), then skipped
+function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime]$Now) {
+  if ($SilentHours -lt 48) { $Quiet.Remove($Name); return [pscustomobject]@{ skip = $false; flag = $null } }   # alive again: a later silence flags anew
+  $flag = $null
+  if (-not $Quiet.ContainsKey($Name)) {
+    $Quiet[$Name] = (Get-KitStamp stored $Now)
+    $flag = [pscustomobject]@{ level = 'WATCH'; what = "run $Name silent $([int]($SilentHours / 24)) days with unfinished agents"; action = "Resume it (bossy.ps1 recover -RunId $Name) or let it go: this flag does not repeat" }
+  }
+  [pscustomobject]@{ skip = $true; flag = $flag }
 }

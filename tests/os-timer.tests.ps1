@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 tests/os-timer.tests.ps1: install / uninstall / status through a fake scheduler adapter, health (off, fresh, stale, gone ->
-reinstalled, removed, osTimer false), the tick (supervise as session os-timer; skips while paused), the step-aside windows (K102), the CLI verbs once installed; storage (verdicts, folder drill-down, db watchdog, rescue hold).
+reinstalled, removed, osTimer false), the tick (supervise as session os-timer; skips while paused), the step-aside windows (K102), the CLI verbs once installed; storage (verdicts, folder drill-down, db watchdog, rescue hold); the os-timer sweep sees every
+session's runs (no retro due mid-run) and releases a dead pid's tab hold.
 Usage: pwsh -NoProfile -File tests/os-timer.tests.ps1 (copies adapters/os-timer.ps1 into its test kit).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -136,5 +137,19 @@ Expect 'storage: one enumeration gives a folder''s size and each child''s' ($sto
 Expect 'storage: the grown folder''s grown child becomes tracked; a learned folder flat 7 days drops out' ($sto -contains 'drill:R+3:R,R/b')
 Expect 'storage: over maxGB killed (43), small not; rescue kills the temp holder (42) once per 10 min, holds builds' ($sto -contains 'db:2:43,42:hold Z/False')
 Expect 'bossy.ps1 storage: the timeline of a drive with its db kills' ((($sto -join "`n") -match '(?m)^== Q: 3 sample') -and ($sto -join "`n") -match 'db-kill: SELECT big')
+# the OS timer's sweep (session os-timer) sees every session's runs: retro due fired all night mid-run; a tab held by a dead
+# script pid past the grace is released (its log row ends) like builds
+$tx = Join-Path (Kd) 'tx'; $wd = New-Item -ItemType Directory -Force (Join-Path $tx 'c0ffee/subagents/workflows/wf_r1'); '{}' | Set-Content (Join-Path $wd 'agent-a1.jsonl')
+'{"type":"started","agentId":"a1","label":"test:T1","phase":"Test"}' | Set-Content (Join-Path $wd 'journal.jsonl')
+$null = Invoke-PsTest os-seed @'
+. $args[0]; $h2 = (Get-Date).AddHours(-2).ToUniversalTime().ToString('o')
+'{"at":"' + $h2 + '","script":"browser.mjs","event":"acquire","kind":"tab","name":"x|t|u","agent":"pid-999999","since":"' + $h2 + '"}' | Add-Content (Get-KitPath leases -Create)
+Write-KitAtomic (Join-Path (Get-KitPath cache -Create) 'idle-holders.json') (@{ "tab $((Get-KitPoolLabel tab 'x|t|u') -replace '\|', ' ')" = $h2 } | ConvertTo-Json)
+1..30 | ForEach-Object { Write-KitLog signals '' ([ordered]@{ skill = 'kitty'; kind = 'friction'; text = "seed $_" }) }
+'@ @($O)
+$env:KIT_TRANSCRIPTS = $tx; $osw = pwsh @np $O supervise -Session os-timer -Takeover -AutoFix -Json 2>$null | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
+$osf = @(($osw | ConvertFrom-Json).flags.what); $lr = @(Get-Content (TkPath $k leases) | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'reclaim' -and $_.agent -eq 'pid-999999' }).Count
+$rw = $osw -match 'workflow wf_r1: 1 agents, 0 finished, 1 running'
+Expect "os-timer sweep: a running workflow of any session = no retro due; a dead pid's tab hold released ($rw $lr $(@($osf -match 'retro|tab') -join ' // '))" (-not @($osf -match '^retro due').Count -and @($osf -match '^auto-fixed: released tab .* of pid-999999 \(holder process ended\)').Count -and $lr -eq 1)
 Remove-TestKit $k
 Complete-Tests

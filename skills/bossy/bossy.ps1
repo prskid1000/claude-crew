@@ -33,8 +33,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L256 budget · L286 launch · L529 recover · L616 pause · L627 resume · L694 program · L722 param ·
-  L728 track · L1118 supervise · L1465 report · L1545 audit · L1605 storage · L1608 bugbrief · L1610 cleanup · L1697 learn ·
-  L1735 decide · L1901 debate · L1945 health · L2013 setup · L2108 guard-sendmessage
+  L728 track · L1118 supervise · L1466 report · L1546 audit · L1606 storage · L1609 bugbrief · L1611 cleanup · L1698 learn ·
+  L1736 decide · L1902 debate · L1946 health · L2014 setup · L2109 guard-sendmessage
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1141,6 +1141,7 @@ function Flag($lvl, $what, $action, $cols) { Set-ActSection $lvl $what; [void]$f
 function L($s) { [void]$lines.Add($s) }
 $lk = Join-Path (Get-KitPath cache -Create) 'supervise.lock'
 Start-KitSweepMemo; $me = Get-SuperviseOwner $Session; Update-KitCoordinatorBeat   # the registry: this session's coordinator row stays live
+$runScope = if ($me -eq 'os-timer') { '' } else { $Session }   # the OS timer names no transcript session: it sees every session's runs (else retro due fired mid-run)
 $script:aside = $null
 Invoke-KitLocked $lk {
   $held = if (Test-Path $lk) { try { Get-Content $lk -Raw | ConvertFrom-Json } catch { $null } }
@@ -1172,9 +1173,9 @@ if (-not $state.quietRuns) { $state.quietRuns = @{} }; if (-not $state.closedRun
 if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Date).AddSeconds(3))) { Flag $x.level $x.what $x.action } } catch { Flag 'WATCH' "param learn failed: $_" 'Look at .state/params.json (bossy.ps1 param show).' } }
 
 # 1. workflows
-Phase 'workflows'; $wfDirs = @(Get-KitRecentWorkflowDirs $Session | Sort-Object KitLastWrite -Descending)
+Phase 'workflows'; $wfDirs = @(Get-KitRecentWorkflowDirs $runScope | Sort-Object KitLastWrite -Descending)
 $doneAt = @{}; $shippedAt = @{}; $collisions = @(); $finishedRuns = Get-KitFinishedRuns; $lnch = @(Read-KitJsonFiles (Get-KitPath launches)); $pausedRuns = @($lnch | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
-if (-not $Session) { foreach ($q in $state.quietRuns, $state.closedRuns) { foreach ($k in @($q.Keys)) { if ($k -notin @($wfDirs | ForEach-Object Name)) { $q.Remove($k) } } } }   # -Session sees only its own runs
+if (-not $runScope) { foreach ($q in $state.quietRuns, $state.closedRuns) { foreach ($k in @($q.Keys)) { if ($k -notin @($wfDirs | ForEach-Object Name)) { $q.Remove($k) } } } }   # -Session sees only its own runs
 foreach ($w in $wfDirs) {
   $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
   $ev = @(Get-Content $j | ForEach-Object { $_ | ConvertFrom-Json })
@@ -1273,7 +1274,7 @@ foreach ($s in $stale | Where-Object { $_.agent -notin $liveNames -and $_.agent 
 }
 foreach ($x in @(Get-KitPauseFlags @(Read-KitJsonFiles (Get-KitPath pauses)) $active $runTotal)) { Flag $x.level $x.what $x.action }
 # local, so before network sections; STUCK = a flag
-Phase 'status rows'; $rows = @(Get-KitStatusRows $now $Session); foreach ($x in @(@(Get-KitStuckFlags $rows $now $idleMin) + @(Get-KitQaQuestionFlags $now))) { [void]$flags.Add($x) }
+Phase 'status rows'; $rows = @(Get-KitStatusRows $now $runScope); foreach ($x in @(@(Get-KitStuckFlags $rows $now $idleMin) + @(Get-KitQaQuestionFlags $now))) { [void]$flags.Add($x) }
 # a subagent that returned but never left: left, never STUCK
 foreach ($r in @($rows | Where-Object { $AutoFix -and $_.session -and $_.done -eq 'turn complete' -and "$($_.tx)" -match '[\\/]subagents[\\/]' -and $_.last -and ($now - [datetime]$_.last).TotalMinutes -ge $bm })) {
   foreach ($e in @($entries | Where-Object { $_.session -eq $r.session -and $_.status -ne 'left' })) { & $markLeft $e 'finished'; Flag 'INFO' "auto-fixed: board entry $($e.agent) ($($e.run)) left: its agent returned" 'Nothing to do.' }

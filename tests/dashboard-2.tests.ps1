@@ -1,7 +1,8 @@
 #Requires -Version 7
 <#
 dashboard-2.tests.ps1: the supervise page has no Parity panel (parity stays internal); the PARITY next batch ACT; the context
-info popover text (from context.tests.ps1); label case, role map, day heat groups (from runtimes.tests.ps1).
+info popover text (from context.tests.ps1); label case, role map, day heat groups (from runtimes.tests.ps1); the hour head;
+context ACTs count only agents after a fix.
 Usage: pwsh -NoProfile -File <kit>/tests/dashboard-2.tests.ps1 (or tests/kit-tests.ps1 -Area dashboard-2).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -45,5 +46,14 @@ $rgm = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }
 Expect "role map: group headers span their columns, later groups open with a gap, waste counts per tag toned with the list in the tooltip, agents on the name line ($rgm)" ($rgm -eq '1,1, True True True True')
 $dgf = & { . $O; $e = { param($s) [Net.WebUtility]::HtmlEncode("$s") }; Format-KitDayHeat @(@{ hd = 'G'; g = 'g1'; cn = 2 }, @{ n = 'a'; v = @(1) }, @{ n = 'b'; v = @(0) }) @('2026-01-01') 'k' }
 Expect 'day heat groups: a header folds its rows, an idle row in the group''s own fold' ($dgf -match "(?s)<div class=rgg data-g='dg-g1'><div class='gk rgh dgh'><button type=button class=rgb aria-expanded=true><span class=gn0>G</span><span class=gcn>2</span></button></div><div class=gk>.*?>a<.*<button type=button class=gkx aria-expanded=false>1 idle rows (·|&#183;) no data in 1 days</button><div class=gki>.*>b<.*</div></div></div>$")
+# hour head (ui-check 900 px clipped 2-cell labels): labels span 3 cells and end before "now" (cols 21-24)
+$hh = & { . $O; Format-KitHourHead ([datetime]'2026-01-01T06:00'); '|'; Format-KitHourHead ([datetime]'2026-01-01T01:00') -Clock }
+$hw = "<b style='grid-column:1/span 3'>06</b><b style='grid-column:7/span 3'>12</b><b style='grid-column:13/span 3'>18</b><b class=nw style='grid-column:21/span 4'>now</b> | <b style='grid-column:6/span 3'>06</b><b style='grid-column:12/span 3'>12</b><b style='grid-column:18/span 3'>18</b>"
+Expect "hour head: 3-cell labels, none under now ($hh)" ("$hh" -eq $hw)
+# context ACT (a 7-day window kept fixed signals firing): only agents started after the signal's last fix count
+$cf = & { . $O; $now = Get-Date; function Get-KitWasteFixes { @{ 'waste:kitty:bigresult' = @{ sha = 'f1x'; at = [datetimeoffset]$now.AddMinutes(-30) } } }
+  $mk = { param($n, $m, $s0 = $m) [pscustomobject]@{ label = $n; role = 'kitty'; run = $n; result = 'pass'; at = $now.AddMinutes(-$m).ToString('o'); t0 = $now.AddMinutes(-$s0).ToString('o'); cx = [pscustomobject]@{ n = 3; s0 = 1; pk = 1; sum = 3; last = 1; w = @(0) * 6; rr = @(0, ''); top = @('9500|2|Read a.ps1') } } }
+  "$(@(Get-KitContextFlags @((& $mk a 90), (& $mk b 80), (& $mk c 10), (& $mk e 5 60)) $now | Where-Object level -eq 'ACT').Count) $(@(Get-KitContextFlags @((& $mk a 90), (& $mk c 10), (& $mk d 5)) $now | Where-Object level -eq 'ACT').what)" }
+Expect "context ACT: agents started before the fix (one ended after it) do not count, 2 after it flag again ($cf)" ("$cf" -match '^0 context: code reads results over 8000 tokens in 2 agents$')
 Remove-TestKit $k
 Complete-Tests

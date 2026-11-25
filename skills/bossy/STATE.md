@@ -1,7 +1,6 @@
 # Kit state (`.state/` durable, `.runtime/` disposable)
-Read by kitty, revy (kind kit), agents needing task links ("Indexes").
-Paths: `kit.example.json` `_paths`; schemas: the Inventory below (`kitbag.py state lint`;
-supervise: BAD = WATCH).
+Read by kitty, revy (kind kit), agents with task links ("Indexes").
+Paths: `kit.example.json` `_paths`; schemas: the Inventory (`kitbag.py state lint`; supervise: BAD = WATCH).
 
 ## Rules
 - **One file per key** (task, session, decision, run, publish key); a shared map only with one owning writer.
@@ -16,11 +15,11 @@ supervise: BAD = WATCH).
 - **Lifecycle:** `.runtime` ages out by `_paths.keep`; in `.state` it only trims the Inventory's logs
   (`Invoke-KitLogTrim`), deletes `tracking.json.migrated`.
 
-## Indexes (not the tracker's comments)
+## Indexes
 - `.state/tasks/<id>.json`: `track` (`bossy.ps1 track`: MRs in merge order, mergeAfter, onMerged, done, `removed[]`, `routes[]`), `docs.<kind>` (url,
   key, type: `devtools.py doc --key <id>:<kind>`), `comments.<kind>` (the comment `tracker comment -Kind` edits), `envRuns[]`
   (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (`devtools.py cases`); `rollup` (`task-rollup.ps1`; a parent: sections, milestones,
-  `closeAsk` = its one close-parent decision, `parentClosed`), `itemIds` / `itemsFrom` / `itemsSig` / `itemsFinal` (the Items checklist), `itemsDropped` (`track forget-item`: never written back), `itemsOpenMrs` (open MRs -> ids: a fix round unticks them), `heldNote` (held item ids: the parent's line stays unticked).
+  `closeAsk` = its one close-parent decision, `parentClosed`), `itemIds` / `itemsFrom` / `itemsSig` / `itemsFinal` (the Items checklist), `itemsDropped` (`track forget-item`: never written back), `itemsOpenMrs` (open MRs -> ids: a fix round unticks them), `heldNote` (held ids: the parent's line unticked).
 - `<qa run>/index.json`: `items.<code>` -> tasks, doc, pubKey, pass, fail (`pokey.ps1 finalize`); a build run:
   `work/waves/<run>.json` (`bossy.ps1 report`).
 
@@ -31,11 +30,12 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | Name | Owner | Schema | Lifecycle |
 |---|---|---|---|
 | `tasks` | `lib.ps1` `Update-KitTracking` / `Update-KitTaskIndex`, `devtools.py publish`, `pokey.ps1 finalize` | `dir v1: task` | keep |
-| `tracking` | none (legacy) | `json v0: tasks` | until moved into `tasks` |
+| `tracking` | none (legacy) | `json v0: tasks` | until in `tasks` |
 | `automerge` | `devtools.py merge`, `bossy.ps1 track run` | `json v1: refs` | an entry until its MR merges |
 | `mr-ignore` | `bossy.ps1 track ignore` | `json v1: mrs` | keep |
 | `published` | `devtools.py publish`, `crafty.ps1 tracker create -Key` | `dir v1: key` | keep |
 | `desc-backups` | `Set-TrackerDescription` | `text v0` | newest 10 per task |
+| `wip-patches` | `wt release` | `text v0` | until applied |
 | `param-state` | `lib.ps1` params | `json v0: byKey` | keep (raw obs 14 d, hourly sketches 90 d) |
 | `params-changes` | `kitlog` (`Write-KitParamChange`) | `jsonl v0: at key ctx` | keep (append-only) |
 | `logs-summary` | `kitlog` (`Invoke-KitLogTrim`) | `jsonl v0: at stream period n` | keep |
