@@ -24,7 +24,7 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L471 code · L482 migrations ·
   L485 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L633 shared builds · L764 hooks · L838 marks · L1022 seed ·
-  L1089 processes · L1453 daemon · L1931 cleanup · L2003 verbs
+  L1094 processes · L1458 daemon · L1936 cleanup · L2008 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -1046,6 +1046,11 @@ function Get-MissingRoutines([string]$e) { $tool = Get-MigTool $e; if (Test-MigV
 # rerunRoutines: a scope's missing routines made pending -> notes
 function Reset-MissingRoutines([string]$e, [string]$s) { $tool = Get-MigTool $e; if (Test-MigVerb $tool 'rerunRoutines') { Invoke-MigVerb $tool 'rerunRoutines' @{ e = $e; schema = $s } } }
 
+# a failed create while a managed service is not healthy (a deploy restarting it: HTTP 000 on a seed upload) -> the hint, else ''
+function Get-SeedDownHint([string]$e) {
+  $st = Read-State $e; $down = @(EnvServices $e | Where-Object { (Managed $_) -and "$($st.services["$($_.name)"].status)" -notin '', 'down', 'stopped' -and -not (Healthy $e $_) } | ForEach-Object { "$($_.name)" })
+  if ($down.Count) { "; $($down -join ', ') not up yet ($(@($down | ForEach-Object { "$($st.services[$_].status)" }) -join ', ')): re-run seed when envy.ps1 status shows it up" } else { '' }
+}
 # -Tables (a restore's fallback): the items naming one (schema.table or table) + their needs; none named: all
 function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
   $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { throw "[$e] no seed file $f (envs.$e.seed)" }
@@ -1064,7 +1069,7 @@ function Invoke-Seed([string]$e, [switch]$Check, [string[]]$Tables) {
     if (-not $Check -and $r.state -in 'missing', 'drift' -and -not $why) {
       $code = Invoke-Shell (Expand-Placeholders ([string]$it.create.cmd) $e ([pscustomobject]@{ port = '' }) $KitConf.Workspace '') (LogFile $e 'seed') (EnvVars $e ([pscustomobject]@{})) 600
       $r = if ($code) { @{ state = 'error'; got = "create $(Get-ShellWhy $code): $((@($script:ShellOut) | Select-Object -Last 2) -join ' | ')" } } else { $x = Test-SeedItem $e $it; $x.created = $true; $x }
-      if ($r.state -ne 'ok') { $why = "create ran, still $($r.state): $($r.got)" }
+      if ($r.state -ne 'ok') { $why = "create ran, still $($r.state): $($r.got)$(Get-SeedDownHint $e)" }
     }
     $res[[string]$it.name] = $r.state
     if ($why) { $skipped.Add("$($it.name) ($why)") }

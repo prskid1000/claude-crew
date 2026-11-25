@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L191 names · L284 slots · L317 lease · L429 release · L475 lanes · L596 sync · L698 pool · L741 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L328 lease · L444 release · L490 lanes · L611 sync · L713 pool · L756 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -312,6 +312,17 @@ function Get-KitSlots([string]$Repo) {
       [pscustomobject]@{ n = $n; name = (Get-KitSlotName $n $rl); path = $w.path; branch = $w.branch; head = $w.head; gitDir = $gd; file = (Get-KitSlotFile $leaf) }
     }) | Sort-Object n
 }
+# board leave / handoff: the agent's queued wt lease waits (wt-slots/wait) removed; its wait loop sees that and stops -> the names
+function Remove-KitPoolWaits([string]$Agent) {
+  $wd = Join-Path (Get-KitPath wt-slots -Create) 'wait'
+  @(Get-ChildItem -LiteralPath $wd -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { $Agent -and "$((Read-KitSlotLease $_.FullName).agent)" -eq $Agent } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; $_.BaseName })
+}
+# the waiter's agent left the board after its wait began, no live row left (never joined: not gone, a coordinator's own lease)
+function Test-KitPoolWaiterGone([string]$Agent, [string]$Since) {
+  $rows = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $Agent -and "$($_.agent)" -eq $Agent })
+  $sAt = try { [datetimeoffset]$Since } catch { [datetimeoffset]::MinValue }
+  -not @($rows | Where-Object { "$($_.status)" -ne 'left' }).Count -and [bool]@($rows | Where-Object { $b = try { [datetimeoffset]"$($_.beat)" } catch { $null }; $b -and $b -ge $sAt }).Count
+}
 function Read-KitSlotLease([string]$File) { if (Test-Path -LiteralPath $File) { try { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json } catch { $null } } }
 function Test-KitSlotDir([string]$Dir) { $gf = Join-Path $Dir '.git'; if (-not (Test-Path -LiteralPath $gf -PathType Leaf)) { return $false }; $gd = ("$(Get-Content -LiteralPath $gf -TotalCount 1)" -replace '^gitdir:\s*').Trim(); [bool]($gd -and (Test-Path -LiteralPath (Join-Path $gd 'claude-slot'))) }
 # ---- lease: wt lease
@@ -347,7 +358,8 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
   $poolLock = Join-Path $sdir "$rl.pool"; $wf = Join-Path $wdir "$(ConvertTo-KitSlug $Agent)-$rl.json"; $since = (Get-KitStamp)
   $slotRoot = if ($Root) { $Root } else { @($KitConf.WorktreeRoots)[0] }
   $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
-  Write-KitAtomic $wf (@{ agent = $Agent; repo = $rl; branch = $Branch; since = $since } | ConvertTo-Json -Compress)
+  $waitTok = [guid]::NewGuid().ToString('n'); $ownWait = { "$((Read-KitSlotLease $wf).token)" -eq $waitTok }
+  Write-KitAtomic $wf (@{ agent = $Agent; repo = $rl; branch = $Branch; since = $since; token = $waitTok; pid = $PID } | ConvertTo-Json -Compress)
   try {
     while (-not $got) {
       $got = Invoke-KitLocked $poolLock {
@@ -385,12 +397,15 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
         $pick
       } | Select-Object -Last 1
       if (-not $got) {
+        # cancelled (board leave / handoff removed the wait, or a newer lease of this agent took it) or its agent left: an orphan never queues ahead of a successor
+        if (-not (& $ownWait)) { throw "wt lease cancelled: the $rl wait of $Agent was removed (board leave / handoff) or replaced by a newer lease" }
+        if (Test-KitPoolWaiterGone $Agent $since) { throw "wt lease stopped: $Agent left the board (no live row): its successor leases fresh" }
         if ((Get-Date) -gt $deadline) { throw "no $rl slot free within $WaitMinutes min (all $size leased: wt pool -Repo $rl shows the holders)" }
         if (-not $told) { "all $size $rl slots are leased; waiting for a release (fair queue) ..."; $told = $true }
         Wait-KitPoll 20
       }
     }
-  } finally { Remove-Item -LiteralPath $wf -Force -ErrorAction SilentlyContinue }
+  } finally { if (& $ownWait) { Remove-Item -LiteralPath $wf -Force -ErrorAction SilentlyContinue } }   # a newer waiter's file stays
   $p = $got.path; $cur = ''; $h0 = ''
   try {
     if ($got.new) {

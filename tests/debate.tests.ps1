@@ -33,6 +33,9 @@ Expect 'decide answer: wait returns it, contracts carry it, none pending' ($w -m
 $out = pwsh @np $O decide ask -Kind envfix -Run w1 -Agent X1 -Item A3 -Question 'refresh the release' -Contracts $cf | Out-String
 $eid = if ($out -match 'ENV-FIX (envfix-[a-z0-9-]+) pending') { $Matches[1] }
 $pend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.run -eq 'w1' })
+# coordinator 2026-11-25: a decisions loop answered 'A' on an ENV-FIX id (no options): refused, still pending
+$efA = Px $O decide answer -Id $eid -Answer 'A' | Out-String; $efCode = $LASTEXITCODE; $efPend = @(Px $O decide list -Pending -Json | ConvertFrom-Json | Where-Object { $_.id -eq $eid }).Count
+Expect "decide answer: a bare option letter on an ENV-FIX is refused (exit 2), it stays pending ($efCode, $efPend, $($efA.Trim()))" ($efCode -eq 2 -and $efPend -eq 1 -and $efA -match 'is an ENV-FIX')
 $null = Px $O decide answer -Id $eid -By coordinator -Answer 'done: refreshed'
 $w = Px $O decide wait -Id $eid -MaxMinutes 1 | Out-String
 Expect 'decide envfix: no context needed, pending for the coordinator, contracts note, answer returned' ($eid -and $pend.Count -eq 1 -and $pend[0].kind -eq 'envfix' -and (Get-Content $cf -Raw) -match "ENV-FIX NEEDED $eid" -and $w -match 'done: refreshed')

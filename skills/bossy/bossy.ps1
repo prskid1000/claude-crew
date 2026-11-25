@@ -219,7 +219,7 @@ switch ($Action) {
     # its phone leases under another id (test:T1hm, holder T1)
     $byHolder = @(Read-KitJsonFiles (Get-KitPath phones) | Where-Object { $_.agent -and $_.agent -ne $script:leftEntry.agent -and "$($_.holder)" -eq $script:leftEntry.agent -and $_.holderPid -and "$($_.holderPid)" -eq "$($script:leftEntry.holderPid)" } | ForEach-Object agent | Select-Object -Unique)
     if (-not $paused -and -not $Handoff -and -not $twin.Count) { Invoke-KitReleaseAgent -Agent (@($script:leftEntry.agent) + $byHolder) -Reason "left the board ($Session)" }   # paused / handed off: successor keeps them
-    if (-not $paused) { try { Stop-KitLeftShells $script:leftEntry } catch { } }   # shells die with it
+    if (-not $paused) { try { Stop-KitLeftShells $script:leftEntry } catch { }; if (-not $twin.Count) { $null = Remove-KitPoolWaits $script:leftEntry.agent } }   # shells, queued wt leases die with it
     if ($paused) {
       # poll-ok: local pause record, bounded by -Wait minutes
       $until = (Get-Date).AddMinutes($Wait); while (($pz = Get-KitActivePause $script:leftEntry.run) -and (Get-Date) -lt $until) { Wait-KitPoll 10 }
@@ -775,8 +775,8 @@ function HeldPast($o) { $nw = Get-Date; if ($o.holdCheckedAt -and ($nw - [dateti
   $o.holdCheckedAt = (Get-KitStamp stored $nw); $past = Test-TrackerStatus $hs 'closed', 'inTest'
   if ($past) { $o.done = $true; $o.doneAt = $o.holdCheckedAt }; $null = Save $o -Run
   if ($past) { "DONE $($o.task): status '$hs' already past promoted; hold dropped ($(if ($o.holdPromotion) { $o.holdPromotion } else { 'planned areas' }))" } }
-# a hold 'deferred items: <task> <why>, ...' whose every piece names another tracked task that is done is a fact gone stale:
-# released with a line (owner 2026-11-23); free text ('pin 744') or the task's own id stays held
+# a hold 'deferred items: <task> <why>, ...' naming only other done tracked tasks is stale: released with a line (owner
+# 2026-11-23); free text ('pin 744') or the task's own id stays held
 function Clear-KitStaleHold($o) {
   if ("$($o.holdPromotion)".Trim() -notmatch '^deferred items:\s*(?<l>.+)$') { return '' }
   $hp = "$($o.holdPromotion)"; $to = @([regex]::Split($Matches.l, ',(?![^()]*\))') | ForEach-Object { ($_.Trim() -split '[\s:]', 2)[0] } | Where-Object { $_ } | Select-Object -Unique)
@@ -1112,7 +1112,7 @@ function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [strin
 function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.completed -and $_.runId } | ForEach-Object runId) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
 # coordAt on disk as text: a session that stepped aside mid-sweep stamped it (ConvertFrom-Json makes a DateTime)
-# the last sweep: the lock's start while its pwsh runs, else the last finished report (a dead or hung sweep's lock never counts)
+# the last sweep: the lock's start while its pwsh runs, else the last report (a dead sweep's lock never counts)
 function Get-KitLastSweepAt { $h = try { Read-KitText (Join-Path (Get-KitPath cache -Create) 'supervise.lock') | ConvertFrom-Json -AsHashtable } catch { $null }
   $ra = try { (Read-KitText (Get-KitPath supervise-state) | ConvertFrom-Json -AsHashtable).report.at } catch { $null }
   # a live pid (a reused one started later never counts): its start or, a long-lived host, its finished report
@@ -1283,7 +1283,7 @@ $nAct = [math]::Max($active.Count, @(Get-KitLiveTranscripts $now 10 '*').Count) 
 Phase 'memory'; $mem = Get-SysMem; $pct = [int](100 * (1 - $mem.AvailGB / $mem.TotalGB)); L "memory: $pct% used, $([math]::Round($mem.AvailGB, 1)) GB available"
 $state.load = @{ at = (Get-KitStamp stored $now); availGB = $mem.AvailGB; cpu = (Get-SysCpu); agents = $nAct + $wfAgents.Count }   # for Get-KitLoadTags
 $keepFree = if ($env:CLAUDE_GATE_KEEP_FREE_GB) { [double]$env:CLAUDE_GATE_KEEP_FREE_GB } else { [double](Get-KitSetting 'gate.keepFreeGB' ([math]::Max(6, [math]::Round($mem.TotalGB * 0.15)))) }
-# adapter hooks see $now, $mem, $keepFree, Within, Left; return a {level,what,action} flag, {name,by,gb} row, {info}, {ramNeed} or a line
+# adapter hooks see $now, $mem, $keepFree, Within, Left; return a flag, {name,by,gb} row, {info}, {ramNeed} or a line
 $res = [Collections.Generic.List[object]]::new(); $script:ownerInfo = @(Get-KitParamChanges $(if ($state.settingsSeen) { [datetime]$state.settingsSeen } else { $now.AddHours(-1) })); if ($AutoFix -and $me -ne 'os-timer') { $state.settingsSeen = (Get-KitStamp stored $now) }; $script:ramNeed = 0   # SETTINGS changed since last beat
 function Add-KitResult($x) { if ($x -is [string]) { L $x } elseif ($x.level) { Set-ActSection $x.level $x.what; [void]$flags.Add($x) } elseif ($x.info) { $script:ownerInfo += $x.info } elseif ($x.ramNeed) { $script:ramNeed = [math]::Max($script:ramNeed, [double]$x.ramNeed) } elseif ($x.name) { $res.Add($x) } }
 # machine guards first (build gate, cache flush, phones, QA seats)
@@ -1661,7 +1661,7 @@ foreach ($f in Get-ChildItem (Get-KitGateLedger) -Filter '*.json' | Where-Object
 
 $ct = if ($DryRun) { [long](Size (Join-Path $osTmp 'claude')) }; if ($ct) { $notes += "Claude session temp (outside the kit, not managed): $([math]::Round($ct / 1MB)) MB in $(Join-Path $osTmp 'claude')" }
 
-# legacy: kit files in the OS temp (the old build-gate ledger); 24 h idle: a not-yet-pulled kit copy keeps its live ones
+# legacy: kit files in the OS temp (the old build-gate ledger); 24 h idle
 foreach ($f in Get-ChildItem $osTmp -Force | Where-Object { $_.Name -match '^(kit-|claude-kit-|claude-build-gate$|wfc\.js$|gradletest$|report-preview\.html$|gate-debug\.ps1$|bad-findings\.json$|audit-test$|kitshots$|tsc\d\.log$|claude-wt-selftest$)' }) {
   if (Old $f 24) { Gone $f.FullName 'kit leftover in the OS temp (legacy)' }
 }
@@ -1803,14 +1803,14 @@ function Invoke-Decide {
     'answer' {
       $o = & $get $Id; if (-not $o) { "no decision $Id"; exit 1 }
       if (-not $Answer) { 'usage: decide answer -Id <id> -Answer "<words>" [-Supersedes <ids>] [-Link <plan url>] [-NoPublish]'; exit 2 }
+      if ($o.kind -eq 'envfix' -and $Answer -match '^\s*\w\s*[:.)]?\s*$') { "refused: $Id is an ENV-FIX (no options): -By <fixer> -Answer 'done: <what>'"; exit 2 }   # a pick sent to the wrong id
       $o.status = 'answered'; $o | Add-Member -Force answer $Answer; $o | Add-Member -Force by $By; $o | Add-Member -Force answeredAt (Get-KitStamp)
       if ($Rationale) { $o | Add-Member -Force rationale $Rationale }
       if ($supIds.Count) { $o | Add-Member -Force supersedes $supIds }
       & $save $o
       & $note $o.contracts "DECISION $Id ANSWERED by $($By): $Answer$(if ($Rationale) { " (Rationale: $Rationale)" })"
       "answered $Id ($($o.agent), item $($o.item)): $Answer"
-      # a scope ask (-Gate scope, or naming `decide record -Gate scope`) answered by a pick: the scope word (wt commit -ScopeOk)
-      # dec-37: "outside the web-payments paths" / "(scope-ok ...)" was a scope ask the old wording test missed
+      # a scope ask (-Gate scope, naming `decide record -Gate scope`, or its wording: dec-37) answered by a pick: the scope word (wt commit -ScopeOk)
       $isScope = $o.gate -eq 'scope' -or "$($o.question) $(@($o.options | ForEach-Object label) -join ' ')" -match '(?i)\boutside\b[^.?]{0,60}\b(area|paths?|scope)\b|\bscope[- ]?(ok|word|record)\b'
       $scItem = if ("$($o.question)" -match '-Gate scope -Item\s+(\S+)') { $Matches[1].TrimEnd('.,;)') } elseif ($isScope) { "$($o.item)" }
       $scBr = @(if ($scItem -or $isScope) { Get-KitAgentBranches $o.agent $o.run }); if (-not $scItem -and $scBr.Count) { $scItem = $scBr[0] }
@@ -1818,7 +1818,7 @@ function Invoke-Decide {
       $pick = @($o.options | Where-Object { $Answer -match "^\s*$([regex]::Escape("$($_.key)"))(\s*[:.)(—-]|\s*$)" })[0]; $said = if ($pick) { "$($pick.label)" } else { $Answer }
       if ($scItem -and $By -notmatch $crewRx) {
         $denyRx = "(?i)\b(split|hold|revert|separate|no|not|don'?t|deny|reject|refuse|never|keep|drop|skip|remove|exclude|decline|undo|without|narrow)\b"
-        # a pick is judged by its label (description: only "merge .. as is"): the owner's why may name the other side (dec-47)
+        # a pick is judged by its label (description: only "merge .. as is"; dec-47)
         $asIs = $pick -and "$($pick.description)" -match '(?i)\bmerge\b.{0,30}\bas is\b'
         if ($said -notmatch $denyRx -and ((($said -match '(?i)\b(record|approve|allow|widen|yes|ok|add|update|include|accept|change|extend)\b' -or $asIs) -and ($pick -or $Answer -notmatch $denyRx)) -or ($Answer -match '(?i)\bscope[- ]?ok\b' -and $Answer -notmatch $denyRx))) {
           $now = (Get-KitStamp); $sc = [pscustomobject][ordered]@{ id = (New-KitName dec "scope $scItem" $dir -Cap 16)
@@ -1845,8 +1845,8 @@ function Invoke-Decide {
       }
     }
     'watch' {
-      # the coordinator's push (Claude Code Monitor, <= 30 min, re-armed): a line per new blocking ask / ENV-FIX at once, not at the
-      # next sweep; on start the last 30 min's (a re-arm gap); other harnesses: the sweep's ACT
+      # the coordinator's push (Monitor, <= 30 min, re-armed): a line per new blocking ask / ENV-FIX at once; on start the
+      # last 30 min's (a re-arm gap); other harnesses: the sweep's ACT
       $until = (Get-Date).AddMinutes([math]::Min($MaxMinutes, 29)); $seen = @{}; $from = (Get-Date).AddMinutes(-30)
       while ($true) {
         foreach ($f in @(Get-ChildItem $dir -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $from -and -not $seen[$_.Name] })) {
