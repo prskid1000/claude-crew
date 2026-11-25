@@ -1482,7 +1482,7 @@ foreach ($tid in @($cand.Keys)) {
 # 5. run.json + lead-notes.md (fixed headings; testers and the lead append with lead-notes add)
 # the title: 25 words at most (capped here; finalize skips the report H1)
 # N3 label '<KEY> <short title>' (+N more tasks): the run's name on the board and dashboard; a task without a key: none (the old label)
-$lb = if ("$(@($items)[0].title)" -match '^(?<k>[A-Z]{2,6}-[A-Z]{2,6}-\d{2,})\s+(?:\[[^\]]+\]\s*)?(?:[^:]{1,30}:\s*)?(?<t>.+)$') { "$($Matches.k) $(Limit-KitWords $Matches.t 7)$(if (@($items).Count -gt 1) { " +$(@($items).Count - 1)" })" }
+$lb = if (($lk = Get-KitTaskKey "$(@(@($items)[0].subtasks)[0].id)") -and (Remove-KitNameKey "$(@($items)[0].title)") -match '^(?:\[[^\]]+\]\s*)?(?:[^:]{1,30}:\s*)?(?<t>.+)$') { "$lk $(Limit-KitWords $Matches.t 7)$(if (@($items).Count -gt 1) { " +$(@($items).Count - 1)" })" }   # dec-60: the key from the kit table
 $run = [ordered]@{ name = "$($jb.name)"; label = "$lb"; started = (Get-KitStamp); title = (Limit-KitWords "$($jb.target): $(@($items | ForEach-Object title) -join '; ')" 25 "+$(@($items).Count)-items"); target = "$($jb.target)"; kitDir = "$($jb.kitDir)"; runDir = $dir; mandate = @($jb.runSettings.mandate); tracker = [ordered]@{ list = "$(@($lists)[0])" }; items = @($items); left = @($left) }
 foreach ($rk in @(@($jb.runSettings.Keys) | Where-Object { $_ -and $_ -notin $run.Keys })) { $run[$rk] = $jb.runSettings[$rk] }
 Write-KitAtomic "$dir/run.json" ($run | ConvertTo-Json -Depth 8)

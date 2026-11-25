@@ -1,6 +1,6 @@
 """kitbag_naming.py (plugin): one naming standard for work items, docs, runs, agents and git names (kit.local.json `naming`).
 
-  python -X utf8 skills/bossy/kitbag.py naming check <kind> <name> [<name> ...]   # exit 1 names each one off the standard + its pattern
+  python -X utf8 skills/bossy/kitbag.py naming check <kind> [key=<KEY>] <name> ...   # exit 1 names each one off the standard (a title: DUP-WORDS vs key=)
   python -X utf8 skills/bossy/kitbag.py naming next key <PRODUCT> <AREA>           # the next <PRODUCT>-<AREA>-<nnn> (locked counter)
   python -X utf8 skills/bossy/kitbag.py naming next name <kind> [<topic>] [--dir d]  # <kind>-<topic> <= 12 chars (buildy-ask, tidy); a tie -2 (--dir: vs its files)
   python -X utf8 skills/bossy/kitbag.py naming next id <kind>                      # <kind>-<n> unpadded (dec-12): only where no word names it
@@ -11,7 +11,7 @@
   python -X utf8 skills/bossy/kitbag.py naming rename --plan <plan.json> [--json]  # old codes -> new keys: a dry run table, never applied here
   python -X utf8 skills/bossy/kitbag.py naming seed <PRODUCT-AREA> <n>          # after an applied rename: next key is n+1
   python -X utf8 skills/bossy/kitbag.py naming tags [--have a,b] key=<KEY> kind=bug env=- ...   # JSON {tags, add, remove}
-Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `SHOP-CAT-004 <outcome>` (kind, area, product: tags)
+Kinds: key `SHOP-CAT-004` · item `SHOP-CAT-004.2 add-price-projection` · title `Cart held in the browser` (dec-60: key, area, product in the description's kit table; kind, area, product: tags)
  · tag `on-staging` (lowercase kebab, from the TAG_GROUPS vocabulary) · desc `ask catalogue create-only prompt`
  · doc `SHOP-CAT-004 Spec v3 — <title>` · run `buildy-ask` · agent `devy-ask-prompts` (no topic: `devy-4`) · area `ask-prompts`
    (what it covers; a tie `-2`) · lane `lane-01` · label `fix: rest` (a dashboard / board run label: no role word, no date)
@@ -20,12 +20,12 @@ WORDS (owner 2026-11-24): a name says what it is; a number only breaks a tie. NO
 (at, started). PADDED: no zero-padded counter. SHOWN (owner 2026-11-25): '<role>-<2-3 topic words> · <plain words>'
 (kitbag.py name_shown: the one normaliser; SHAPE, TIE-LETTER, NUMBERED, DESC flag the rest; lint NAME-NUMBER: a counter name says why). Old dated / padded ids (`buildy-20261123-01`, `dec-0012`) still resolve, never made.
 PRODUCT / AREA: 2-6 capitals registered in naming.products / naming.areas ({code: name}); an unknown code or a key without
-one is refused. A tracker with native ids keeps them as the link; the kit key lives in the title prefix and a field.
+one is refused. A tracker with native ids keeps them as the link; the kit key lives in the `kit:` line (an old title prefix still reads).
 DUP-WORDS: a name never repeats what its key or tags say (product, a leading area word, a [Type] tag, a repo list); make and
 rename strip them. TAGS (owner 2026-11-24): the facts a title no longer says, one vocabulary (TAG_GROUPS, naming.tags);
 one kind, one broad area (naming.tags.areaMap) and one product tag first (scan, WATCH TAGS; fix: tracker retag); no wave tag.
 Exit codes: 0 ok · 1 names off the standard · 2 usage error.
-Sections: L33 model · L110 no repeats · L214 tags
+Sections: L33 model · L112 no repeats · L216 tags
 """
 import json, os, re, sys, time
 import os.path as osp
@@ -50,15 +50,15 @@ def patterns(cfg):
     key = rf'(?:{alt(cfg["products"])})-(?:{alt(cfg["areas"])})-\d{{{cfg["digits"]},}}'
     ty, slug = '|'.join(TYPES), r'[a-z0-9]+(?:-[a-z0-9]+)*'
     return {'key': rf'^{key}$', 'item': rf'^{key}\.\d+ {slug}$', 'case': rf'^{key}-TC\d{{2,}}$',
-            'title': rf'^{key}(?:\.\d+)? \S.*$', 'tag': r'^[a-z0-9]+(?:-[a-z0-9]+)*$',
+            'title': r'^(?!\[|[A-Z]{2,6}-[A-Z]{2,6}-\d)\S.*$', 'tag': r'^[a-z0-9]+(?:-[a-z0-9]+)*$',
             'doc': rf'^{key}(?:\.\d+)? (?:{"|".join(map(re.escape, DOC_KINDS))}) v\d+ — \S.*$',
             'run': r'^[a-z]+(?:-[a-z0-9]+)*$', 'id': r'^[a-z]+(?:-[a-z0-9]+)+$', 'agent': r'^[a-z]+(?:-[a-z0-9]+)+$',
             'area': r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$', 'lane': r'^lane-\d{2,}$', 'label': r'^\S.*$', 'desc': r'^[a-z0-9].*$',
             'branch': rf'^(?:{ty})/{key}-{slug}$', 'mr': rf'^(?:{ty})(?:\([\w./-]+\))?!?: \S.* \[{key}\]$'}
 
 
-def name_problem(kind, name, cfg=None):
-    """'' when <name> fits <kind>, else why (an unknown PRODUCT / AREA code named)."""
+def name_problem(kind, name, cfg=None, key=''):
+    """'' when <name> fits <kind>, else why (an unknown PRODUCT / AREA code named); a plain title: DUP-WORDS against its <key> (kit table)."""
     cfg = cfg or naming_cfg()
     rx = patterns(cfg).get(kind)
     if rx is None:
@@ -67,6 +67,8 @@ def name_problem(kind, name, cfg=None):
         return f'NO-DATE: {dm[0]!r} is a date; the record\'s fields hold it, its words name it ({EXAMPLES[kind]})'
     if kind in ('run', 'id', 'agent') and (pm := re.search(r'-(0\d+)(?=-|$)', name) or re.match(r'^[a-z]+(?:-[a-z]+)*-(\d{4,})$', name)):
         return f'PADDED: {pm[1]!r} is a padded counter; name it by what it is, a number only to break a tie ({EXAMPLES[kind]}; an old id still resolves)'
+    if kind == 'title' and re.match(r'[A-Z]{2,6}-[A-Z]{2,6}-\d', name):
+        return "KEY-IN-TITLE: the key lives in the description's kit table (dec-60); fix: crafty.ps1 tracker retag <ids> -DryRun, then apply"
     if kind == 'area' and re.match(r'^area-[A-Z]', name):
         return f'NUMBERED: {name!r} is a code + counter; name the area by what it covers ({EXAMPLES[kind]})'
     if kind in ('run', 'agent', 'area') and len(re.sub(r'-\d+$', '', name)) > 16:   # owner: ~12, 16 at most, a tie suffix aside
@@ -83,7 +85,7 @@ def name_problem(kind, name, cfg=None):
     if kind == 'tag' and re.match(rx, name) and (len(name) > 30 or name.upper() in codes):
         return f'a tag is 1-30 characters and never a PRODUCT / AREA code (the key says it): {name!r}'
     if re.match(rx, name):
-        return dup_words(kind, name, cfg)
+        return dup_words(kind, f'{key} {name}' if kind == 'title' and key else name, cfg)
     m = re.search(r'\b([A-Z]{2,6})-([A-Z]{2,6})-\d+', name)
     if kind in ('key', 'item', 'case', 'title', 'doc', 'branch', 'mr') and not (cfg['products'] and cfg['areas']):
         return 'naming.products / naming.areas are empty: register the codes in kit.local.json first'
@@ -95,7 +97,7 @@ def name_problem(kind, name, cfg=None):
 
 
 EXAMPLES = {'key': 'SHOP-CAT-004', 'item': 'SHOP-CAT-004.2 add-price-projection', 'case': 'SHOP-CAT-004-TC03',
-            'title': 'SHOP-CAT-004 <outcome>', 'tag': 'wave-2', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
+            'title': 'Cart held in the browser', 'tag': 'wave-2', 'doc': 'SHOP-CAT-004 Spec v3 — <title>',
             'run': 'buildy-ask', 'id': 'dec-close-parent', 'agent': 'devy-ask-prompts', 'area': 'ask-prompts', 'lane': 'lane-01', 'label': 'fix: rest', 'desc': 'ask catalogue create-only prompt',
             'branch': 'feat/SHOP-CAT-004-public-catalogue', 'mr': 'feat(web): <summary> [SHOP-CAT-004]'}
 
@@ -201,7 +203,7 @@ def make(kind, p, cfg=None):
     key = g('key')
     cl = lambda t, ty='': clean(t, key, cfg, ty)
     tag = slugify(g('tag'), 3)   # a tracker's native branch tag (CU-<id>): kept so its links and the kit's branch parsers still match
-    out = {'title': lambda: f'{key} {readable(clean(g("outcome"), key, cfg, g("type", "Feature"), labels=True), key, cfg)}',   # type, product, area: tags (naming tags)
+    out = {'title': lambda: readable(clean(g("outcome"), key, cfg, g("type", "Feature"), labels=True), key, cfg),   # dec-60: plain words; key, area, product: the kit table; type: a tag
            'doc': lambda: f'{key} {g("kind", "Spec")} v{g("ver", "1")} — {cl(g("title"), g("kind", "Spec"))}',
            'branch': lambda: f'{g("type", "feat")}/{key}-' + '-'.join(x for x in (tag, slugify(cl(g("slug") or g("title"), g("type", "feat")))) if x),
            'mr': lambda: f'{g("type", "feat")}{"(" + g("scope") + ")" if g("scope") else ""}: {cl(g("summary"), g("type", "feat"))} [{key}]',
@@ -338,6 +340,17 @@ def tag_gaps(have, cfg=None, level=''):
     return out + [f'{g} tag {t!r} (retired)' for t, g in zip(have, by) if g in RETIRED]
 
 
+META_RX = re.compile(r'\\?<!-- kit:meta -->(.*?)\\?<!-- /kit:meta -->', re.S)   # ClickUp reads markers back as \<!--
+
+
+def meta_read(desc):
+    """dec-60: a description's kit table as {key (row Code), area, product, parent, run, ...} (the last table wins; task-items.ps1
+    Get-KitTaskMeta / Set-KitTaskMeta; Markdown and Jira wiki rows)."""
+    ms = META_RX.findall(str(desc or '').replace('\r\n', '\n'))
+    rows = [m for ln in re.sub(r'\\(?=[\W_])', '', ms[-1]).split('\n') if (m := re.match(r'^\s*\|\|?\s*([^|]+?)\s*\|\|?\s*([^|]*?)\s*\|\|?\s*$', ln))] if ms else []
+    return {('key' if (n := re.sub(r'\W+', '', m[1].lower())) == 'code' else n): m[2].strip() for m in rows if not re.match(r'^(?:Kit|:?-+:?)$', m[1]) and m[2].strip()}
+
+
 def next_key(product, area, cfg=None):
     cfg = cfg or naming_cfg()
     product, area = product.upper(), area.upper()
@@ -414,13 +427,14 @@ def plan_rows(plan, cfg):
             except re.error as e:
                 bad.append(f'naming.titleStrip {rx!r}: {e}')
         title = make('title', {'key': key, 'type': ty, 'outcome': re.sub(r'\s{2,}', ' ', outcome)}, cfg) + (' ' + tail.strip() if tail.strip() else '')
-        bad += [f'new title {w}' for w in [name_problem('title', title, cfg)] if w]
+        bad += [f'new title {w}' for w in [name_problem('title', title, cfg, key)] if w]
+        meta = {'key': key, 'area': tag_value('area', key.split('-')[1], cfg), 'product': tag_value('product', key.split('-')[0], cfg)}   # task-items.ps1 New-KitKeyMeta
         wave = next((m[1] for h in live if (m := re.match(r'(?i)wave\b.*?(\d+)\s*$', str(h)))), '') or it.get('wave') or ''   # a live label, else the kit's order record
         try:
             tg = tags({'key': key, 'kind': ty, **({'level': it['level']} if it.get('level') else {})}, live, cfg)
         except ValueError as e:
             tg, bad = {'tags': live, 'add': [], 'remove': []}, bad + [str(e)]
-        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad, 'gaps': tag_gaps(live, cfg, it.get('level') or ''), **tg})
+        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'meta': meta, 'problems': bad, 'gaps': tag_gaps(live, cfg, it.get('level') or ''), **tg})
     return rows
 
 
@@ -434,8 +448,9 @@ def cmd_naming(rest):
         return 0 if (not a or a[0] in ('help', '-h') or '--help' in rest) else 2
     verb = a[0]
     if verb == 'check' and len(a) >= 3:
-        bad = [(n, w) for n in a[2:] if (w := name_problem(a[1], n, cfg))]
-        print('\n'.join(f'NAME {a[1]} {n!r}: {w}' for n, w in bad) or f'naming: {len(a) - 2} {a[1]} name(s) fit the standard')
+        ky, ns = next((x[4:] for x in a[2:] if x.startswith('key=')), ''), [x for x in a[2:] if not x.startswith('key=')]   # check title key=<KEY> <title>: DUP-WORDS
+        bad = [(n, w) for n in ns if (w := name_problem(a[1], n, cfg, ky))]
+        print('\n'.join(f'NAME {a[1]} {n!r}: {w}' for n, w in bad) or f'naming: {len(ns)} {a[1]} name(s) fit the standard')
         return 1 if bad else 0
     if verb == 'norm' and len(a) >= 3:   # the shown form: <id> · <description>; --live: the other live names (a tie suffix stays on a clash)
         print(name_shown(a[1], a[2], opt('--topic'), [x for x in opt('--live').split(',') if x], opt('--role')))
@@ -456,7 +471,8 @@ def cmd_naming(rest):
         except ValueError as e:   # a non-number n / m
             print(f'naming make {a[1]}: {e}', file=sys.stderr)
             return 2
-        if a[1] in patterns(cfg) and (w := name_problem(a[1], n, cfg)):   # a made name obeys its own check
+        kw = name_problem('key', dict(x.split('=', 1) for x in a[2:] if '=' in x).get('key', ''), cfg) if a[1] == 'title' else ''   # a plain title: its key still checked
+        if a[1] in patterns(cfg) and (w := name_problem(a[1], n, cfg) or kw):   # a made name obeys its own check
             print(f'NAME {a[1]} {n!r}: {w}', file=sys.stderr)
             return 1
         print(n)
@@ -503,7 +519,7 @@ def cmd_naming(rest):
             for r in rows:
                 g, n = r['key'].rsplit('-', 1)
                 top[g] = max(top.get(g, 0), int(n))
-            print('DRY RUN: nothing renamed; the old code stays searchable (a tracker field / the title suffix) when applied. After applying: '
+            print('DRY RUN: nothing renamed; the old code stays searchable (the title suffix, the Old title line) when applied. After applying: '
                   + '; '.join(f'kitbag.py naming seed {g} {n}' for g, n in top.items()))
         return 1 if any(r['problems'] for r in rows) else 0
     print(__doc__, file=sys.stderr)

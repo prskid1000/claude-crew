@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L93 move · L137 status roles · L296 task text · L313 naming · L457 track lines · L462 task ids ·
-#   L478 tags · L547 order
+# Sections: L8 items · L98 move · L142 status roles · L301 task text · L318 naming · L322 meta (dec-60, owner 2026-11-25) ·
+#   L490 track lines · L495 task ids · L511 tags · L587 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -69,6 +69,7 @@ function ConvertTo-KitSpecItems($Spec, [string]$Task) {
 # $CodeOf (rollup areas), else its id
 function Update-KitParentItems([string]$Parent, $Pt, [hashtable]$CodeOf = @{}) {
   if (-not $Pt) { Clear-TrackerMemo $Parent; $Pt = Get-TrackerTask $Parent }; $subs = @($Pt.subtasks | Where-Object { $_.id }); if (-not $subs.Count) { return }
+  Update-KitParentMeta $Parent $Pt
   $px = Read-KitState (Get-KitTaskFile $Parent); $items = @(ConvertTo-KitSpecItems $px.spec $Parent) + @(foreach ($s in $subs) { $sx = Read-KitState (Get-KitTaskFile $s.id); $sc = $sx.spec.code
       if (-not $sc) { $sc = @($px.spec.subtasks | Where-Object { "$($_.id)" -eq "$($s.id)" } | ForEach-Object code)[0] }
       [pscustomobject]@{ text = "$(Format-KitItemText $(if ($sc) { "$sc" } elseif ($CodeOf[$s.id]) { "$($CodeOf[$s.id])" } else { "$($s.id)" }) ("$($s.name)" -replace '^\s*\[[^\]]*\]\s*') @($s.url))$(if ($sx.heldNote) { " · $($sx.heldNote)" })"
@@ -77,6 +78,10 @@ function Update-KitParentItems([string]$Parent, $Pt, [hashtable]$CodeOf = @{}) {
   $null = Set-KitTaskChecklist $Parent (Get-KitItemsLabel) $items -Prune; Update-KitTaskIndex $Parent { param($x) $x.parentItemsSig = $sig; $x.itemsFrom = 'subtasks' }
   "parent items ${Parent}: $(@($items | Where-Object done).Count)/$($items.Count) done"
 }
+# a keyed parent's kit table: its Children count and shape follow its subtasks (a fresh read before the write: a rollup may just have written)
+function Update-KitParentMeta([string]$Parent, $Pt) { if (-not $Pt) { Clear-TrackerMemo $Parent; $Pt = Get-TrackerTask $Parent }; $pm = Get-KitTaskMeta "$($Pt.description)"
+  if (-not $pm.key -or "$($pm.children)" -eq "$(@($Pt.subtasks | Where-Object { $_.id }).Count)") { return }; Clear-TrackerMemo $Parent; $fp = Get-TrackerTask $Parent
+  $null = Set-TrackerDescription $Parent (Set-KitTaskMeta "$($fp.description)" (Get-KitShapeMeta $fp $pm.key)) }
 # merge by key: items / subtasks by code, decisions by id; any other field present replaces the stored one
 function Merge-KitTaskSpec($Old, $New) {
   $m = [ordered]@{}; foreach ($k in @($Old.Keys)) { $m[$k] = $Old[$k] }
@@ -310,10 +315,36 @@ function Test-KitKindName([string]$Name) {   # a kit-rendered kind (tracker.kind
   $kp = Get-KitSetting 'tracker.kindPrefixes' $null; $ks = @('feature', 'chore') + @(if ($kp) { (Get-KitProps $kp).Name }) | Where-Object { $_ -ine 'bug' } | Select-Object -Unique
   $n = "$Name".TrimStart(); [bool]@($ks | Where-Object { $n.StartsWith((Get-KitKindPrefix $_), 'OrdinalIgnoreCase') }).Count
 }
-# ---- naming: the kit key (kitbag.py naming, kit.local.json naming) at a name's start: <KEY> <outcome> (+ tags)
+# ---- naming: the kit key (kitbag.py naming, kit.local.json naming): the kit table below (dec-60); old names start <KEY> <outcome>
 function Get-KitNameKey([string]$Name) { if ("$Name".TrimStart() -cmatch '^([A-Z]{2,6}-[A-Z]{2,6}-\d{2,})(?:\.\d+)?(?=\s|$)') { $Matches[1] } else { '' } }
 function Remove-KitNameKey([string]$Name) { "$Name".TrimStart() -creplace '^[A-Z]{2,6}-[A-Z]{2,6}-\d{2,}(?:\.\d+)?\s+', '' }
 function Test-KitNamingOn { [bool]@(Get-KitProps (Get-KitSetting 'naming.areas' $null)).Count }
+# ---- meta (dec-60, owner 2026-11-25): the key and every id the kit tracks in ONE table at the description's end, never the title:
+# <!-- kit:meta --> | Kit | Value | rows Code (the key), Area, Product, Parent, Run <!-- /kit:meta -->; every adapter's description path
+# (Markdown, Jira ADF / wiki, Azure HTML), kept last on a rewrite (Set-TrackerDescription), out of prose caps; kitbag_naming.py meta_read reads it too
+$script:KitMetaRx = '(?s)\\?<!-- kit:meta -->(.*?)\\?<!-- /kit:meta -->'   # ClickUp reads markers back as \<!--
+function Get-KitTaskMeta([string]$Desc) { $mo = [ordered]@{}; $mb = @([regex]::Matches(("$Desc" -replace "`r`n", "`n"), $script:KitMetaRx))
+  if ($mb.Count) { foreach ($ml in ($mb[-1].Groups[1].Value -replace '\\(?=[\W_])', '') -split "`n") { if ($ml -match '^\s*\|\|?\s*([^|]+?)\s*\|\|?\s*([^|]*?)\s*\|\|?\s*$' -and $Matches[1] -notmatch '^(Kit|:?-+:?)$' -and $Matches[2].Trim()) {
+        $mn = $Matches[1].ToLower() -replace '\W+'; $mo[$(if ($mn -eq 'code') { 'key' } else { $mn })] = $Matches[2].Trim() } } }; $mo }
+function Set-KitTaskMeta([string]$Desc, $Fields) {   # $Fields win over the table's own; '' keeps the old value, '-' drops the row
+  $mm = Get-KitTaskMeta $Desc; foreach ($mk in @($Fields.Keys)) { $mv = "$($Fields[$mk])".Trim() -replace '\|', '/'; if ($mv -eq '-') { $mm.Remove($mk) } elseif ($mv) { $mm[$mk] = $mv } }
+  $rest = (("$Desc" -replace "`r`n", "`n") -replace "$script:KitMetaRx\n*", '').TrimEnd(); if (-not $mm.Count) { return $rest }
+  $kro = 'key', 'area', 'product', 'parent', 'children', 'run'; $ord = @($kro | Where-Object { $mm.Contains($_) }) + @($mm.Keys | Where-Object { $_ -notin $kro })
+  "$(if ($rest) { "$rest`n`n" })<!-- kit:meta -->`n`n| Kit | Value |`n|---|---|`n$(@($ord | ForEach-Object { "| $(if ($_ -eq 'key') { 'Code' } else { (Get-Culture).TextInfo.ToTitleCase($_) }) | $($mm[$_]) |" }) -join "`n")`n`n<!-- /kit:meta -->"
+}
+# a key's line fields: product and area as their registry names, slugged like their tags (kitbag_naming.py tag_value)
+function New-KitKeyMeta([string]$Key) { if ($Key -cnotmatch '^([A-Z]{2,6})-([A-Z]{2,6})-\d+$') { return [ordered]@{} }; $kpc = $Matches[1]; $kac = $Matches[2]
+  $kslug = { param($Reg, $Code) $kv = @((Get-KitProps (Get-KitSetting "naming.$Reg" $null)) | Where-Object { $_.Name -ceq $Code } | ForEach-Object { "$($_.Value)" })[0]; (@([regex]::Matches("$(if ($kv) { $kv } else { $Code })".ToLower(), '[a-z0-9]+') | Select-Object -First 6 | ForEach-Object Value) -join '-') }
+  [ordered]@{ key = $Key; area = (& $kslug 'areas' $kac); product = (& $kslug 'products' $kpc) } }
+# the rows a task's shape needs (owner 2026-11-25): child Code, Area, Parent · parent Code, Product, Children (count) · standalone Code, Area,
+# Product; '-' drops a row another shape had. $T: a read (parent, subtasks)
+function Get-KitShapeMeta($T, [string]$Key) { $sm = New-KitKeyMeta $Key; if (-not $sm.Count) { return $sm }; $sn = @($T.subtasks | Where-Object { $_.id }).Count
+  if ("$($T.parent)" -and "$($T.parent)" -ne '-') { $sm.product = '-'; $sm.parent = "$($T.parent)"; $sm.children = '-' } elseif ($sn) { $sm.area = '-'; $sm.parent = '-'; $sm.children = "$sn" } else { $sm.parent = '-'; $sm.children = '-' }; $sm }
+# a task's kit key: its kit table, else an old title prefix, else '' (-OrId: the tracker id); $Task: an id or a read (a row without description: read)
+function Get-KitTaskKey($Task, [switch]$OrId) {
+  $T = if ($Task -is [string]) { if ($Task -and $Task -ne '-') { Get-TrackerTask $Task } } elseif ($Task.id -and -not ($Task | Get-Member -Name description)) { Get-TrackerTask "$($Task.id)" } else { $Task }
+  $tk = (Get-KitTaskMeta "$($T.description)").key; if (-not $tk) { $tk = Get-KitNameKey "$($T.name)" }; if (-not $tk -and $OrId) { "$($T.id)" } else { "$tk" }
+}
 # kitbag.py naming <verb> ...: its last stdout line, or a throw with its refusal
 function Invoke-KitNaming([string[]]$Argv) {
   $lec = $global:LASTEXITCODE; $o = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming @Argv 2>&1 | ForEach-Object { "$_" }); $rc = $global:LASTEXITCODE; $global:LASTEXITCODE = $lec
@@ -363,37 +394,39 @@ function Get-KitBakName([string]$File) {
   if (Test-Path -LiteralPath "$File.bak" -PathType Leaf) { Move-Item -LiteralPath "$File.bak" "$File.bak.prev" -Force }
   "$File.bak"
 }
-# Set-TrackerName: an unkeyed new name of a keyed task keeps its key and [Type] (owner 2026-11-24: a hand rename dropped RM-AGT-001)
+# Set-TrackerName (dec-60): the new name plain; a key typed or in the old title moves to the kit table first (owner 2026-11-24: a rename never drops a key)
 function Resolve-KitRenameName([string]$Id, [string]$Name) {
-  if (-not (Test-KitNamingOn) -or (Get-KitNameKey $Name) -or -not ($rnKey = Get-KitNameKey "$((Get-TrackerTask $Id).name)")) { return $Name }
-  if ("$Name".TrimStart() -notmatch '^\[') { $Name = "[$((Get-KitNameKind "$((Get-TrackerTask $Id).name)").kind)] $Name" }; Format-KitKeyedName $Name $rnKey
+  if (-not (Test-KitNamingOn)) { return $Name }; $rnT = Get-TrackerTask $Id; $rnKey = Get-KitNameKey $Name; if (-not $rnKey) { $rnKey = Get-KitNameKey "$($rnT.name)" }
+  if (-not $rnKey) { $rnKey = (Get-KitTaskMeta "$($rnT.description)").key }; if (-not $rnKey) { return (Remove-KitNameKey $Name).Trim() }
+  if ($rnT.name -and -not (Get-KitTaskMeta "$($rnT.description)").key) { $null = Set-TrackerDescription $Id (Set-KitTaskMeta "$($rnT.description)" (New-KitKeyMeta $rnKey)) }
+  if ("$(Remove-KitNameKey $Name)".TrimStart() -notmatch '^\[') { $Name = "[$(if (Test-KitBugTask $rnT) { 'Bug' } else { (Get-KitNameKind "$($rnT.name)").kind })] $(Remove-KitNameKey $Name)" }; Format-KitKeyedName $Name $rnKey   # cleaned like a made title
 }
 # a key for a new task: its own, else allocated from Area ("AREA" or "PRODUCT-AREA") or the parent's key; product: given, the parent's, the
 # only one registered. '' when none can be derived (old-style name kept one version, with a warning)
 function Get-KitNewTaskKey([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) {
-  if ($k = Get-KitNameKey $Name) { return $k }
-  $pk = if ($Parent -and $Parent -ne '-') { Get-KitNameKey "$((Get-TrackerTask $Parent).name)" }; $pp = @("$pk" -split '-')
+  $k = Get-KitNameKey $Name; if (-not $k -and "$($script:KitTitleKey["$Name".Trim()])" -like '*-000') { $k = "$($script:KitTitleKey["$Name".Trim()])" }   # a plain title this create made: its <P>-<A>-000 (dec-60; never another task's real key)
+  if ($k -and $k -notlike '*-000') { return $k }; if ($k -and -not $Area) { $Area = $k -replace '-\d+$' }   # <P>-<A>-000: allocated after the checks
+  $pk = if ($Parent -and $Parent -ne '-') { Get-KitTaskKey $Parent }; $pp = @("$pk" -split '-')
   $ar = @("$Area".ToUpper() -split '-' | Where-Object { $_ }); $prods = @((Get-KitProps (Get-KitSetting 'naming.products' $null)).Name)
   $a = if ($ar.Count) { $ar[-1] } elseif ($pk) { $pp[1] }; $p = if ($ar.Count -gt 1) { $ar[0] } elseif ($pk) { $pp[0] } elseif ($prods.Count -eq 1) { $prods[0] }
   if (-not ($a -and $p)) { [Console]::Error.WriteLine("WARNING: naming: '$Name' gets no key (pass the spec's area: one of $(@((Get-KitProps (Get-KitSetting 'naming.areas' $null)).Name) -join ' '), or a parent with a key); old-style names are accepted one version"); return '' }
   if ($NoAllocate) { return "$p-$a-000" }   # a dry run: the counter is not used
   Invoke-KitNaming @('next', 'key', $p, $a)
 }
-# <KEY> <outcome> (kitbag.py naming make title; owner 2026-11-24: the [Type] and area are tags); naming off or no key: the name as given.
-# A [Type] prefix names the kind; a re-format of the made title keeps it ($script:KitTitleKind); $script:KitNameTags: the tags for create
-$script:KitTitleKind = @{}
+# the plain <outcome> (kitbag.py naming make title; dec-60: the key in the kit table, the [Type] a tag); naming off or no key: the name as given.
+# A [Type] prefix names the kind; a re-format keeps kind and key ($script:KitTitleKind / KitTitleKey); KitNameTags / KitNameMeta: for create
+$script:KitTitleKind = @{}; $script:KitTitleKey = @{}
 function Format-KitKeyedName([string]$Name, [string]$Key) {
   if (-not $Key) { return $Name }; $bare = (Remove-KitNameKey $Name).Trim(); $nk = Get-KitNameKind $bare
   $ty = if ($nk.rest -cne $bare) { $tk = (Get-Culture).TextInfo.ToTitleCase("$($nk.kind)".ToLower()); if ($tk -in 'Feature', 'Bug', 'Chore', 'Spike') { $tk } else { 'Feature' } } elseif ($script:KitTitleKind[$bare]) { $script:KitTitleKind[$bare] } else { 'Feature' }
-  $nm = Invoke-KitNaming @('make', 'title', "key=$Key", "type=$ty", "outcome=$($nk.rest)")
-  $script:KitTitleKind[(Remove-KitNameKey $nm).Trim()] = $ty; $script:KitNameTags = @("key=$Key", "kind=$ty"); $nm
+  $nm = (Invoke-KitNaming @('make', 'title', "key=$Key", "type=$ty", "outcome=$($nk.rest)")).Trim()
+  $script:KitTitleKind[$nm] = $ty; $script:KitTitleKey[$nm] = $Key; $script:KitNameTags = @("key=$Key", "kind=$ty"); $script:KitNameMeta = New-KitKeyMeta $Key; $nm
 }
 # tracker update of an existing task (owner 2026-11-24): its live name stays (a hand rename, never re-made from the brief's area text); a
-# typed title renames it; a key the live name lost comes back
+# typed title renames it; the key stays in the kit table ($Key: unused since dec-60)
 function Get-KitKeptName([string]$Task, $Spec, [string]$Rendered, [string]$Key) {
   $Live = if ($Task) { Clear-TrackerMemo $Task; "$((Get-TrackerTask $Task).name)" }
-  if (-not $Live -or "$($Spec.title)".Trim()) { return $Rendered }
-  if ($Key -and $Key -notlike '*-000' -and -not (Get-KitNameKey $Live)) { "$Key $Live" } else { $Live }
+  if (-not $Live -or "$($Spec.title)".Trim()) { $Rendered } else { $Live }
 }
 # tracker create -Key: the keyed defect record with the name the kit gave it (a re-run renames only while the task still has it)
 function Save-KitKeyedTask([string]$File, [string]$Key, [string]$Id) { Write-KitState $File ([ordered]@{ key = $Key; id = $Id; name = "$((Get-TrackerTask $Id).name)" })
@@ -403,33 +436,33 @@ function Update-KitKeyedTask([string]$File, $Old, [string]$Live, [string]$Name, 
   if ($Old.name -and $Live -ceq "$($Old.name)") { $null = Set-TrackerName $Old.id $Name }
   if (-not $Old.name -or $Live -ceq "$($Old.name)") { Save-KitKeyedTask $File $Key $Old.id }
 }
-function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) { $script:KitNameTags = @(); if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area -NoAllocate:$NoAllocate) }
+function Resolve-KitTaskName([string]$Name, [string]$Parent, [string]$Area, [switch]$NoAllocate) { $script:KitNameTags = @(); $script:KitNameMeta = $null; if (-not (Test-KitNamingOn)) { return $Name }; Format-KitKeyedName $Name (Get-KitNewTaskKey $Name $Parent $Area -NoAllocate:$NoAllocate) }
 # wt new / lease -Task without -Branch: <feat|fix>/<KEY>-<tracker tag>-<slug> (kitbag.py naming make branch; the tag keeps every
 # branch -> task parser and the tracker's own links working); a task without a key: throw (pass -Branch)
 function Get-KitTaskBranch([string]$Task) {
-  $tk = Get-TrackerTask $Task; $nm = "$($tk.name)"; $ky = Get-KitNameKey $nm
-  if (-not $ky) { throw "wt: task $Task has no kit key in its name ('$nm'): pass -Branch, or key the task first (kitbag.py naming)" }
+  $tk = Get-TrackerTask $Task; $nm = "$($tk.name)"; $ky = Get-KitTaskKey $tk
+  if (-not $ky) { throw "wt: task $Task has no kit key (a kit table or an old title prefix; '$nm'): pass -Branch, or key the task first (kitbag.py naming)" }
   $nk = Get-KitNameKind $nm; $rest = $nk.rest -creplace '\s*\(was [^)]*\)\s*$', ''   # an old "<Area>: " head: make's clean drops it
   Invoke-KitNaming @('make', 'branch', "key=$ky", "type=$(if (Test-KitBugTask $tk) { 'fix' } else { 'feat' })", "slug=$rest", "tag=$($KitConf.TrackerTag)$Task")
 }
 # an explicit -Branch of a keyed task off the standard: a warning (old-style names accepted one version)
 function Test-KitTaskBranch([string]$Task, [string]$Branch) {
-  if (-not ($Task -and (Test-KitNamingOn))) { return }; $ky = Get-KitNameKey "$((Get-TrackerTask $Task).name)"
+  if (-not ($Task -and (Test-KitNamingOn))) { return }; $ky = Get-KitTaskKey $Task
   if ($ky -and $Branch -cnotmatch "/$([regex]::Escape($ky))-") { [Console]::Error.WriteLine("WARNING: wt: branch '$Branch' of $ky is off the naming standard (<type>/$ky-<slug>; omit -Branch to get it): accepted one version") }
 }
-# naming on and the ask keyed: <Name> is in the ask's area (its key's AREA); naming off or an unkeyed ask: true
-function Test-KitSameArea([string]$Name, [string]$Ask) {
-  if (-not ((Test-KitNamingOn) -and $Ask -and $Ask -ne '-')) { return $true }; $ak = Get-KitNameKey "$((Get-TrackerTask $Ask).name)"
-  if (-not $ak) { return $true }; $nk = Get-KitNameKey $Name; [bool]($nk -and ($nk -split '-')[1] -ceq ($ak -split '-')[1])
+# naming on and the ask keyed: $Task (a read, or an old keyed name) is in the ask's area (its key's AREA); naming off or an unkeyed ask: true
+function Test-KitSameArea($Task, [string]$Ask) {
+  if (-not ((Test-KitNamingOn) -and $Ask -and $Ask -ne '-')) { return $true }; $ak = Get-KitTaskKey $Ask
+  if (-not $ak) { return $true }; $nk = if ($Task -is [string]) { Get-KitNameKey $Task } else { Get-KitTaskKey $Task }; [bool]($nk -and ($nk -split '-')[1] -ceq ($ak -split '-')[1])
 }
 # a spec's key: its own, the title's, the live task's (a hand-renamed one keeps it), else allocated on create (-Allocate)
 function Set-KitSpecKey($Spec, [string]$Task, [switch]$Allocate) {
   if (-not (Test-KitNamingOn)) { return }
-  if ($Task -and ($lk = Get-KitNameKey "$((Get-TrackerTask $Task).name)")) { $Spec.key = $lk; return }   # the live key wins over a stored one
+  if ($Task -and ($lk = Get-KitTaskKey $Task)) { $Spec.key = $lk; return }   # the live key wins over a stored one
   if ($Spec.key) { return }
   $tk = Get-KitNameKey "$($Spec.title)"   # create: a typed key only names PRODUCT-AREA; the counter gives the number (owner 2026-11-23)
   $ar = if ($Spec.area) { (@($Spec.product, $Spec.area) | Where-Object { $_ }) -join '-' } elseif ($tk) { ($tk -split '-')[0..1] -join '-' }
-  $k = if ($Task) { Get-KitNameKey "$((Get-TrackerTask $Task).name)" } else { Get-KitNewTaskKey (Remove-KitNameKey "$($Spec.title)") "$($Spec.parent)" $ar -NoAllocate:(-not $Allocate) }
+  $k = if ($Task) { Get-KitTaskKey $Task } else { Get-KitNewTaskKey (Remove-KitNameKey "$($Spec.title)") "$($Spec.parent)" $ar -NoAllocate:(-not $Allocate) }
   if ($k) { $Spec.key = $k }
 }
 # a task name's kind and the rest: a configured prefix (tracker.kindPrefixes, bugPrefix), else a leading [Kind], else Feature (a kit key first is skipped)
@@ -466,11 +499,11 @@ function Resolve-TrackerId([string]$Id, [switch]$Soft) {
   if ($__trType -in 'none', 'local' -or $Id -cnotmatch '^[A-Z]{2,6}-[A-Z]{2,6}-\d{2,}$') { return $Id }
   $m = Read-KitState (Join-Path (Get-KitPath cache -Create) 'task-keys.json'); if ($m -and $m[$Id]) { return [string]$m[$Id] }
   if ($Soft) { return $Id }
-  throw "tracker ($__trType): $Id is a kit key, not a $__trType task id: pass the native id (the task URL's id; the task's title starts with $Id)"
+  throw "tracker ($__trType): $Id is a kit key, not a $__trType task id: pass the native id (the task URL's id; its description's kit table names $Id)"
 }
 $script:KitKeyIds = @{}
-function Save-TrackerKey($Task) {   # a keyed task read: key -> native id, once per process
-  $ky = if ($Task -and $Task.name) { Get-KitNameKey "$($Task.name)" }
+function Save-TrackerKey($Task) {   # a keyed task read: key -> native id, once per process (the kit table, else an old title prefix; never a second read)
+  $ky = if ($Task -and $Task.name) { $mk = (Get-KitTaskMeta "$($Task.description)").key; if ($mk) { $mk } else { Get-KitNameKey "$($Task.name)" } }
   if (-not $ky -or -not $Task.id -or "$($Task.id)" -ceq $ky -or $script:KitKeyIds[$ky] -eq "$($Task.id)") { return }
   $f = Join-Path (Get-KitPath cache -Create) 'task-keys.json'; $script:KitKeyIds[$ky] = "$($Task.id)"
   try { Invoke-KitLocked $f { $m = Read-KitState $f; if (-not $m) { $m = @{} }; if ($m[$ky] -ne "$($Task.id)") { $m[$ky] = "$($Task.id)"; Write-KitState $f $m } } } catch { Write-KitLog calls task-keys @{ key = $ky; error = "$_" } }
@@ -508,7 +541,8 @@ function Get-KitTagGapFlag { $lec = $global:LASTEXITCODE; $rows = @(@(try { & (G
 }
 # after tracker create (lib.ps1 New-TrackerTask): kind, product, area of the name Format-KitKeyedName made
 # a task's tags by its shape from a fresh read: a parent (has subtasks) kind + product, a subtask kind + broad area, alone all three
-function Set-KitShapeTags([string]$Task) { if (-not (Test-KitNamingOn)) { return }; Clear-TrackerMemo $Task; $st = Get-TrackerTask $Task; $sk = Get-KitNameKey "$($st.name)"; if (-not $st.name) { return }
+function Set-KitShapeTags([string]$Task) { if (-not (Test-KitNamingOn)) { return }; Clear-TrackerMemo $Task; $st = Get-TrackerTask $Task; $sk = Get-KitTaskKey $st; if (-not $st.name) { return }
+  if ($sk -and ($sd = ("$($st.description)" -replace "`r`n", "`n").TrimEnd()) -cne ($sn = Set-KitTaskMeta $sd (Get-KitShapeMeta $st $sk)) -and (Get-KitTaskMeta $sd).Count) { $null = Set-TrackerDescription $Task $sn -Resolved }   # the kit table's rows follow the shape too
   Set-KitTaskTags $Task (@(if ($sk) { "key=$sk" }) + "level=$(if ($st.parent) { 'sub' } elseif (@($st.subtasks).Count) { 'parent' } else { 'solo' })") -Soft }
 # a subtask: kind + area, its parent then kind + product (owner 2026-11-25: the product is inherited)
 function Set-KitNewTaskTags([string]$Task, [string]$Parent = '') { if ($Task -and @($script:KitNameTags).Count) { $null = Set-KitTaskTags $Task (@($script:KitNameTags) + "level=$(if ($Parent) { 'sub' } else { 'solo' })") -Soft; if ($Parent) { $null = Set-KitTaskTags $Parent @('level=parent') -Soft } } }
@@ -516,11 +550,11 @@ function Set-KitNewTaskTags([string]$Task, [string]$Parent = '') { if ($Task -an
 function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fallback trackers): its full read
   if (Test-KitBugName "$($T.name)") { return $true }
   $tg = @($T.tags) + @(if ($T.id) { (Read-KitState (Get-KitTaskFile "$($T.id)")).tags })
-  if (-not @($tg | Where-Object { $_ }).Count -and $T.id -and -not ($T | Get-Member -Name tags) -and (Test-KitNamingOn) -and (Get-KitNameKey "$($T.name)")) { $tg = @(Get-KitTaskTags "$($T.id)") }
+  if (-not @($tg | Where-Object { $_ }).Count -and $T.id -and -not ($T | Get-Member -Name tags) -and (Test-KitNamingOn) -and (Get-KitTaskKey ($tf = Get-TrackerTask "$($T.id)"))) { $tg = @(Get-KitTaskTags "$($T.id)" $tf) }   # one (memoised) read: a plain title says no key
   'bug' -in $tg
 }
-# tracker tags <id> <group=value> ... | tracker retag <parent>[,<parent>] [-DryRun]: keyed titles + labels of the trees -> <KEY> <outcome>
-# + tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md); -DryRun: the table only (shown to the owner before an apply)
+# tracker tags <id> <group=value> ... | tracker retag <parent>[,<parent>] [-DryRun]: the backfill (dec-60) of keyed tasks of the trees: plain
+# title, the kit table, tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md), then the parents' Items; -DryRun: counts + table
 function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product phase repo env risk decision origin test)'; exit 2 }; return Set-KitTaskTags $Id $Rest }
   if (-not $Id) { 'usage: tracker retag <parent>[,<parent>] [-DryRun]'; exit 2 }
@@ -529,20 +563,26 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   $seen = @{}; $todo = [Collections.Generic.Queue[string]]::new(); foreach ($p in @(Split-KitList $Id)) { $todo.Enqueue($p) }
   $items = @(while ($todo.Count) { $k = $todo.Dequeue(); if ($seen.Contains($k)) { continue }; Clear-TrackerMemo $k; $tk = Get-TrackerTask $k; $seen[$k] = $tk
       if (-not $tk.name) { Write-Warning "retag: $k not readable: skipped"; continue }; foreach ($s in @($tk.subtasks)) { if ($s.id) { $todo.Enqueue("$($s.id)") } }
-      if (Get-KitNameKey $tk.name) { $ot = if ("$($tk.description)" -match '\*\*Old title:\*\* ([^\r\n]+)') { "$(Get-KitNameKey $tk.name) $(Remove-KitNameKey ($Matches[1] -replace '\\([\[\]_*`#])', '$1'))" } else { "$($tk.name)" }   # a re-run plans from the first old title, the live key kept
+      if ($ky = Get-KitTaskKey $tk) { $ot = "$ky $(Remove-KitNameKey $(if ("$($tk.description)" -match '\*\*Old title:\*\* ([^\r\n]+)') { $Matches[1] -replace '\\([\[\]_*`#])', '$1' } else { "$($tk.name)" }))"   # a re-run plans from the first old title, the live key kept
       [ordered]@{ id = "$k"; title = $ot; tags = @(Get-KitTaskTags $k $tk); level = $(if ($tk.parent) { 'sub' } elseif (@($tk.subtasks).Count) { 'parent' } else { 'solo' }); wave = "$((Read-KitState (Get-KitTaskFile $k)).order.wave)" } } })   # wave: tracker order's record
   $pf = New-KitTempFile; [IO.File]::WriteAllText($pf, (@{ items = $items } | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
   $lec = $global:LASTEXITCODE; $md = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch '^DRY RUN: nothing renamed' })   # keys stay: no seed hint
   $rows = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf --json 2>$null | ConvertFrom-Json); $global:LASTEXITCODE = $lec; Remove-Item -LiteralPath $pf -Force
   [IO.File]::WriteAllLines($Out, [string[]]$md, [Text.UTF8Encoding]::new($false))
-  $md; if ($dry) { "DRY RUN: $($rows.Count) keyed task(s), nothing changed; table: $Out"; return }
-  foreach ($r in @($rows | Where-Object { -not @($_.problems).Count })) {
-    $old = "$($seen[$r.id].name)"; if ($r.title -cne $old) { $null = Set-TrackerName $r.id $r.title }
-    Write-KitTaskTags $r.id $seen[$r.id] $r
-    if ($r.title -cne $old) { Clear-TrackerMemo $r.id; $tk = Get-TrackerTask $r.id   # the old title stays searchable (its codes), written once
-      if ("$($tk.description)" -notmatch '<!-- kit:was -->') { $null = Set-TrackerDescription $r.id (Set-KitDescSection $tk.description 'was' "**Old title:** $old" '') } }
-    "RETAGGED $($r.id): $($r.title) · $(@($r.tags) -join ', ')" }
+  $ok = @($rows | Where-Object { -not @($_.problems).Count }); $rtN = @($ok | Where-Object { $_.title -cne "$($seen[$_.id].name)" }).Count
+  $nds = @{}; foreach ($r in $ok) { $tk = $seen[$r.id]; $od = ("$($tk.description)" -replace "`r`n", "`n").TrimEnd(); $nd = Set-KitTaskMeta $od (Get-KitShapeMeta $tk "$($r.key)")   # rows by shape: child / parent / standalone
+    if ($r.title -cne "$($tk.name)" -and $nd -notmatch '<!-- kit:was -->') { $nd = Set-KitDescSection $nd 'was' "**Old title:** $($tk.name)" '' }; $nds[$r.id] = $nd }   # the old title stays searchable (its codes), written once
+  $rmN = @($ok | Where-Object { $nds[$_.id] -cne ("$($seen[$_.id].description)" -replace "`r`n", "`n").TrimEnd() }).Count; $rgN = @($ok | Where-Object { @($_.add).Count + @($_.remove).Count }).Count
+  "retag: $($rows.Count) keyed task(s): $rtN title(s) to strip · $rmN description(s) to set (kit table) · $rgN tag fix(es) · $($rows.Count - $ok.Count) skipped (problems)"
+  [IO.File]::WriteAllLines(($Out -replace '\.md$', '-texts.md'), [string[]]@(foreach ($r in $ok) { "## $($r.id): $($seen[$r.id].name) -> $($r.title)", '### Description now', '````md', "$($seen[$r.id].description)".TrimEnd(), '````', '### After', '````md', $nds[$r.id], '````' }), [Text.UTF8Encoding]::new($false))
+  $md; if ($dry) { "DRY RUN: $($rows.Count) keyed task(s), nothing changed; table: $Out; texts before / after: $($Out -replace '\.md$', '-texts.md')"; return }
+  foreach ($r in $ok) {
+    $tk = $seen[$r.id]; $old = "$($tk.name)"; $od = ("$($tk.description)" -replace "`r`n", "`n").TrimEnd(); $nd = $nds[$r.id]
+    if ($nd -cne $od) { $null = Set-TrackerDescription $r.id $nd -Resolved }; if ($r.title -cne $old) { $null = Set-TrackerName $r.id $r.title }   # the kit table first: the rename finds it
+    Clear-TrackerMemo $r.id; Write-KitTaskTags $r.id (Get-TrackerTask $r.id) $r   # a fresh read: a description tag line keeps the lines above
+    "RETAGGED $($r.id): $($r.title) · Code $($r.key) · $(@($r.tags) -join ', ')" }
   foreach ($r in @($rows | Where-Object { @($_.problems).Count })) { "SKIPPED $($r.id): $(@($r.problems) -join '; ')" }
+  foreach ($p in @($seen.Keys | Where-Object { @($seen[$_].subtasks).Count })) { try { Update-KitParentItems $p } catch { "parent items ${p}: $($_.Exception.Message)" } }   # their Items lines name the new titles
 }
 # ---- order: waits-on links and wave tags (owner 2026-11-23: order and parallel work readable without titles)
 # native when the tracker can (caps dependencies; wave: Set-KitTaskTags), else a <!-- kit:order --> description section; titles never change

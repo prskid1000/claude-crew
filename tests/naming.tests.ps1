@@ -23,7 +23,7 @@ Set-JsonFile (TkPath $k naming) @{ 'id:fix:20261123' = 4; 'id:fix:20261124' = 2 
 Expect "NO-DATE: day counters fold (fix-7), a dated run / doc refused ($($i3.out) | $($dn.out))" ($i3.out -eq 'fix-7' -and $dn.code -eq 1 -and $dn.out -match 'NO-DATE' -and $dnd.code -eq 1 -and $dnd.out -match 'NO-DATE')
 
 # ---- check: every kind, good and bad
-$good = @{ key = 'SHOP-CAT-004'; item = 'SHOP-CAT-004.2 add-price-projection'; case = 'SHOP-CAT-004-TC03'; title = 'SHOP-CAT-004 public page'; tag = 'wave-2'
+$good = @{ key = 'SHOP-CAT-004'; item = 'SHOP-CAT-004.2 add-price-projection'; case = 'SHOP-CAT-004-TC03'; title = 'Public page'; tag = 'wave-2'
   doc = 'SHOP-CAT-004 Spec v3 — Public catalogue'; run = 'buildy-ask'; id = 'dec-398'; agent = 'devy-ask-prompts'; area = 'ask-prompts'; lane = 'lane-02'
   branch = 'feat/SHOP-CAT-004-public-catalogue'; mr = 'feat(web): public catalogue page [SHOP-CAT-004]' }
 $bad = @{ key = 'WEB-12'; item = 'SHOP-CAT-004.2'; case = 'T1'; title = '[Feature] Shop — G3 catalogue'; tag = 'Wave: 2'; doc = 'T1 testing doc (AI)'; run = 'buildy-0042'; id = 'd-20261123-x'
@@ -38,17 +38,17 @@ $mt = Kb naming make title key=SHOP-CAT-004 type=Feature product=SHOP area=CAT '
 $md = Kb naming make doc key=SHOP-CAT-004 kind=Spec ver=2 'title=Public catalogue'; $mc = Kb naming make case key=SHOP-CAT-004 n=3
 $mm = Kb naming make mr type=feat scope=site key=SHOP-CAT-004 'summary=catalogue and cart blocks'; $ml = Kb naming make mr type=feat key=SHOP-CAT-004 'summary=Catalogue: cart blocks'
 Expect "make mr: a leading area word in a sentence stays, as a label it goes (retro 1124: an MR title lost 'catalogue') ($($mm.out) | $($ml.out))" ($mm.out -eq 'feat(site): catalogue and cart blocks [SHOP-CAT-004]' -and (Kb naming check mr $mm.out).code -eq 0 -and $ml.out -eq 'feat: cart blocks [SHOP-CAT-004]')
-Expect "make: title, branch, doc, case ($($mt.out) | $($mb.out))" ($mt.out -eq 'SHOP-CAT-004 Catalogue public page' -and $mb.out -eq 'feat/SHOP-CAT-004-public-catalogue-page' -and
+Expect "make: title, branch, doc, case ($($mt.out) | $($mb.out))" ($mt.out -eq 'Catalogue public page' -and $mb.out -eq 'feat/SHOP-CAT-004-public-catalogue-page' -and
   $md.out -eq 'SHOP-CAT-004 Spec v2 — Public catalogue' -and $mc.out -eq 'SHOP-CAT-004-TC03' -and (Kb naming check title $mt.out).code -eq 0 -and (Kb naming check branch $mb.out).code -eq 0)
 
 # ---- DUP-WORDS: a name never repeats its product, a leading area / type word, a repo list (owner 2026-11-23)
-$dups = @(@('title', 'SHOP-CAT-001 [Feature] Shop — Catalogue: Public catalogue'), @('title', 'SHOP-CAT-001 [Feature] Catalogue: Catalogue blocks'),
-  @('title', 'SHOP-CAT-001 [Feature] Catalogue: page (api, web)'), @('branch', 'feat/SHOP-CAT-004-shop-page'), @('mr', 'feat(web): Shop page [SHOP-CAT-004]'),
+$dups = @(@('title', 'key=SHOP-CAT-001', 'Shop — Catalogue: Public catalogue'), @('title', 'key=SHOP-CAT-001', 'Catalogue: Catalogue blocks'), @('title', 'key=SHOP-CAT-001', 'Catalogue: page (api, web)'),
+  @('branch', 'feat/SHOP-CAT-004-shop-page'), @('mr', 'feat(web): Shop page [SHOP-CAT-004]'),
   @('doc', 'SHOP-CAT-004 Spec v3 — Spec of the page'), @('item', 'SHOP-CAT-004.2 catalogue-price'))
-$dupMiss = @($dups | Where-Object { $r = Kb naming check $_[0] $_[1]; $r.code -ne 1 -or $r.out -notmatch 'DUP-WORDS' } | ForEach-Object { $_[1] })
-$dupOk = Kb naming check title 'SHOP-CAT-001 Public catalogue (was G3)'
+$dupMiss = @($dups | Where-Object { $r = Kb naming check @($_); $r.code -ne 1 -or $r.out -notmatch 'DUP-WORDS' } | ForEach-Object { $_[-1] })
+$dupOk = Kb naming check title 'Public catalogue (was G3)'
 $mkd = Kb naming make doc key=SHOP-CAT-004 'kind=Testing goals' ver=2 'title=Testing goals for Shop page'; $mkb = Kb naming make branch type=feat key=SHOP-CAT-004 'slug=Shop catalogue blocks' tag=CU-14ab9
-Expect "DUP-WORDS: 7 repeating names refused (missed: $($dupMiss -join ' | ')); make strips them ($($mkd.out) | $($mkb.out))" ($dupMiss.Count -eq 0 -and $dupOk.code -eq 0 -and
+Expect "DUP-WORDS: 7 repeating names refused (missed: $($dupMiss -join ' | ')); make strips them ($($mkd.out) | $($mkb.out))" ($dupMiss.Count -eq 0 -and $dupOk.code -eq 0 -and (Kb naming check title 'SHOP-CAT-001 Public').out -match 'KEY-IN-TITLE' -and
   $mkd.out -eq 'SHOP-CAT-004 Testing goals v2 — page' -and $mkb.out -eq 'feat/SHOP-CAT-004-cu-14ab9-blocks')
 
 # ---- rename: a dry-run table, old code -> new key; plan registries for codes not yet in kit.local.json
@@ -59,9 +59,9 @@ Set-JsonFile "$wd/plan.json" @{ product = 'SHOP'; areas = @{ ORD = 'Orders' }; i
   @{ code = 'Z1'; id = 't-4'; area = 'BAD'; title = 'Z1 something' }, @{ code = 'G9'; id = 't-5'; title = 'SHOP-PAY-003 [Feature] Shop — Payments: Payments refunds (was G9)' }) }
 $rn = Kb naming rename --plan "$wd/plan.json"
 Expect "rename: dry-run rows G3 -> SHOP-CAT-001, G5 -> SHOP-ORD-001, G4 -> SHOP-CAT-002, unknown AREA flagged, exit 1 ($($rn.code))" ($rn.code -eq 1 -and
-  $rn.out -match '\| G3 \| t-1 \| .* \| SHOP-CAT-001 \| SHOP-CAT-001 Public catalogue endpoint \(was G3\) \| no kind tag, no area tag, no product tag \| feature, catalogue, shop \| — \| — \|' -and $rn.out -match '\| G5 \| t-2 \|.*\| SHOP-ORD-001 \|' -and
+  $rn.out -match '\| G3 \| t-1 \| .* \| SHOP-CAT-001 \| Public catalogue endpoint \(was G3\) \| no kind tag, no area tag, no product tag \| feature, catalogue, shop \| — \| — \|' -and $rn.out -match '\| G5 \| t-2 \|.*\| SHOP-ORD-001 \|' -and
   $rn.out -match '\| G4 \| t-3 \|.*\| SHOP-CAT-002 \|' -and $rn.out -match 'unknown AREA BAD' -and $rn.out -match 'DRY RUN' -and $rn.out -match 'naming seed SHOP-CAT 2' -and
-  $rn.out -match '\| G9 \| t-5 \|.*\| SHOP-PAY-003 \| SHOP-PAY-003 Payments refunds \(was G9\) \| no kind tag, no area tag, no product tag \| feature, payments, shop \| — \| — \|')
+  $rn.out -match '\| G9 \| t-5 \|.*\| SHOP-PAY-003 \| Payments refunds \(was G9\) \| no kind tag, no area tag, no product tag \| feature, payments, shop \| — \| — \|')
 # ---- tags: one vocabulary; an exclusive group keeps one value; -value drops one; off-vocabulary refused
 $tg1 = Kb naming tags key=SHOP-CAT-004 kind=Bug wave=2 --have 'wave: v2 wave 1,urgent'; $tg2 = Kb naming tags env=needs-deploy decision=-needs-owner --have 'on-stg,needs-owner,bug'; $tg3 = Kb naming tags risk=nope
 $tj1 = $tg1.out | ConvertFrom-Json; $tj2 = $tg2.out | ConvertFrom-Json
@@ -76,10 +76,10 @@ Expect "tags review: rerun keeps bug, repo tag 'cat', a person's label kept, wav
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' }; titleStrip = @('^Old v1 [A-Z]\d+\s+', '\s*\(was K\d\)') } }
 Set-JsonFile "$wd/plan3.json" @{ items = @(@{ id = 't-8'; title = 'SHOP-CAT-008 [Feature] Catalogue: Old v1 G2 Price list (was K1)' }) }; $rn3 = Kb naming rename --plan "$wd/plan3.json" --json
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }
-Expect "titleStrip: old codes cut ($($rn3.out -replace '\s+', ' '))" (($rn3.out | ConvertFrom-Json).title -eq 'SHOP-CAT-008 Price list')
+Expect "titleStrip: old codes cut ($($rn3.out -replace '\s+', ' '))" (($rn3.out | ConvertFrom-Json).title -eq 'Price list' -and ($rn3.out | ConvertFrom-Json).meta.area -eq 'catalogue')
 # readable titles (coordinator 2026-11-24): an area word goes only as a label; a lowercase start gets a capital
 $rt1 = Kb naming make title key=SHOP-PAY-001 type=Feature 'outcome=Payments: Payment methods: card'; $rt2 = Kb naming make title key=SHOP-CAT-001 type=Feature 'outcome=Catalogue: menu: list'; $rt3 = Kb naming make title key=SHOP-PAY-001 type=Feature 'outcome=methods: card'
-Expect "readable titles ($($rt1.out) | $($rt2.out))" ($rt1.out -ceq 'SHOP-PAY-001 Payment methods: card' -and $rt2.out -ceq 'SHOP-CAT-001 Catalogue menu: list' -and $rt3.out -ceq 'SHOP-PAY-001 Payment methods: card')
+Expect "readable titles ($($rt1.out) | $($rt2.out))" ($rt1.out -ceq 'Payment methods: card' -and $rt2.out -ceq 'Catalogue menu: list' -and $rt3.out -ceq 'Payment methods: card')
 $sd = Kb naming seed SHOP-CAT 7; $k4 = Kb naming next key SHOP CAT; $mi = Kb naming make title key=BAD-X-1 product=ZZ area=Q outcome=x; $mn = Kb naming make case key=SHOP-CAT-004 n=abc
 Expect "seed: next key after the migrated ones; make refuses a name off the standard (1) or a bad number (2) ($($k4.out) $($mi.code)$($mn.code))" ($sd.code -eq 0 -and $k4.out -eq 'SHOP-CAT-008' -and
   $mi.code -eq 1 -and $mi.out -match 'NAME title' -and $mn.code -eq 2)
@@ -104,11 +104,11 @@ $tArea = Invoke-PsTest samearea @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; "$(Test-KitSameArea 'SHOP-CAT-012 [Bug] Catalogue: x' $args[1])|$(Test-KitSameArea 'SHOP-PAY-001 [Bug] Payments: x' $args[1])|$(Test-KitSameArea '[Bug] old collector' $args[1])"
 '@ @($D, $tNew.id)
 Expect "tracker create: a typed key names only PRODUCT-AREA (next number, one type tag), -List fills the spec; a QA bug joins only its area's collector ($($tTyped.name) | $tArea)" (
-  $tTyped.name -eq 'SHOP-CAT-011 Typed key' -and (pwsh -NoProfile -File $D tracker view $tTyped.id 2>$null | ConvertFrom-Json).list -eq 'L2' -and "$tArea" -eq 'True|False|False')
+  $tTyped.name -eq 'Typed key' -and ($tTv = pwsh -NoProfile -File $D tracker view $tTyped.id 2>$null | ConvertFrom-Json).list -eq 'L2' -and $tTv.description -cmatch '\| SHOP-CAT-011 \|\n\| Area \| catalogue \|\n\| Product \| shop \|\n\n' -and "$tArea" -eq 'True|False|False')
 $null = pwsh -NoProfile -File $D tracker create -List L2 -Spec (@{ kind = 'feature'; title = 'Catalogue typed key'; area = 'CAT'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'x' }); acceptance = @('a') } | ConvertTo-Json -Compress -Depth 4) 2>$null; $tDupC = $LASTEXITCODE
 $tNext = pwsh -NoProfile -File $D tracker create -List L2 -Spec (@{ kind = 'chore'; title = 'Price import job'; area = 'CAT'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'x' }); acceptance = @('a') } | ConvertTo-Json -Compress -Depth 4) 2>$null | ConvertFrom-Json
 $null = pwsh -NoProfile -File $D tracker create -Key qa-fx-naming-1 -List L1 -Parent $tNew.id -Name 'Shop: crash on save again' -Description 'd2' 2>$null; $tReuse = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name
-Expect "tracker create: a refused duplicate burns no key ($tDupC, next $($tNext.name)); a reused QA defect keeps its key ($tReuse)" ($tDupC -ne 0 -and $tNext.name -eq 'SHOP-CAT-012 Price import job' -and $tReuse -match '^SHOP-CAT-010 Crash on save again$')
+Expect "tracker create: a refused duplicate burns no key ($tDupC, $($tNext.name)); a reused QA defect keeps it ($tReuse)" ($tDupC -ne 0 -and $tNext.name -eq 'Price import job' -and (pwsh -NoProfile -File $D tracker view $tNext.id 2>$null | ConvertFrom-Json).description -match '\| Code \| SHOP-CAT-012 \|' -and $tReuse -ceq 'Crash on save again')
 # a hand rename stays on every later kit write: rename keeps the key, update -Spec without a title (devtools finish), the group re-render, a QA re-run
 $null = pwsh -NoProfile -File $D tracker rename $tNext.id 'Price import: owner words' 2>$null; $hr1 = (pwsh -NoProfile -File $D tracker view $tNext.id 2>$null | ConvertFrom-Json).name
 $null = pwsh -NoProfile -File $D tracker update $tNext.id -Spec (@{ docs = @{ spec = 'https://d/s1' } } | ConvertTo-Json -Compress) 2>$null; $hr2 = (pwsh -NoProfile -File $D tracker view $tNext.id 2>$null | ConvertFrom-Json).name
@@ -119,22 +119,22 @@ $null = pwsh -NoProfile -File $D tracker rename $tBug.id 'SHOP-CAT-010 owner bug
 $null = pwsh -NoProfile -File $D tracker create -Key qa-fx-naming-1 -List L1 -Parent $tNew.id -Name 'Shop: crash third time' -Description 'd3' 2>$null; $hr4 = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name
 $kfq = Join-Path (TkPath $k published) 'qa-fx-naming-1_task.json'; $kq = Get-Content $kfq -Raw | ConvertFrom-Json; Set-JsonFile $kfq @{ key = $kq.key; id = $kq.id }   # a record from before names were kept
 $null = pwsh -NoProfile -File $D tracker create -Key qa-fx-naming-1 -List L1 -Parent $tNew.id -Name 'Shop: crash fourth time' -Description 'd4' 2>$null; $hr5 = (Get-Content $kfq -Raw | ConvertFrom-Json).name
-Expect "keyed record without a name: the re-run keeps the title and records it ($hr5)" ($hr5 -ceq 'SHOP-CAT-010 owner bug words' -and (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name -ceq $hr5)
-Expect "hand rename kept: rename keeps the key, update / re-render / QA re-run keep the name ($hr1 | $hr2 | $(@($hr3)[-1]) | $hr4)" ($hr1 -ceq 'SHOP-CAT-012 Price import: owner words' -and $hr2 -ceq $hr1 -and "$(@($hr3)[-1])" -ceq $hr1 -and $hr4 -ceq 'SHOP-CAT-010 owner bug words')
+Expect "keyed record without a name: a re-run keeps and records the title ($hr5)" ($hr5 -ceq 'Owner bug words' -and (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name -ceq $hr5)
+Expect "hand rename kept: rename keeps the key, update / re-render / QA re-run keep the name ($hr1 | $hr2 | $(@($hr3)[-1]) | $hr4)" ($hr1 -ceq 'Price import: owner words' -and $hr2 -ceq $hr1 -and "$(@($hr3)[-1])" -ceq $hr1 -and $hr4 -ceq 'Owner bug words')
 Remove-Item Env:KIT_TRACKER_TYPE
 Expect "keyed task: MR title, commit subject, doc title (v per changed round), branch (fix/ for a bug, the tracker tag kept); no key: -Branch needed ($tMr | $tCm | $tDoc | $($tBr -join ' | '))" (
   $tMr -eq 'feat(web): grid page [SHOP-CAT-009]' -and $tCm -eq 'feat(web): grid page [SHOP-CAT-009]' -and $tDoc -eq 'SHOP-CAT-009 Testing goals v2 — blocks and nav' -and
   @($tBr)[0] -match '^fix/SHOP-CAT-010-local-\d+-crash-on-save$' -and "$tBr" -match 'REFUSED .*no kit key')
 Expect "tracker: render previews <P>-<A>-000, create allocates; a bug under it takes the parent's key; update keeps it; tags kind product area ($($tDry.name) | $($tNew.name) | $($tBug.name) | $($tUpd.name) | $($tNewV.tags) | $($tBug.tags))" (
-  $tDry.name -eq 'SHOP-CAT-000 Catalogue blocks' -and $tNew.name -eq 'SHOP-CAT-009 Catalogue blocks' -and $tBug.name -eq 'SHOP-CAT-010 Crash on save' -and $tUpd.name -eq 'SHOP-CAT-009 Catalogue blocks and nav' -and
-  ($tNewV.tags -join ',') -eq 'feature,shop' -and ($tBug.tags -join ',') -eq 'bug,catalogue,qa-found')
+  $tDry.name -eq 'Catalogue blocks' -and $tNew.name -eq 'Catalogue blocks' -and $tBug.name -eq 'Crash on save' -and $tUpd.name -eq 'Catalogue blocks and nav' -and $tNewV.description -cmatch '\| SHOP-CAT-009 \|\n\| Product \| shop \|\n\| Children \| 1 \|\n\n<!-- /kit:meta -->$' -and
+  $tBug.description -cmatch '\| Code \| SHOP-CAT-010 \|' -and $tBug.description.Contains("| Parent | $($tNew.id) |") -and ($tNewV.tags -join ',') -eq 'feature,shop' -and ($tBug.tags -join ',') -eq 'bug,catalogue,qa-found')
 # owner 2026-11-24: a wave's area subtask is keyed from its parent; a rename never drops a key or type (SHOP-AGT-001 vanished by hand)
 $env:KIT_TRACKER_TYPE = 'none'
 $tSub = pwsh -NoProfile -File $D tracker create -Spec (@{ kind = 'Feature'; title = '[Feature] Shop Catalogue fix wave — grid page (web)'; parent = $tNew.id; newTask = 'wave area'; list = 'L1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'grid' }); acceptance = @('a'); links = @('https://x.example/1') } | ConvertTo-Json -Compress -Depth 5) 2>$null | ConvertFrom-Json
 $null = pwsh -NoProfile -File $D tracker rename $tNew.id 'blocks and footer'; $null = pwsh -NoProfile -File $D tracker rename $tBug.id 'crash on load'
-$tRn = (pwsh -NoProfile -File $D tracker view $tNew.id 2>$null | ConvertFrom-Json).name; $tRb = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name; Remove-Item Env:KIT_TRACKER_TYPE
-Expect "keyed titles: a wave area subtask gets '<KEY> <outcome>' from its parent; tracker rename without a key keeps key (type: a tag) ($($tSub.name) | $tRn | $tRb)" (
-  "$($tSub.name)" -match '^SHOP-CAT-\d{3} [a-z]' -and "$($tSub.name)" -cnotmatch 'Shop|\[|\(web\)' -and $tRn -eq 'SHOP-CAT-009 Blocks and footer' -and $tRb -eq 'SHOP-CAT-010 Crash on load')
+$tNv = pwsh -NoProfile -File $D tracker view $tNew.id 2>$null | ConvertFrom-Json; $tRn = $tNv.name; $tSd = (pwsh -NoProfile -File $D tracker view $tSub.id 2>$null | ConvertFrom-Json).description;$tRb = (pwsh -NoProfile -File $D tracker view $tBug.id 2>$null | ConvertFrom-Json).name; Remove-Item Env:KIT_TRACKER_TYPE
+Expect "dec-60: a wave subtask keyed from its parent; rename keeps the key, title plain ($($tSub.name) | $tRn | $tRb)" ("$tSd" -match '\| Code \| SHOP-CAT-\d{3} \|' -and
+  "$($tSub.name)" -cnotmatch 'SHOP|Shop|\[|\(web\)' -and $tRn -ceq 'Blocks and footer' -and $tRb -ceq 'Crash on load' -and $tNv.description -match '\| Code \| SHOP-CAT-009 \|')
 
 # ---- standard flags (-Mr -Lane -TimeoutSeconds -Resume): the old names keep working one version; stamps: one helper per use
 $O = Join-Path $k 'skills/bossy/bossy.ps1'
@@ -154,13 +154,6 @@ $fl += foreach ($ff in Get-ChildItem (Join-Path $src 'skills') -Recurse -Filter 
 $fs = pwsh -NoProfile -Command ". '$(Lib)'; Get-KitStamp file ([datetime]'2026-11-23T10:05:06Z'); Get-KitStamp stored ([datetime]'2026-11-23T10:05:06.5Z')"
 Expect "flags: -Mr records, -Mrs finds it; every -Mrs / -Lanes / -TimeoutSec / -Takeover and verb -Task / -Code / -Message / -*Sec / -*Min has its standard alias ($($fl -join ', ')); stamps ($($fs -join ' '))" ($fr -match 'RECORDED' -and $fw -match 'WORD ' -and
   -not @($fl | Where-Object { $_ }).Count -and $fs[0] -eq '20261123-100506' -and $fs[1] -eq '2026-11-23T10:05:06.500Z')
-# TS-STORED: writers store UTC ...Z; a fresh ...Z beat reads as local (board HH:mm local, age ~0, never stale)
-$tsOut = Px $O board join -Type devy -Agent tsz-01 -Run tsr | Out-String; $tsFile = @(Get-ChildItem (TkPath $k board) -Filter 'tsz-01*.json')[0].FullName
-$tsRaw = Get-Content -LiteralPath $tsFile -Raw; $tsLocal = ([datetimeoffset]($tsRaw | ConvertFrom-Json -DateKind String).beat).LocalDateTime.ToString('HH:mm'); $tsShow = Px $O board show | Out-String
-$tsRead = pwsh -NoProfile -Command ". '$(Lib)'; `$e = Get-Content -LiteralPath '$tsFile' -Raw | ConvertFrom-Json; [int][math]::Abs(((Get-Date) - [datetime]`$e.beat).TotalMinutes); ([datetime]`$e.beat).ToString('HH:mm')"
-$tsLeft = Px $O board leave -Agent tsz-01 | Out-String
-Expect "TS-STORED: board beat stored as UTC ...Z, read back local ($($tsRead -join ' ')) and shown as local $tsLocal, not stale" ($tsRaw -match '"beat":\s*"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"' -and
-  [int]$tsRead[0] -le 1 -and $tsRead[1] -eq $tsLocal -and $tsShow -match "tsz-01.*\| beat $tsLocal" -and $tsShow -notmatch 'STALE|QUIET')
 
 # ---- scan: live names (a published doc title) vs the standard
 $pub = TkPath $k published -Create; Set-JsonFile (Join-Path $pub 'T1_testing-ai.json') @{ key = 'T1:testing-ai'; title = 'T1 testing doc (AI)' }

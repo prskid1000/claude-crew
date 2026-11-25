@@ -3,7 +3,7 @@
 dashboard-2.tests.ps1: the supervise page has no Parity panel (parity stays internal); the PARITY next batch ACT; the context
 info popover text (from context.tests.ps1); label case, role map, day heat groups (from runtimes.tests.ps1); the hour head;
 context ACTs count only agents after a fix; heatmap cell numbers (from dashboard.tests.ps1); group lines, today-only rows, status per
-past day, folds kept across a reload.
+past day, folds kept across a reload; board beat stamps stored UTC, shown local (TS-STORED, from naming.tests.ps1).
 Usage: pwsh -NoProfile -File <kit>/tests/dashboard-2.tests.ps1 (or tests/kit-tests.ps1 -Area dashboard-2).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -122,5 +122,12 @@ Expect "waits: DEPLOY IDLE (done, or its CI run done, no record) names the live 
 # deploy intest probe: never under one -TimeoutSec round once lookups used the budget (was a 15 s floor); no budget: 10 x -TimeoutSec
 $ip = & { . $O; $s = (Get-Date).AddSeconds(-40); @((Get-KitInTestProbeSec 50 240 $s), (Get-KitInTestProbeSec 300 100 $s), (Get-KitInTestProbeSec 0 100 $s) | ForEach-Object { [int][math]::Round($_ / 10) * 10 }) -join ',' }
 Expect "deploy intest: probe seconds = budget left, at least -TimeoutSec + 10; no budget 10 x ($ip)" ($ip -eq '250,260,1000')
+# TS-STORED: writers store UTC ...Z; a fresh ...Z beat reads as local (board HH:mm local, age ~0, never stale)
+$tsOut = Px $O board join -Type devy -Agent tsz-01 -Run tsr | Out-String; $tsFile = @(Get-ChildItem (TkPath $k board) -Filter 'tsz-01*.json')[0].FullName
+$tsRaw = Get-Content -LiteralPath $tsFile -Raw; $tsLocal = ([datetimeoffset]($tsRaw | ConvertFrom-Json -DateKind String).beat).LocalDateTime.ToString('HH:mm'); $tsShow = Px $O board show | Out-String
+$tsRead = pwsh -NoProfile -Command ". '$(Lib)'; `$e = Get-Content -LiteralPath '$tsFile' -Raw | ConvertFrom-Json; [int][math]::Abs(((Get-Date) - [datetime]`$e.beat).TotalMinutes); ([datetime]`$e.beat).ToString('HH:mm')"
+$tsLeft = Px $O board leave -Agent tsz-01 | Out-String
+Expect "TS-STORED: board beat stored as UTC ...Z, read back local ($($tsRead -join ' ')) and shown as local $tsLocal, not stale" ($tsRaw -match '"beat":\s*"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"' -and
+  [int]$tsRead[0] -le 1 -and $tsRead[1] -eq $tsLocal -and $tsShow -match "tsz-01.*\| beat $tsLocal" -and $tsShow -notmatch 'STALE|QUIET')
 Remove-TestKit $k
 Complete-Tests

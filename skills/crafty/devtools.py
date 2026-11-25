@@ -1999,7 +1999,7 @@ def doc_title(scope, kind, title, ver):
             print(f'[publish] {scope}:{kind}: no kit key on {scope}: old-style title {title!r} kept (one version; tracker create keys new tasks)', file=sys.stderr)
         return title
     nm = re.sub(r'\s*\(was [^)]*\)\s*$', '', _KEYS.get(f'name:{scope}', ''))
-    out = nm[km.end():].strip() if (km := re.match(KEY_RX, nm)) else re.sub(rf'^\S+ v\d+ — ', '', str(title))   # make's clean drops an old [Type] Area: head
+    out = (nm[km.end():] if (km := re.match(KEY_RX, nm)) else nm).strip() or re.sub(rf'^\S+ v\d+ — ', '', str(title))   # make's clean drops an old [Type] Area: head
     return naming().make('doc', {'key': k, 'kind': DOC_KIND_NAMES.get(kind, kind.replace('-', ' ').capitalize()), 'ver': ver, 'title': out})
 
 
@@ -2473,12 +2473,12 @@ naming_on = lambda: bool((n := naming()) and n.naming_cfg()['areas'])
 
 
 def task_key(tid):
-    """A task's kit key (naming on): its spec's, else its tracker name's prefix; '' when none or naming is off."""
+    """A task's kit key (naming on): its spec's, its kit table (dec-60), an old name prefix; '' when none or naming is off."""
     if not tid or not naming_on():
         return ''
     if tid not in _KEYS:
-        _KEYS[f'name:{tid}'] = nm = str(task(tid).get('name') or '')
-        _KEYS[tid] = ((state_read(task_file(tid)) or {}).get('spec') or {}).get('key') or ((m := re.match(KEY_RX, nm)) and m[1]) or ''
+        _KEYS[f'name:{tid}'] = nm = str((t := task(tid)).get('name') or '')
+        _KEYS[tid] = ((state_read(task_file(tid)) or {}).get('spec') or {}).get('key') or naming().meta_read(t.get('description')).get('key') or ((m := re.match(KEY_RX, nm)) and m[1]) or ''
     return _KEYS[tid]
 
 

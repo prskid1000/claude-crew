@@ -24,7 +24,7 @@ a non-kit dir).
 
 Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L466 load · L959 lint ·
   L1373 README graph · L1491 lint command · L1773 audit · L1921 registry · L1981 tools · L2069 parity · L2670 arch lint ·
-  L2943 prose · L3125 sections · L3257 budget · L3275 migrate · L3423 plugins · L3480 state lint · L3668 main
+  L2943 prose · L3126 sections · L3258 budget · L3276 migrate · L3424 plugins · L3481 state lint · L3669 main
 """
 import ast, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2969,6 +2969,7 @@ def prose_parts(text):
     """(prose lines without fenced code, sections {name: [lines]}) of a Markdown text."""
     lines, fence = [], False
     text = re.sub(r'\A---\n.*?\n---\n', '', text.replace('\r\n', '\n'), flags=re.S)   # front matter: one-line fields
+    text = re.sub(r'\\?<!-- kit:meta -->.*?<!-- /kit:meta -->', '', text, flags=re.S)   # dec-60: the kit table is no prose (out of every cap)
     for l in text.split('\n'):
         if l.lstrip().startswith('```'):
             fence = not fence

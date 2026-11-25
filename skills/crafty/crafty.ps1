@@ -2163,7 +2163,7 @@ function Test-KitTaskSpec($Spec) {
 }
 # tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a typed known kind prefix ([Bug]) is swapped, another "[...]" stays
 function Get-KitSpecName($Spec) {
-  if ($Spec.key) { $nk = [hashtable]::new($Spec); $nk.Remove('key'); return (Format-KitKeyedName (Get-KitSpecName $nk) "$($Spec.key)") }   # naming: <KEY> <outcome> + tags
+  if ($Spec.key) { $nk = [hashtable]::new($Spec); $nk.Remove('key'); return (Format-KitKeyedName (Get-KitSpecName $nk) "$($Spec.key)") }   # naming: plain title + tags
   $t = (Remove-KitNameKey "$($Spec.title)").Trim(); if (-not $Spec.kind) { return $t }
   $nk = Get-KitNameKind $t
   if ($nk.rest -ne $t -and $nk.kind -ieq "$($Spec.kind)") { $t = $nk.rest } elseif ($t -match '^\[') { return $t }   # another kind typed: kept as written
@@ -2222,7 +2222,7 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
     $null = Set-TrackerName $Task $r.name; $null = Set-TrackerDescription $Task $nd -Resolved; $bkp = $script:KitDescBackup; $id = $Task
   }
   else { $nt = New-TrackerTask -List "$($sp.list)" -Name $r.name -Description $r.description -Parent "$($sp.parent)" -Assignee "$($sp.assignee)" -Priority "$($sp.priority)" -NewTask "$($sp.newTask)" -Related @($sp.related); $id = "$($nt.id)"; if (-not $id) { throw "tracker create returned no id: $nt" }
-    if ("$($sp.key)" -like '*-000') { Clear-TrackerMemo $id; $r.name = "$((Get-TrackerTask $id).name)"; $sp.key = Get-KitNameKey $r.name } }   # the key New-TrackerTask allocated after its checks
+    if ("$($sp.key)" -like '*-000') { Clear-TrackerMemo $id; $r.name = "$(($nv = Get-TrackerTask $id).name)"; $sp.key = Get-KitTaskKey $nv } }   # New-TrackerTask's key
   $cl = if ($r.items.Count) { Set-KitTaskChecklist $id (Get-KitItemsLabel) $r.items -Prune:$ReplaceItems -KeepDone:($ReplaceItems -and -not $Force) }
   if ($r.decisions.Count) { $null = Set-KitTaskChecklist $id 'Decisions' $r.decisions }
   $nkx = @($sp.items | ForEach-Object { "$($_.code)" })

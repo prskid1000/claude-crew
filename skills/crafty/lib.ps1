@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L915 status · L1118 tracker · L1437 prior ·
-  L1456 ask bugs · L1641 deploy words · L1685 git-host · L1873 kitlog · L1983 params · L2288 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L915 status · L1118 tracker · L1440 prior ·
+  L1459 ask bugs · L1644 deploy words · L1688 git-host · L1876 kitlog · L1986 params · L2291 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1365,9 +1365,10 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
       throw "tracker create refused: possible duplicate of $($dup[0].id) $($dup[0].name) (score $($dup[0].score)): extend it (crafty.ps1 tracker scope -Task $($dup[0].id) -Add '<item>'), or -NewTask '<why it cannot be folded in>'" }
   }
   if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
-  if ($Name -cmatch '^([A-Z]{2,6}-[A-Z]{2,6})-0+\s') { $Name = Resolve-KitTaskName (Remove-KitNameKey $Name) $Parent $Matches[1] }   # naming: the key only after every check passed
-  $nt = __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
-  Set-KitNewTaskTags "$($nt.id)" $(if ($sub -and $Parent -and $Parent -ne '-') { $Parent }); if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild }   # parent follows
+  if ("$($script:KitNameMeta.key)" -like '*-000') { $Name = Resolve-KitTaskName $Name $Parent $Area }   # naming: the key only after every check passed
+  $ds = __TrText $Description; if ($script:KitNameMeta) { $mt = Get-KitShapeMeta @{ parent = $(if ($sub) { $Parent }) } "$($script:KitNameMeta.key)"; $mt.run = "$(if ($script:KitWho.run) { $script:KitWho.run } else { $env:KIT_RUN })"; $ds = Set-KitTaskMeta $ds $mt }   # dec-60: plain title, ids in the kit table
+  $nt = __TrA 'create' @{ list = $List; name = $Name; description = $ds; parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
+  Set-KitNewTaskTags "$($nt.id)" $(if ($sub -and $Parent -and $Parent -ne '-') { $Parent }); if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild; if (-not $__trDry -and $script:KitNameMeta) { try { Update-KitParentMeta $Parent } catch { Write-Warning "tracker: kit table of $Parent not updated: $_" } } }   # parent follows
   $nt
 }
 # a priority word -> the kit's 1 (urgent) .. 4 (low), as every adapter takes it (each maps the number to its own names)
@@ -1381,6 +1382,7 @@ function Set-TrackerDescription([string]$Id, [string]$Text, [switch]$Resolved) {
   $nd = if ($Resolved) { $Text } else { __TrText $Text }; if (-not "$nd".Trim()) { throw "tracker describe ${Id}: empty text refused (it would wipe the description)" }
   $script:KitDescBackup = ''
   if (-not $__trDry) { Clear-TrackerMemo $Id; $otk = Get-TrackerTask $Id; if (-not $otk.name) { throw "tracker describe ${Id}: the old description cannot be read for its backup: nothing written" }; $od = "$($otk.description)"
+    $om = Get-KitTaskMeta $od; if ($om.Count) { $nd = Set-KitTaskMeta $nd $(if ((Get-KitTaskMeta $nd).Count) { @{} } else { $om }) }   # the kit table survives every rewrite, last (a new one wins)
     if ($od.Trim() -and ($od -replace "`r`n", "`n") -ne ("$nd" -replace "`r`n", "`n")) { $bd = Join-Path (Get-KitPath desc-backups -Create) ($Id -replace '[^\w.-]+', '_'); $null = New-Item -ItemType Directory -Force -Path $bd
       $bf = Join-Path $bd "$(New-KitName desc '' $bd).md"; [IO.File]::WriteAllText($bf, $od, [Text.UTF8Encoding]::new($false))   # desc, a tie desc-2 (the folder names the task)
       @(Get-ChildItem -LiteralPath $bd -Filter '*.md' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 10) | Remove-Item -ErrorAction SilentlyContinue
@@ -1408,8 +1410,9 @@ function Set-TrackerName([string]$Id, [string]$Name) { $Name = Resolve-KitRename
 # command adapter: tracker.commands.move
 function Move-TrackerTask([string]$Id, [string]$Parent = '', [string]$List = '', [switch]$Top) {
   if (-not ($Parent -or $List -or $Top)) { throw 'tracker move: -Parent, -List or -NoParent' }; if ($Top -and $Parent) { throw 'tracker move: -Parent or -NoParent, not both' }
-  Clear-TrackerMemo $Id; $mvOld = try { "$((Get-TrackerTask $Id).parent)" } catch { '' }   # read first: the old parent follows the children it keeps
+  Clear-TrackerMemo $Id; $mvT0 = try { Get-TrackerTask $Id } catch { $null }; $mvOld = "$($mvT0.parent)"   # read first: the old parent follows the children it keeps
   $mv = __TrA 'move' @{ id = $Id; parent = $Parent; list = $List; top = [bool]$Top }; Clear-TrackerMemo $Id   # the read above memoised the old parent
+  if (($Parent -or $Top) -and -not $__trDry -and ($mvM = Get-KitTaskMeta "$($mvT0.description)").Count -and "$($mvM.parent)" -ne $Parent -and ($mvT = Get-TrackerTask $Id)) { $null = Set-TrackerDescription $Id (Set-KitTaskMeta "$($mvT.description)" (Get-KitShapeMeta @{ parent = $Parent; subtasks = $mvT.subtasks } "$($mvM.key)")) }   # the kit table follows the new shape
   if ($Parent) { $null = Sync-TrackerParent $Id '' -ParentId $Parent -NewChild }
   if ($mvOld -and $mvOld -ne $Parent) { $null = Sync-TrackerParent -ParentId $mvOld }
   $mv }
@@ -1499,7 +1502,7 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
     $s0 = & $put ([pscustomobject]@{ id = $null; description = '' })
     $t = try { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority } catch {   # owner rule: grow a related open task
       if ("$_" -match 'UNKNOWN: the duplicate check failed') { New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask 'ask bug: duplicate check unavailable' }
-      elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid) -and (Test-KitBugCollector $b2) -and (Test-KitSameArea $b2.name $Ask)) { return & $put $b2 }   # naming: never another area's collector
+      elseif ("$_" -match 'possible duplicate of (\S+)') { $rid = $Matches[1]; if (($b2 = & $open $rid) -and (Test-KitBugCollector $b2) -and (Test-KitSameArea $b2 $Ask)) { return & $put $b2 }   # naming: never another area's collector
         New-TrackerTask -List $List -Name $Name -Description $s0.section -Parent $Ask -Assignee $Assignee -Priority $Priority -NewTask "ask bug: the related task $rid is closed or not a QA collector" } else { throw } }
     if ($t.id) { $null = Set-KitTaskTags $t.id @('origin=qa-found') -Soft; [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
   }

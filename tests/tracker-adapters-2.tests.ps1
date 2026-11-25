@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 tests/tracker-adapters-2.tests.ps1: the linear, youtrack and azure tracker adapters' K54 moves and native caps (dependencies, labels,
-statuses, azure checklist) on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
+statuses, azure checklist), the dec-60 kit table through every adapter's description path, on recorded answers (Invoke-RestMethod mocked; an unknown call fails; no account: replayed API). Split from tracker-adapters (file cap).
 Usage: pwsh -NoProfile -File tests/tracker-adapters-2.tests.ps1 [-Kit <kit>] (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 #>
 param([string]$Kit = (Split-Path $PSScriptRoot))
@@ -74,5 +74,38 @@ Cap azure checklist $azCl @{ id = '42'; name = 'Items'; prune = $true; items = @
 $azV = try { Initialize-KitTracker -Type azure; $global:fx = $azCl; $global:log.Clear(); Clear-TrackerMemo 42; $vt = Get-TrackerTask 42; $global:fx = [ordered]@{ 'wiql' = '{"workItems":[]}' }; $null = __TrA 'list' @{ status = 'To Do' }
   "$(@($vt.subtasks.id) -join ',')|$([bool]@(($global:log -match 'wiql') -match "NOT \[System.Tags\] CONTAINS 'kit-checklist'").Count)" } catch { "$_" }
 if ($azV -notmatch '^52\|True$') { $global:failed++ }; "$(if ($azV -match '^52\|True$') { 'PASS' } else { 'FAIL' }) tracker azure: view and list skip checklist children ($azV)"
+# ---- dec-60 (owner 2026-11-25): the kit table (Code, Area, Product, Parent, Run; no title key, no custom field) through each adapter's description
+# path, one reader in PowerShell and Python (CRLF too), kept last on every rewrite, out of the word cap; lookup kit table -> old title prefix -> tracker id
+. (Join-Path $Kit 'skills/crafty/adapters/tracker-jira.ps1')
+$mF = [ordered]@{ key = 'SHOP-CAT-004'; area = 'catalogue'; product = 'shop'; parent = 'T1' }; $mT = Set-KitTaskMeta "Problem: x`n`n**Items**`n- [ ] A1 · grid`n" $mF
+$mPaths = [ordered]@{ 'clickup github gitlab linear youtrack none (Markdown as stored)' = $mT; jira = (__TrAdfText (__TrAdf $mT)); 'jira-server' = (__TrWiki $mT); azure = (__TrUnHtml (__TrHtml $mT)); crlf = ($mT -replace "`n", "`r`n"); 'clickup read-back (\<!--)' = ($mT -replace '<!--', '\<!--') }
+$mBad = @($mPaths.Keys | Where-Object { (@((Get-KitTaskMeta $mPaths[$_]).Values) -join '|') -ne 'SHOP-CAT-004|catalogue|shop|T1' })
+$mPy = Join-Path $trRt 'meta.md'; $null = New-Item -ItemType Directory -Force $trRt; [IO.File]::WriteAllText($mPy, (($mT -replace 'SHOP-CAT-004', 'SHOP\-CAT\-004' -replace '<!--', '\<!--') -replace "`n", "`r`n"))
+$mPr = & (Get-Python) -X utf8 -c 'import sys; sys.path.insert(0, sys.argv[1]); import kitbag_naming as n; print("|".join(n.meta_read(open(sys.argv[2], encoding="utf-8", newline="").read()).values()))' (Join-Path $Kit 'skills/bossy') $mPy
+$mTbl = "<!-- kit:meta -->`n`n| Kit | Value |`n|---|---|`n| Code | SHOP-CAT-004 |`n| Area | catalogue |`n| Product | shop |`n| Parent | T1 |`n`n<!-- /kit:meta -->"
+$pass = $mT -ceq "Problem: x`n`n**Items**`n- [ ] A1 · grid`n`n$mTbl" -and (Set-KitTaskMeta $mT $mF) -ceq $mT -and (Set-KitTaskMeta ($mT -replace '<!--', '\<!--') $mF) -ceq $mT -and -not $mBad.Count -and "$mPr" -eq 'SHOP-CAT-004|catalogue|shop|T1' -and
+  (Set-KitTaskMeta $mT @{ area = 'payments'; key = ''; parent = '-' }) -cmatch '(?s)Items.*\| Code \| SHOP-CAT-004 \|\n\| Area \| payments \|\n\| Product \| shop \|\n\n<!-- /kit:meta -->$' -and @([regex]::Matches((Set-KitTaskMeta $mT @{ run = 'r' }), '<!-- kit:meta -->')).Count -eq 1
+if (-not $pass) { $global:failed++; "  $($mBad -join ', ') | py $mPr | $($mT -replace '\n', '\n')" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) dec-60 kit table: one writer, every adapter's description path reads the same rows (Markdown, Jira ADF and wiki, Azure HTML, CRLF), Python reads it too, an update keeps one table, '-' drops a row"
+$mem = @{ T7 = [pscustomobject]@{ id = 'T7'; name = 'Cart held in the browser'; status = 'open'; description = $mT }; T8 = [pscustomobject]@{ id = 'T8'; name = 'SHOP-CAT-002 Old style'; status = 'open'; description = 'd' }
+  T9 = [pscustomobject]@{ id = 'T9'; name = 'Plain'; status = 'open'; description = 'd' }; T10 = [pscustomobject]@{ id = 'T10'; name = 'Pay x'; status = 'open'; description = (Set-KitTaskMeta 'd' @{ key = 'SHOP-PAY-001' }) } }
+Register-KitAdapter 'tracker' 'fkm' @{ view = { param($a) $mem[$a.id] }; describe = { param($a) $mem[$a.id].description = $a.text; 'ok' }; rename = { param($a) $mem[$a.id].name = $a.name; 'ok' }; url = { param($a) $a.id } }
+$mk = try { $__trType = 'fkm'; $null = Set-TrackerDescription T7 "Rewritten by a rollup`n`n<!-- kit:delivery -->`nrows`n<!-- /kit:delivery -->"; $null = Set-TrackerDescription T7 "$($mem.T7.description)`n`n**Scope 2026-11-25:** more"
+  "$((Get-KitTaskKey T7))|$((Get-KitTaskKey T8))|$((Get-KitTaskKey T9))|$((Get-KitTaskKey T9 -OrId))" } catch { "$_" }
+$pass = $mk -eq 'SHOP-CAT-004|SHOP-CAT-002||T9' -and $mem.T7.description -cmatch "(?s)^Rewritten by a rollup.*kit:delivery.*\*\*Scope 2026-11-25:\*\* more\n\n$([regex]::Escape($mTbl))$" -and @([regex]::Matches($mem.T7.description, '<!-- kit:meta -->')).Count -eq 1
+if (-not $pass) { $global:failed++; "  $mk | $($mem.T7.description -replace '\n', '\n')" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) dec-60: a description rewrite keeps the kit table last (rollup, scope); key lookup kit table -> old title prefix -> '' / -OrId the tracker id ($mk)"
+# naming on (make stubbed): an old keyed title renamed moves its key into the kit table first; a QA collector of another area is refused; a plain title
+# never borrows another task's real key, only its own create's <P>-<A>-000
+$mr = & { function Test-KitNamingOn { $true }; function Invoke-KitNaming([string[]]$Argv) { if ($o = "$(@($Argv) -like 'outcome=*')") { $o.Substring(8) } else { 'desc' } }
+  $__trType = 'fkm'; $null = Set-TrackerName T8 'Old style, reworded'; $script:KitTitleKey['Add tests'] = 'SHOP-CAT-009'; $script:KitTitleKey['New one'] = 'SHOP-CAT-000'
+  "$($mem.T8.name)|$((Get-KitTaskMeta $mem.T8.description).key)|$(Test-KitSameArea $mem.T10 T7)|$(Test-KitSameArea $mem.T7 T7)|$(Get-KitNewTaskKey 'Add tests' '' '' -NoAllocate 2>$null)|$(Get-KitNewTaskKey 'New one' '' '' -NoAllocate)" }
+$pass = $mr -ceq 'Old style, reworded|SHOP-CAT-002|False|True||SHOP-CAT-000'; if (-not $pass) { $global:failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) dec-60: rename of an old keyed title keeps its key in the kit table; same-area by the table; no borrowed key ($mr)"
+$mS1 = Set-KitTaskMeta 'd' (Get-KitShapeMeta @{} 'SHOP-CAT-004'); $mS2 = Set-KitTaskMeta $mS1 (Get-KitShapeMeta @{ subtasks = @(@{ id = 'a' }, @{ id = 'b' }) } 'SHOP-CAT-004'); $mS3 = Set-KitTaskMeta 'd' (Get-KitShapeMeta @{ parent = 'P1' } 'SHOP-CAT-004')
+$ms = @($mS1, $mS2, $mS3 | ForEach-Object { $sm = Get-KitTaskMeta $_; @($sm.Keys | ForEach-Object { "$_=$($sm[$_])" }) -join ',' }) -join ' | '
+$pass = $ms -eq 'key=SHOP-CAT-004,area=cat,product=shop | key=SHOP-CAT-004,product=shop,children=2 | key=SHOP-CAT-004,area=cat,parent=P1'; if (-not $pass) { $global:failed++ }
+"$(if ($pass) { 'PASS' } else { 'FAIL' }) dec-60 kit table rows by shape: standalone Code Area Product · parent Code Product Children · child Code Area Parent ($ms)"
+$mW = Join-Path $trRt 'cap.md'; [IO.File]::WriteAllText($mW, "Problem: $((1..195 | ForEach-Object { "w$_" }) -join ' ') https://x.example/1`n`n$mTbl`n")
+$mC = & (Get-Python) -X utf8 (Join-Path $Kit 'skills/bossy/kitbag.py') prose --kind task-description $mW 2>&1 | Out-String
+$pass = $mC -notmatch 'words \(max'; if (-not $pass) { $global:failed++; "  $mC" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) dec-60: the kit table is out of the task-description word cap (197 words + the table)"
 Remove-Item $trRt -Recurse -Force -ErrorAction SilentlyContinue
 exit [int]($global:failed -gt 0)
