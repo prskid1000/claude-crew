@@ -9,7 +9,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy watch -Env <target>[,..] [-Started <name>=<sha>,..] [-Finished <name>=success|failed,..] [-WaitMinutes <deploy.pipelineWaitMinutes>] [-Json]   one bounded poll loop over the schedule's started pipelines: START (a gate opened) · DONE (verify it) · FAILED (its dependents held) · WAIT; logs actual vs predicted
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated] [-Agent <ids> (laneApk: phones free or leased by them only)]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L17 helpers · L108 intest · L312 deploy · L523 schedule · L707 restart · L787 supervise
+Sections: L17 helpers · L108 intest · L312 deploy · L523 schedule · L719 restart · L799 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -540,15 +540,16 @@ function Get-KitDeployHistory([string]$Repo, $Row, [int]$Runs = (Get-KitParam 'd
     $cf = Join-Path (Get-KitPath cache -Create) 'deploy-timings.json'; $cache = try { Get-Content -LiteralPath $cf -Raw | ConvertFrom-Json -AsHashtable } catch { $null }; if ($cache -isnot [hashtable]) { $cache = @{} }
     $p = Get-HostProject $Repo -Raw; $n0 = $cache.Count
     foreach ($r in @(@(try { Invoke-HostVerb 'ci.runs' @{ repo = $p; ref = $Row.branch; per_page = 2 * $Runs } } catch { }) | Where-Object { $_ -and (ConvertTo-KitCiState "$($_.status)") -eq 'success' } | Select-Object -First $Runs)) {
-      $key = "$Repo|$($Row.branch)|$($r.id)"; if (-not $cache.ContainsKey($key)) { $cache[$key] = Get-KitRunSplit $p $r $Row }
-      $x = $cache[$key]; if ($null -ne $x.total) { $out.Add(([ordered]@{} + $x + @{ src = 'host' })); $seen["$($x.sha)"] = 1 }
+      $key = "$Repo|$($Row.branch)|$($Row.job)|$($r.id)"; if (-not $cache.ContainsKey($key)) { $cache[$key] = Get-KitRunSplit $p $r $Row }
+      # a cached at reads back as a DateTime: ISO again, so the sort below compares like with like
+      $x = $cache[$key]; if ($null -ne $x.total) { $e = [ordered]@{} + $x; $e.at = "$((ConvertTo-KitOffset $x.at)?.ToString('o'))"; $e.src = 'host'; $out.Add($e); $seen["$($x.sha)"] = 1 }
     }
-    if ($cache.Count -ne $n0) { $keep = @{}; foreach ($k in @($cache.Keys | Sort-Object { "$($cache[$_].at)" } -Descending | Select-Object -First 500)) { $keep[$k] = $cache[$k] }; try { Write-KitAtomic $cf ($keep | ConvertTo-Json -Depth 3 -Compress) } catch { } }
+    if ($cache.Count -ne $n0) { $keep = @{}; foreach ($k in @($cache.Keys | Sort-Object { ConvertTo-KitOffset $cache[$_].at } -Descending | Select-Object -First 500)) { $keep[$k] = $cache[$k] }; try { Write-KitAtomic $cf ($keep | ConvertTo-Json -Depth 3 -Compress) } catch { } }
   }
   foreach ($t in @(Read-KitLog deploy-log -Since (Get-Date).AddDays(-(Get-KitParam 'deploy.schedule.historyDays')) | Where-Object { $_.event -eq 'timing' -and "$($_.repo)" -eq $Repo -and "$($_.target)" -eq "$($Row.target)" -and $_.status -eq 'success' -and -not $seen.ContainsKey("$($_.sha)") })) {
     $out.Add([ordered]@{ at = "$((ConvertTo-KitOffset $t.at)?.ToString('o'))"; sha = "$($t.sha)"; total = $t.totalMin; build = $t.buildMin; deploy = $t.deployMin; src = 'log' })
   }
-  @($out | Sort-Object { "$($_.at)" } -Descending | Select-Object -First $Runs)
+  @($out | Sort-Object { ConvertTo-KitOffset $_.at } -Descending | Select-Object -First $Runs)
 }
 # p50 / p90 / fastest of a row's history; n 0 = no timing (its edges wait for live)
 function Get-KitDeployTiming([string]$Repo, $Row, [int]$Runs = (Get-KitParam 'deploy.schedule.historyRuns')) {
@@ -641,7 +642,9 @@ function Invoke-DeploySchedule([string[]]$Envs, [string[]]$Mrs, [string[]]$RepoN
   }
   $sh = Get-KitDeployShape $items $Mode ([int](Get-KitParam 'deploy.schedule.maxParallel')) ([double](Get-KitParam 'deploy.schedule.marginMinutes'))
   $key = ConvertTo-KitSlug ($Envs -join '-'); $f = Join-Path (Get-KitPath deploys -Create) "schedule-$key.json"
-  $doc = [ordered]@{ envs = $Envs; at = (Get-Date).ToString('o'); decision = $Decision; maxParallel = [int](Get-KitParam 'deploy.schedule.maxParallel') } + $sh
+  $old = try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null }; $busy = @($old.items | Where-Object { $_.status -eq 'running' } | ForEach-Object { $_.name })
+  if ($busy.Count) { "deploy schedule: $($busy -join ', ') still running in $(Split-Path $f -Leaf): deploy watch -Env $($Envs -join ',') until they finish (a new schedule would drop their state)"; exit 1 }
+  $doc =[ordered]@{ envs = $Envs; at = (Get-Date).ToString('o'); decision = $Decision; maxParallel = [int](Get-KitParam 'deploy.schedule.maxParallel') } + $sh
   Write-KitAtomic $f ($doc | ConvertTo-Json -Depth 6 -Compress)
   if ($Json) { $doc | ConvertTo-Json -Depth 6; return }
   $fmt = { param($v) if ($null -eq $v) { '?' } else { $v } }
@@ -663,6 +666,9 @@ function Invoke-DeployWatch([string[]]$Envs, [string[]]$Started, [string[]]$Fini
   $by = @{}; foreach ($i in $doc.items) { $by[$i.name] = $i }; $now = { [datetimeoffset](Get-Date) }
   foreach ($pr in @(@($Started | ForEach-Object { , @($_, 'running') }) + @($Finished | ForEach-Object { , @($_, '') }))) {
     $n, $v = "$($pr[0])" -split '=', 2; $i = $by[$n]; if (-not $i) { "deploy watch: $n is not in the schedule ($(@($by.Keys) -join ', '))"; exit 2 }
+    # no sha: the branch's newest run is the last deploy's (a false DONE)
+    if ($pr[1] -and -not "$v".Trim() -and $i.branch -and $i.kind -in 'ci-job', 'branch-mr') { "deploy watch: -Started $n needs =<merge sha> (a CI target is matched by its sha)"; exit 2 }
+    if (-not $pr[1] -and $v -notin 'success', 'failed') { "deploy watch: -Finished $n=${v}: use success or failed"; exit 2 }
     if ($pr[1]) { if ($i.status -eq 'pending') { $i.status = 'running'; $i.sha = "$v"; $i.startedAt = (& $now).ToString('o') } } elseif ($v -in 'success', 'failed') { $i.status = $v; $i.finishedAt = (& $now).ToString('o'); $i.recorded = $false }
   }
   $out = [Collections.Generic.List[string]]::new(); $end = (Get-Date).AddMinutes($WaitMinutes); $bk = @{}; $pz = ''
@@ -686,7 +692,7 @@ function Invoke-DeployWatch([string[]]$Envs, [string[]]$Started, [string[]]$Fini
     $run = @($doc.items | Where-Object { $_.status -eq 'running' }); $go = @()
     foreach ($i in @($doc.items | Where-Object { $_.status -eq 'pending' })) {
       $res = @($i.gates | ForEach-Object { Test-KitDeployGate $_ $by[$_.on] (& $now) })
-      $lk = @($run | Where-Object { $i.lock -and $_.lock -eq $i.lock }); $full = $doc.maxParallel -gt 0 -and ($run.Count + $go.Count) -ge $doc.maxParallel
+      $lk = @(@($run) + @($go) | Where-Object { $i.lock -and $_.lock -eq $i.lock }); $full = $doc.maxParallel -gt 0 -and ($run.Count + $go.Count) -ge $doc.maxParallel
       $i.wait = (@($res | ForEach-Object text) + @($(if ($lk.Count) { "lock $($i.lock) held by $($lk[0].name)" }; if ($full) { "maxParallel $($doc.maxParallel)" })) | Where-Object { $_ }) -join '; '
       if (-not @($res | Where-Object { -not $_.ok }).Count -and -not $lk.Count -and -not $full) { $go += $i }
     }
@@ -698,8 +704,14 @@ function Invoke-DeployWatch([string[]]$Envs, [string[]]$Started, [string[]]$Fini
   foreach ($i in $go) { $out.Add("START $($i.name) -> $($i.target) now ($(if ($i.wait) { $i.wait } else { 'no gate' })): bossy.ps1 deploy $(if ($i.kind -in 'ci-job', 'branch-mr') { "merge -Repo $($i.checkout) -To $($i.target) -Mr" } else { "run -To $($i.target) -Repo $($i.repo)" })$(if (@($i.mrs).Count) { " -Mrs $(@($i.mrs) -join ',')" })$(if ($doc.decision) { " -Decision $($doc.decision)" }); then deploy watch -Env $($Envs -join ',') -Started $($i.name)=<merge sha>") }
   foreach ($i in @($doc.items | Where-Object { $_.status -eq 'pending' -and $_ -notin $go })) { $out.Add("WAIT $($i.name): $($i.wait)") }
   foreach ($i in @($doc.items | Where-Object { $_.status -eq 'running' -and -not ($_.branch -and $_.kind -in 'ci-job', 'branch-mr') })) { $out.Add("RUNNING $($i.name): no CI run to poll ($($i.kind)): deploy watch -Finished $($i.name)=success|failed once it returns") }
-  Write-KitAtomic $f ($doc | ConvertTo-Json -Depth 6 -Compress)
-  $cnt = @($doc.items | Group-Object { $_.status } | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ', '
+  # another watch (a -Started / -Finished call while this one polled) may have moved an item on: the further state wins
+  $rank = @{ pending = 0; running = 1; success = 2; failed = 2; held = 2 }
+  Invoke-KitLocked $f {
+    $disk = try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable } catch { $null }
+    foreach ($d in @($disk.items)) { $mine = $by[$d.name]; if ($mine -and $rank["$($d.status)"] -gt $rank["$($mine.status)"]) { foreach ($dk in @($d.Keys)) { $mine[$dk] = $d[$dk] } } }
+    Write-KitAtomic $f ($doc | ConvertTo-Json -Depth 6 -Compress)
+  }
+  $cnt =@($doc.items | Group-Object { $_.status } | ForEach-Object { "$($_.Count) $($_.Name)" }) -join ', '
   if ($Json) { [ordered]@{ done = -not @($doc.items | Where-Object { $_.status -in 'pending', 'running' }).Count; lines = @($out); items = @($doc.items | ForEach-Object { [ordered]@{ name = $_.name; status = $_.status; actual = $_.actual; p50 = $_.p50 } }) } | ConvertTo-Json -Depth 4 -Compress; return }
   $out; "watch: $cnt$(if (@($doc.items | Where-Object { $_.status -in 'pending', 'running' }).Count) { ' · Next: act on the lines above, then deploy watch again (same -Env)' } else { ' · all finished' })"
 }

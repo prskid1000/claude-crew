@@ -213,8 +213,8 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
   if ($Verb -eq 'ci.jobs') { $script:jh++; $n = if ("$($A.id)" -match '-(\d)$') { [int]$Matches[1] } else { 0 }; $L = $len[[math]::Min(2, [math]::Max(0, $n))]
     return @([pscustomobject]@{ id = 1; name = 'build'; stage = 'build'; status = 'success'; finished_at = $t0.AddDays(-$n).AddMinutes($L - 5).ToString('o') }, [pscustomobject]@{ id = 2; name = 'deploy-st'; stage = 'deploy'; status = 'success'; finished_at = $t0.AddDays(-$n).AddMinutes($L).ToString('o') }) }
 }
-$tm = Get-KitDeployTiming be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' }); $null = Get-KitDeployTiming be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' })
-"history:$($tm.n -eq 3 -and $tm.p50 -eq 24 -and $tm.p90 -eq 30 -and $tm.min -eq 20 -and $tm.build -eq 19 -and $tm.deploy -eq 5 -and $tm.basis -eq '3 run(s): 3 host' -and $script:jh -eq 3)"
+$tm = Get-KitDeployTiming be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' }); $h2 = @(Get-KitDeployHistory be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' }))
+"history:$($tm.n -eq 3 -and $tm.p50 -eq 24 -and $tm.p90 -eq 30 -and $tm.min -eq 20 -and $tm.build -eq 19 -and $tm.deploy -eq 5 -and $tm.basis -eq '3 run(s): 3 host' -and $script:jh -eq 3 -and $h2[0].sha -eq 'sbe0' -and $h2[-1].sha -eq 'sbe2' -and $h2[0].at -match '^2026-11-01T')"
 Write-KitLog deploy-log timing ([ordered]@{ target = 'st'; repo = 'app'; sha = 'x1'; status = 'success'; totalMin = 4 })
 $so = Invoke-DeploySchedule @('st') @('be!1', 'ui!2', 'app!3') @() @() @() '' 'd-1' | Out-String
 "plan:$($so -match 'SHAPE staggered' -and $so -match 'ui -> st: start \+18 · finish \+26 · p50 8 / p90 10 min' -and $so -match 'basis 1 run\(s\): 1 log' -and $so -match 'WHY  ui after be \(repos\[\]\.role producer -> consumer\)' -and $so -match 'build 19, deploy 5')"
@@ -225,11 +225,17 @@ $w1 = Invoke-DeployWatch @('st') @('be=aaa111') @() 0 | Out-String; & $age be 40
 $script:live.ui = @{ sha = 'bbb222'; st = 'running' }; $script:live.be.st = 'failed'
 $w4 = Invoke-DeployWatch @('st') @('ui=bbb222') @() 0 | Out-String; $script:live.ui.st = 'success'; $w5 = Invoke-DeployWatch @('st') @() @() 0 | Out-String
 $tl = @(Read-KitLog deploy-log | Where-Object { $_.event -eq 'timing' -and $_.repo -eq 'ui' })[-1]
+$rs = Invoke-DeploySchedule @('st') @('be!1') @() @() @() '' '' | Out-String; $rs2 = Invoke-DeploySchedule @('st') @('be!1', 'app!3') @() @() @() '' '' | Out-String
+$d = Get-Content $sf -Raw | ConvertFrom-Json -AsHashtable; foreach ($x in $d.items) { $x.lock = 'db'; $x.gates = @() }; Write-KitAtomic $sf ($d | ConvertTo-Json -Depth 6 -Compress)
+$wl = Invoke-DeployWatch @('st') @() @() 0 | Out-String; $d = Get-Content $sf -Raw | ConvertFrom-Json -AsHashtable; @($d.items | Where-Object { $_.name -eq 'be' })[0].status = 'running'; Write-KitAtomic $sf ($d | ConvertTo-Json -Depth 6 -Compress)
+"guards:$($rs -match 'SHAPE single' -and @([regex]::Matches($wl, '(?m)^START ')).Count -eq 1 -and $wl -match 'WAIT app: lock db held by be')"
 "loop:$($w4 -match 'FAILED be -> st after 9 min: opsy step 6 for this target only' -and $w4 -match 'HELD app: its producer be failed' -and $w4 -notmatch 'HELD ui' -and $w5 -match 'DONE ui -> st in 9 min \(predicted 8, p90 10: on time\): verify it now' -and $w5 -match 'watch: 1 failed, 1 success, 1 held|watch: .*all finished' -and $tl.predictedMin -eq 8 -and $tl.totalMin -eq 9)"
 '@
 $cliW = pwsh @np $O deploy watch -Env nope 2>&1 | Out-String; $cliS = pwsh @np $O deploy schedule -Env st -Repo ui,app -Mode serial -After app=ui 2>&1 | Out-String
 Expect "deploy schedule / watch from the CLI: no schedule = a clear stop; -Repo / -Mode / -After bind ($($cliS.Trim()))" ($cliW -match 'no schedule for nope: run bossy.ps1 deploy schedule' -and $cliS -match 'SHAPE serial \(mode serial\): ui, then app' -and $cliS -match 'WHY  app after ui \(-After\)')
-Expect-Each (Invoke-PsTest 'deploy-watch' $wch @($O)) 'deploy schedule + watch: # (host history p50 / p90 + build / deploy split, cached; log history; saved plan text; gates replan; one loop: a failure holds its dependents only, done = verify, actual vs predicted logged)' @('history', 'plan', 'gate', 'loop') 20
+Expect-Each (Invoke-PsTest 'deploy-watch' $wch @($O)) 'deploy schedule + watch: # (host history p50 / p90 + build / deploy split, cached; log history; saved plan text; gates replan; a lock starts one per pass; one loop: a failure holds its dependents only, done = verify, actual vs predicted logged)' @('history', 'plan', 'gate', 'guards', 'loop') 20
+$cliR = pwsh @np $O deploy schedule -Env st -Mrs be!1 2>&1 | Out-String; $cliN = pwsh @np $O deploy watch -Env st -Started be 2>&1 | Out-String; $cliF = pwsh @np $O deploy watch -Env st -Finished app=ok 2>&1 | Out-String
+Expect "deploy schedule refuses while a target runs; watch -Started without a sha / -Finished other than success|failed = usage ($($cliR.Trim()))" ($cliR -match 'be still running in schedule-st\.json' -and $cliN -match '-Started be needs =<merge sha>' -and $cliF -match '-Finished app=ok: use success or failed')
 Remove-Item Env:CLAUDE_WT_ROOT
 Remove-TestKit $k
 Complete-Tests

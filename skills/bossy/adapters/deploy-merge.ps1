@@ -146,5 +146,8 @@ if ($done.state -ne 'merged') { "deploy MR $url merge FAILED (state $($done.stat
 $msha = "$(@($done.merge_commit_sha, $done.squash_commit_sha) | Where-Object { $_ } | Select-Object -First 1)"
 "merged deploy MR $url into $To (merge commit$(if ($msha) { " $($msha.Substring(0, [math]::Min(8, $msha.Length)))" })$(if ($ahead) { ", $ahead commits from $From" }))"
 # the deploy pipeline: wait on the host's status (bounded), never only on a log line
-if (-not $noCi) { "Next: & $($KitCmd.dev) pipes -Repo $($rc.name) -Branch $To$(if ($msha) { " -Sha $($msha.Substring(0, [math]::Min(8, $msha.Length)))" }) (polls the host up to deploy.pipelineWaitMinutes; JSON done + status; run it in the background)" }
+# a deploy schedule names this branch: its one watch loop polls it with the others
+$sched = @(Get-ChildItem -LiteralPath (Get-KitPath deploys -Create) -Filter 'schedule-*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { @($_.items | Where-Object { $_.repo -eq $rc.name -and $_.branch -eq $To -and $_.status -eq 'pending' }).Count })[0]
+if (-not $noCi -and $sched) { $sn = @($sched.items | Where-Object { $_.repo -eq $rc.name -and $_.branch -eq $To })[0].name; "Next: & $($KitCmd.orch) deploy watch -Env $(@($sched.envs) -join ',') -Started $sn=$(if ($msha) { $msha.Substring(0, [math]::Min(8, $msha.Length)) } else { '<merge sha>' }) (one loop for the schedule's pipelines; run it in the background)" }
+elseif (-not $noCi) { "Next: & $($KitCmd.dev) pipes -Repo $($rc.name) -Branch $To$(if ($msha) { " -Sha $($msha.Substring(0, [math]::Min(8, $msha.Length)))" }) (polls the host up to deploy.pipelineWaitMinutes; JSON done + status; run it in the background)" }
 }
