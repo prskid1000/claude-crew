@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L96 state · L177 config · L258 OS · L489 leases · L915 status · L1118 tracker · L1437 prior ·
-  L1456 ask bugs · L1641 git-host · L1829 kitlog · L1939 params · L2244 entry-scripts
+  L1456 ask bugs · L1641 deploy words · L1682 git-host · L1870 kitlog · L1980 params · L2285 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1637,6 +1637,47 @@ function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {
     $h = if ("$($d.item)") { "$($d.item)" } else { 'Decision' }
     [pscustomobject]@{ question = $d.question; header = $h.Substring(0, [math]::Min(12, $h.Length)); multiSelect = $false
       options = @(Get-KitDecisionOrder $d | Select-Object -First 4 | ForEach-Object { [pscustomobject]@{ label = "$($_.key): $($_.label)$(if ($_.recommended) { ' (Recommended)' })" -replace '^: ', ''; description = $_.description } }) } }) }
+}
+# ---- deploy words: single use, pins (decide check, deploy holds / merge / run / schedule)
+# a deploy word is single-use (owner 2026-11-25): a used event in the decisions log (durable) or usedAt on its record (.runtime) ends it;
+# id -> the agent that used it
+function Get-KitUsedWords([datetime]$Since = [datetime]'2000-01-01') {
+  $u = @{}
+  foreach ($l in @(Read-KitLog decisions-log $Since | Where-Object { $_.event -eq 'used' -and $_.id })) { $u["$($l.id)"] = "$($l.usedBy)" }
+  foreach ($f in @(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object { $_.usedAt -and $_.id })) { $u["$($f.id)"] = "$($f.usedBy)" }
+  $u
+}
+# an MR ref, URL or group/repo!n -> repo!n (bossy.ps1 ConvertTo-MrRef when loaded)
+function ConvertTo-KitPinRef([string]$R) { if (Get-Command ConvertTo-MrRef -ErrorAction SilentlyContinue) { ConvertTo-MrRef $R } else { $R.Trim() -replace '^[\w./-]+/(?=[\w.-]+!\d+$)' } }
+# a word's pin: its commit (-Commit, or "pinned at / commit <sha>" in the answer) and MR list (-Mrs, or refs in the answer: an MR ref in a
+# yes pins it); in a clause (split at ; , but) refs after "except / without / not" or before "not included / excluded" are out
+function Get-KitDeployWordPin($D) {
+  $ans = "$($D.answer)"; $sha = "$($D.commit)".Trim().ToLowerInvariant(); $rx = '(?:https?://\S+?/-/merge_requests/\d+|https?://\S+?/pull/\d+|[\w./-]*![0-9]+)'
+  if (-not $sha -and $ans -match '(?i)\b(?:pinned\s+(?:at|to)|pin|commit|sha|head)\s+((?=[0-9a-f]*\d)[0-9a-f]{7,40})\b') { $sha = $Matches[1].ToLowerInvariant() }
+  $in = @(@($D.mrs) | Where-Object { $_ } | ForEach-Object { ConvertTo-KitPinRef "$_" }); $out = @()
+  $refsOf = { param($s) @([regex]::Matches($s, $rx) | ForEach-Object { ConvertTo-KitPinRef $_.Value }) }
+  foreach ($cl in @($ans -split '[;\r\n,]|\bbut\b')) { if (-not (& $refsOf $cl).Count) { continue }
+    $ng = [regex]::Match($cl, '(?i)\b(not included|excluded?|left out|skipped|excluding|except|without|leave out|skip|do not deploy|not)\b(?!\s+(wait|urgent|now)\b)')
+    if (-not $ng.Success) { $in += & $refsOf $cl }
+    elseif ($ng.Value -match '(?i)^(not included|excluded?|left out|skipped)$') { $out += & $refsOf $cl }
+    else { $in += & $refsOf $cl.Substring(0, $ng.Index); $out += & $refsOf $cl.Substring($ng.Index) } }
+  [pscustomobject]@{ commit = $sha; mrs = @($in | Select-Object -Unique); not = @($out | Select-Object -Unique); pinned = [bool]($sha -or $in.Count -or $out.Count) }
+}
+# decide check (bossy.ps1): why a found word does not serve (used, or the MRs / commit asked lie outside its pin), else $null;
+# -Commit is the pin itself (a prefix of 7+); an older commit: deploy merge -Commit checks the ancestry
+function Get-KitWordBlock($D, [string[]]$WantMrs, [string]$Commit, [datetime]$Since) {
+  if ($D.usedAt -or (Get-KitUsedWords $Since).ContainsKey("$($D.id)")) { return "$($D.id) already used$(if ($D.usedAt) { " by $($D.usedBy) at $($D.usedAt)" })" }
+  $pn = Get-KitDeployWordPin $D; $po = @($WantMrs | Where-Object { -not (Test-KitDeployPinCovers $pn $_) }); $c = "$Commit".ToLowerInvariant()
+  if ($po.Count -or ($c -and $pn.commit -and ($c.Length -lt 7 -or -not ($c.StartsWith($pn.commit, [StringComparison]::Ordinal) -or $pn.commit.StartsWith($c, [StringComparison]::Ordinal))))) { "$($D.id) pinned ($(@(@($pn.commit) + @($pn.mrs) | Where-Object { $_ }) -join ', ')), not $(@(@($po) + @($Commit) | Where-Object { $_ }) -join ', ')" }
+}
+# the WORD line's pin part
+function Format-KitWordPin($D) { $pn = Get-KitDeployWordPin $D; if ($pn.pinned) { " | pin: $(@(@($pn.commit) + @($pn.mrs) | Where-Object { $_ }) -join ', ')$(if (@($pn.not).Count) { "; not $(@($pn.not) -join ', ')" }) only" } }
+# an MR inside a pin's lists ("!12" in an answer matches any repo's !12); a commit pin is checked where the commit is known (deploy merge)
+function Test-KitDeployPinCovers($Pin, [string]$Mr) {
+  $cn = { param($x) if (Get-Command Get-CanonMr -ErrorAction SilentlyContinue) { Get-CanonMr $x } else { $x } }   # adapters/deploys.ps1: repo aliases
+  $m = & $cn (ConvertTo-KitPinRef $Mr); $hit = { param($r) $c = & $cn "$r"; $c -eq $m -or ($c -like '!*' -and $m -like "*$c") }
+  if (@($Pin.not | Where-Object { & $hit $_ }).Count) { return $false }
+  -not @($Pin.mrs).Count -or [bool]@($Pin.mrs | Where-Object { & $hit $_ }).Count
 }
 # ---- git-host: git-host + ci adapters (README "Adapters"); Invoke-HostVerb <verb> @{ repo = '<group/name>'; n; ... }
 # host name -> adapter; '' = unknown (self-hosted on its own name: set gitHostType)

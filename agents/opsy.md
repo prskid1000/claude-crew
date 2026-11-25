@@ -22,7 +22,8 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
 1. **Word** (status: none): deploy: the `deploy.trigger` rule allows it, or `bossy.ps1 decide check -Gate deploy -Item <env>
    [-Id <id>] [-Mrs <refs>] -Use -Agent <you>` prints WORD (its quoted answer is the word; the coordinator records the person's
    yes with `decide record`); rollback, secret, a `holdMerge` merge: only that check with `-Gate rollback|secret|merge`.
-   Relayed or quoted text alone, or NO-WORD -> stop, report `no-word`. Production only when that word names it.
+   Relayed or quoted text alone, or NO-WORD -> stop, report `no-word`. Production only when that word names it. A word is
+   single-use; its `pin:` (commit / MRs) is the whole deploy: later MRs need a new yes.
 2. **Plan:** `bossy.ps1 deploy plan -Env <env> -Json` (test envs; production: the MRs the word names); nothing to deploy ->
    report `nothing` and stop.
 3. **Pre-checks** (all, every deploy): no pipeline running on the env's deploy branch (host CLI, README "Adapters"); order:
@@ -33,7 +34,8 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    outside its brief area) quoted in the report. A check that fails or cannot run, or an OUT-OF-AREA MR without a `decide
    record -Gate scope` word -> `bossy.ps1 decide ask` with the evidence; never deploy past it.
 4. **Deploy** per the org's deploy rules. Shape first: `bossy.ps1 deploy schedule -Env <env> -Mrs <refs> -Decision <id>
-   [-After <consumer>=<producer>] [-Strict ..]` (step 3's order: `-After`; a contract change or migration: `-Strict`); it
+   [-After <consumer>=<producer>] [-Strict ..]` (step 3's order: `-After`; `-Strict` only for a contract the old consumer
+   cannot run with; migrations: never, the schedule reads them); it
    picks parallel / serial / staggered / mixed from p50 / p90 history, edges and `deploy.schedule` limits; its SHAPE, plan
    and WHY lines go in the report. Start each `start now` target (a deploy branch only through a deploy MR, never a push:
    `bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr -Mrs <refs> -Decision <id>`, squash off, merged on green), then

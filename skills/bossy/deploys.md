@@ -3,7 +3,9 @@ A person says `deploy <env>` (`deploy.trigger: ask` only: supervise DEPLOY ASK -
 or a wait (`decide record -Gate deploy -Item <env> -Answer "no ..." | "wait: retry HH:mm"`): one muted held / waiting line, no
 ask, until a later yes or an MR the no did not cover (an env-wide no, "all / never / keep ... held", or kit.local.json
 `deploy.hold: [<env>]` covers new MRs too); a wait past its time, or a yes after it: DEPLOY RETRY; a no / wait `until run <run>
-done` / `until tasks <ids> merged` (or `until all of <run name> is merged`): muted until it holds, then one DEPLOY ASK; a yes: DEPLOY GO; inside
+done` / `until tasks <ids> merged` (or `until all of <run name> is merged`): muted until it holds, then one DEPLOY ASK; a yes: DEPLOY GO, once (a `used` event ends it; a pin, `-Commit` / `-Mrs` or a
+commit / MR ref in the answer, covers only those: `decide check`, `deploy merge | run | schedule` refuse the rest, a commit pin every
+other repo too); inside
 `deploy.minIntervalHours`, per repo and env (`minIntervalScope: env` = per env), say when). The coordinator records the yes (`bossy.ps1 decide record -Gate deploy -Item <env> -Source chat|askuser`) and spawns `opsy` with its id (router R7), which runs these steps at once, end to end, no
 question back:
 1. `bossy.ps1 deploy plan -Env <env>`: every session's merged-not-deployed MRs for that env.
@@ -21,6 +23,8 @@ question back:
    from each row's p50 / p90 (the host's green runs on its deploy branch, build / deploy split; the deploy log's `timing` lines),
    edges (`repos[].role` producer -> consumer, `deploys[].after`, `-After` / `-Strict`) and limits (`deploy.schedule`
    maxParallel, `deploys[].lock`); a consumer finishes at or just after its producer goes live; no history: it waits for live.
+   A producer's migrations in the batch set the edge (owner 2026-11-25): breaking (drop, rename, type change, not null, delete;
+   `deploy.schedule.breakingMigrationRx`) = strict, additive (add column / table / index) = the p50 edge, both run in parallel.
    `deploy watch -Env <env> -Started <name>=<sha>`: one bounded loop; a gate re-planned on elapsed time (past p90: wait for live).
 3. `bossy.ps1 deploy record -Env <target>[,<target>..] -Mrs <refs> -By <who>`: each a `repos[].deploys` target name (one per host deployed), never a host group.
 4. `bossy.ps1 deploy intest -Apply -Env <target> -Mrs <refs>` once live: those MRs' tasks move when all their MRs are live; no

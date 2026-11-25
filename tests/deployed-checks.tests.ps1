@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: pwsh -NoProfile -File tests/deployed-checks.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
-# tests/deployed-checks.tests.ps1: probe cmd / url / tag / regex and the ssh script. Next to <kit>/tests/harness.ps1.
+# tests/deployed-checks.tests.ps1: probe cmd / url / tag / regex and the ssh script; schedule edges from migrations. Next to <kit>/tests/harness.ps1.
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $env:KIT_TEST_SHIM = Join-Path $PSScriptRoot 'hostverb-shim.ps1'   # GitLab-path mocks behind host verbs
 $TestKitFiles = @('skills/bossy/adapters/deploy-merge.ps1', 'skills/bossy/adapters/deploys.ps1', 'skills/bossy/deploys.md', 'skills/pokey/adapters/deployed-checks.ps1', 'skills/pokey/adapters/ui-android.ps1')   # copied into every New-TestKit kit
@@ -179,5 +179,32 @@ $bsn = Join-Path (Kd) 'beat-null.txt'; Set-Content $bsw ('. $args[0]; . $args[1]
 $bsp = @(1..3 | ForEach-Object { Start-Process pwsh -ArgumentList '-NoProfile', '-File', $bsw, (Join-Path $k 'skills/crafty/lib.ps1'), (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1') -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path (Kd) "beatn-$_.out") }); foreach ($bq in $bsp) { $null = $bq.WaitForExit(60000) }
 $bsk = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $k 'skills/pokey/adapters/deployed-checks.ps1'); $env:KIT_API_BEAT = 'b3'; @('ref=feat/a', 'ref=feat_a', 'ref=Main', 'ref=main') | ForEach-Object { $kv = $_; Get-BeatShared "ci.runs|$kv" { $kv } }; Remove-Item Env:KIT_API_BEAT }
 Expect "K93: a null answer: one call for 3 probes; keys feat/a, feat_a, Main, main: 4 answers ($(@(Get-Content $bsn -ErrorAction SilentlyContinue).Count) call(s), $($bsk -join ','))" (@(Get-Content $bsn).Count -eq 1 -and ($bsk -join ',') -eq 'ref=feat/a,ref=feat_a,ref=Main,ref=main')
+# migrations set the schedule edge (owner 2026-11-25): additive (rollback drops skipped, XML and compact YAML) = p50 edge, both start
+# at once, -Strict kept; multi-line SQL MODIFY = strict; a code migration = strict; a pin from another repo = unknown, a why note
+$migBossy = Join-Path $k 'skills/bossy/bossy.ps1'; $mg = Join-Path (Kd) 'mig'; $gq = @('-c', 'user.name=t', '-c', 'user.email=t@x'); $null = git init -q --bare "$mg/o.git"; $null = git clone -q "$mg/o.git" "$mg/c" 2>&1
+$mgPut = { param($f, $body) $mgFile = Join-Path "$mg/c" $f; New-Item -ItemType Directory -Force (Split-Path $mgFile) | Out-Null; Set-Content $mgFile $body; git -C "$mg/c" add -A; git -C "$mg/c" @gq commit -qm $f; git -C "$mg/c" push -q origin HEAD:main 2>&1 | Out-Null }
+git -C "$mg/c" checkout -q -b main; & $mgPut 'README' 'x'; git -C "$mg/c" push -q origin HEAD:staging 2>&1 | Out-Null
+& $mgPut 'db/changelog/001.xml' "<changeSet id=`"1`">`n<addColumn tableName=`"t`"><column name=`"c`"/></addColumn>`n<rollback>`n<dropColumn tableName=`"t`" columnName=`"c`"/>`n</rollback>`n</changeSet>"
+& $mgPut 'db/changelog/002.yaml' "- changeSet:`n    changes:`n      - createTable:`n          tableName: u`n    rollback:`n    - dropTable:`n        tableName: u"
+$mgHead = @'
+. $args[0]; $env:MG = $args[1]
+function Get-KitDeployTiming { [pscustomobject]@{ n = 5; p50 = 20; p90 = 30; min = 15; basis = 't' } }
+Set-Item function:Get-KitValue ({ if ($args[0] -eq 'repos') { @([pscustomobject]@{ name = 'be'; role = 'producer'; target = 'main'; checkout = "$env:MG/c"; deploys = @([pscustomobject]@{ target = 'st'; branch = 'staging' }) }, [pscustomobject]@{ name = 'ui'; role = 'consumer'; deploys = @([pscustomobject]@{ target = 'st'; branch = 'staging' }) }) } else { $args[1] } }.GetNewClosure())
+$ui = { param($st) @((Invoke-DeploySchedule @('st') @() @('be', 'ui') @() $st 'auto' '' -Json | ConvertFrom-Json).items | Where-Object name -eq 'ui')[0] }
+$a = Get-KitMigrationKind "$env:MG/c" staging origin/main; $u = & $ui @()
+'@
+$mgA = Invoke-PsTest 'mig-add' ($mgHead + "`n" + @'
+$us = & $ui @('ui=be'); $np = Get-KitMigrationKind "$env:MG/c" staging 0badc0ffee12
+"add:$($a.kind -eq 'additive' -and @($a.files).Count -eq 2 -and $u.start -eq 2 -and $u.gates[0].kind -eq 'left' -and $us.gates[0].kind -eq 'left90' -and -not $np.kind -and $np.note -match 'not in this checkout')"
+'@) @($migBossy, $mg)
+& $mgPut 'db/changelog/003.sql' "ALTER TABLE t`n  MODIFY c VARCHAR(10);"
+$mgB = Invoke-PsTest 'mig-brk' ($mgHead + "`n" + @'
+"brk:$($a.kind -eq 'breaking' -and $a.hit -eq 'MODIFY c VARCHAR(10);' -and $u.start -eq 17 -and $u.gates[0].kind -eq 'left90')"
+'@) @($migBossy, $mg)
+Remove-Item "$mg/c/db/changelog/003.sql"; & $mgPut 'db/migrations/0004_x.py' 'op.add_column("t", "d")'
+$mgC = Invoke-PsTest 'mig-code' ($mgHead + "`n" + @'
+"code:$($a.kind -eq 'breaking' -and $a.hit -match '0004_x.py .not read: code' -and $u.gates[0].kind -eq 'left90')"
+'@) @($migBossy, $mg)
+Expect-Each @(@($mgA) + @($mgB) + @($mgC)) 'deploy schedule edge from migrations: #' @('add', 'brk', 'code')
 Remove-TestKit $k
 Complete-Tests

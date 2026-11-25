@@ -4,7 +4,7 @@
 # Merges the main line into a deploy branch through a deploy MR (-Mr: deploy/<env> pushed, reused per env; MR per deploy.mergeMethod, merged on
 # green), or tags it (deploys[].tag, {n} = the deployed head's sha7; -Push pushes the tag). A deploy branch itself is never pushed to. Owner
 # 2026-11-24: no date or counter in a ref (the time is in the tag message and the commit); old deploy/<env>-<n> branches still resume.
-# Sections: L8 merge · L115 mr
+# Sections: L8 merge · L125 mr
 # ---- merge: tag or trunk, the merge in a worktree
 function Invoke-DeployMerge {
 param(
@@ -38,6 +38,16 @@ if ($Commit) {   # -Commit: deploy one main-line commit, never a hand-pushed pin
   if ($LASTEXITCODE) { "deploy merge -Commit $Commit is not on origin/${From}: only a commit of the source branch deploys; nothing merged"; exit 2 }
   $src = $pin; "pinned: $($pin.Substring(0, 8)) of $From"
 }
+# a pinned word deploys only its pin (owner 2026-11-25): a commit at or before its commit, only its MRs
+$wp = try { Get-KitDecisionPin $Decision } catch { "deploy merge: $_; nothing merged"; exit 2 }   # adapters/deploys.ps1
+if ($wp.commit) {
+  $wc = "$(git -C $Repo rev-parse -q --verify "$($wp.commit)^{commit}" 2>$null)".Trim()
+  if ($wc -and $pin) { git -C $Repo merge-base --is-ancestor $pin $wc }
+  if (-not $wc -or -not $pin -or $LASTEXITCODE) { "deploy merge: word $Decision is pinned at $($wp.commit)$(if (-not $wc) { ", not a commit of $Repo" } else { ": pass -Commit <it or an older commit>" }); nothing merged"; exit 2 }
+}
+$wo = @(@(Split-KitList $Mrs) | Where-Object { $wp -and -not (Test-KitDeployPinCovers $wp "$_") })
+if ($wp.pinned -and -not $wp.commit -and (-not $pin -or -not @(Split-KitList $Mrs).Count)) { "deploy merge: word $Decision is pinned to MRs ($(@($wp.mrs) -join ', ')): pass -Mrs and -Commit (the newest commit they need); nothing merged"; exit 2 }
+if ($wo.Count) { "deploy merge: word $Decision does not cover $($wo -join ', ') (its pin: $(@(@($wp.mrs) + @($wp.not | ForEach-Object { "not $_" })) -join ', ')); nothing merged"; exit 2 }
 if ($dep.tag) {
   git -C $Repo fetch -q origin $From
   if ($LASTEXITCODE) { "fetch origin $From FAILED (exit ${LASTEXITCODE}: offline or wrong -From): no tag"; exit 1 }   # a stale origin/<From> would ship old code

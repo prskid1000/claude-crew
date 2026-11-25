@@ -52,13 +52,20 @@ $hostCmd = { param($v, $a) "pwsh -NoProfile -File `"$hostPs`" $v $a" }
 Get-ChildItem "$r/wt" -Directory -Filter 'deploymerge-*' -ErrorAction SilentlyContinue | ForEach-Object { git -C "$r/repo" worktree remove --force $_.FullName 2>$null }
 $o5 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Push 2>&1 | Out-String
 Expect "deploy merge -Push to a deploy branch: refused, nothing pushed ($($o5.Trim()))" ($o5 -match 'REFUSED' -and $o5 -match '-Mr' -and $o5 -match 'squash off' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
+# a pinned word (owner 2026-11-25): no -Commit, a sha the repo lacks, MRs it does not cover: refused, nothing merged
+$wordOf = { param($a) (pwsh @np $O decide record -Gate deploy -Item st -Question q -Answer $a -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1' }
+$hd = "$(git -C "$r/repo" rev-parse origin/main)".Trim()
+$pm1 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Decision (& $wordOf "yes, pinned at $($hd.Substring(0, 10))") 2>&1 | Out-String
+$pm2 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Commit $hd -Decision (& $wordOf 'yes, pinned at 0badc0ffee12') 2>&1 | Out-String
+$pm3 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Commit $hd -Mrs 'repo!8' -Decision (& $wordOf 'yes: repo!7; repo!8 not included') 2>&1 | Out-String
+Expect "deploy merge: a pinned word refuses no -Commit, a foreign sha, an MR outside it ($($pm1.Trim()) | $($pm3.Trim()))" ($pm1 -match 'pass -Commit' -and $pm2 -match 'not a commit of' -and $pm3 -match 'does not cover repo!8' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
 $klKeep = Get-Content $kl -Raw; $klSq = $klKeep | ConvertFrom-Json; $klSq | Add-Member -Force NoteProperty deploy @{ mergeMethod = 'squash' }; $klSq | ConvertTo-Json -Depth 8 | Set-Content $kl
 $o5s = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Push 2>&1 | Out-String; Set-Content $kl $klKeep -NoNewline
 Expect "deploy merge texts follow deploy.mergeMethod: squash never says squash off ($($o5s.Trim()))" ($o5s -match 'merge method squash' -and $o5s -notmatch 'squash off')
 $env:DM_HOST_LOG = $hostLog
-$o6 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Mrs 'shop!12' -Decision 'd-42' -WaitMinutes 1 2>&1 | Out-String
+$o6 = pwsh @np $O deploy merge -Repo "$r/repo" -To st -Mr -Mrs 'shop!12' -Decision ($d42 = & $wordOf 'yes') -WaitMinutes 1 2>&1 | Out-String
 $hl = if (Test-Path $hostLog) { Get-Content $hostLog -Raw } else { '' }; $depBr = @(git -C "$r/origin.git" for-each-ref --format='%(refname:short)' 'refs/heads/deploy/')
-Expect "deploy merge -Mr: deploy/st pushed (no counter, no date), MR to staging with method merge and MRs + decision in the body, merged on green, staging never pushed ($($o6.Trim()) | $hl)" ($o6 -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/5' -and $depBr -contains 'deploy/st' -and $hl -match 'create deploy/st \| staging \| merge \| ' -and $hl -match 'shop!12' -and $hl -match 'Deploy decision: d-42' -and $hl -match 'merge 5 merge abc' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
+Expect "deploy merge -Mr: deploy/st pushed (no counter, no date), MR to staging with method merge and MRs + decision in the body, merged on green, staging never pushed ($($o6.Trim()) | $hl)" ($o6 -match 'merged deploy MR https://h\.example/g/shop/-/merge_requests/5' -and $depBr -contains 'deploy/st' -and $hl -match 'create deploy/st \| staging \| merge \| ' -and $hl -match 'shop!12' -and $hl -match "Deploy decision: $d42" -and $hl -match 'merge 5 merge abc' -and "$(git -C "$r/origin.git" rev-parse staging)".Trim() -eq $stagingTip)
 # a re-run after a cut wait (an agent shell's timeout): the open deploy MR of the env resumes: no new branch, no second MR
 Set-Content "$hostLog.open" '[{"iid":7,"source_branch":"deploy/st-20260101-101010","target_branch":"staging","state":"opened","web_url":"https://h.example/g/shop/-/merge_requests/7"}]'
 git -C "$r/repo" push -q origin main:refs/heads/deploy/st-20260101-101010 2>$null; Remove-Item "$hostLog.merged", $hostLog -ErrorAction SilentlyContinue; $brN = @(git -C "$r/origin.git" for-each-ref 'refs/heads/deploy/').Count
@@ -216,6 +223,7 @@ function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
 $tm = Get-KitDeployTiming be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' }); $h2 = @(Get-KitDeployHistory be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' }))
 "history:$($tm.n -eq 3 -and $tm.p50 -eq 24 -and $tm.p90 -eq 30 -and $tm.min -eq 20 -and $tm.build -eq 19 -and $tm.deploy -eq 5 -and $tm.basis -eq '3 run(s): 3 host' -and $script:jh -eq 3 -and $h2[0].sha -eq 'sbe0' -and $h2[-1].sha -eq 'sbe2' -and $h2[0].at -match '^2026-11-01T')"
 Write-KitLog deploy-log timing ([ordered]@{ target = 'st'; repo = 'app'; sha = 'x1'; status = 'success'; totalMin = 4 })
+@{ id = 'd-1'; answer = 'yes' } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath decisions -Create) 'd-1.json')   # a recorded word (an unknown id is refused)
 $so = Invoke-DeploySchedule @('st') @('be!1', 'ui!2', 'app!3') @() @() @() '' 'd-1' | Out-String
 "plan:$($so -match 'SHAPE staggered' -and $so -match 'ui -> st: start \+18 · finish \+26 · p50 8 / p90 10 min' -and $so -match 'basis 1 run\(s\): 1 log' -and $so -match 'WHY  ui after be \(repos\[\]\.role producer -> consumer\)' -and $so -match 'build 19, deploy 5')"
 $sf = Join-Path (Get-KitPath deploys) 'schedule-st.json'; $age = { param($n, $m) $d = Get-Content $sf -Raw | ConvertFrom-Json -AsHashtable; @($d.items | Where-Object { $_.name -eq $n })[0].startedAt = (Get-Date).AddMinutes(-$m).ToString('o'); Write-KitAtomic $sf ($d | ConvertTo-Json -Depth 6 -Compress) }

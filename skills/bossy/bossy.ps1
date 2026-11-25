@@ -1846,14 +1846,14 @@ function Invoke-Decide {
       }
     }
     'record' {
-      if (-not ($Gate -in $kitGates -and $Item -and $Question -and $Answer -and $Source)) { "usage: decide record -Gate $($kitGates -join '|') -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs] [-Task] [-Supersedes <ids>] [-NoPublish]"; exit 2 }
+      if (-not ($Gate -in $kitGates -and $Item -and $Question -and $Answer -and $Source)) { "usage: decide record -Gate $($kitGates -join '|') -Item <env|task|MR> -Question <q> -Answer <pick, verbatim> -Source askuser|chat [-By <person>] [-Mrs | -Commit <sha>] [-Task] [-Supersedes <ids>] [-NoPublish]"; exit 2 }
       if ($By -match $crewRx -or ($Agent -and $Agent -ne 'coordinator')) { "refused: -By names the person who gave the word, never an agent or the coordinator ($By): omit -By (default owner) or name the person; the coordinator runs it without -Agent"; exit 2 }
       $resolvedTask = if ($Task) { NormTask $Task } elseif (($tagRx = Get-KitTaskTagRx) -and $Item -match $tagRx) { NormTask $Item } else { '' }
       $now = (Get-KitStamp)
       $o = [pscustomobject][ordered]@{ id = (New-KitId dec $dir)
         kind = 'decision'; run = $Run; agent = 'coordinator'; item = $Item; gate = $Gate; question = $Question
         options = @(); blocking = $false; contracts = $Contracts; status = 'answered'; at = $now; task = $resolvedTask
-        mrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); answer = $Answer; by = $By; source = $Source; answeredAt = $now; supersedes = $supIds }
+        mrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); answer = $Answer; by = $By; source = $Source; answeredAt = $now; supersedes = $supIds; commit = $Commit }
       & $save $o
       if ($resolvedTask) { Update-KitTracking { param($t) if ($t.tasks[$resolvedTask]) { $t.tasks[$resolvedTask].decisions = @(@($t.tasks[$resolvedTask].decisions) + $o.id | Select-Object -Unique) } } }
       & $note $Contracts "DECISION $($o.id) RECORDED ($Gate $Item) by $($By) via $($Source): $Answer"
@@ -1861,7 +1861,7 @@ function Invoke-Decide {
       & $pub $resolvedTask ([bool]$Task)
     }
     'check' {
-      if (-not ($Id -or ($Gate -and ($Item -or $Mrs)))) { 'usage: decide check (-Id <id> [-Item <env|task|mr>,..] [-Gate <g>,..] | -Gate <gate> (-Item <env|task> | -Mrs <refs>)) [-MaxHours 12] [-Use -Agent <id>]   (with -Id a non-gate -Gate such as ask is ignored)'; exit 2 }
+      if (-not ($Id -or ($Gate -and ($Item -or $Mrs)))) { 'usage: decide check (-Id <id> [-Item <env|task|mr>,..] [-Gate <g>,..] | -Gate <gate> (-Item <env|task> | -Mrs <refs>)) [-Commit <sha>] [-MaxHours 12] [-Use -Agent <id>]   (with -Id a non-gate -Gate such as ask is ignored)'; exit 2 }
       # -Item a,b: any of them (also a record's MR); -Id with -Gate a,b: the record's gate is one of them (buildy NONE word)
       $wantMrs = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ }); $items = @(Split-KitList $Item); $gates = @(Split-KitList $Gate)
       $wantTasks = @($items | ForEach-Object { NormTask $_ } | Where-Object { $_ })
@@ -1877,7 +1877,7 @@ function Invoke-Decide {
           $gateOk -and $itemOk -and $mrOk })
       foreach ($d in $found) {
         if ($d.by -match $crewRx -or $d.source -eq 'rule') { $why += "$($d.id) answered by $($d.by), no person"; continue }
-        if ($d.usedAt) { $why += "$($d.id) already used by $($d.usedBy) at $($d.usedAt)"; continue }
+        if ($wb = Get-KitWordBlock $d $wantMrs $Commit $since) { $why += $wb; continue }
         if ([datetime]$d.answeredAt -lt $since) { $why += "$($d.id) older than $MaxHours h"; continue }
         if ($Use) {   # under the record's lock: two agents never both use one word
           $df = Join-Path $dir "$($d.id).json"; $usedBy = if ($Agent) { $Agent } else { 'unknown' }
@@ -1885,7 +1885,7 @@ function Invoke-Decide {
           if ($won) { $why += "$($d.id) already used by $($won.usedBy) at $($won.usedAt)"; continue }
           Write-KitLog decisions-log used ([ordered]@{ id = $d.id; gate = $d.gate; usedBy = $usedBy })
         }
-        "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt) | question: $($d.question)"; exit 0
+        "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt)$(Format-KitWordPin $d) | question: $($d.question)"; exit 0
       }
       # deploy.triggers {<env | repo>: auto}: the owner's standing word in config (every env named and every MR's repo is auto)
       $tgs = if (-not $Id -and $gates -contains 'deploy') { Get-KitSetting 'deploy.triggers' $null }

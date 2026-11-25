@@ -178,9 +178,40 @@ function Invoke-Bounded { '[{"target":"stage","status":"READY","mrs":[{"mr":"api
 $r = @(Get-KitSuperviseFlagsDeploys -AutoFix); $t0 = -not (& $acts $r) -and ($r.info -join ';') -eq 'deploy stage held until tasks t-1, t-2 merged (hh88)'
 Update-KitTracking { param($tk) $tk.tasks['t-2'] = @{ task = 't-2'; done = $true } }; $r = @(Get-KitSuperviseFlagsDeploys -AutoFix)
 "tasks:$($t0 -and (& $acts $r) -match '^DEPLOY ASK stage: tasks t-1, t-2 merged \(wait hh88\)' -and $null -eq (Get-KitDeployCondition 'no: hold until the moon is merged') -and (Get-KitDeployCondition 'wait until run r-2 done').id -eq 'r-2')"
+# a yes is single-use, a pin covers only its own (owner 2026-11-25): dec-56 = pinned at a commit, !6827 out, already used -> no GO
+Set-Item function:Get-KitSetting ({ if ($args[0] -eq 'deploy.trigger') { 'ask' } else { & $gs @args } }.GetNewClosure())   # env web: no wait word of the cases above
+@{ at = $now.ToString('o'); asked = $now.ToString('o'); ready = @('web (2 MR(s))'); ask = @('web: 2 MR(s) (web!6823, web!6827)'); mrsOf = @{ web = @('web!6823', 'web!6827') } } | ConvertTo-Json -Depth 4 | Set-Content $pc
+$word = { param($id, $ans, $q, $min) Write-KitLog decisions-log answered ([ordered]@{ id = $id; kind = 'decision'; item = 'web'; gate = 'deploy'; question = $q; answer = $ans; by = 'owner'; answeredAt = $now.AddMinutes(-$min).ToString('o'); mrs = @() }) }
+& $word 'dec-56' 'Yes: web half of dec-24, pinned at 4af19298ce; wave 3 and !6827 not included' 'web pinned?' -5
+$p = Get-KitDeployWordPin ([pscustomobject]@{ answer = 'Yes: web half of dec-24, pinned at 4af19298ce; wave 3 and !6827 not included'; mrs = @() })
+"pin:$($p.commit -eq '4af19298ce' -and "$($p.not)" -eq '!6827' -and -not $p.mrs.Count -and -not (Test-KitDeployPinCovers $p 'shop!6827') -and (Test-KitDeployPinCovers $p 'shop!6823'))"
+$pins = @('yes: deploy web!6823, not !6827', 'yes, do not wait, deploy web!6823', 'yes: standing rule', 'wait: retry 14:30', 'yes, commit effaced', 'yes: acme/web!6823', 'yes except https://git.x/acme/web/-/merge_requests/6827') | ForEach-Object { $q = Get-KitDeployWordPin ([pscustomobject]@{ answer = $_ }); "$($q.mrs -join '+')/$($q.not -join '+')" }
+"parse:$(($pins -join ' ') -eq 'web!6823/!6827 web!6823/ / / / web!6823/ /web!6827')"
+$r = @(Get-KitSuperviseFlagsDeploys); $g56 = & $acts $r
+Write-KitLog decisions-log used ([ordered]@{ id = 'dec-56'; gate = 'deploy'; usedBy = 'opsy-stage-2' }); $r = @(Get-KitSuperviseFlagsDeploys)
+"used:$($g56 -match '^DEPLOY GO web: approved \(56, owner\) pinned at 4af19298ce: only MRs at or before it, never web!6827' -and (& $acts $r) -notmatch 'DEPLOY GO' -and (& $acts $r) -match '^DEPLOY ASK web: 2 MR')"
+& $word 'dec-57' 'yes' 'deploy web' -6; @{ id = 'dec-57'; usedAt = $now.ToString('o') } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath decisions -Create) 'dec-57.json')
+$r = @(Get-KitSuperviseFlagsDeploys); "usedFile:$((& $acts $r) -notmatch 'DEPLOY GO' -and (& $acts $r) -match 'DEPLOY ASK web')"
+& $word 'dec-58' 'yes: deploy web!6823 only' 'deploy web' -7; $r = @(Get-KitSuperviseFlagsDeploys)
+"pinMrs:$((& $acts $r) -match '^DEPLOY GO web: approved \(58, owner\) pinned: covers 1 MR\(s\) \(web!6823\); not covered, a new yes: web!6827')"
+& $word 'dec-59' 'yes, deploy stage' 'deploy web' -8; $r = @(Get-KitSuperviseFlagsDeploys); "freshYes:$((& $acts $r) -match '^DEPLOY GO web: approved \(59, owner\), 2 MR\(s\)')"
 '@
 $hr = Invoke-PsTest 'deploy-holds' $ht @($O)
-Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too); a no until a run / tasks: muted, then one DEPLOY ASK (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg', 'until', 'met', 'tasks')
+Expect-Each $hr 'supervise deploy holds: an env''s newest no = one muted "held by <by>: <id>" line, no ACT, until a later yes or an MR it did not cover (one fresh ask, then covered); a yes = DEPLOY GO; env-wide no / deploy.hold: held; a wait = "waiting: <why>, retry HH:mm", then DEPLOY RETRY (a yes after it too); a no until a run / tasks: muted, then one DEPLOY ASK; a used yes (log event or record file) = an ask; a pin covers only its commit / MRs (#)' @('held', 'fresh', 'yes', 'wait', 'due', 'retry', 'all', 'cfg', 'until', 'met', 'tasks', 'pin', 'used', 'usedFile', 'pinMrs', 'freshYes', 'parse')
+# decide check: a used word stays used when its record lost usedAt (the log event counts); a pin refuses another commit and shows on WORD
+$pid56 = (Px $O decide record -Gate deploy -Item rmx -Question q -Answer 'Yes: web half, pinned at 4af19298ce; wave 3 and !6827 not included' -Source askuser | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
+$pinWord = Px $O decide check -Gate deploy -Id $pid56 -Item rmx | Out-String; $pcm = Px $O decide check -Gate deploy -Id $pid56 -Item rmx -Commit 99999999ab | Out-String
+$pu = Px $O decide check -Gate deploy -Id $pid56 -Item rmx -Use -Agent op9 | Out-String
+$pf = Get-ChildItem $k -Recurse -Filter "$pid56.json" | Select-Object -First 1; $pj = Read-Json $pf.FullName; $pj.PSObject.Properties.Remove('usedAt'); & $J $pj $pf.FullName
+$pa = Px $O decide check -Gate deploy -Item rmx | Out-String
+$fid = (Px $O decide record -Gate deploy -Item rmx -Question q -Answer 'yes' -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'; $fw = Px $O decide check -Gate deploy -Item rmx | Out-String
+Expect "decide check: pinned word shows its pin, refuses another commit; used once (the log event counts); a fresh word passes ($($pa.Trim()))" ($pinWord -match "WORD $pid56 .*\| pin: 4af19298ce; not !6827 only" -and $pcm -match "NO-WORD.*$pid56 pinned \(4af19298ce\), not 99999999ab" -and
+  $pu -match "WORD $pid56" -and $pa -match "NO-WORD.*$pid56 already used" -and $fw -match "WORD $fid ")
+# deploy run / schedule under an MR-pinned word: no -Mrs or an MR it excludes = refused, nothing runs
+$mw = (Px $O decide record -Gate deploy -Item svc-stage -Question q -Answer 'yes: deploy svc!7, not svc!8' -Source chat | Out-String) -replace '(?s).*RECORDED (\S+) .*', '$1'
+$dra = Px $O deploy run -To svc-stage -Decision $mw 2>&1 | Out-String; $drb = Px $O deploy run -To svc-stage -Mrs 'svc!8' -Decision $mw 2>&1 | Out-String
+$dsa = Px $O deploy schedule -Env svc-stage -Decision $mw 2>&1 | Out-String
+Expect "deploy run / schedule: an MR-pinned word needs -Mrs inside it ($($dra.Trim()) | $($drb.Trim()))" ($dra -match "REFUSED deploy run -To svc-stage: word $mw is pinned \(pass -Mrs" -and $drb -match 'pinned \(not svc!8\)' -and $dsa -match 'is pinned: pass -Mrs')
 Expect "deploy word kinds: no / wait / yes from the answer ($(@($hr) -match '^kinds:'))" (@($hr) -contains 'kinds:no,no,no,wait,wait,yes,yes,yes,yes,unclear,noAll,no,no,noAll,yes,yes,no')
 Expect "deploy.answerWords: an org's own leading words first, whole words only, English still read ($(@($hr) -match '^words:'))" (@($hr) -contains 'words:yes,no,noAll,wait,unclear,yes')
 # deploy request (retro tidy-20261124-01: a batch's plan ran 58 KB): a summary out, the full plan in crafty.ps1 dir -Agent <run>

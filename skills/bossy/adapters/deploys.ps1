@@ -9,7 +9,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy watch -Env <target>[,..] [-Started <name>=<sha>,..] [-Finished <name>=success|failed,..] [-WaitMinutes <deploy.pipelineWaitMinutes>] [-Json]   one bounded poll loop over the schedule's started pipelines: START (a gate opened) · DONE (verify it) · FAILED (its dependents held) · WAIT; logs actual vs predicted
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated] [-Agent <ids> (laneApk: phones free or leased by them only)]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L17 helpers · L108 intest · L312 deploy · L523 schedule · L719 restart · L799 supervise
+Sections: L17 helpers · L108 intest · L312 deploy · L523 schedule · L760 restart · L844 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -615,10 +615,42 @@ function Test-KitDeployGate($Gate, $Dep, [datetimeoffset]$Now) {
   if ($null -eq $el -or $el -gt $span) { return @{ ok = $false; text = "REPLAN $($Dep.name) runs $el min, past its p90 $($Dep.p90): waits for it live" } }
   $rem = [math]::Round($span - $el, 1); @{ ok = $rem -le $Gate.lead; text = "$($Dep.name) has ~$rem min left (start at <= $($Gate.lead))" }
 }
+# a producer's migrations in this deploy (owner 2026-11-25: additive = no strict edge): the added lines of its migration files between
+# the deploy branch and the source (or the pin), rollback blocks and undo files skipped; kind breaking (drop / rename / type change /
+# not null / delete: the old consumer may break; a file it cannot read, not .xml / .yaml / .sql / .json, too) | additive | '' (none, or
+# unknown: note says why). -U0 shows added lines only: a line added inside an old rollback block reads as breaking (the safe side)
+function Get-KitMigrationKind([string]$Checkout, [string]$Branch, [string]$Src) {
+  $res = { param($k, $f, $h, $n) [pscustomobject]@{ kind = $k; files = @($f); hit = $h; note = $n } }
+  if (-not $Checkout -or -not $Branch -or -not $Src -or -not (Test-Path -LiteralPath $Checkout)) { return & $res '' @() '' '' }   # no checkout here: nothing to read, no note
+  $null = Invoke-GitFetch $Checkout 30 @($Branch, $(if ($Src -like 'origin/*') { $Src.Substring(7) }) | Where-Object { $_ })   # a stale clone would miss the batch
+  if ($Src -notlike 'origin/*') { $null = git -C $Checkout cat-file -e "$Src^{commit}" 2>&1; if ($LASTEXITCODE) { return & $res '' @() '' "pin $Src not in this checkout" } }
+  $rng = "origin/$Branch...$Src"; $pathRx = [string](Get-KitSetting 'deploy.schedule.migrationPathRx' '(?i)(^|/)(db|migrations?|changelogs?)(/|\.|$)|changelog[^/]*\.(xml|ya?ml|sql|json)$')
+  $fs = @(git -C $Checkout -c core.quotepath=off diff --no-renames --name-only --diff-filter=AM $rng 2>$null)
+  if ($LASTEXITCODE) { return & $res '' @() '' "git diff $rng failed" }
+  $fs = @($fs | Where-Object { $_ -match $pathRx -and $_ -notmatch '(^|/)U\d+[_.]' }); if (-not $fs.Count) { return & $res '' @() '' '' }
+  if (($unk = @($fs | Where-Object { $_ -notmatch '\.(xml|ya?ml|sql|json)$' })).Count) { return & $res 'breaking' $fs "$($unk[0]) (not read: code)" '' }
+  $brk = [string](Get-KitSetting 'deploy.schedule.breakingMigrationRx' '(?i)\b(dropColumn|dropTable|dropView|renameColumn|renameTable|renameView|modifyDataType|addNotNullConstraint|mergeColumns|dropPrimaryKey|dropForeignKeyConstraint)\b|\bDROP\s+(TABLE|COLUMN|VIEW|FOREIGN|CONSTRAINT)\b|\bRENAME\s+(TABLE|COLUMN|TO)\b|\bRENAME\s+\w+\s+TO\b|\bALTER\s+TABLE\b.*\b(DROP|MODIFY|CHANGE)\b|^\s*(MODIFY|CHANGE|RENAME|ALTER\s+COLUMN)\s+\S|^\s*DROP\s+(?!INDEX\b)\S|\bALTER\s+COLUMN\b.*\bTYPE\b|\bSET\s+NOT\s+NULL\b|\bTRUNCATE\b|\bDELETE\s+FROM\b|^\s*<delete\b|^\s*-\s*delete:')
+  $inRb = $false; $rbInd = -1; $hit = ''
+  foreach ($l in @(git -C $Checkout -c core.quotepath=off diff --no-renames -U0 $rng -- @($fs) 2>$null)) {
+    if ($l -match '^\+\+\+ ') { $inRb = $false; $rbInd = -1; continue }
+    if ($l -notmatch '^\+(?<t>.*)$') { continue }; $t = $Matches.t; $ind = $t.Length - $t.TrimStart().Length
+    # a YAML rollback block ends at a lower indent, or its own indent unless a list item ("rollback:" then "- dropTable:")
+    if ($rbInd -ge 0 -and $t.Trim() -and ($ind -lt $rbInd -or ($ind -eq $rbInd -and $t.TrimStart() -notmatch '^-'))) { $rbInd = -1 }
+    if ($t -match '^\s*-?\s*rollback:\s*$') { $rbInd = $ind; continue }
+    if ($t -match '(?i)<rollback\b' -and $t -notmatch '(?i)</rollback>|/>\s*$') { $inRb = $true; continue }
+    if ($inRb) { if ($t -match '(?i)</rollback>') { $inRb = $false }; continue }
+    if ($rbInd -ge 0 -or $t -match '^\s*--\s*rollback\b' -or $t -match '(?i)<rollback\b') { continue }
+    if (-not $hit -and $t -match $brk) { $hit = $t.Trim() }
+  }
+  & $res $(if ($hit) { 'breaking' } else { 'additive' }) $fs $hit ''
+}
 # deploy schedule: items of -Env (one per repo x target: -Mrs' repos, -Repo, else every repo with a row there) -> the shape, saved for deploy watch
-function Invoke-DeploySchedule([string[]]$Envs, [string[]]$Mrs, [string[]]$RepoNames, [string[]]$After, [string[]]$Strict, [string]$Mode, [string]$Decision, [switch]$Json) {
+function Invoke-DeploySchedule([string[]]$Envs, [Alias('Mr')][string[]]$Mrs, [string[]]$RepoNames, [string[]]$After, [string[]]$Strict, [string]$Mode, [string]$Decision, [switch]$Json) {
   if (-not $Mode) { $Mode = [string](Get-KitSetting 'deploy.schedule.mode' 'auto') }
   if ($Mode -notin 'auto', 'parallel', 'serial') { "deploy schedule: mode $Mode unknown (auto | parallel | serial)"; exit 2 }
+  $sp = try { Get-KitDecisionPin $Decision } catch { "deploy schedule: $_; nothing scheduled"; exit 2 }
+  $spOut = @($Mrs | Where-Object { $_ -and $sp -and -not (Test-KitDeployPinCovers $sp "$_") })
+  if ($spOut.Count -or ($sp.pinned -and -not $sp.commit -and -not @($Mrs | Where-Object { $_ }).Count)) { "deploy schedule: word $Decision is pinned$(if ($spOut.Count) { ", does not cover $($spOut -join ', ')" } else { ': pass -Mrs <the refs it covers>' }); nothing scheduled"; exit 2 }
   $mrOf = @{}; foreach ($m in $Mrs) { $c = Get-CanonMr (ConvertTo-MrRef $m); $rn = (($c -split '!')[0] -split '/')[-1]; $mrOf[$rn] = @(@($mrOf[$rn]) + $c | Where-Object { $_ }) }
   $want = @(@($mrOf.Keys) + @($RepoNames | ForEach-Object { Get-KitRepoName $_ }) | Select-Object -Unique)
   $edges = @{}; foreach ($pr in @(@($After | ForEach-Object { , @($_, 'after') }) + @($Strict | ForEach-Object { , @($_, 'strict') }))) { $c, $p = "$($pr[0])" -split '=', 2; if (-not $p) { "deploy schedule: -$($pr[1]) takes <consumer>=<producer> ($($pr[0]))"; exit 2 }; $edges["$(Get-KitRepoName $c)|$(Get-KitRepoName $p)"] = $pr[1] }
@@ -626,7 +658,7 @@ function Invoke-DeploySchedule([string[]]$Envs, [string[]]$Mrs, [string[]]$RepoN
       if ($want.Count -and "$($rp.name)" -notin $want) { continue }
       foreach ($d in @($rp.deploys | Where-Object { "$($_.target)" -in $Envs })) {
         $t = Get-KitDeployTiming "$($rp.name)" $d
-        [ordered]@{ name = $(if ($Envs.Count -gt 1) { "$($rp.name)@$($d.target)" } else { "$($rp.name)" }); repo = "$($rp.name)"; target = "$($d.target)"; branch = "$($d.branch)"; checkout = "$($rp.checkout)"; kind = (Get-KitDeployKind $d)
+        [ordered]@{ name = $(if ($Envs.Count -gt 1) { "$($rp.name)@$($d.target)" } else { "$($rp.name)" }); repo = "$($rp.name)"; target = "$($d.target)"; branch = "$($d.branch)"; from = "$(@($d.from)[0] ?? $rp.target)"; checkout = "$($rp.checkout)"; kind = (Get-KitDeployKind $d)
           role = "$($rp.role)"; rowAfter = @($d.after | Where-Object { $_ }); lock = "$($d.lock)"; mrs = @($mrOf["$($rp.name)"]); n = $t.n; p50 = $t.p50; p90 = $t.p90; min = $t.min; build = $t.build; deploy = $t.deploy; basis = $t.basis; job = "$($d.job)"; after = @(); strict = @(); why = @{}; status = 'pending' }
       } })
   if (-not $items.Count) { "deploy schedule: nothing to deploy to $($Envs -join ', ')$(if ($want.Count) { " for $($want -join ', ')" }) (repos[].deploys targets)"; exit 2 }
@@ -640,11 +672,20 @@ function Invoke-DeploySchedule([string[]]$Envs, [string[]]$Mrs, [string[]]$RepoN
       elseif ($i.role -eq 'consumer' -and $j.role -eq 'producer') { $i.after += $j.name; $i.why[$j.name] = 'repos[].role producer -> consumer' }
     }
   }
+  # migrations decide strict, not the caller: a breaking one makes its consumers' edges strict; additive stays a p50 edge (both run in parallel)
+  foreach ($j in @($items | Where-Object { $jn = $_.name; @($items | Where-Object { $jn -in @($_.after) }).Count })) {
+    $mk = Get-KitMigrationKind $j.checkout $j.branch $(if ($sp.commit) { $sp.commit } elseif ($j.from) { "origin/$($j.from)" })
+    foreach ($i in @($items | Where-Object { $j.name -in @($_.after) })) {
+      if ($mk.kind -eq 'breaking') { $i.after = @($i.after | Where-Object { $_ -ne $j.name }); $i.strict += $j.name; $i.why[$j.name] = "breaking migration: $($mk.hit)" }
+      elseif ($mk.kind) { $i.why[$j.name] += "; additive migrations ($(@($mk.files).Count) file(s)): not strict" }
+      elseif ($mk.note) { $i.why[$j.name] += "; migrations unknown ($($mk.note)): -Strict when breaking" }
+    }
+  }
   $sh = Get-KitDeployShape $items $Mode ([int](Get-KitParam 'deploy.schedule.maxParallel')) ([double](Get-KitParam 'deploy.schedule.marginMinutes'))
   $key = ConvertTo-KitSlug ($Envs -join '-'); $f = Join-Path (Get-KitPath deploys -Create) "schedule-$key.json"
   $old = try { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } catch { $null }; $busy = @($old.items | Where-Object { $_.status -eq 'running' } | ForEach-Object { $_.name })
   if ($busy.Count) { "deploy schedule: $($busy -join ', ') still running in $(Split-Path $f -Leaf): deploy watch -Env $($Envs -join ',') until they finish (a new schedule would drop their state)"; exit 1 }
-  $doc =[ordered]@{ envs = $Envs; at = (Get-Date).ToString('o'); decision = $Decision; maxParallel = [int](Get-KitParam 'deploy.schedule.maxParallel') } + $sh
+  $doc =[ordered]@{ envs = $Envs; at = (Get-Date).ToString('o'); decision = $Decision; pin = "$($sp.commit)"; maxParallel = [int](Get-KitParam 'deploy.schedule.maxParallel') } + $sh
   Write-KitAtomic $f ($doc | ConvertTo-Json -Depth 6 -Compress)
   if ($Json) { $doc | ConvertTo-Json -Depth 6; return }
   $fmt = { param($v) if ($null -eq $v) { '?' } else { $v } }
@@ -701,7 +742,7 @@ function Invoke-DeployWatch([string[]]$Envs, [string[]]$Started, [string[]]$Fini
     if ($go.Count -or -not $live.Count -or $out.Count -or (Get-Date) -gt $end) { break }
     Wait-KitBackoff $bk $pq 30 $end
   } while ((Get-Date) -le $end)
-  foreach ($i in $go) { $out.Add("START $($i.name) -> $($i.target) now ($(if ($i.wait) { $i.wait } else { 'no gate' })): bossy.ps1 deploy $(if ($i.kind -in 'ci-job', 'branch-mr') { "merge -Repo $($i.checkout) -To $($i.target) -Mr" } else { "run -To $($i.target) -Repo $($i.repo)" })$(if (@($i.mrs).Count) { " -Mrs $(@($i.mrs) -join ',')" })$(if ($doc.decision) { " -Decision $($doc.decision)" }); then deploy watch -Env $($Envs -join ',') -Started $($i.name)=<merge sha>") }
+  foreach ($i in $go) { $out.Add("START $($i.name) -> $($i.target) now ($(if ($i.wait) { $i.wait } else { 'no gate' })): bossy.ps1 deploy $(if ($i.kind -in 'ci-job', 'branch-mr') { "merge -Repo $($i.checkout) -To $($i.target) -Mr$(if ($doc.pin) { " -Commit $($doc.pin)" })" } else { "run -To $($i.target) -Repo $($i.repo)" })$(if (@($i.mrs).Count) { " -Mrs $(@($i.mrs) -join ',')" })$(if ($doc.decision) { " -Decision $($doc.decision)" }); then deploy watch -Env $($Envs -join ',') -Started $($i.name)=<merge sha>") }
   foreach ($i in @($doc.items | Where-Object { $_.status -eq 'pending' -and $_ -notin $go })) { $out.Add("WAIT $($i.name): $($i.wait)") }
   foreach ($i in @($doc.items | Where-Object { $_.status -eq 'running' -and -not ($_.branch -and $_.kind -in 'ci-job', 'branch-mr') })) { $out.Add("RUNNING $($i.name): no CI run to poll ($($i.kind)): deploy watch -Finished $($i.name)=success|failed once it returns") }
   # another watch (a -Started / -Finished call while this one polled) may have moved an item on: the further state wins
@@ -728,6 +769,10 @@ function Invoke-DeployRun([string]$To, [string]$Repo, [Alias('Mr')][string[]]$Mr
   # a person's word first (AGENTS.md): checked, not used (deploy merge uses it)
   $drWord = if ($Decision) { "$(& pwsh -NoProfile -File $KitCmd.orch decide check -Id $Decision -Gate deploy -Item $To 2>&1)" } else { '' }
   if ($drWord -notmatch '^WORD ') { "REFUSED deploy run -To ${To}: no person's deploy word (decide record -Gate deploy -Item $To, then -Decision <id>)$(if ($drWord) { ": $drWord" })"; exit 1 }
+  # a pinned word: its MRs only; a commit pin deploys through deploy merge -Commit (a run deploys the head)
+  $drPin = try { Get-KitDecisionPin $Decision } catch { "REFUSED deploy run -To ${To}: $_"; exit 1 }
+  $drOut = @($Mrs | Where-Object { $_ -and -not (Test-KitDeployPinCovers $drPin "$_") })
+  if ($drPin.commit -or $drOut.Count -or ($drPin.pinned -and -not @($Mrs | Where-Object { $_ }).Count)) { "REFUSED deploy run -To ${To}: word $Decision is pinned ($(if ($drPin.commit) { "at $($drPin.commit): deploy merge -Commit" } elseif ($drOut.Count) { "not $($drOut -join ', ')" } else { 'pass -Mrs <the refs it covers>' }))"; exit 1 }
   foreach ($x in $rows) {
     $kd = Get-KitDeployKind $x.d; $cmdDeploy = $x.d.command.deploy -and $kd -ne 'command'   # fallback: a row's command.deploy line (any kind)
     if (-not (Test-KitCap 'deploy-kind' $kd 'deploy') -and -not $cmdDeploy) { "UNSUPPORTED deploy-kind/$kd/deploy $($x.r.name) -> ${To}: a person deploys ($(Invoke-KitDeployKind $x.d 'plan')), then deploy record -Env $To"; continue }
@@ -811,6 +856,14 @@ function Get-KitDeployWordKind([string]$Answer) {
   elseif ($a -match '(?i)^(yes|y|sure|proceed|please|confirmed?|ok|okay|go|approved?|deploy)\b') { 'yes' }
   else { 'unclear' }
 }
+# deploy merge / run / schedule -Decision: the record, else its answered log line (.runtime is disposable); none = throw (fail closed)
+function Get-KitDecisionPin([string]$Id) {
+  if (-not $Id) { return $null }
+  $f = Join-Path (Get-KitPath decisions) "$Id.json"
+  $d = if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } else { @(Read-KitLog decisions-log ([datetime]'2000-01-01') | Where-Object { $_.event -eq 'answered' -and $_.id -eq $Id }) | Select-Object -Last 1 }
+  if (-not $d) { throw "decision $Id not found: its pin cannot be checked" }
+  Get-KitDeployWordPin $d
+}
 # a wait or no on a condition: 'until run <run> done', 'until tasks <ids> merged', or 'until (all of) <phrase> is merged|done' whose
 # letters and digits name one launched run ('v2 wave 1' = v2-wave1); else $null (a plain wait / no)
 function Get-KitDeployCondition([string]$Answer) {
@@ -847,7 +900,7 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
     $retry = if ($ans -match '\b([01]?\d|2[0-3]):([0-5]\d)\b') { $rt = $at.Date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2]); if ($rt -le $at) { $rt.AddDays(1) } else { $rt } } else { $at.AddMinutes((Get-KitParam 'deploy.waitRetryMinutes')) }
     $why = if ("$($d.question) $ans" -match '(?i)\bbusy\b') { 'host busy' } else { "wait ($($d.by))" }
     [pscustomobject]@{ target = $t; state = $(if ($Now -lt $retry) { 'waiting' } else { 'due' }); sid = $sid; why = $why; retry = $retry; text = "$t waiting: $why, retry $($retry.ToString('HH:mm')) ($sid)" } }
-  $dirty = $false
+  $dirty = $false; $used = $null
   foreach ($t in $tgs) {
     if ($t -in $cfgHold) { $hold[$t] = [pscustomobject]@{ target = $t; state = 'held'; sid = 'deploy.hold'; new = @(); text = "$t held by config: deploy.hold" }; continue }
     $ws = @($words[$t] | Where-Object { $_ }); if (-not $ws.Count) { continue }
@@ -859,8 +912,16 @@ function Get-KitDeployHolds($Cache, [string]$CacheFile, [datetime]$Now = (Get-Da
       $hold[$t] = [pscustomobject]@{ target = $t; state = $st; sid = $sid; why = $cond.text; text = $(if ($met) { "$t condition met: $($cond.text) ($sid), owner asked" } else { "$t held until $($cond.text) ($sid)" }) }; continue }
     if ($kind -eq 'wait') { $hold[$t] = & $waitOf $t $d }
     elseif ($kind -eq 'yes') {
+      # a used yes is spent (its deploy ran): the env's MRs since need a new yes; the log's used event counts, the record file may be gone
+      if ($null -eq $used) { $used = Get-KitUsedWords $Now.AddDays(-(Get-KitParam 'deploy.wordsDays')) }
+      if ($used.ContainsKey("$($d.id)")) { $ub = $used["$($d.id)"]   # its deploy still runs (the user live on the board): muted, no second ask
+        if ($ub -and @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { "$($_.agent)" -eq $ub -and $_.status -ne 'left' }).Count) { $hold[$t] = [pscustomobject]@{ target = $t; state = 'held'; sid = $sid; new = @(); text = "$t deploying: word $sid used by $ub" } }
+        continue }
       $w = @($ws | Where-Object { (Get-KitDeployWordKind "$($_.answer)") -eq 'wait' -and ($Now - (& $atOf $_)).TotalHours -lt (Get-KitParam 'deploy.waitWordHours') } | Select-Object -Last 1)
-      $hold[$t] = if ($w.Count) { & $waitOf $t $w[0] } else { [pscustomobject]@{ target = $t; state = 'go'; sid = $sid; by = $d.by; text = "$t approved: $sid" } }
+      $pin = Get-KitDeployWordPin $d; $mrs = @(@((Get-KitMember $Cache.mrsOf $t)) | Where-Object { $_ })
+      $cov = @($mrs | Where-Object { Test-KitDeployPinCovers $pin "$_" }); $out = @($mrs | Where-Object { "$_" -notin $cov })
+      if ($pin.pinned -and $mrs.Count -and -not $cov.Count) { continue }   # the pin covers none of the batch: a new ask
+      $hold[$t] = if ($w.Count) { & $waitOf $t $w[0] } else { [pscustomobject]@{ target = $t; state = 'go'; sid = $sid; by = $d.by; pin = $pin; cov = $cov; out = $out; text = "$t approved: $sid" } }
     }
     elseif ($kind -in 'no', 'noAll') {
       $by = if ($d.by) { $d.by } else { 'owner' }
@@ -970,7 +1031,8 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
       $h = $holds[("$a" -split ':', 2)[0].Trim()]
       if ($h.state -in 'held', 'waiting', 'until', 'met', 'asked') { continue }   # its muted line below; met: the ask below
       if ($h.state -eq 'due') { & $flag 'ACT' "DEPLOY RETRY $($h.target): $($h.why), wait $($h.sid) due since $($h.retry.ToString('HH:mm'))" "Deploy $($h.target) again per its deploy rules (the busy check runs first); still busy: a new wait with its retry time (decide record -Gate deploy -Item $($h.target) -Answer 'wait: retry HH:mm')."; continue }
-      if ($h.state -eq 'go') { & $flag 'ACT' "DEPLOY GO $($h.target): approved ($($h.sid), $($h.by)), $(("$a" -split ':', 2)[1].Trim()) not deployed" "Deploy $($h.target) now with that decision (opsy, bossy E5); no ask."; continue }
+      if ($h.state -eq 'go') { $pn = $h.pin; $pt = if ($pn.commit -and -not @($pn.mrs).Count) { " pinned at $($pn.commit): only MRs at or before it$(if (@($h.out).Count) { ", never $(@($h.out) -join ', ')" }), later ones need a new yes;" } elseif ($pn.pinned) { " pinned$(if ($pn.commit) { " at $($pn.commit)" }): covers $(@($h.cov).Count) MR(s) ($(@($h.cov) -join ', '))$(if (@($h.out).Count) { "; not covered, a new yes: $(@($h.out) -join ', ')" })" } else { ", $(("$a" -split ':', 2)[1].Trim())" }
+        & $flag 'ACT' "DEPLOY GO $($h.target): approved ($($h.sid), $($h.by))$pt not deployed" "Deploy $($h.target) now with that decision (opsy, bossy E5)$(if ($pn.commit) { ", deploy merge -Commit $($pn.commit)" })$(if ($pn.pinned) { ', only the MRs it covers' }); no ask."; continue }
       & $flag 'ACT' "DEPLOY ASK $a merged, not deployed, window open$(if ($h.state -eq 'ask') { " (new since hold $($h.sid): $($h.new -join ', '))" })$askStale" "& $($KitCmd.orch) deploy plan: show the batch, ask the owner ONCE for this env; their yes: decide record -Gate deploy -Item <env> -Source askuser, its id to opsy; after the deploy: deploy record -Env <target> -Mrs <refs>, then deploy intest -Apply."
     }
     # a condition wait that now holds: the owner asked to be asked (any deploy.trigger), once a word
