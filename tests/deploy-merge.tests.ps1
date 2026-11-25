@@ -177,6 +177,59 @@ Expect-Each $swR 'deploy intest: -Env = its deploy records'' MRs, only their tas
 # deploy plan target-branch memo (from deploys.tests.ps1: its token cap)
 $tbm = Join-Path (TkPath $k cache -Create) 'deployed-rows.json'; & $J @{ 'mr|jc!9' = @{ at = (Get-Date).ToString('s'); mr = @{ target_branch = 'st/a' } } } $tbm
 Expect-Each (Invoke-PsTest 'tb-memo' '. $args[0]; function Invoke-HostVerb { throw }; "memo:$((Get-MrTargetBranch ''jc!9'' $null) -eq ''st/a'')"' @($O)) 'deploy plan: target branch from pokey''s cache, no host call (#)' @('memo') 3; Remove-Item $tbm
+# owner 2026-11-25: deploy shape from pipeline history (parallel / serial / staggered / mixed), one poll loop for all started pipelines
+$shp = @'
+. $args[0]
+$mk = { param($n, $p50, $p90, $min, $af = @(), $st = @(), $lk = '') [ordered]@{ name = $n; p50 = $p50; p90 = $p90; min = $min; after = @($af); strict = @($st); lock = $lk; why = @{} } }
+$it = { param($s, $n) @($s.items | Where-Object { $_.name -eq $n })[0] }
+$s1 = Get-KitDeployShape @((& $mk be 24 30 20), (& $mk ui 8 10 6 @('be'))) auto 0 2; $u = & $it $s1 ui
+"offset:$($s1.shape -eq 'staggered' -and $u.start -eq 18 -and $u.finish -eq 26 -and $u.gates[0].kind -eq 'left' -and $u.gates[0].lead -eq 6 -and $s1.finish -eq 26 -and $s1.serial -eq 32)"
+$s2 = Get-KitDeployShape @((& $mk be $null $null $null), (& $mk ui 8 10 6 @('be')), (& $mk py 5 6 4)) auto 0 2
+"nohist:$((& $it $s2 ui).gates[0].kind -eq 'live' -and $null -eq (& $it $s2 ui).start -and (& $it $s2 py).start -eq 0 -and $s2.shape -eq 'mixed' -and @($s2.why -match 'no timing history').Count)"
+$s3 = Get-KitDeployShape @((& $mk ui 8 10 6 @() @('be')), (& $mk be 24 30 20)) auto 0 2; $u3 = & $it $s3 ui
+"strict:$($s3.items[0].name -eq 'be' -and $u3.gates[0].kind -eq 'left90' -and $u3.start -eq 26 -and $u3.finish -ge 30)"
+$s4 = Get-KitDeployShape @((& $mk a 10 12 9), (& $mk b 5 6 4), (& $mk c 3 4 2)) serial 0 2
+"serial:$($s4.shape -eq 'serial' -and (& $it $s4 b).start -eq 10 -and (& $it $s4 c).start -eq 15)"
+$s5 = Get-KitDeployShape @((& $mk be 24 30 20), (& $mk ui 8 10 6 @('be'))) parallel 0 2; $s5b = Get-KitDeployShape @((& $mk be 24 30 20), (& $mk ui 8 10 6 @() @('be'))) parallel 0 2
+"parallel:$($s5.shape -eq 'parallel' -and (& $it $s5 ui).start -eq 0 -and (& $it $s5b ui).start -eq 26)"
+$s6 = Get-KitDeployShape @((& $mk a 10 12 9), (& $mk b 5 6 4)) auto 1 2
+$s7 = Get-KitDeployShape @((& $mk a 10 12 9 @() @() 'db'), (& $mk b 5 6 4 @() @() 'db'), (& $mk c 3 4 2)) auto 0 2
+"limits:$((& $it $s6 b).start -eq 10 -and @($s6.why -match 'maxParallel 1').Count -and (& $it $s7 b).start -eq 10 -and (& $it $s7 c).start -eq 0 -and $s7.shape -eq 'mixed' -and @($s7.why -match 'lock db').Count)"
+$s8 = Get-KitDeployShape @((& $mk a 10 12 9 @('b')), (& $mk b 5 6 4 @('a'))) auto 0 2; "cycle:$(@($s8.items).Count -eq 2 -and @($s8.why -match '^cycle').Count)"
+'@
+Expect-Each (Invoke-PsTest 'deploy-shape' $shp @($O)) 'deploy schedule shape: # (offsets from history, no-history fallback, strict order, serial / parallel modes, maxParallel + lock, cycle)' @('offset', 'nohist', 'strict', 'serial', 'parallel', 'limits', 'cycle') 12
+Set-JsonFile $kl @{ deploy = @{ schedule = @{ marginMinutes = 2 } }; repos = @(
+    @{ name = 'be'; checkout = "$r/repo"; role = 'producer'; deploys = @(@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' }) },
+    @{ name = 'ui'; checkout = "$r/repo"; role = 'consumer'; deploys = @(@{ target = 'st'; branch = 'deploy/st' }) },
+    @{ name = 'app'; checkout = "$r/repo"; role = 'consumer'; deploys = @(@{ target = 'st'; ssh = @{ host = 'u@h' } }) }) }
+$wch = @'
+. $args[0]
+$t0 = [datetimeoffset]'2026-11-01T10:00:00Z'; $script:live = @{}; $script:jh = 0
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) {
+  $rn = "$($A.repo)" -split '/' | Select-Object -Last 1; $len = @{ be = @(20, 24, 30); ui = @(7, 8, 10) }[$rn]
+  if ($Verb -eq 'ci.runs') {
+    if ($script:live[$rn]) { return @([pscustomobject]@{ id = "$rn-live"; sha = $script:live[$rn].sha; status = $script:live[$rn].st; created_at = $t0.ToString('o'); updated_at = $t0.AddMinutes(9).ToString('o') }) }
+    return @(foreach ($n in 0..2) { [pscustomobject]@{ id = "$rn-$n"; sha = "s$rn$n"; status = 'success'; created_at = $t0.AddDays(-$n).ToString('o'); updated_at = $t0.AddDays(-$n).AddMinutes($len[$n]).ToString('o') } }) }
+  if ($Verb -eq 'ci.jobs') { $script:jh++; $n = if ("$($A.id)" -match '-(\d)$') { [int]$Matches[1] } else { 0 }; $L = $len[[math]::Min(2, [math]::Max(0, $n))]
+    return @([pscustomobject]@{ id = 1; name = 'build'; stage = 'build'; status = 'success'; finished_at = $t0.AddDays(-$n).AddMinutes($L - 5).ToString('o') }, [pscustomobject]@{ id = 2; name = 'deploy-st'; stage = 'deploy'; status = 'success'; finished_at = $t0.AddDays(-$n).AddMinutes($L).ToString('o') }) }
+}
+$tm = Get-KitDeployTiming be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' }); $null = Get-KitDeployTiming be ([pscustomobject]@{ target = 'st'; branch = 'deploy/st'; job = 'deploy*' })
+"history:$($tm.n -eq 3 -and $tm.p50 -eq 24 -and $tm.p90 -eq 30 -and $tm.min -eq 20 -and $tm.build -eq 19 -and $tm.deploy -eq 5 -and $tm.basis -eq '3 run(s): 3 host' -and $script:jh -eq 3)"
+Write-KitLog deploy-log timing ([ordered]@{ target = 'st'; repo = 'app'; sha = 'x1'; status = 'success'; totalMin = 4 })
+$so = Invoke-DeploySchedule @('st') @('be!1', 'ui!2', 'app!3') @() @() @() '' 'd-1' | Out-String
+"plan:$($so -match 'SHAPE staggered' -and $so -match 'ui -> st: start \+18 · finish \+26 · p50 8 / p90 10 min' -and $so -match 'basis 1 run\(s\): 1 log' -and $so -match 'WHY  ui after be \(repos\[\]\.role producer -> consumer\)' -and $so -match 'build 19, deploy 5')"
+$sf = Join-Path (Get-KitPath deploys) 'schedule-st.json'; $age = { param($n, $m) $d = Get-Content $sf -Raw | ConvertFrom-Json -AsHashtable; @($d.items | Where-Object { $_.name -eq $n })[0].startedAt = (Get-Date).AddMinutes(-$m).ToString('o'); Write-KitAtomic $sf ($d | ConvertTo-Json -Depth 6 -Compress) }
+$script:live.be = @{ sha = 'aaa111'; st = 'running' }
+$w1 = Invoke-DeployWatch @('st') @('be=aaa111') @() 0 | Out-String; & $age be 40; $w2 = Invoke-DeployWatch @('st') @() @() 0 | Out-String; & $age be 20; $w3 = Invoke-DeployWatch @('st') @() @() 0 | Out-String
+"gate:$($w1 -match 'WAIT ui: be has ~24 min left \(start at <= 6\)' -and $w2 -match 'REPLAN be runs 40 min, past its p90 30' -and $w3 -match 'START ui -> st now .*deploy merge -Repo .* -To st -Mr -Mrs ui!2 -Decision d-1' -and $w3 -notmatch 'START app')"
+$script:live.ui = @{ sha = 'bbb222'; st = 'running' }; $script:live.be.st = 'failed'
+$w4 = Invoke-DeployWatch @('st') @('ui=bbb222') @() 0 | Out-String; $script:live.ui.st = 'success'; $w5 = Invoke-DeployWatch @('st') @() @() 0 | Out-String
+$tl = @(Read-KitLog deploy-log | Where-Object { $_.event -eq 'timing' -and $_.repo -eq 'ui' })[-1]
+"loop:$($w4 -match 'FAILED be -> st after 9 min: opsy step 6 for this target only' -and $w4 -match 'HELD app: its producer be failed' -and $w4 -notmatch 'HELD ui' -and $w5 -match 'DONE ui -> st in 9 min \(predicted 8, p90 10: on time\): verify it now' -and $w5 -match 'watch: 1 failed, 1 success, 1 held|watch: .*all finished' -and $tl.predictedMin -eq 8 -and $tl.totalMin -eq 9)"
+'@
+$cliW = pwsh @np $O deploy watch -Env nope 2>&1 | Out-String; $cliS = pwsh @np $O deploy schedule -Env st -Repo ui,app -Mode serial -After app=ui 2>&1 | Out-String
+Expect "deploy schedule / watch from the CLI: no schedule = a clear stop; -Repo / -Mode / -After bind ($($cliS.Trim()))" ($cliW -match 'no schedule for nope: run bossy.ps1 deploy schedule' -and $cliS -match 'SHAPE serial \(mode serial\): ui, then app' -and $cliS -match 'WHY  app after ui \(-After\)')
+Expect-Each (Invoke-PsTest 'deploy-watch' $wch @($O)) 'deploy schedule + watch: # (host history p50 / p90 + build / deploy split, cached; log history; saved plan text; gates replan; one loop: a failure holds its dependents only, done = verify, actual vs predicted logged)' @('history', 'plan', 'gate', 'loop') 20
 Remove-Item Env:CLAUDE_WT_ROOT
 Remove-TestKit $k
 Complete-Tests

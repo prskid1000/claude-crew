@@ -17,6 +17,11 @@ question back:
    Any kind: `deploy run -To <env> -Mrs <refs> -Decision <id>` runs each row's kind `deploy` verb (branch-mr / ci-job / tag: deploy
    merge; command, or any row's `command.deploy`; ssh: `ssh.deployCmd`; awsStack: `template` (repo path) at the deploy head; laneApk: phoney.ps1 build;
    manual: prints `manual`, a person deploys); while it runs the plan says DEPLOYING; UNSUPPORTED / FAILED rows: by hand, then record.
+   Several targets or repos: `deploy schedule -Env <env> -Mrs <refs>` first: the shape (parallel, serial, staggered or mixed stages)
+   from each row's p50 / p90 (the host's green runs on its deploy branch, build / deploy split; the deploy log's `timing` lines),
+   edges (`repos[].role` producer -> consumer, `deploys[].after`, `-After` / `-Strict`) and limits (`deploy.schedule`
+   maxParallel, `deploys[].lock`); a consumer finishes at or just after its producer goes live; no history: it waits for live.
+   `deploy watch -Env <env> -Started <name>=<sha>`: one bounded loop; a gate re-planned on elapsed time (past p90: wait for live).
 3. `bossy.ps1 deploy record -Env <target>[,<target>..] -Mrs <refs> -By <who>`: each a `repos[].deploys` target name (one per host deployed), never a host group.
 4. `bossy.ps1 deploy intest -Apply -Env <target> -Mrs <refs>` once live: those MRs' tasks move when all their MRs are live; no
    -Mrs / -Env: every promoted task, whoever deployed it (supervise -AutoFix runs that sweep while no opsy is live: FIXED lines; a

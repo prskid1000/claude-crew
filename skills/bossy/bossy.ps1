@@ -27,7 +27,7 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   tidy prep [-DryRun] [-Json] | done -At <time>   /tidy: digest + upkeep without an LLM, then the retro stamp
   report -Run <id> [-Detail] [-Stopped] · bugbrief -Task [-Agent B-<task>] [-Repos <from its MRs>] [-Mandate] [-Only <ids>] [-Skip <id>=<why>; ...] [-Complex] · cleanup [-DryRun] [-IfDue] [-Quiet] [-WorktreesOnly] [-Detail]
   audit [-Run <run | wf id>] [-Agent] [-Task] [-Since 2h|3d|<time>] [-Last N] [-All] [-Json]   one timeline: kitlog + journal + board
-  deploy plan|request|record|intest ... · decide ask|list|answer|wait|record|check|publish|rules ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist; standing rules
+  deploy plan|request|record|intest|schedule|watch ... · decide ask|list|answer|wait|record|check|publish|rules ...   deploy batch; decision pauses; a person's gate word; a task's Decisions checklist; standing rules
   debate start -Item -Question -Options "A: ..","B: .." [-Run] [-Why] [-Owner] | brief -File -Side A|B|revy -Round <n> | ask -File   a written debate (1 per run; rechy kind debate), its table + decide ask
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.

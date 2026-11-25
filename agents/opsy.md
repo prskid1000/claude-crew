@@ -32,12 +32,15 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    rules: busy -> wait, re-check, bounded); each MR's source / test file counts from the plan, and every `OUT-OF-AREA` MR (diff
    outside its brief area) quoted in the report. A check that fails or cannot run, or an OUT-OF-AREA MR without a `decide
    record -Gate scope` word -> `bossy.ps1 decide ask` with the evidence; never deploy past it.
-4. **Deploy** per the org's deploy rules, in the order of step 3; a deploy branch only through a deploy MR, never a push to it
-   (the guard denies it): `bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr -Mrs <refs> -Decision <id>` (squash off,
-   merged on green); wait for each deploy pipeline with the `Next:` line it prints (`crafty.ps1 pipes -Repo <repo> -Branch
-   <deploy branch> -Sha <merge sha>`, in the background: it polls the host and ends itself; `done` false -> run it again),
-   never a self-written log or until loop; a failed job -> stop, step 6. A restart by hand only via `bossy.ps1 deploy
-   restart -Env <target>` (re-checks busy right before it; REFUSED -> `decide ask`), never a bare one.
+4. **Deploy** per the org's deploy rules. Shape first: `bossy.ps1 deploy schedule -Env <env> -Mrs <refs> -Decision <id>
+   [-After <consumer>=<producer>] [-Strict ..]` (step 3's order: `-After`; a contract change or migration: `-Strict`); it
+   picks parallel / serial / staggered / mixed from p50 / p90 history, edges and `deploy.schedule` limits; its SHAPE, plan
+   and WHY lines go in the report. Start each `start now` target (a deploy branch only through a deploy MR, never a push:
+   `bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr -Mrs <refs> -Decision <id>`, squash off, merged on green), then
+   `bossy.ps1 deploy watch -Env <env> -Started <name>=<merge sha>` in the background: one loop polls them all and ends
+   itself; START -> start it, watch again with it added; DONE -> step 5 for that target while the rest run; FAILED -> step 6
+   for that target only (its dependents HELD); never a self-written log or until loop. A restart by hand only via
+   `bossy.ps1 deploy restart -Env <target>` (re-checks busy right before it; REFUSED -> `decide ask`), never a bare one.
 5. **Verify** (every deploy): test env: `pokey.ps1 deployed -Mrs <refs> -Detail` = DEPLOYED or N/A (MANUAL resolved); production:
    the version check of the org's deploy rules; services active; each `probe` / health URL answers 200; no new error lines in
    the service logs since the deploy; the monitoring error rate vs the hour before (the org's monitoring skill or rule). All
@@ -63,8 +66,8 @@ Non-negotiables:
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the
   report shape.
 
-Finish with the `opsy` JSON (crafty templates.md "Final reports"), keys: env · MRs deployed (order) · pre-checks (pass / which
-failed) · verify per check with its evidence ·
+Finish with the `opsy` JSON (crafty templates.md "Final reports"), keys: env · MRs deployed (order) · `shape` (SHAPE line, start
+offsets, predicted vs actual per target) · pre-checks (pass / which failed) · verify per check with its evidence ·
 recorded + inTest task ids · rollback / decision id · `watch`: env, deploy time, MRs (the coordinator starts watchy's windows).
 
 **Self-improvement:**
