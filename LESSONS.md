@@ -61,6 +61,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Optional context, expiry or revert logic -> never gate the main action on optional context; set the terminal state only when the revert completes; access from structured data, not regex; anchor expiry to the source timestamp; clear a stored reason with its state (each broke a flow once). (5├ù)
 
 ## pokey
+- results patch -Check on observed / what_was_done -> keep observed <= 40 words and what_was_done <= 25 before patching (T11 needed a second patch after prose limit failure)
+- patching results.json with text holding quotes or apostrophes -> write the patch to a file and pass the file, never JSON argv through Bash (T1, T2, T13 lost apostrophes, reworded text, needed second patches)
 - a hung own script needs killing -> kill only your own PID, never taskkill /IM node.exe (killed 3 node processes incl. other testers scripts)
 - a results patch with inline JSON is rejected by the Bash tool quoting -> save the patch JSON to a file under the agent work dir and pass the file (inline quoting rejected, one retry per run)
 - a browser.mjs script is killed by timeout or Stop-Process -> release its tab lease (browser release) before the next session() (tab stays leased; later session() blocks 300 s with all 8 tabs busy)
@@ -81,10 +83,8 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Before finalize -> run `finalize -Check -FixNames -ExpectChecks N` (it renames the files and every reference in results.json, lists and text). (2x)
 - A node QA script -> wrap it in try/finally s.done(); after a hard kill run `bossy.ps1 release -Agent <id>` (leased tabs, 8 max, made session() hang silently). (2x)
 - Writing QA observed and verify text -> sentences of <= 25 words, <= 40 words per observed text, before evidence -Check (so the first -Check passes). (3×) (2×)
-- A PowerShell helper param -> never reuse a script variable name in any case (`$o` is `$O`); use distinct names (the helper ran with the wrong value: hard failure). (1x)
 - Passing `pokey.ps1 api -OutDir` -> take it from `crafty.ps1 dir` in a distinctly named variable (a reused case-insensitive name, $o is $O, sent a number: refused 9x). (9x)
 - Report -Check fails on prose limits -> shorten the observed wording only, keep every evidence name and file reference (renamed references broke the report). (2x) (3×)
-- Before every publish -> run `pokey.ps1 finalize -Check` (it catches missing or renamed evidence references: no broken report goes out). (1x)
 - A publish run exits 0 -> check the publish output and the tracker, not the exit code (fixed in kit 1fda997 + 711fa46: a finalize crash exits 1; seen again = regression). (5×)
 - A local env start -> check free RAM for the gate (its need + gate.keepFreeGB) first, or run the API checks first (the start waited on the memory gate). (3×)
 - Before a run -> check the MCP servers it uses (record in lead-notes.md); checks needing a down server use the API or scripts (a down server left checks untested). (2×)
@@ -112,6 +112,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - A restored snapshot leaves a lane "offline" in adb -> `phoney.ps1 avd reset -Lanes <name> -Level cold` (a warm reset keeps the offline state).
 
 ## kitty
+- editing the head of a one-line if/elseif chain -> read the whole line first; never leave a trailing # comment before elseif (comment hid the mr.list array branch)
 - editing a ps1 or test file with a scripted edit -> use Edit, or write the .py with the Write tool; never a Bash heredoc python; pwsh variables are case-insensitive (`$O` vs `$o`) (heredoc mangled regex backslashes; $o shadowed $O in a test)
 - renaming lanes, slots or other owner-visible names -> ask first (decide ask); keep the bird names (lane-<nn>/slot-<nn> switch without asking was rejected by the owner)
 - editing files from Git Bash via pwsh -Command with ${...} -> use the Edit tool (bash ate the variable and an empty string emptied testy.js)
@@ -141,7 +142,6 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - a multi-line program or a > or // argument to python from Git Bash (pyenv shim, MSYS conversion) -> write a .py into crafty.ps1 dir, run it and pass selectors from pwsh (cut programs, stray files, 4 flaky FAILs, a dropped slash) (3×)
 - counting a property that may be null in PowerShell -> use @($x.prop | Where-Object { $_ }).Count or test $null first; @($null).Count is 1 (deploy plan printed OUT-OF-AREA for every MR, supervise info on an empty cache, a route hold skipped) (3×)
 - Working after a push in a merged clean worktree -> run every later command with absolute paths into it, never cd then a command that falls back to the live clone (cleanup swept the worktree: hard failure). (2×)
-- Reading ISO times with ConvertFrom-Json -> compare as DateTimeOffset or keep them text (-AsHashtable, then ToString('o')) (DateTime interpolation drops fraction and offset: same-second ties broke ordering). (1×)
 - A test string holds a regex -> put it in a here-string or a variable (an unbalanced paren in a single-quoted string inside a double-quoted subexpression does not parse). (2x)
 - Kit tests clean up -> remove only the fake files they wrote, never a whole folder (Remove-Item adapters -Recurse broke the bossy area for 2 days when a core function moved into adapters/). (1×)
 - Scripted replace pairs in PowerShell -> wrap each concatenation in parentheses (the comma binds tighter than +: @('a', 'b' + 'c') has 3 items). (2×)
