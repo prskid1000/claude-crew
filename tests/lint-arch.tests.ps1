@@ -114,8 +114,8 @@ Expect 'NAME-NUMBER: a counter name (New-KitId) is a problem at its line; a NAME
 $nrmIn = @(@('run', 'fix-ask-012', 'SHOP-ASK-012 cancel SO reason', ''), @('run', 'fix-ask011', 'ask catalogue create-only prompt', ''), @('run', 'aiedit-b', 'AI edit lost fields other types', ''),
   @('run', 'v2-wave3', 'Website v2 wave 3: payments, my account, events, fix round', 'buildy'), @('agent', 'devy-only-prompt', 'ask catalogue create-only prompt', ''), @('agent', 'devy-askimg', '-', ''), @('agent', 'devy-cartpick', '-', ''))
 $nrm = @($nrmIn | ForEach-Object { "$(& $py -X utf8 $KT3 naming norm $_[0] $_[1] --topic $_[2] @(if ($_[3]) { '--role', $_[3] }) 2>&1)".Trim() }); $nTie = "$(& $py -X utf8 $KT3 naming norm run aiedit-b --live aiedit-a,aiedit-b 2>&1)".Trim()
-$nWant = @('cancel-reason · cancel so reason', 'ask-catalogue · ask catalogue create-only prompt', 'ai-edit · ai edit lost fields other types', 'buildy-payments · website payments, my account, events, fix round',
-  'devy-only-prompt · ask catalogue create-only prompt', 'devy-ask-img', 'devy-cart-pick')
+$nWant = @('cancel-reason', 'ask-catalogue · create-only prompt', 'ai-edit · lost fields other types', 'buildy-payments · website my account, events, fix round',
+  'devy-only-prompt · ask catalogue create', 'devy-ask-img', 'devy-cart-pick')   # the text never repeats a word of the id
 $nChk = @(@('run', 'aiedit-b'), @('run', 'fix-ask011'), @('run', 'kitty-48'), @('agent', 'datay-5'), @('run', 'buildy-ask'), @('run', 'testy-retest-2'), @('desc', 'Website v2 wave 3: payments'), @('desc', 'ask catalogue create-only prompt')) | ForEach-Object { $null = & $py -X utf8 $KT3 naming check $_[0] $_[1] 2>&1; $LASTEXITCODE }
 $nDir = Join-Path $kc 'zz-names'; $nPair = @(1, 2 | ForEach-Object { "$(& $py -X utf8 $KT3 naming next name dec 'Merge the cart change now or wait?' --dir $nDir --cap 16 2>&1)".Trim() })   # no file yet: the hold breaks the tie
 $nBad = @(@(if (($nPair -join ',') -ne 'dec-merge-cart,dec-merge-cart-2') { "held tie: $($nPair -join ',')" }) + @(0..($nWant.Count - 1) | Where-Object { $nrm[$_] -ne $nWant[$_] } | ForEach-Object { "$($nrmIn[$_][1]) -> $($nrm[$_])" }))

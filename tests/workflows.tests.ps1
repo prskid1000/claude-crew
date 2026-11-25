@@ -143,7 +143,7 @@ $ld = TkPath $k launches -Create; $self = { param($s, $run, $json) $f = Join-Pat
 $sa = '{"select":{"statuses":["inTest"]},"target":"stg","kitDir":"C:/k"}'
 $null = & $self testy.js select-stg $sa -RunDir 'C:/rt/qa-runs/d-stg'
 $sr = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Get-Content -Raw | ConvertFrom-Json
-Expect 'launch -Self testy: original args + runDir as extra field' ($sr.argsRaw -eq $sa -and $sr.runDir -eq 'C:/rt/qa-runs/d-stg' -and -not $sr.args.runDir -and (& { . $O; Get-LaunchRunName ($sa | ConvertFrom-Json) }) -eq 'select-stg')
+Expect 'launch -Self testy: original args + runDir as extra field' ($sr.argsRaw -eq $sa -and $sr.runDir -eq 'C:/rt/qa-runs/d-stg' -and -not $sr.args.runDir -and (& { . $O; Get-LaunchRunName ($sa | ConvertFrom-Json) }) -eq 'testy-stg')
 $sf = Get-ChildItem $ld -Filter 'self-testy-select-stg-*.json' | Select-Object -First 1
 $sr | Add-Member -Force holderPid 999999; & $J $sr $sf.FullName 10   # its session is gone
 $sl0 = pwsh @np $O launch -List -Brief | Out-String
@@ -218,7 +218,7 @@ const logs = []
 run(args, agent, (m) => logs.push(m), () => {}, null).then(() => {
  const p = calls.find((c) => c.label === 'prepare'), t = calls.find((c) => c.label === 'test:A1'), recs = calls.filter((c) => c.label === 'record-args'), orig = JSON.stringify(args)
  // the launch record == the original args (before Prepare), then the same args + the resolved runDir
- const rec = recs.length === 2 && calls.indexOf(recs[0]) < calls.indexOf(p) && recs.every((r) => r.prompt.includes(`<<<ARGS\n${orig}\nARGS>>>`) && /-Run 'select-local'/.test(r.prompt)) &&
+ const rec = recs.length === 2 && calls.indexOf(recs[0]) < calls.indexOf(p) && recs.every((r) => r.prompt.includes(`<<<ARGS\n${orig}\nARGS>>>`) && /-Run 'testy-local'/.test(r.prompt)) &&
   !/-RunDir/.test(recs[0].prompt) && recs[1].prompt.includes("-RunDir 'C:/rt/work/qa-runs/2026-01-01-local'")
  console.log(`prepare:${!!p && /"statuses":\["promoted","inTest"\]/.test(p.prompt) && /"target":"local"/.test(p.prompt) && /"exclude":\["T7"\]/.test(p.prompt) && /qa-runs\/<testy-id>"/.test(p.prompt) && /"name":"local-promoted-inTest"/.test(p.prompt)}`)
  console.log(`record:${rec}`)

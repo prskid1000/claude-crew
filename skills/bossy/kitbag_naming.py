@@ -226,6 +226,7 @@ TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, broad 
     'test': (False, ('ui', 'api', 'mobile')),                               # by hand / testing doc
 }
 RETIRED = ('wave',)   # owner 2026-11-25: no numbers
+LEVEL_DROP = {'parent': 'area', 'sub': 'product'}   # the group a parent / a subtask never carries
 KIND_TAG = {'feat': 'feature', 'fix': 'bug', 'refactor': 'chore', 'perf': 'chore'}
 
 
@@ -296,6 +297,9 @@ def tags(parts, have=(), cfg=None):
     if 'type' in p:
         p.setdefault('kind', p.pop('type'))
     p.pop('wave', None)   # retired group: never set
+    lvl = str(p.pop('level', '') or '')   # owner 2026-11-25: a parent: kind + product · a subtask: kind + area (its parent says the product) · alone: all three
+    if lvl in LEVEL_DROP:
+        p[LEVEL_DROP[lvl]] = '-'
     have = [str(h).strip() for h in have if str(h).strip()]
     keep = [h for h in have if tag_group(h, cfg, groups) not in RETIRED]   # old wave-N / 'Wave: x' tags go on any update
     for g, raw in p.items():
@@ -321,13 +325,15 @@ def tags(parts, have=(), cfg=None):
     return {'tags': keep, 'add': [t for t in keep if t.lower() not in low(have)], 'remove': [h for h in have if h.lower() not in low(keep)]}
 
 
-def tag_gaps(have, cfg=None):
+def tag_gaps(have, cfg=None, level=''):
     """[problem]: a kit task carries exactly one kind, one broad area and one product tag (owner 2026-11-25); no narrow area or wave tag."""
     cfg = cfg or naming_cfg()
     groups = tag_groups(cfg)
     by = [tag_group(t, cfg, groups) for t in have]
     by = [g if g != 'area' or str(t).strip().lower() in area_broad(cfg) else 'narrow' for t, g in zip(have, by)]
-    out = [f'{n} {g} tags' if n else f'no {g} tag' for g in ('kind', 'area', 'product') if g in groups and (n := by.count(g)) != 1]
+    need = [g for g in ('kind', 'area', 'product') if g != LEVEL_DROP.get(level)]   # level '' (unknown): area or product may be inherited
+    out = [f'{n} {g} tags' if n else f'no {g} tag' for g in need if g in groups and (n := by.count(g)) != 1 and (level or g == 'kind' or n > 1 or not by.count('area' if g == 'product' else 'product'))]
+    out += [f'{g} tag on a {"parent" if level == "parent" else "subtask"}' for g in by if level in LEVEL_DROP and g == LEVEL_DROP[level]]
     out += [f'narrow area tag {t!r} (a broad one replaces it)' for t, g in zip(have, by) if g == 'narrow']
     return out + [f'{g} tag {t!r} (retired)' for t, g in zip(have, by) if g in RETIRED]
 
@@ -411,10 +417,10 @@ def plan_rows(plan, cfg):
         bad += [f'new title {w}' for w in [name_problem('title', title, cfg)] if w]
         wave = next((m[1] for h in live if (m := re.match(r'(?i)wave\b.*?(\d+)\s*$', str(h)))), '') or it.get('wave') or ''   # a live label, else the kit's order record
         try:
-            tg = tags({'key': key, 'kind': ty, **({'wave': wave} if wave else {})}, live, cfg)
+            tg = tags({'key': key, 'kind': ty, **({'level': it['level']} if it.get('level') else {})}, live, cfg)
         except ValueError as e:
             tg, bad = {'tags': live, 'add': [], 'remove': []}, bad + [str(e)]
-        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad, 'gaps': tag_gaps(live, cfg), **tg})
+        rows.append({'old': code, 'id': it.get('id', ''), 'oldTitle': old, 'key': key, 'title': title, 'problems': bad, 'gaps': tag_gaps(live, cfg, it.get('level') or ''), **tg})
     return rows
 
 

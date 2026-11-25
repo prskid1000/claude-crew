@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L93 move · L136 status roles · L295 task text · L312 naming · L456 track lines · L461 task ids ·
-#   L477 tags · L542 order
+# Sections: L8 items · L93 move · L137 status roles · L296 task text · L313 naming · L457 track lines · L462 task ids ·
+#   L478 tags · L547 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -97,7 +97,8 @@ function Move-KitTask([string]$Id, [string]$Parent = '', [string]$List = '', [sw
   $mvOut = Move-TrackerTask $Id -Parent $Parent -List $List -Top:$Top; if ($DryRun) { return $mvOut }
   Update-KitTaskIndex $Id { param($x) if ($x.spec -is [Collections.IDictionary]) { if ($mvTop) { $x.spec.Remove('parent') } elseif ($mvParent) { $x.spec.parent = $mvParent }; if ($mvList) { $x.spec.list = $mvList } }
     $x.moves = @(@($x.moves | Where-Object { $_ }) + [ordered]@{ at = (Get-KitStamp); from = $mvFrom; parent = $(if ($mvTop) { '' } else { $mvParent }); list = $mvList }) }
-  @(@($mvOut) + @(foreach ($p in @($mvFrom, $mvParent) | Where-Object { $_ } | Select-Object -Unique) { try { Update-KitParentItems $p } catch { "parent items ${p}: $($_.Exception.Message)" } }) | Where-Object { $_ }) -join ' · '
+  $mvTags = @(Set-KitShapeTags $Id; foreach ($p in @($mvFrom, $mvParent) | Where-Object { $_ } | Select-Object -Unique) { Set-KitShapeTags $p })   # its shape changed: parent / subtask / alone tags (owner 2026-11-25)
+  @(@($mvOut) + @(foreach ($p in @($mvFrom, $mvParent) | Where-Object { $_ } | Select-Object -Unique) { try { Update-KitParentItems $p } catch { "parent items ${p}: $($_.Exception.Message)" } }) + $mvTags | Where-Object { $_ }) -join ' · '
 }
 # tracker group (K54; a wave's related tasks under one ask): the parent from -Spec when missing; a task in the parent's list -> moved
 # under it (code: the parent's Items line naming it, its spec code, else its id); another list -> an Items line with its full URL (a
@@ -506,7 +507,11 @@ function Get-KitTagGapFlag { $lec = $global:LASTEXITCODE; $rows = @(@(try { & (G
     action = "Dry run, then apply: & $($KitCmd.dev) tracker retag $($ids -join ',') -DryRun; then without -DryRun (a person's own tags stay)."; problem = "$($rows.Count) task(s): a kind / broad area / product tag missing or doubled, or a narrow area / wave tag"; next = 'tracker retag <ids> -DryRun' }
 }
 # after tracker create (lib.ps1 New-TrackerTask): kind, product, area of the name Format-KitKeyedName made
-function Set-KitNewTaskTags([string]$Task) { if ($Task -and @($script:KitNameTags).Count) { $null = Set-KitTaskTags $Task $script:KitNameTags -Soft } }
+# a task's tags by its shape from a fresh read: a parent (has subtasks) kind + product, a subtask kind + broad area, alone all three
+function Set-KitShapeTags([string]$Task) { if (-not (Test-KitNamingOn)) { return }; Clear-TrackerMemo $Task; $st = Get-TrackerTask $Task; $sk = Get-KitNameKey "$($st.name)"; if (-not $st.name) { return }
+  Set-KitTaskTags $Task (@(if ($sk) { "key=$sk" }) + "level=$(if ($st.parent) { 'sub' } elseif (@($st.subtasks).Count) { 'parent' } else { 'solo' })") -Soft }
+# a subtask: kind + area, its parent then kind + product (owner 2026-11-25: the product is inherited)
+function Set-KitNewTaskTags([string]$Task, [string]$Parent = '') { if ($Task -and @($script:KitNameTags).Count) { $null = Set-KitTaskTags $Task (@($script:KitNameTags) + "level=$(if ($Parent) { 'sub' } else { 'solo' })") -Soft; if ($Parent) { $null = Set-KitTaskTags $Parent @('level=parent') -Soft } } }
 # a bug: a bug-prefixed name (unkeyed, old titles) or a bug tag (keyed titles carry the kind as a tag), live or in the task index
 function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fallback trackers): its full read
   if (Test-KitBugName "$($T.name)") { return $true }
@@ -525,7 +530,7 @@ function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest) {
   $items = @(while ($todo.Count) { $k = $todo.Dequeue(); if ($seen.Contains($k)) { continue }; Clear-TrackerMemo $k; $tk = Get-TrackerTask $k; $seen[$k] = $tk
       if (-not $tk.name) { Write-Warning "retag: $k not readable: skipped"; continue }; foreach ($s in @($tk.subtasks)) { if ($s.id) { $todo.Enqueue("$($s.id)") } }
       if (Get-KitNameKey $tk.name) { $ot = if ("$($tk.description)" -match '\*\*Old title:\*\* ([^\r\n]+)') { "$(Get-KitNameKey $tk.name) $(Remove-KitNameKey ($Matches[1] -replace '\\([\[\]_*`#])', '$1'))" } else { "$($tk.name)" }   # a re-run plans from the first old title, the live key kept
-      [ordered]@{ id = "$k"; title = $ot; tags = @(Get-KitTaskTags $k $tk); wave = "$((Read-KitState (Get-KitTaskFile $k)).order.wave)" } } })   # wave: tracker order's record
+      [ordered]@{ id = "$k"; title = $ot; tags = @(Get-KitTaskTags $k $tk); level = $(if ($tk.parent) { 'sub' } elseif (@($tk.subtasks).Count) { 'parent' } else { 'solo' }); wave = "$((Read-KitState (Get-KitTaskFile $k)).order.wave)" } } })   # wave: tracker order's record
   $pf = New-KitTempFile; [IO.File]::WriteAllText($pf, (@{ items = $items } | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
   $lec = $global:LASTEXITCODE; $md = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch '^DRY RUN: nothing renamed' })   # keys stay: no seed hint
   $rows = @(& (Get-Python) -X utf8 $KitCmd.kitbag naming rename --plan $pf --json 2>$null | ConvertFrom-Json); $global:LASTEXITCODE = $lec; Remove-Item -LiteralPath $pf -Force

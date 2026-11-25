@@ -70,7 +70,7 @@ Expect "tags (owner 2026-11-25): kind, area, product, own last; a wave tag retir
 # review: a re-run keeps a bug; a repo word equal to an AREA code is a repo tag; a person's label stays
 Set-JsonFile "$wd/plan2.json" @{ items = @(@{ id = 't-9'; title = 'SHOP-CAT-007 crash on save'; tags = @('bug', 'shop') }) }; $rn2 = Kb naming rename --plan "$wd/plan2.json" --json
 $tg4 = Kb naming tags key=SHOP-CAT-004 repo=cat-svc --have 'team=core'; $tg5 = Kb naming tags 'wave=1,2'
-Expect "tags review: rerun keeps bug, repo tag 'cat', a person's label kept, wave= ignored ($($tg4.out) | $($rn2.out -replace '\s+', ' '))" ((($rn2.out | ConvertFrom-Json).tags -join ',') -eq 'bug,catalogue,shop' -and (@(($rn2.out | ConvertFrom-Json).gaps) -join ',') -eq 'no area tag' -and
+Expect "tags review: rerun keeps bug, repo tag 'cat', a person's label kept, wave= ignored ($($tg4.out) | $($rn2.out -replace '\s+', ' '))" ((($rn2.out | ConvertFrom-Json).tags -join ',') -eq 'bug,catalogue,shop' -and -not @(($rn2.out | ConvertFrom-Json).gaps).Count -and
   (($tg4.out | ConvertFrom-Json).tags -join ',') -eq 'catalogue,shop,team=core,cat' -and $tg5.code -eq 0 -and -not @(($tg5.out | ConvertFrom-Json).tags).Count)
 # naming.titleStrip (owner 2026-11-24): org regexes cut old codes from retag titles
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' }; titleStrip = @('^Old v1 [A-Z]\d+\s+', '\s*\(was K\d\)') } }
@@ -127,7 +127,7 @@ Expect "keyed task: MR title, commit subject, doc title (v per changed round), b
   @($tBr)[0] -match '^fix/SHOP-CAT-010-local-\d+-crash-on-save$' -and "$tBr" -match 'REFUSED .*no kit key')
 Expect "tracker: render previews <P>-<A>-000, create allocates; a bug under it takes the parent's key; update keeps it; tags kind product area ($($tDry.name) | $($tNew.name) | $($tBug.name) | $($tUpd.name) | $($tNewV.tags) | $($tBug.tags))" (
   $tDry.name -eq 'SHOP-CAT-000 Catalogue blocks' -and $tNew.name -eq 'SHOP-CAT-009 Catalogue blocks' -and $tBug.name -eq 'SHOP-CAT-010 Crash on save' -and $tUpd.name -eq 'SHOP-CAT-009 Catalogue blocks and nav' -and
-  ($tNewV.tags -join ',') -eq 'feature,catalogue,shop' -and ($tBug.tags -join ',') -eq 'bug,catalogue,shop,qa-found')
+  ($tNewV.tags -join ',') -eq 'feature,shop' -and ($tBug.tags -join ',') -eq 'bug,catalogue,qa-found')
 # owner 2026-11-24: a wave's area subtask is keyed from its parent; a rename never drops a key or type (SHOP-AGT-001 vanished by hand)
 $env:KIT_TRACKER_TYPE = 'none'
 $tSub = pwsh -NoProfile -File $D tracker create -Spec (@{ kind = 'Feature'; title = '[Feature] Shop Catalogue fix wave — grid page (web)'; parent = $tNew.id; newTask = 'wave area'; list = 'L1'; problem = 'p.'; goal = 'g.'; items = @(@{ code = 'A1'; desc = 'grid' }); acceptance = @('a'); links = @('https://x.example/1') } | ConvertTo-Json -Compress -Depth 5) 2>$null | ConvertFrom-Json
@@ -208,18 +208,18 @@ $lbl = pwsh -NoProfile -Command ". '$O'; Get-KitRunLabel ([pscustomobject]@{ nam
   Get-KitAgentLabel ([pscustomobject]@{ n = 'devy-01'; ar = 'area-CAT'; sub = 'devy' }); Get-KitAgentLabel ([pscustomobject]@{ n = 'briefy-v1retest'; sub = 'briefy' }); Get-KitAgentLabel ([pscustomobject]@{ n = 'JC'; sub = 'devy' })
   (Get-KitQaRunStart 'testy-20261123-02').ToString('o'); (Get-KitQaRunStart '2026-11-23-150132-old').ToString('HH:mm:ss')"
 Expect "labels: board show '<role>-<topic> · <words> (<run id>)', no key / wave / date; QA run start from run.json ($($lbl -join ' | '))" (
-  $show -match "run buildy-public · public price list \(buildy-20261123-01\)" -and $show -match "$($d2.id) " -and $show -notmatch "$($d2.id) · (area-)?cat" -and $lbl[0] -eq 'testy' -and
+  $show -match "run buildy-public · price list \(buildy-20261123-01\)" -and $show -match "$($d2.id) " -and $show -notmatch "$($d2.id) · (area-)?cat" -and $lbl[0] -eq 'testy' -and
   $lbl[1] -eq 'select · card refunds' -and $lbl[2] -eq 'devy-cat' -and $lbl[3] -eq 'briefy-v1retest' -and $lbl[4] -eq 'devy-jc' -and
   [datetime]$lbl[5] -eq ([datetimeoffset]'2026-11-23T10:00:00Z').LocalDateTime -and $lbl[6] -eq '15:01:32')
-# shown names (normaliser examples: lint-arch.tests.ps1); tags: one kind, broad area (areaMap), product
+# shown names (more: lint-arch.tests.ps1); tags by shape
 $ks = & $bj @('-Type', 'kitty', '-Run', 'kitty-fix-0007', '-Subject', 'rest', '-Area', 'kit'); $show2 = pwsh -NoProfile -File $O board show | Out-String
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue' } } }; Set-JsonFile (TkPath $k tracking) @{ tasks = @{ 'tg-1' = @{ name = 'SHOP-CAT-021 Grid page' }; 'tg-2' = @{ name = 'SHOP-CAT-022 Grid sort' } } }
 Set-JsonFile (Join-Path (TkPath $k tasks -Create) 'tg-1.json') @{ task = 'tg-1'; tags = @('shop', 'wave-3') }; Set-JsonFile (Join-Path (TkPath $k tasks) 'tg-2.json') @{ task = 'tg-2'; tags = @('bug', 'catalogue', 'shop') }
 $tsc = @((Kb naming scan --json).out | ConvertFrom-Json | Where-Object { $_.kind -eq 'tags' -and $_.where -match ' tg-\d$' }); $tgf = pwsh -NoProfile -Command ". '$O'; (Get-KitTagGapFlag).action" | Out-String
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' }; tags = @{ areaMap = @{ CAT = 'website'; PAY = 'website' } } } }
-$am = (Kb naming tags key=SHOP-CAT-004 kind=bug --have 'catalogue,shop,urgent').out | ConvertFrom-Json; $amG = Kb naming tags area=catalogue
-Expect "board show, join warns; tag scan ($($tsc.why -join ' | ')); WATCH TAGS; areaMap ($($am.tags -join ','))" ($show2 -match 'run kitty-rest \(kitty-fix-0007\)' -and $ks.out -match 'NAME run' -and
-  $tsc.Count -eq 1 -and $tsc[0].why -eq "no kind tag; no area tag; wave tag 'wave-3' (retired)" -and $tgf -match 'tracker retag \S*tg-1\S* -DryRun' -and ($am.tags -join ',') -eq 'bug,website,shop,urgent' -and ($am.remove -join ',') -eq 'catalogue' -and $amG.code -eq 1)# the wave-brief render names areas area-<AREA> (dependsOn follows, old ids aliased) and the run label '<KEY> <short title>'
+$am = (Kb naming tags key=SHOP-CAT-004 kind=bug --have 'catalogue,shop,urgent').out | ConvertFrom-Json; $amG = Kb naming tags area=catalogue; $amL = (Kb naming tags key=SHOP-CAT-004 kind=bug level=sub --have 'shop').out | ConvertFrom-Json
+Expect "show; scan ($($tsc.why)); $($am.tags)" ($show2 -match 'run kitty-rest \(kitty-fix-0007\)' -and $ks.out -match 'NAME run' -and
+  $tsc.Count -eq 1 -and $tsc[0].why -eq "no kind tag; wave tag 'wave-3' (retired)" -and $tgf -match 'tracker retag \S*tg-1\S* -DryRun' -and ($am.tags -join ',') -eq 'bug,website,shop,urgent' -and ($am.remove -join ',') -eq 'catalogue' -and $amG.code -eq 1 -and ($amL.tags -join ',') -eq 'bug,website' -and ($amL.remove -join ',') -eq 'shop')# the wave-brief render names areas area-<AREA> (dependsOn follows, old ids aliased) and the run label '<KEY> <short title>'
 Set-JsonFile $lc @{ naming = @{ products = @{ SHOP = 'Shop' }; areas = @{ CAT = 'Catalogue'; PAY = 'Payments' } } }; $wpy = Join-Path $wd 'wave_ids_check.py'
 Set-Content -LiteralPath $wpy -Encoding utf8 -Value @"
 import json, sys

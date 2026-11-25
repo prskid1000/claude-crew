@@ -22,9 +22,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L358 kitlog · L460 load · L953 lint ·
-  L1367 README graph · L1485 lint command · L1767 audit · L1915 registry · L1975 tools · L2063 parity · L2664 arch lint ·
-  L2937 prose · L3119 sections · L3251 budget · L3269 migrate · L3417 plugins · L3474 state lint · L3662 main
+Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L466 load · L959 lint ·
+  L1373 README graph · L1491 lint command · L1773 audit · L1921 registry · L1981 tools · L2069 parity · L2670 arch lint ·
+  L2943 prose · L3125 sections · L3257 budget · L3275 migrate · L3423 plugins · L3480 state lint · L3668 main
 """
 import ast, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -261,12 +261,18 @@ def name_normal(kind, name, topic='', live=(), role=''):
     return '-'.join(head + (rest[:3] + rest[-1:] if len(rest) > 3 and re.fullmatch(r'[a-z]|\d+', rest[-1]) else rest[:3]))   # 2-3 topic words (+ a kept tie)
 
 def name_shown(kind, name, topic='', live=(), role=''):
-    """`<id> · <description>` (owner 2026-11-25 reference: 'devy-only-prompt · ask catalogue create-only prompt')."""
+    """`<id> · <description>`; the description never repeats a word of the id or itself (owner 2026-11-25), under 2 words left: none."""
     if kind == 'desc':
         return name_describe(name)
     n, d = name_normal(kind, name, topic, live, role), name_describe(topic)
-    said = d and (d.replace(' ', '-') == n.split('-', 1)[-1] or all(any(w.startswith(x) for w in n.split('-')) for x in re.findall(r'[a-z0-9]+', d)))
-    return f'{n} · {d}' if d and not said else n   # the id says it already (devy-cat · cat, kitty-ask · kit)
+    seen, out = set(n.split('-')), []
+    for tok in d.split(' '):
+        core = tok.rstrip(',')
+        parts = [p for p in core.split('-') if p and p not in seen and not any(w.startswith(p) for w in n.split('-'))]   # kit under kitty-ask
+        seen.update(parts)
+        out += ['-'.join(parts) + tok[len(core):]] if parts else []
+    d = ' '.join(out).strip(' ,')
+    return f'{n} · {d}' if len(re.findall(r'[a-z0-9]+', d)) >= 2 else n   # 'testy-retest · retest-staging rm-staging' -> 'testy-retest · staging rm'
 
 def name_slug(text, drop=(), words=2, room=12, tail=False):
     """A topic as kebab words (no code, date, stop word or word <drop> says; 3+ letter words first), <= <words> words and <room>

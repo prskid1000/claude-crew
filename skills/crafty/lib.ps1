@@ -1367,7 +1367,7 @@ function New-TrackerTask([string]$List, [string]$Name, [string]$Description, [st
   if (-not $Assignee) { $Assignee = Get-TrackerOwner }   # assignee: the kit runner unless '-' (nobody)
   if ($Name -cmatch '^([A-Z]{2,6}-[A-Z]{2,6})-0+\s') { $Name = Resolve-KitTaskName (Remove-KitNameKey $Name) $Parent $Matches[1] }   # naming: the key only after every check passed
   $nt = __TrA 'create' @{ list = $List; name = $Name; description = (__TrText $Description); parent = $(if ($Parent -and $Parent -ne '-') { $Parent }); assignee = $(if ($Assignee -and $Assignee -ne '-') { $Assignee }); priority = (ConvertTo-KitPriority $Priority) }
-  Set-KitNewTaskTags "$($nt.id)"; if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild }   # parent follows
+  Set-KitNewTaskTags "$($nt.id)" $(if ($sub -and $Parent -and $Parent -ne '-') { $Parent }); if ($sub -and $nt.id) { $null = Sync-TrackerParent "$($nt.id)" (Resolve-TrackerStatus 'open') -ParentId $Parent -NewChild }   # parent follows
   $nt
 }
 # a priority word -> the kit's 1 (urgent) .. 4 (low), as every adapter takes it (each maps the number to its own names)

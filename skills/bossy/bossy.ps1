@@ -380,7 +380,7 @@ function Get-LaunchRunName($a) {
   if ($a.run) { return [string]$a.run }
   if ($a.brief) { $bw = @([regex]::Matches(([IO.Path]::GetFileName([string]$a.brief).ToLower() -replace '\.md$', ''), '[a-z0-9]+') | Select-Object -First 3 | ForEach-Object Value); return "buildy-$(if ($bw.Count) { $bw -join '-' } else { 'wave' })" }   # = buildy.js RUN
   if ($a.runDir) { return (Split-Path ([string]$a.runDir) -Leaf) }
-  if ($a.select) { return "select-$(if ($a.name) { $a.name } elseif ($a.target) { $a.target } else { 'run' })" }
+  if ($a.select) { return "$(if ($a.name) { $a.name } elseif ($a.target) { $a.target } else { 'run' })" -replace '^(?!testy-)', 'testy-' }   # = testy.js RUN0
   ''
 }
 # task ids in items text (notes have words like oauth2)

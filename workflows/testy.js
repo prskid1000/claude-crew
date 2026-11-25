@@ -63,7 +63,7 @@ function takeConfig(out) {
 // ---- record-args: the launch record (a resume needs it byte-exact)
 // launch record first (bossy.ps1 launch -Self, FNV-1a); runDir rides along once known
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
-const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : `select-${R.name || R.target || 'run'}`) + (R.instance ? `-${R.instance}` : '')
+const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : String(R.name || R.target || 'run').replace(/^(?!testy-)/, 'testy-')) + (R.instance ? `-${R.instance}` : '')
 async function recordArgs(run, runDir, phaseName, plan = '') {
  const json = JSON.stringify(ARGS0), file = `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime.launches}args-testy-${run.replace(/[^\w.-]/g, '_')}.json`
  const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}
