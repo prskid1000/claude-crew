@@ -5,7 +5,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
    new / lease -Task <id> without -Branch: a keyed task's branch, kitbag.py naming make branch)
  scope [-Mrs <refs> [-Json]] [-Days 7]  -Mrs: each MR's source / test files + OUT-OF-AREA vs its logged area; none: one WATCH line for MRs merged outside it
  stack -Dir <module> [-Json]  build/test/run commands (auto-detected; .claude-stack.json overrides)
- check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force]  gated checks (e2e: the diff's specs only; -AllTests = whole suite;
+ check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force] [-Lane <id>]  gated checks (e2e: the diff's specs only, on the branch's lane ports; -AllTests = whole suite;
    a pass on the same sources + command is not rerun, -Force reruns)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
  tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text backed up), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), order <parent> [-Apply <brief>.order.json] (waves, waits-on links, wave tags), tags <id> <group>=<value>, retag <parents> [-DryRun], list, ...)
@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L289 stack · L388 gate · L720 check · L1043 pipes · L1108 guard · L2036 dir · L2046 checkpoint ·
-  L2086 prior · L2125 tracker · L2147 task spec · L2353 scope · L2401 host
+Sections: L25 init · L34 wt · L289 stack · L388 gate · L720 check · L1050 pipes · L1115 guard · L2043 dir · L2053 checkpoint ·
+  L2093 prior · L2132 tracker · L2154 task spec · L2360 scope · L2408 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -772,7 +772,8 @@ param(
   [switch]$Show,
   [switch]$Touched,
   [switch]$RealAngular,
-  [switch]$Force
+  [switch]$Force,
+  [string]$Lane = ''   # e2e: the local-env lane the specs hit (default: the lane holding the branch)
 )
 $ErrorActionPreference = 'Stop'
 $script:anyUnrun = $false; $script:CheckSrcKey = $null
@@ -917,6 +918,12 @@ if ($Step -eq 'e2e') {
     foreach ($s in $why.Keys) { $fd = if ($split) { & $fold $s } else { if (-not $groups.Contains('')) { $groups[''] = [Collections.Generic.List[string]]::new() }; '' }; $groups[$fd].Add($s) }
   }
   $envs = [ordered]@{}; if ($recipe.env) { foreach ($p in (Get-KitProps $recipe.env)) { $envs[$p.Name] = "$($p.Value)" } }
+  # the run's lane (-Lane, else the local-env lane holding this branch as a layer): its ports replace lane 1's in cmd + env (Cypress hit lane 1, retro 2026-11-25)
+  if ($ln = Get-KitBranchLane $Lane "$(git -C $st.dir branch --show-current)") {
+    $lnFix = { param([string]$t) $t = [regex]::Replace($t, '\{port:([\w.-]+)\}', { param($m) if ($ln.ports.ContainsKey($m.Groups[1].Value)) { $ln.ports[$m.Groups[1].Value] } else { $m.Value } }); [regex]::Replace($t, '(?<=//[^/\s:''"]+:)\d{2,5}(?!\d)', { param($m) if ($ln.map.ContainsKey($m.Value)) { $ln.map[$m.Value] } else { $m.Value } }) }
+    $was = "$cmd $($envs.Values -join ' ')"; $cmd = & $lnFix $cmd; foreach ($ek in @($envs.Keys)) { $envs[$ek] = & $lnFix $envs[$ek] }
+    Write-Host "[check] e2e: lane $($ln.env) ($($ln.why))$(if ("$cmd $($envs.Values -join ' ')" -ne $was) { ': its ports in the recipe' } elseif ($ln.map.Count) { ": the recipe names no lane port ($(@($ln.map.Keys | ForEach-Object { "$_->$($ln.map[$_])" }) -join ', ')): set tests.e2e.run[].env with {port:<service>} (what the spec config reads), else the specs hit lane 1" })"
+  }
   $runs = @(foreach ($fd in $groups.Keys) { $ss = @($groups[$fd]); $(if (-not $ss.Count) { $cmd } else { $cmd.Replace('{specs}', $(if ($cmd -match '--spec[=\s]+"?\{specs\}') { $ss -join ',' } else { $ss -join ' ' })) }) })
   if (-not $runs.Count) { Write-Host "[check] e2e NOT_TESTED: no spec file found (tests.e2e.specs)"; exit 5 }
   if ($Show) { if ($envs.Count) { "e2e env: $(@($envs.Keys | ForEach-Object { "$_=$($envs[$_])" }) -join ' ')" }; foreach ($r in $runs) { "e2e : $r" }; exit 0 }
@@ -2201,8 +2208,8 @@ function Publish-KitTaskSpec($Spec, [string]$Task, [switch]$DryRun, [switch]$Rep
   $gap = @(Test-KitTaskSpec $sp); if ($gap.Count) { throw "tracker spec refused: missing or wrong: $($gap -join '; ') (crafty.ps1 ""task spec"")" }
   $r = ConvertTo-KitTaskRender $sp $Task
   $dt = "`n`n$(@($r.decisions.text) -join "`n")"; $pf = @(if (-not $Spec.proseOk) { Test-KitProse -Kind task-description -Text "$($r.name)`n`n$($r.description)$dt" })
-  if (@($pf | Where-Object { $_ -match '^\(all\): \d+ words' }).Count) {   # Items come from the brief: the word cap counts the rest
-    $pq = $sp | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable; $pq.items = @(); $pq.subtasks = @()
+  if (@($pf | Where-Object { $_ -match '^\(all\): \d+ words' }).Count) {   # Items come from the brief, doc links from finish (204 > 200, retro 2026-11-25): the word cap counts the rest
+    $pq = $sp | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable; $pq.items = @(); $pq.subtasks = @(); $pq.docs = @{}
     $pf = @(@($pf | Where-Object { $_ -notmatch '^\(all\): \d+ words' }) + @(Test-KitProse -Kind task-description -Text "$($r.name)`n`n$(Format-KitTaskText $pq)$dt" | Where-Object { $_ -match '^\(all\): \d+ words' }))
   }
   if ($pf.Count) { throw "tracker spec refused: $($pf.Count) prose finding(s): $($pf -join '; ')" }

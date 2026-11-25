@@ -94,6 +94,17 @@ $out = node $spec --dir $proj a.spec 2>&1 | Out-String
 Expect 'spec.mjs: no esbuild -> exit 2 with the reason' ($LASTEXITCODE -eq 2 -and $out -match 'no esbuild')
 $out = node $spec --help 2>&1 | Out-String
 Expect 'spec.mjs --help prints its header' ($LASTEXITCODE -eq 0 -and $out -match 'Exit codes')
+# tests.specTimeoutMs: a kit.local.json pin wins over the registry default (5000), KIT_PARAM_ over both
+$spK = Join-Path (Kd) 'spk'; New-Item -ItemType Directory -Force "$spK/skills/crafty", "$spK/skills/bossy" | Out-Null; & $J @{ params = @{ 'tests.specTimeoutMs' = 'config default=5000 unit=ms' } } "$spK/skills/bossy/params.registry.json"
+$spJ = Join-Path (Kd) 'spk.mjs'; [IO.File]::WriteAllText($spJ, @'
+import fs from 'node:fs'; import { join } from 'node:path'
+const { readFileSync } = fs, src = readFileSync(process.argv[2], 'utf8'), KIT = process.argv[3]
+eval(src.slice(src.indexOf('function kitParam'), src.indexOf('const SPEC_TIMEOUT_MS')).replace('function kitParam', 'globalThis.kitParam = function'))
+console.log(kitParam('tests.specTimeoutMs'))
+'@)
+$spD = node $spJ $spec $spK; & $J @{ tests = @{ specTimeoutMs = 20000 } } "$spK/skills/crafty/kit.local.json"; $spP = node $spJ $spec $spK
+$env:KIT_PARAM_TESTS_SPECTIMEOUTMS = '7000'; $spE = node $spJ $spec $spK; $env:KIT_PARAM_TESTS_SPECTIMEOUTMS = $null
+Expect "spec.mjs tests.specTimeoutMs: registry default, kit.local.json pin, KIT_PARAM_ env ($spD $spP $spE)" ("$spD|$spP|$spE" -eq '5000|20000|7000')
 
 # check stamps: a step that passed on the same sources with the same command is not rerun; a doc edit keeps the stamp, a
 # source edit, other tests, -Force or a failed run rerun it
@@ -187,6 +198,14 @@ Expect-Cases @(
 $er2 = "$((& $e2 'src/app/orders/list.component.ts' '-Show').out)|$((& $e2 'README.md' @('-AllTests', '-Show')).out)"
 Expect 'check -Step e2e: tests.e2e.run = cmd + env, one run per spec folder; -AllTests: a folder glob each' ($er2 -match 'env: CY_L=1' -and $er2 -match 'e2e : x -r0 --spec "cypress/e2e/02-orders/01\.create\.cy\.ts"' -and
   $er2 -match '"cypress/e2e/(misc|nav)\.cy\.ts,cypress/e2e/(misc|nav)\.cy\.ts"' -and $er2 -match '"cypress/e2e/invoices/\*\.cy\.\*"' -and @([regex]::Matches($er2, 'e2e : ')).Count -eq 5)
+# the run's lane (retro 2026-11-25: specs hit lane 1 :8443 while the branch was live on lane 2): the lane holding the branch's layer, its ports in cmd + env; -Lane names one
+$elE = Join-Path $k 'skills/envy/envy.ps1'; New-Item -ItemType Directory -Force (Split-Path $elE) | Out-Null   # a stub of envy.ps1 envs -Json (env, group, lane, ports)
+"'[{`"env`":`"shop`",`"group`":`"shop`",`"lane`":1,`"ports`":{`"web`":4200,`"api`":8443}},{`"env`":`"shop2`",`"group`":`"shop`",`"lane`":2,`"ports`":{`"web`":4300,`"api`":8543}}]'" | Set-Content $elE
+& $J @{ tests = @{ e2e = @{ run = @(@{ dir = ''; cmd = 'x --grep t:4200 --config baseUrl=http://127.0.0.1:4200 --spec "{specs}"'; env = @{ CY_API = 'http://127.0.0.1:{port:api}' } }) } } } $kl
+$elS = Join-Path (TkPath $k localenv -Create) 'shop2.json'; & $J @{ release = @{ repos = @{ web = @{ layers = @(@{ branch = "$(git -C $er branch --show-current)"; agent = 'a1' }) } } } } $elS
+$el = (& $e2 'src/app/orders/list.component.ts' '-Show').out; $elN = (& $e2 'src/app/orders/list.component.ts' @('-Show', '-Lane', 'shop')).out
+Expect "check -Step e2e: the branch's lane ports in cmd + env; -Lane shop = lane 1 ($(($el -split "`n" | Where-Object { $_ -match 'lane|e2e (env|:)' }) -join ' / '))" ($el -match 'lane shop2 \(holds .+\): its ports in the recipe' -and $el -match 'baseUrl=http://127\.0\.0\.1:4300 ' -and $el -match '--grep t:4200 ' -and $el -match 'CY_API=http://127\.0\.0\.1:8543' -and $elN -match 'baseUrl=http://127\.0\.0\.1:4200 ' -and $elN -match 'CY_API=http://127\.0\.0\.1:8443')
+Remove-Item $elS, $elE
 Remove-Item $kl
 # a Maven test step builds the reactor modules it depends on (transitively) whose sources are newer than their local-repo artefact,
 # and those between, in one reactor with the tests (retro: stale sibling jar); never installs into the shared local repository

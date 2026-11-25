@@ -10,7 +10,7 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   prepare -Job <job JSON | file> | -RunDir <run>   L1 selection: run.json, lead-notes.md, Left out; last line RUN <run JSON>
   lead-notes add -RunDir <run> -Code <code> -Text '<question or answer>'   one line under "## Answers (newest last)"
-  results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
+  results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Results results-retry.json] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
   ui dump|tap|tapid|tapxy|type|clear|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL)
   ui login -Target <t> -As <login> [-Serial <phone>] [-Tenant <t>]   types a stored login into the app (qa.userRecipes app.steps)
   user create -Target <t> -Name <login> -Role <role> [-Kind web|api|app] [-As <admin>] [-Tenant <t>] [-Run <run>] [-Seat] · user list -Target <t> · user deactivate -Target <t> -Name <login>
@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
 Sections: L30 lanes · L44 report · L161 seat · L310 api · L573 users · L705 login surfaces (parity.json login) · L738 finalize ·
-  L1284 results · L1317 retest · L1374 prepare
+  L1284 results · L1319 retest · L1376 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1286,16 +1286,18 @@ $out.subtasks | ForEach-Object { "  $($_.id): $($_.pass)/$($_.total) pass, faile
 $script:ResultRowKeys = 'id', 'subtask_id', 'case', 'screen', 'result', 'defect', 'knownBug', 'signature', 'cause', 'env_fix', 'what_was_done', 'observed', 'evidence', 'attempts', 'window', 'guideId', 'verify', 'flaky', 'firstAttempt'
 function Invoke-Results {
 param([Parameter(Mandatory, Position = 0)][ValidateSet('patch', 'hold')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Alias('Item')][Parameter(Mandatory)][string]$Code,
-  [string]$Patch, [string]$Why, [string]$Summary, [string]$EnvFix)
+  [string]$Patch, [string]$Why, [string]$Summary, [string]$EnvFix, [string]$Results = 'results.json')
 $dir = Join-Path $RunDir $Code
 if ($Action -eq 'hold') {   # supervise + workers read it; the time is the script's
   Write-KitAtomic (Join-Path $dir 'held.json') ([ordered]@{ code = $Code; held = $Why; envFix = $(if ($EnvFix) { $EnvFix | ConvertFrom-Json } else { $null }); summary = $Summary; at = (Get-KitStamp) } | ConvertTo-Json -Depth 6)
   "held $Code`: $Why"; return
 }
 # -Patch { set: { <id>: { <field>: <value> } }, add: [<rows>], top: { findings, setup_changes, data_created } }
-$p = $Patch | ConvertFrom-Json -AsHashtable; $f = Join-Path $dir 'results.json'
+$p = $Patch | ConvertFrom-Json -AsHashtable; $f = Join-Path $dir (Split-Path $Results -Leaf)
 $pAdd = @($p['add'] | Where-Object { $null -ne $_ })   # by index: a missing key read as .add is the hashtable's Add method
-if (-not (Test-Path -LiteralPath $f)) { throw "results patch: no $f (the tester writes it first)" }
+# only a scoped retry's file there (testy-wave2 T5): name it, never hand-write results.json
+if (-not (Test-Path -LiteralPath $f)) { $rf = Join-Path $dir 'results-retry.json'
+  throw "results patch: no $f (the tester writes it first)$(if ($f -ne $rf -and (Test-Path -LiteralPath $rf)) { "; only $rf (a scoped retry): patch it with -Results results-retry.json, finalize -Check -Results results-retry.json; never hand-write results.json" })" }
 $r = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json -AsHashtable
 $bad = @(foreach ($c in $pAdd + @($p.set.Values)) { if ($c) { $c.Keys | Where-Object { $_ -notin $script:ResultRowKeys } } }) | Select-Object -Unique
 if ($bad.Count) { throw "results patch refused: unknown row key(s) $($bad -join ', ') (testy.js CHECKS_SCHEMA); nothing written" }

@@ -229,6 +229,11 @@ $pn = foreach ($bp in '{"add":[{"observed":"x"}]}', '{"set":{"T1":"PASS"}}') { p
 Expect 'results patch: an add row without id or a set value no object = refused with the set shape, no crash' (@($pn | Where-Object { $_ -match 'add rows need an id; to change fields of a check use set' }).Count -eq 2)
 $ps = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W1 -Patch '{"set":{"T2":{"observed":"set only"}}}' 2>&1 | Out-String   # no add key: .add was the hashtable's Add method (L20)
 Expect "results patch: a set-only patch (no add key) applies ($($ps.Trim()))" ($ps -match '1 changed, 0 added' -and @((Get-Content -Raw "$rd/W1/results.json" | ConvertFrom-Json).checks | Where-Object { $_.id -eq 'T2' -and $_.observed -eq 'set only' }).Count -eq 1)
+# only a scoped retry's file (testy-wave2 T5): the error names -Results; -Results results-retry.json patches it
+New-Item -ItemType Directory -Force "$rd/W2" | Out-Null; Set-JsonFile "$rd/W2/results-retry.json" $tester
+$pq = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W2 -Patch '{"set":{"T1":{"observed":"retry"}}}' 2>&1 | Out-String
+$pqr = pwsh -NoProfile -File $PK results patch -RunDir $rd -Code W2 -Patch '{"set":{"T1":{"observed":"retry"}}}' -Results results-retry.json 2>&1 | Out-String
+Expect "results patch: no results.json but results-retry.json -> names -Results; with it the retry file is patched ($($pq.Trim()) || $($pqr.Trim()))" ($pq -match 'only .*results-retry\.json \(a scoped retry\): patch it with -Results results-retry\.json' -and -not (Test-Path "$rd/W2/results.json") -and $pqr -match '1 changed' -and (Get-Content -Raw "$rd/W2/results-retry.json" | ConvertFrom-Json).checks[0].observed -eq 'retry')
 Expect "pokey.ps1 results hold: held.json from arguments, the script's UTC time ($($hj.at))" ($hj.held -eq "env: it's down" -and $hj.envFix.id -eq 'd-1' -and $hj.summary -eq 'W1: pass 1/3' -and (Get-Content -Raw "$rd/W1/held.json") -match '"at": "\d{4}-\d\d-\d\dT[\d:.]+Z"')
 # buildy: AREA TASK lines give each devy its subtask; -HoldPromotion '' only on its own subtask (on a shared task it released every area's hold)
 $jsat = @'

@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L184 names · L277 slots · L310 lease · L421 release · L452 lanes · L557 sync · L659 pool · L702 sweep
+Sections: L15 worktrees · L184 names · L277 slots · L310 lease · L421 release · L452 lanes · L573 sync · L675 pool · L718 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -553,6 +553,22 @@ function Invoke-LaneResync([switch]$DryRun) {
   if (-not $DryRun) { Write-KitAtomic (Get-KitLaneSyncFile) (ConvertTo-Json @($rows) -Depth 4) }
 }
 # wt-slots/lanes/lanes.json: its own folder (wt-slots/*.json are slot leases only)
+# crafty.ps1 check -Step e2e: -Lane <id>, else the local-env lane whose release holds the branch (envy state, newest): @{ env; why; ports (svc -> port); map (lane-1 port -> lane port) }
+function Get-KitBranchLane([string]$Lane, [string]$Branch) {
+  $why = 'named -Lane'
+  if (-not $Lane) {
+    $ld = Get-KitPath localenv; if (-not $Branch -or -not (Test-Path -LiteralPath $ld)) { return }
+    $Lane = @(Get-ChildItem -LiteralPath $ld -Filter *.json -File | Sort-Object LastWriteTimeUtc -Descending | Where-Object {
+      $sj = try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -AsHashtable } catch { $null }
+      $sj -and $sj.release -and $sj.release.repos -and @($sj.release.repos.Values | ForEach-Object { @($_.layers) } | Where-Object { $_ -and "$($_.branch)" -eq $Branch }).Count } | ForEach-Object BaseName)[0]
+    if (-not $Lane) { return }; $why = "holds $Branch"
+  }
+  $rows = @(try { (pwsh -NoProfile -File $KitCmd.local envs -Json 2>$null | Out-String) | ConvertFrom-Json } catch { })
+  $me = @($rows | Where-Object env -eq $Lane)[0]; if (-not $me) { Write-Host "[check] e2e: no local-env lane $Lane (envy.ps1 envs)"; return }
+  $base = @($rows | Where-Object { $_.group -eq $me.group -and [int]$_.lane -eq 1 })[0]; $ports = @{}; $map = @{}
+  foreach ($p in (Get-KitProps $me.ports)) { $ports[$p.Name] = "$($p.Value)"; $bp = "$(Get-KitMember $base.ports $p.Name)"; if ($bp -and $bp -ne "$($p.Value)") { $map[$bp] = "$($p.Value)" } }
+  @{ env = $Lane; why = $why; ports = $ports; map = $map }
+}
 function Get-KitLaneSyncFile { Join-Path (New-Item -ItemType Directory -Force (Join-Path (Get-KitPath wt-slots -Create) 'lanes')).FullName 'lanes.json' }
 # ---- sync: every pooled repo (wt pool; supervise every sync.everyMinutes): one fetch, fast-forward each local branch strictly
 # behind its upstream (checked out: ff-only when clean), prune lane branches no worktree holds and gone-upstream branches merged

@@ -10,7 +10,7 @@
 // project's jsdom (no layout: sizes 0); no jsdom -> NOT RUN.
 // <spec>: paths (relative to --dir, default cwd; space/comma-separated) or a path part ("price-calc"); none = all (slow).
 // Exit codes: 0 all passed · 1 a failure / bundle error / NOT RUN spec · 2 no esbuild, no spec found or usage error.
-// Sections: L21 kit paths · L27 spec shim · L163 registry · L224 runner · L271 angular · L328 jsdom · L370 main
+// Sections: L21 kit paths · L27 spec shim · L163 registry · L231 runner · L278 angular · L335 jsdom · L377 main
 import Module, { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, relative } from 'node:path'
@@ -181,7 +181,14 @@ export function install(g = globalThis) {
  })
 }
 
-async function call(fn, timeout = 5000) {
+// a config key as lib.ps1 Get-KitParam: KIT_PARAM_<KEY>, a kit.local.json pin, else the registry default
+function kitParam(key) {
+ const env = +process.env['KIT_PARAM_' + key.replace(/\W/g, '_').toUpperCase()], json = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return {} } }
+ const pin = key.split('.').reduce((o, k) => o?.[k], json(join(KIT, 'skills', 'crafty', 'kit.local.json')))
+ return env || (typeof pin === 'number' ? pin : +(/default=([\d.]+)/.exec(json(join(KIT, 'skills', 'bossy', 'params.registry.json')).params?.[key] || '') || [])[1] || 0)
+}
+const SPEC_TIMEOUT_MS = kitParam('tests.specTimeoutMs') || 5000   // jasmine's default when the registry is unread
+async function call(fn, timeout = SPEC_TIMEOUT_MS) {
  let timer
  const body = fn.length > 0
   ? new Promise((res, rej) => { const done = (e) => (e ? rej(e) : res()); done.fail = (e) => rej(new Fail(e ?? 'done.fail')); fn(done) })

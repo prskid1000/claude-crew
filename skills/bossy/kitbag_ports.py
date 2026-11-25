@@ -11,8 +11,8 @@ deployed targets; a deselected one's kit-written copies are removed (its folder 
 the files (bossy.ps1 health, prepush, kitty audit) and also writes each agent's Character block from the manifest. kitbag.py
 loads this file and shares its names (frontmatter, manifest, SCHEMAS, CHAR_RX, ...).
 Exit codes: 0 ok · 1 stale or missing ports (--check).
-Sections: L40 characters · L75 tools · L196 agents · L266 hooks · L351 workflows · L583 mechanics · L617 deploy · L667 targets ·
-  L880 command
+Sections: L40 characters · L75 tools · L211 agents · L281 hooks · L366 workflows · L598 mechanics · L632 deploy · L682 targets ·
+  L895 command
 """
 import base64, contextlib, fnmatch, hashlib, io, json, os, re, shutil, sys, tempfile
 from pathlib import Path
@@ -127,6 +127,21 @@ def tools_deploy():
             git_quiet('add', '--', p)
     if (line := mcp_line()):
         print(line)
+
+def mcp_failed(run=None):
+    """MCP servers that do not connect now (`claude mcp list`, ~4 s: port --deploy from health -Checks, in the background), shown before the
+    next run (chrome-devtools failed unseen in testy-wave2). No claude CLI (Codex, Antigravity): no line."""
+    import subprocess
+    exe = shutil.which('claude')
+    if not exe and not run:
+        return ''
+    try:
+        out = (run or (lambda: subprocess.run([exe, 'mcp', 'list'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=kit_param('tools.mcpListSec')).stdout))()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    bad = [m.group(1) for m in re.finditer(r'(?m)^(\S+?): .* - ✗ ', out or '')]
+    return (f"tools: MCP server(s) {', '.join(bad)} failed to connect (claude mcp list): reconnect with /mcp or fix its config before a run "
+      'that needs it') if bad else ''
 
 def mcp_servers(home=None, ws=None):
     """MCP servers Claude Code starts in the workspace: ~/.claude.json user + project scope (minus its disabledMcpServers),
@@ -888,6 +903,8 @@ def cmd_port(a):
         return 1 if stale else 0
     if '--deploy' in a:   # post-merge, health: the workspace copies + tools grants only (the filter keeps the tracked text)
         tools_deploy()
+        if (line := mcp_failed()):   # --deploy only (health -Checks, post-merge: both in the background), never a commit's port
+            print(line)
         port_deploy(quiet=True)
         return 0
     write_characters(str(KIT))

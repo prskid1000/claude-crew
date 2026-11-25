@@ -209,5 +209,11 @@ $tw ="$($tor -match '^waves:')" -replace '^waves:'
 Expect "tracker order: spec waitsOn / wave -> a kit:order section (no native verb); waves: Alpha + Gamma, Beta, Delta; table rows per wave; a cycle and a later wave with no link flagged; a native dependencies verb gets the links ($($tor -join ' // '))" (
   $tw -match '^1=LOCAL-\d+,1=LOCAL-\d+,2=LOCAL-\d+,3=LOCAL-\d+$' -and @($tor -match '^section:True').Count -and @($tor -match '^flags:0$').Count -and @($tor -match '^table:.*\| 1 \| [^|]*(Alpha[^|]*Gamma|Gamma[^|]*Alpha)[^|]*\|.*\| 3 \| [^|]*Delta').Count -and
   @($tor -match '^cycle:CYCLE: LOCAL-\d+, LOCAL-\d+, LOCAL-\d+ wait on each other').Count -and @($tor -match '^missing:1$').Count -and @($tor -match '^native:LOCAL-\d+<-LOCAL-\d+\|False$').Count)
+# the 200-word cap counts neither Items nor finish's doc links (204 > 200 once links came, retro 2026-11-25); 5 more problem words: refused
+$dcap = @(Invoke-PsTest docscap @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'; Copy-Item $args[1] (Join-Path $script:KitRoot 'skills/crafty')   # templates.md: the prose check
+foreach ($dn in 192, 197) { try { $null = Publish-KitTaskSpec @{ title = 'x'; problem = ('word ' * $dn); goal = 'g.'; acceptance = @('a'); links = @('https://t/2'); items = @(@{ code = 'A'; desc = 'a' }); docs = @{ 'testing-doc' = 'https://h/aaaa'; 'testing-ai' = 'https://h/bbbb' } } -DryRun; 'passed' } catch { "$_" } }
+'@ @((Join-Path $k 'skills/crafty/crafty.ps1'), (Join-Path $src 'skills/crafty/templates.md')) | Where-Object { "$_" -match '^(passed|tracker spec refused)' })
+Expect "task spec: finish's doc links are no words of the cap; 5 more problem words are refused ($($dcap -join ' | '))" ($dcap[0] -eq 'passed' -and $dcap[1] -match '\(all\): 2\d\d words')
 Remove-TestKit $k
 Complete-Tests

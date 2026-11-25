@@ -104,7 +104,7 @@ Register-KitAdapter db-engine redis @{ defaultPort = 6379; passwordEnv = 'REDISC
     $all = ($ks | ForEach-Object { [long]$_.Groups[2].Value } | Measure-Object -Sum).Sum
     foreach ($m in $ks) { "$($m.Groups[1].Value)`t$($m.Groups[2].Value)`t$(if ($all) { [math]::Round($mb * [long]$m.Groups[2].Value / $all) } else { 0 })" } } }
 $search = @{ defaultPort = 9200; query = 'curl -s http://{H}:{P}/{sql}'; exec = 'curl -s -H "Content-Type: application/x-ndjson" -X POST http://{H}:{P}/_bulk --data-binary "@{file}"'
-  sizes = { param($a) $c = DbConn $a.e; foreach ($ix in @(Invoke-RestMethod "http://$($c.host):$($c.port)/_cat/indices?format=json&bytes=mb" -TimeoutSec 30 | Where-Object { "$($_.index)" -notlike '.*' })) { "$($ix.index)`t$($ix.'docs.count')`t$($ix.'store.size')" } }
+  sizes = { param($a) $c = DbConn $a.e; foreach ($ix in @(Invoke-RestMethod "http://$($c.host):$($c.port)/_cat/indices?format=json&bytes=mb" -TimeoutSec (Get-KitParam 'localEnv.db.httpReadSec') | Where-Object { "$($_.index)" -notlike '.*' })) { "$($ix.index)`t$($ix.'docs.count')`t$($ix.'store.size')" } }
   # SQL over REST: elasticsearch _sql (json: columns, rows), opensearch the SQL plugin (jdbc: schema, datarows); pages followed by cursor
   sql = { param($a) $c = DbConn $a.e; $os = (Get-DbEngineName $a.e) -eq 'opensearch'
     $u = "http://$($c.host):$($c.port)/$(if ($os) { '_plugins/_sql' } else { '_sql?format=json' })"; $body = @{ query = $a.sql.TrimEnd().TrimEnd(';'); fetch_size = 1000 }
@@ -120,8 +120,8 @@ $search = @{ defaultPort = 9200; query = 'curl -s http://{H}:{P}/{sql}'; exec = 
   unsnap = { param($a) $null = Invoke-DbSnapRest $a.e Delete ($a.pos -split ':')[0] }
   # the scope's indices now are deleted (made after the mark, or replaced), then the snapshot's come back
   revert = { param($a) $c = DbConn $a.e; $t = ($a.pos -split ':')[0]; $back = @((Invoke-DbSnapRest $a.e Get $t).snapshots[0].indices | Where-Object { "$_" -notlike '.*' })
-    $now = @(Invoke-RestMethod "http://$($c.host):$($c.port)/_cat/indices?format=json&h=index" -TimeoutSec 60 | ForEach-Object { "$($_.index)" } | Where-Object { $_ -notlike '.*' -and (-not @($a.scopes).Count -or $_ -in @($a.scopes) -or $_ -in $back) })
-    if ($now.Count) { $null = Invoke-RestMethod -Method Delete "http://$($c.host):$($c.port)/$($now -join ',')" -TimeoutSec 300 }
+    $now = @(Invoke-RestMethod "http://$($c.host):$($c.port)/_cat/indices?format=json&h=index" -TimeoutSec (Get-KitParam 'localEnv.db.httpReadSec') | ForEach-Object { "$($_.index)" } | Where-Object { $_ -notlike '.*' -and (-not @($a.scopes).Count -or $_ -in @($a.scopes) -or $_ -in $back) })
+    if ($now.Count) { $null = Invoke-RestMethod -Method Delete "http://$($c.host):$($c.port)/$($now -join ',')" -TimeoutSec (Get-KitParam 'localEnv.db.httpDeleteSec') }
     if ($back.Count) { $null = Invoke-DbSnapRest $a.e Post "$t/_restore?wait_for_completion=true" @{ indices = $back -join ','; include_global_state = $false } }
     @{} } }
 $osearch = $search.Clone(); $search.jdbc = 'jdbc:es://http://{H}:{P}'; $osearch.jdbc = 'jdbc:opensearch://http://{H}:{P}'

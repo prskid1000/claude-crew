@@ -263,6 +263,11 @@ srv =pt.mcp_servers(home, tk.parent)
 line = pt.mcp_line(home, tk.parent)
 ok_m = srv == ['db', 'local1', 'plugin_browse_devtools', 'quiet', 'shared'] \
     and all(s in line for s in ('local1', 'plugin_browse_devtools', 'shared')) and 'quiet' not in line and ' db' not in line
+# a server that fails to connect (claude mcp list ✗) is named; connected ones and no CLI output: no line
+ml = 'Checking MCP server health…\n\nplugin:dev-mcp:devtools: npx dev-mcp@1 - ✗ Failed to connect\ndb: py db.py - ✔ Connected\n'
+fl = pt.mcp_failed(lambda: ml)
+ok_m = ok_m and 'plugin:dev-mcp:devtools failed to connect' in fl and ' db' not in fl \
+    and pt.mcp_failed(lambda: 'db: x - ✔ Connected\n') == '' and pt.mcp_failed(lambda: '') == ''
 print(f'ports-tools:{ok_t and ok_f and ok_n and ok_m} {ok_t} {ok_f} {ok_n} {ok_m}')
 
 # parity (AGENTS.md "Parity"): the kit has 0 problems; a verb on one adapter only, a stale or unknown gap, an unported hook fail
