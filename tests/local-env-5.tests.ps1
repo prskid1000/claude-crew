@@ -102,6 +102,9 @@ $lrx = & { . $L5; $rw = Join-Path $k 'lrx-wt'; $null = New-Item -ItemType Direct
   '<project><groupId>o</groupId><artifactId>root</artifactId><version>1</version><packaging>pom</packaging><modules><module>common/core</module><module>mid</module><module>api</module><module>other</module></modules></project>' | Set-Content (Join-Path $rw 'pom.xml')
   $g = { git -C $rw -c user.name=t -c user.email=t@t @args 2>&1 | Out-Null }
   & $g add -A; & $g commit -q -m base
+  $lrxPrevM2 = $env:MAVEN_REPO_LOCAL; $env:MAVEN_REPO_LOCAL = Join-Path $k 'lrx-m2'
+  $lrxJar = { param($a, $h) $jf = Join-Path (New-Item -ItemType Directory -Force "$env:MAVEN_REPO_LOCAL/o/$a/1") "$a-1.jar"; 'j' > $jf; (Get-Item $jf).LastWriteTime = (Get-Date).AddHours($h) }
+  & $lrxJar core 1; & $lrxJar mid 1
   $layer = { param($dir) & $g checkout -q -B "f-$(Split-Path $dir -Leaf)" main; "class Y {}" | Set-Content (Join-Path $rw "$dir/Y.java"); & $g add -A; & $g commit -q -m change; & $g checkout -q main
     & $g checkout -q -B lane main; & $g merge -q --no-ff -m "localenv layer f-$dir (devy)" "f-$(Split-Path $dir -Leaf)" }
   function EnvRepos { @{ r = [pscustomobject]@{ wt = $rw } } }; function RepoOf { 'r' }; function SvcDir { Join-Path $rw 'api' }
@@ -110,15 +113,16 @@ $lrx = & { . $L5; $rw = Join-Path $k 'lrx-wt'; $null = New-Item -ItemType Direct
   $f1 = Get-LayerReactorFlags t $sv 'mvn -q package -DskipTests' 6>$null; $x1 = Get-Content (Join-Path $rw '.localenv-reactor-api.xml') -Raw
   $own = Get-LayerReactorFlags t $sv 'mvn -q package -pl api' 6>$null
   & $g checkout -q main; & $layer 'other/src'; $f2 = Get-LayerReactorFlags t $sv 'mvn -q package' 6>$null
-  & $g checkout -q main; $f0 = Get-LayerReactorFlags t $sv 'mvn -q package' 6>$null
+  & $g checkout -q main; (Get-Item (Join-Path $rw 'common/core/pom.xml')).LastWriteTime = (Get-Date).AddHours(3); $f0 = Get-LayerReactorFlags t $sv 'mvn -q package' 6>$null
+  try { & $lrxJar core -1; $fs = Get-LayerReactorFlags t $sv 'mvn -q package' 6>$null; $xs = Get-Content (Join-Path $rw '.localenv-reactor-api.xml') -Raw } finally { $env:MAVEN_REPO_LOCAL = $lrxPrevM2 }
   # Gradle: a changed separate build is included; the service's own and an enclosing build are not
   & $g checkout -q main; $null = New-Item -ItemType Directory -Force (Join-Path $rw 'app/src'), (Join-Path $rw 'lib/src')
   foreach ($sd in '.', 'app', 'lib') { 'x' | Set-Content (Join-Path $rw "$sd/settings.gradle") }; & $g add -A; & $g commit -q -m gradle-base
   & $g checkout -q -B f-g main; 'y' | Set-Content (Join-Path $rw 'lib/src/A.kt'); 'y' | Set-Content (Join-Path $rw 'app/src/B.kt'); 'y' | Set-Content (Join-Path $rw 'README'); & $g add -A; & $g commit -q -m g
   & $g checkout -q -B lane main; & $g merge -q --no-ff -m 'localenv layer f-g (devy)' f-g
   function SvcDir { Join-Path $rw 'app' }; $fg = Get-LayerReactorFlags t ([pscustomobject]@{ name = 'app' }) './gradlew build' 6>$null; $gw = '--include-build "' + (Join-Path $rw 'lib') + '"'
-  "$($f1 -match '-pl api -am$')|$($x1 -match '<module>common/core</module><module>mid</module><module>api</module></modules>')|$($x1 -notmatch 'other')|[$own][$f2][$f0]|$($fg -eq $gw)" }
-Expect "build: a layer changing a nested dependency (common/core, via mid; a prepare commit on top) -> -f <aggregator of common/core, mid, api> -pl api -am; an own -pl, an unrelated module or no layer -> no flags; Gradle: only the changed separate build is included ($lrx)" ($lrx -eq 'True|True|True|[][][]|True')
+  "$($f1 -match '-pl api -am$')|$($x1 -match '<module>common/core</module><module>mid</module><module>api</module></modules>')|$($x1 -notmatch 'other')|[$own][$f2][$f0]|$($fg -eq $gw)|$($fs -eq $f1 -and $xs -eq $x1)" }
+Expect "build: a layer changing nested dep core (via mid; prepare commit on top), or a core commit newer than its jar -> -f <aggregator of core, mid, api> -pl api -am; own -pl, other module, jar newer (file times not) -> none; Gradle: changed build only ($lrx)" ($lrx -eq 'True|True|True|[][][]|True|True')
 # the flags go after every Maven / Gradle step, never onto a folder or an echo argument
 $atf = & { . $L5; $cases = [ordered]@{ 'mvn -q package' = 'mvn -F -q package'; 'cd D:\tools\mvn && ./mvnw package' = 'cd D:\tools\mvn && ./mvnw -F package'; 'mvn clean && mvn package' = 'mvn -F clean && mvn -F package'
     '"C:\Program Files\mvn\bin\mvn.cmd" -q package' = '"C:\Program Files\mvn\bin\mvn.cmd" -F -q package'; 'cmd /c "mvnw.cmd package"' = 'cmd /c "mvnw.cmd -F package"'; 'echo gradle && gradlew.bat build' = 'echo gradle && gradlew.bat -F build' }

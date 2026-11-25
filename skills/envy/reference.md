@@ -103,8 +103,8 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
   (`-XX:AOTCache="{aotFile}"`) once it exists.
 - `classpathFile` (off): thin jar + this classpath: per-release argfile; `start`: `@"{javaArgs}" <main>`.
 - `{reactor}` in `build` = `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only modules whose parent is
-  in the module's parent chain, the rest come from the local repository: doctor lists them). Without it (or `-pl`):
-  modules a layer changes that the service needs join its reactor (Gradle `--include-build`), never installed.
+  in the module's parent chain, the rest from the local repository: doctor lists them). Without it (or `-pl`):
+  needed modules a layer changes or a stale jar holds join its reactor (Gradle `--include-build`); never installed.
 - An edited kit.local.json, envy.ps1, lib.ps1 or `adapters/` file restarts the loop between trains.
 - `readyPattern`: a ready log line checks health at once (else every 5 s; fail lines every 1 s).
 - `logClasses` { expected, startup, connection, 5xx, dependency }: regexes replacing the generic log classes (supervise's

@@ -1,12 +1,12 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Sections: L9 poms · L44 reactor · L69 engine
+# Sections: L9 poms · L57 reactor · L76 engine
 # runtimes: before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
 # -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests, $Show.
 # Maven: reactor modules this module depends on (transitively) whose sources are newer than their local-repo jar are built in
 # one reactor with the tests (Add-KitReactorTestFlags), never installed: the local repository is shared by every agent and lane.
-# ---- poms: reactor walk shared with envy lane builds (Get-KitReactorPoms, Get-KitReactorNeeds, Get-KitReactorBetween, Add-ToolFlags)
+# ---- poms: reactor walk shared with envy lane builds (Get-KitReactorPoms, Get-KitReactorNeeds, Get-KitReactorBetween, Get-KitReactorStale, Add-ToolFlags)
 function Get-KitPomInfo([string]$Pom) {
   $x = try { ([xml](Get-Content -LiteralPath $Pom -Raw)).project } catch { return $null }
   $g = if ($x.groupId) { "$($x.groupId)" } else { "$($x.parent.groupId)" }; $v = if ($x.version) { "$($x.version)" } else { "$($x.parent.version)" }
@@ -36,6 +36,19 @@ function Get-KitReactorBetween([hashtable]$Need, [hashtable]$Mods) {
     $v = $Mods[$k] -and $Mods[$k].dir -eq $Need[$k].dir; foreach ($dk in @($Need[$k].deps | ForEach-Object { ($_ -split '\|', 2)[1] })) { if ($Need[$dk] -and (& $visit $dk)) { $v = $true } }; $keep[$k] = [bool]$v; [bool]$v }
   @($Need.Keys | Where-Object { & $visit $_ })
 }
+# the $Need modules with no local-repo artefact or a pom / src/main file newer than it -> artifactId -> pom info; $Wt (envy
+# lanes: clean checkouts whose file times are checkout times): the module's last commit time in $Wt instead
+function Get-KitReactorStale([hashtable]$Need, [string]$Wt) {
+  $repo = if ($env:MAVEN_REPO_LOCAL) { $env:MAVEN_REPO_LOCAL } else { Join-Path $HOME '.m2/repository' }
+  $stale = @{}; foreach ($p in $Need.Values) {
+    if (-not $p.v -or $p.v -match '\$') { continue }   # a ${revision} version: its artefact path is unknown here
+    $art = Join-Path $repo "$($p.g -replace '\.', '/')/$($p.a)/$($p.v)/$($p.a)-$($p.v).$(if ($p.pk -eq 'pom') { 'pom' } else { 'jar' })"
+    $jar = Get-Item -LiteralPath $art -ErrorAction SilentlyContinue
+    $srcUtc = if ($Wt) { $ct = "$(git -C $Wt log -1 --format=%ct -- $p.dir 2>$null)".Trim(); if ($ct) { [DateTimeOffset]::FromUnixTimeSeconds([long]$ct).UtcDateTime } }
+    else { @(@(Get-Item -LiteralPath (Join-Path $p.dir 'pom.xml')) + @(Get-ChildItem -LiteralPath (Join-Path $p.dir 'src/main') -Recurse -File -ErrorAction SilentlyContinue) | Sort-Object LastWriteTimeUtc -Descending)[0].LastWriteTimeUtc }
+    if (-not $jar -or ($srcUtc -and $srcUtc -gt $jar.LastWriteTimeUtc)) { $stale[$p.key] = $p } }
+  $stale
+}
 # $flags after every mvn / mvnw / mvnd / gradle(w) that starts a command step (a folder named so, an echo argument: untouched)
 function Add-ToolFlags([string]$cmd, [string]$flags) {
   $re = '(?<=(?:^|&&|\|\||;|\||\()\s*(?:call\s+)?(?:cmd(?:\.exe)?\s+/[cs]\s+)?(?:"[^"]*[\\/]|"|[^\s"&|;()]*[\\/])?)(mvnw|mvnd|mvn|gradlew|gradle)(\.cmd|\.bat)?"?(?=[\s)]|$)'
@@ -49,13 +62,7 @@ function Add-KitReactorTestFlags([string]$Cmd) {
   $rp = Get-KitReactorPoms $st.dir; $root = $rp.root; if (-not $root) { return $Cmd }
   $mine = Get-KitPomInfo $me; if (-not $mine) { return $Cmd }
   $need = Get-KitReactorNeeds $mine $rp.all
-  $repo = if ($env:MAVEN_REPO_LOCAL) { $env:MAVEN_REPO_LOCAL } else { Join-Path $HOME '.m2/repository' }
-  $stale = @{}; foreach ($p in $need.Values) {
-    if (-not $p.v -or $p.v -match '\$') { continue }   # a ${revision} version: its artefact path is unknown here
-    $art = Join-Path $repo "$($p.g -replace '\.', '/')/$($p.a)/$($p.v)/$($p.a)-$($p.v).$(if ($p.pk -eq 'pom') { 'pom' } else { 'jar' })"
-    $src = @(@(Get-Item -LiteralPath (Join-Path $p.dir 'pom.xml')) + @(Get-ChildItem -LiteralPath (Join-Path $p.dir 'src/main') -Recurse -File -ErrorAction SilentlyContinue) | Sort-Object LastWriteTimeUtc -Descending)[0]
-    $jar = Get-Item -LiteralPath $art -ErrorAction SilentlyContinue
-    if (-not $jar -or ($src -and $src.LastWriteTimeUtc -gt $jar.LastWriteTimeUtc)) { $stale[$p.key] = $p } }
+  $stale = Get-KitReactorStale $need
   if (-not $stale.Count) { return $Cmd }
   $staleRel = @($stale.Values | ForEach-Object { [IO.Path]::GetRelativePath($root, $_.dir).Replace('\', '/') } | Sort-Object) -join ', '
   if ($Cmd -match '(^|\s)(-pl|--projects|-f|--file)(\s|=|$)') { Write-Host "[check] reactor module(s) newer than their local-repo artefact: $staleRel; the test command has its own -pl / -f, so the tests see the stale local-repo jars: add them to its -pl with -am"; return $Cmd }

@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L132 lane pick · L182 start room · L226 thin artifacts
+# Sections: L4 shared builds · L133 lane pick · L183 start room · L227 thin artifacts
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -101,25 +101,26 @@ function Find-MarkerDir([string]$wt, [string]$from, [string[]]$marks) {
   $top = $wt.TrimEnd('\', '/'); for ($d = $from.TrimEnd('\', '/'); $d -and $d.Length -ge $top.Length; $d = Split-Path $d) { if (@($marks | Where-Object { Test-Path -LiteralPath (Join-Path $d $_) -PathType Leaf }).Count) { return $d } }
   $null
 }
-# a build whose layers change a module it depends on: Maven builds the changed modules (and those between) in one reactor with
-# it (-f <aggregator> -pl <module> -am), Gradle adds each changed build (--include-build); never installed: the local repository
-# is shared by every lane and agent (envfix-5). Empty: no layer, an own -pl / -f / --include-build, or no such module
+# a build depending on an in-repo module that its layers change or that is newer than its local-repo artefact (the target
+# moved past the installed jar, envfix-kestrel-2): Maven builds those (and the modules between) in one reactor with it
+# (-f <aggregator> -pl <module> -am), Gradle adds each build the layers change (--include-build); never installed: the local
+# repository is shared by every lane and agent (envfix-5). Empty: none such, or an own -pl / -f / --include-build
 function Get-LayerReactorFlags([string]$e, $s, [string]$cmd) {
   if ($cmd -match '(^|\s)(-pl|--projects|-f|--file|--include-build)(\s|=|$)') { return '' }
   $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; if (-not $wt -or -not (Test-Path -LiteralPath (Join-Path $wt '.git'))) { return '' }
   $n = 0; while ($n -lt 50 -and "$(git -C $wt log -1 --format=%s "HEAD~$n" 2>$null)" -like 'localenv *') { $n++ }   # layer merges + prepare commits on the target
-  if (-not $n) { return '' }
-  $changed = @(git -C $wt -c core.quotepath=off diff --name-only "HEAD~$n" HEAD 2>$null | Where-Object { $_ } | ForEach-Object { Split-Path (Join-Path $wt $_) })
+  $changed = @(if ($n) { git -C $wt -c core.quotepath=off diff --name-only "HEAD~$n" HEAD 2>$null | Where-Object { $_ } | ForEach-Object { Split-Path (Join-Path $wt $_) } })
   $svc = (SvcDir $e $s).TrimEnd('\', '/')
   if ($cmd -match '\b(mvn|mvnw|mvnd)\b' -and (Test-Path -LiteralPath (Join-Path $svc 'pom.xml'))) {
     $mods = @{}; foreach ($d in @($changed | Select-Object -Unique)) { if (($md = Find-MarkerDir $wt $d 'pom.xml') -and $md -ne $svc -and ($p = Get-KitPomInfo (Join-Path $md 'pom.xml'))) { $mods[$p.key] = $p } }
-    if (-not $mods.Count) { return '' }
     $all = (Get-KitReactorPoms $svc).all; foreach ($k in $mods.Keys) { if (-not $all[$k]) { $all[$k] = $mods[$k] } }   # a module no aggregator lists
     $need = Get-KitReactorNeeds (Get-KitPomInfo (Join-Path $svc 'pom.xml')) $all
+    $stale = Get-KitReactorStale $need $wt; foreach ($k in $stale.Keys) { if (-not $mods[$k]) { $mods[$k] = $stale[$k] } }
+    if (-not $mods.Count) { return '' }
     $use = @(Get-KitReactorBetween $need $mods | ForEach-Object { [IO.Path]::GetRelativePath($wt, $need[$_].dir).Replace('\', '/') } | Sort-Object)
     if (-not $use.Count) { return '' }
     $me = [IO.Path]::GetRelativePath($wt, $svc).Replace('\', '/')
-    Write-Host "[$e] $($s.name): layers change $($use -join ', ') it depends on: built in one reactor with it, not taken from the local repository"
+    Write-Host "[$e] $($s.name): in-repo deps $($use -join ', ') (changed by its layers or newer than their local-repo jar): built in one reactor with it, not taken from the local repository"
     return Write-ReactorPom $wt $s.name $me @(@($use) + $me)
   }
   if ($cmd -match '\bgradlew?\b') {
