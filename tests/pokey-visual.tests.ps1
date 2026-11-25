@@ -162,5 +162,17 @@ Expect "prepare: the run title is cut to 25 words at creation (finalize -Check l
 $gkept = Join-Path (Kd) 'kept.md'; Set-Content $gkept "# Testing: X`n## Checks`n| C1 | a |`n## shop-staging run 2026-11-05 16:54`nold-a`n## shop-staging run 2026-11-07 09:18`nnew-b`n### Results`nnew-c`n## docs-staging run 2026-11-06 10:20`nold-d"
 $gcp = pwsh -NoProfile -Command "`$a = [Management.Automation.Language.Parser]::ParseFile('$Q', [ref]`$null, [ref]`$null); iex `$a.Find({ param(`$n) `$n.Name -eq 'Copy-QaGuide' }, `$true).Extent.Text; Copy-QaGuide '$gkept' '$gkept.out'; Copy-QaGuide '$gkept.out' '$gkept.one'; (Get-Content '$gkept.out') -join '|'; (Get-Content '$gkept.one') -join '|'"
 Expect "guide copy: head + newest run (its ### parts), older runs named; a one-run doc copied whole ($($gcp -join ' // '))" ($gcp[0] -match '^# Testing: X\|## Checks\|\| C1 \| a \|\|## shop-staging run 2026-11-07 09:18\|new-b\|### Results\|new-c\|\|> Older runs \(2\): ' -and $gcp[0] -notmatch 'old-' -and $gcp[1] -eq $gcp[0])
+# spawnHidden (2026-11-25: a detached browser server's chrome-headless-shell opened a Windows Terminal window): args arrive
+# whole; on Windows the child's own console child opens no window (no new OpenConsole -Embedding)
+$shOut = Join-Path (Kd) 'sh-args.json'; $shKid = Join-Path (Kd) 'sh-kid.mjs'; $shRun = Join-Path (Kd) 'sh-run.mjs'
+[IO.File]::WriteAllText($shKid, "import { writeFileSync } from 'node:fs'; import { execFileSync } from 'node:child_process'; try { execFileSync('cmd.exe', ['/c', 'ver']) } catch {}; writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)))")
+[IO.File]::WriteAllText($shRun, "const m = await import(process.argv[2]); m.spawnHidden(process.execPath, [process.argv[3], process.argv[4], 'a b', 'q`"x', '[`"--x`",`"y z`"]', 'end\\', '']); await new Promise((r) => setTimeout(r, 3000))")
+$shEmb = { @(if ($IsWindows) { Get-CimInstance Win32_Process -Filter "Name='OpenConsole.exe'" | Where-Object CommandLine -match 'Embedding' | ForEach-Object ProcessId }) }
+$shB = & $shEmb; node $shRun ([Uri](Join-Path $src 'skills/pokey/adapters/engine-playwright.mjs')).AbsoluteUri $shKid $shOut
+for ($shI = 0; $shI -lt 40 -and -not (Test-Path $shOut); $shI++) { Start-Sleep -Milliseconds 250 }; Start-Sleep 1
+$shGot = Get-Content $shOut -Raw -ErrorAction SilentlyContinue; $shNew = @(& $shEmb | Where-Object { $_ -notin $shB })
+Expect "engine-playwright spawnHidden: args whole, no console window ($shGot; new handoffs $($shNew.Count))" ($shGot -eq '["a b","q\"x","[\"--x\",\"y z\"]","end\\",""]' -and $shNew.Count -eq 0)
+$pop = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') popups --minutes 0 2>&1 | Out-String
+Expect "kitbag popups --minutes 0: a bounded watch, 0 windows ($($pop.Trim()))" ($pop -match 'popups: (0 window\(s\) in 0 min|Windows only)')
 Remove-TestKit $k
 Complete-Tests

@@ -24,8 +24,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L467 load · L960 lint ·
-  L1381 README graph · L1499 lint command · L1781 audit · L1929 registry · L1989 tools · L2077 parity · L2678 arch lint ·
-  L2951 prose · L3134 sections · L3266 budget · L3284 migrate · L3432 plugins · L3489 state lint · L3677 main
+  L1382 README graph · L1500 lint command · L1782 audit · L1930 registry · L1990 tools · L2078 parity · L2679 arch lint ·
+  L2952 prose · L3135 sections · L3267 budget · L3285 migrate · L3433 plugins · L3490 state lint · L3678 main
 """
 import ast, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1215,7 +1215,8 @@ def lint(k, g=None, org_terms=None):
     rx_win = {'.ps1': (r'Start-Process\s+(?:-FilePath\s+)?(?:\S*(?:pwsh|powershell|cmd)|\$\w+)|New-ScheduledTaskAction\b|\bschtasks(?:\.exe)?\s+/create\b',
                        r'WindowStyle|NoNewWindow|@\w*hid|--headless|-Verb\s+RunAs'),
               '.py': (r'creationflags\s*=.*(?:DETACHED_PROCESS|CREATE_NEW_CONSOLE)|\bstart_new_session\s*=\s*True', r'CREATE_NO_WINDOW|STARTF_USESHOWWINDOW'),   # arch-ok: flag names
-              '.mjs': (r'\bdetached:\s*true', r'windowsHide:\s*true'), '.js': (r'\bdetached:\s*true', r'windowsHide:\s*true')}   # arch-ok: Windows window flags
+              # node: detached = no console on Windows (windowsHide no help: its console children got windows) -> spawnHidden
+              '.mjs': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'"), '.js': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'")}   # arch-ok: Windows window flags
     for f in counted:
         ext = osp.splitext(f)[1]
         if ext not in rx_win or f.startswith(GENERATED):
@@ -1224,7 +1225,7 @@ def lint(k, g=None, org_terms=None):
         for i, line in enumerate(ls):
             if re.search(rx_win[ext][0], line, re.I) and not re.match(r"\s*(#|//|@\(\s*')", line) \
                     and not re.search(rx_win[ext][1], '\n'.join(ls[max(0, i - 2):i + 1]), re.I):   # a splat or flags set up to 2 lines above
-                bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a program without a hidden window (-WindowStyle Hidden / -NoNewWindow, windowsHide: true, CREATE_NO_WINDOW, a scheduled task via conhost --headless): a console window opens on the desktop')   # arch-ok: message text
+                bad('HIDDEN-WINDOW', f'{f}:{i + 1}', 'starts a program without a hidden window (-WindowStyle Hidden / -NoNewWindow, CREATE_NO_WINDOW, node: engine-playwright.mjs spawnHidden, a scheduled task via conhost --headless): a console window opens on the desktop')   # arch-ok: message text
     # ---- waste guards (2026-11-18 audit): a short fixed sleep in a loop that calls the host, ssh or re-reads files polls
     # forever at full rate; a bossy -Recurse over the runtime trees walks ~140k files per sweep
     rx_call = r'Invoke-HostVerb|Invoke-BoundedSsh|\bssh\b|\bglab\b|\bgh\s|ConvertFrom-Json|Get-Content'

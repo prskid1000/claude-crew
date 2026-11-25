@@ -6,9 +6,8 @@
 //   import { session, go, clickText, shot, saveNet, relogin, record, matrix, testerScreen, hitTest } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as }); go(s.page, '/x'); shot(s.page, f); s.net.failed: saveNet(s, f); s.done(); waits <= 20 s
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
-// Sections: L17 config · L49 login · L118 browsers · L161 tabs · L250 session · L303 actions · L402 ui checks · L409 evidence
+// Sections: L16 config · L48 login · L117 browsers · L160 tabs · L249 session · L302 actions · L401 ui checks · L408 evidence
 import puppeteer from 'puppeteer-core'
-import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -275,9 +274,9 @@ export async function session({ target, tenant, as } = {}) {
     const conn = () => puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: VIEW, protocolTimeout: PROTO_MS })
     try { browser = await conn() } catch { browser = await withLock(`chrome-${keyFile(key)}`, async () => {   // one spawn per port
       try { return await conn() } catch {}
-      let b; const dir = (await adapter('engine-playwright.mjs')).quietProfile(`${PROFILES}/${keyFile(key)}`)
-      spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, ...QUIET_ARGS,
-        ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+      let b; const ep = await adapter('engine-playwright.mjs'), dir = ep.quietProfile(`${PROFILES}/${keyFile(key)}`)
+      ep.spawnHidden(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, `--window-size=${VIEW.width},${VIEW.height}`, `--lang=${bo.lang}`, ...QUIET_ARGS,
+        ...(bo.diskCache ? [] : ['--disk-cache-size=1']), 'about:blank'])
       for (let i = 0; i < 40 && !b; i++) { await sleep(500); try { b = await conn() } catch {} }
       if (!b) throw new Error(`could not start Chrome on port ${port}`)
       return b
