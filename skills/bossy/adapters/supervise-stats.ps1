@@ -8,7 +8,7 @@ every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its ru
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L733 flags · L958 bands ·
-  L1124 shells · L1195 reset · L1236 parity
+  L1124 shells · L1195 reset · L1236 parity · L1248 faults
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -1235,14 +1235,27 @@ function Select-KitUsageSince($U, [datetime]$StatsFrom) {
 }
 # ---- parity: the catch-up ACT (owner 2026-11-24): kitbag.py parity next has cells and no parity kitty (run or subject parity) is live = an ACT,
 # so the next batch starts once the last one pushes; the count is cached per kit HEAD + parity.json time (one kitbag run per change)
+function Test-KitKittyOn($Board, [string]$Rx) { @($Board | Where-Object { $_.status -ne 'left' -and $_.beat -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'supervise.kittyLiveHours') -and ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') -and "$($_.run) $($_.subject)" -match $Rx }).Count -gt 0 }
 function Get-KitSuperviseFlagsParity([switch]$AutoFix, $Board = $entries) {
-  if (@($Board | Where-Object { $_.status -ne 'left' -and $_.beat -and ((Get-Date) - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'supervise.kittyLiveHours') -and ($_.type -eq 'kitty' -or "$($_.agent)" -match '^kitty') -and "$($_.run) $($_.subject)" -match 'parity' }).Count) { return }
+  if (Test-KitKittyOn $Board 'parity') { return }
   $pj = Join-Path $KitConf.Kit 'skills/crafty/parity.json'; $cf = Join-Path (Get-KitPath cache -Create) 'parity-next.json'
   $key = "$(git -C $KitConf.Kit rev-parse HEAD 2>$null)|$((Get-Item -LiteralPath $pj -ErrorAction SilentlyContinue).LastWriteTimeUtc.Ticks)"
   $c = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
   $n = if ($c -and $c.key -eq $key) { [int]$c.n } else { $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kitbag, 'parity', 'next', '--n', '0') 120
     if ("$($r.out)" -notmatch 'parity next: (\d+) open') { return }; Write-KitAtomic $cf (@{ key = $key; n = [int]$Matches[1] } | ConvertTo-Json -Compress); [int]$Matches[1] }
   if ($n) { [pscustomobject]@{ level = 'ACT'; what = "PARITY next batch: $n open cell(s), no parity kitty live"; action = 'Spawn ONE kitty (kind build, subject parity, low priority): kitbag.py parity next --n 5, close those cells, a test each, push (bossy K1).' } }
+}
+# ---- faults: the script-fault ACT (owner 2026-11-25), as parity's: kitbag.py faults next captures agents' failed commands from the
+# transcripts and has open items (a recurring signature with no prevention, or one seen after it) and no fault kitty is live = an ACT
+function Get-KitSuperviseFlagsFaults([switch]$AutoFix, $Board = $entries) {
+  if (Test-KitKittyOn $Board 'script-?fault') { return }
+  $cf = Join-Path (Get-KitPath cache -Create) 'faults-next.json'; $c = try { Get-Content -LiteralPath $cf -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+  # the cache age in ticks: no time-zone reading
+  if ($c -and $c.ticks -and ([DateTime]::UtcNow.Ticks - [long]$c.ticks) / 6e8 -lt [double](Get-KitParam 'scriptFaults.scanMinutes')) { $n = [int]$c.n; $top = "$($c.top)" } else {
+    $r = Invoke-KitExe (Get-Python) @('-X', 'utf8', $KitCmd.kitbag, 'faults', 'next', '--n', '1') 240
+    if ("$($r.out)" -notmatch 'faults next: (\d+) open') { return }; $n = [int]$Matches[1]; $top = "$(@("$($r.out)" -split "`r?`n")[0])" -replace ' · .*$', ''
+    Write-KitAtomic $cf (@{ ticks = [DateTime]::UtcNow.Ticks; n = $n; top = $top } | ConvertTo-Json -Compress) }
+  if ($n) { [pscustomobject]@{ level = 'ACT'; what = "SCRIPT-FAULTS: $n open recurring failure(s) of agents' commands, no fault kitty live (top: $top)"; action = 'Spawn ONE kitty (kind fix, subject script-faults, low priority): kitbag.py faults next --n 5; per class a guard (crafty adapters/guard-scripts.ps1), helper, lint or doc line, its prevention + since in kitbag_admin.py FAULT_CLASSES, a test each, bossy.ps1 learn; push (bossy K1).' } }
 }
 # a run silent 2+ days with unfinished agents: one WATCH ($Quiet remembers it), then skipped
 function Get-KitSilentRun([string]$Name, [double]$SilentHours, $Quiet, [datetime]$Now) {

@@ -206,7 +206,7 @@
       "config": "built-in guard rules",
       "file": "skills/crafty/adapters/guard-localenv.ps1",
       "verbs": "check",
-      "names": "local-env deployed-env large-writes secrets runtimes"
+      "names": "local-env deployed-env large-writes secrets runtimes script-faults"
     },
     "stack": {
       "config": "repos[] stack detection",
@@ -263,6 +263,10 @@
       "Monitor and background-shell check": {
         "codex": "port: the shell sweep finds shells under codex by their exec_command in the rollout (supervise-resources.ps1 KitShellCall)",
         "antigravity": "port: the shell sweep finds shells under agy by their run_command in transcript.jsonl (supervise-resources.ps1 KitShellCall)"
+      },
+      "script-fault capture and guard (kitbag.py faults, guard rule script-faults)": {
+        "codex": "port: faults reads exec_command / function_call_output in the rollouts; the guard runs on Bash; fallback: its Bash-only checks (bash -n, MSYS paths, bash-quoted pwsh payloads) skip Codex (its shell on Windows is PowerShell), and apply_patch edits get the case and Java checks when the script runs or compiles",
+        "antigravity": "port: faults reads run_command and its 'exited with code' step in transcript.jsonl; the guard runs on run_command; fallback: the Bash-only checks skip it (no Git Bash shell), edits are checked when the script runs"
       }
     }
   }

@@ -90,8 +90,8 @@ the **Target**. A mixed request is split and each part routed on its own.
   A test suite's tenant reset (app restore, ~1 GB) runs once per lease; re-runs name their specs.
 - Browsers are headless by default (`skills/pokey/browser.mjs`); a visible browser only when the owner asks to watch.
 - Python with `-X utf8`. On Windows: python and node from the PowerShell tool
-  (pwsh 7), not Git Bash; anything handed to a Windows program uses `D:/...` paths (or the `crafty.ps1 dir` output), never Git
-  Bash `/d/...` (guard-denied).
+  (pwsh 7; no such tool: Bash `pwsh -NoProfile -File <x.ps1>`), not Git Bash; anything handed to a Windows program uses `D:/...`
+  paths (or the `crafty.ps1 dir` output), never Git Bash `/d/...` (guard-denied).
 - Runtime output goes to `<kit>/.runtime/` (disposable) and durable state to `<kit>/.state/`, both git-ignored; never
   elsewhere in the kit. Your own files (notes, bodies, logs, evidence) go
   only where `crafty.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says, never in `/tmp`,

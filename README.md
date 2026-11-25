@@ -354,6 +354,7 @@ Vendor adapters sit in `skills/crafty/adapters/` and load only when config selec
 Registry: `skills/crafty/parity.json` (per family: verbs, caps, fallbacks, declared gaps); `kitbag.py parity [--json]` prints
 adapter x verb (native, config, fallback, gap) and harness x feature; lint PARITY fails a verb or feature with neither.
 `kitbag.py parity next [--n 3]`: the cells to close next (kit-admin.md "Parity"); supervise ACT `PARITY next batch` starts each batch.
+`kitbag.py faults [next]`: agents' failed commands -> recurring script-fault items (ACT `SCRIPT-FAULTS`; guard: `adapters/guard-scripts.ps1`).
 <!-- kit-graph:start table-adapters -->
 | Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Not native (adapters) | Code |
 |---|---|---|---|---|---|---|
@@ -374,7 +375,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 | device | `devices.type` | dump tap tapid tapxy type clear key swipe openurl shot shotmark wait photo log mic | android, ios, none |  | gap: clear (1), dump (1), key (1), log (1), mic (2), openurl (1), photo (2), shot (1), shotmark (1), swipe (1), tap (1), tapid (1), tapxy (1), type (1), wait (1) | `skills/pokey/adapters/ui-android.ps1` |
 | browser-engine | `browser.engine` | session context; caps: reuse | chrome, chromium, firefox, webkit |  |  | `skills/pokey/adapters/engine-playwright.mjs` |
 | scheduler | `supervise.osTimer` | install uninstall status | windows, cron, launchd, none |  |  | `skills/bossy/adapters/os-timer.ps1` |
-| guard | `built-in guard rules` | check | local-env, deployed-env, large-writes, secrets, runtimes |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
+| guard | `built-in guard rules` | check | local-env, deployed-env, large-writes, secrets, runtimes, script-faults |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
 | stack | `repos[] stack detection` | detect | core, presets |  |  | `skills/crafty/adapters/stack-presets.ps1` |
 <!-- kit-graph:end -->
 
@@ -397,11 +398,11 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
   `-Detail`: each item and what stays, why; counts per repo: health line, dashboard); Claude session temp: reported only.
   `crafty.ps1 wt remove` prunes and deletes its branch by the same rule.
 - The PreToolUse guard blocks `git stash`, `--no-verify`, force-pushes to shared branches, pushes to a deploy branch (`repos[].deploys[].branch`: a deploy MR only, `bossy.ps1 deploy merge -Mr`), ungated builds, hand-started dev
-  servers, `adb kill-server`, whole-drive searches (`find /`, `grep -r C:/`, `Get-ChildItem -Recurse C:\`: Glob / Grep on a scoped path), a file or folder path as the command or opened by `start` / `ii` / `code` (a desktop app: use the Read tool), Git Bash `/d/...` paths handed to Windows programs (node, python, java, curl, ...), new files at a drive root or outside the workspace, kit, repo, worktree, temp, `~/.claude`, `~/Downloads` and `guard.writeRoots` roots (a redirect, `tee`, `cp`, `Out-File`, `Set-Content`, `WriteAllText`, the Write tool: `crafty.ps1 dir` instead) and edits
-  to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live edit: `KIT_LIVE_EDIT=1` in the session env or the command),
+  servers, `adb kill-server`, whole-drive searches (`find /`, `grep -r C:/`: scope them), a file or folder path as the command or opened by `start` / `ii` / `code` (the Read tool instead), Git Bash `/d/...` paths and `/x` args handed to Windows programs, script faults (rule `script-faults`), new files at a drive root or outside the workspace, kit, repo, worktree, temp, `~/.claude`, `~/Downloads` and `guard.writeRoots` roots (any write, the Write tool too: `crafty.ps1 dir` instead) and edits
+  to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live edit: `KIT_LIVE_EDIT=1`),
   a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw `glab mr merge` / `gh pr merge` of an MR no
-  task tracks (an MR with no task: `KIT_NO_TASK=<reason>`, logged). Deploys start only from a person's word. Never production. One
-  machine (the memory gate is local); Codex runs no workflows (ported procedures, "Install").
+  task tracks (no task: `KIT_NO_TASK=<reason>`, logged). Deploys start only from a person's word. Never production. One
+  machine (a local memory gate); Codex runs no workflows (ported procedures, "Install").
 ## Extending (change the kit)
 The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` changes it in a kit worktree while runs execute the
 live clone, keeps it generic, gets a `revy` review and pushes main (`main` is protected:
@@ -552,6 +553,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_github_ps1["github.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_gitlab_ps1["gitlab.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_guard_localenv_ps1["guard-localenv.ps1"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_guard_scripts_ps1["guard-scripts.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_ps1["liquibase.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_py["liquibase.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_module_audit_py["module_audit.py"]

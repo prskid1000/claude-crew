@@ -44,8 +44,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    load; `tests/` has its own total and per-file caps: a file over its cap first forgets (`kitbag.py forget`), then moves a
    self-contained block to an area file with room), script headers, prose (`kit-admin.md` "kitty steps 5-6").
 7. **Improve:** `& $O learn -Stats`, `-Show -Last 300`, `-History`, the newest `<runtime>/logs/retros/*.md`,
-   `bossy.ps1 audit -Since 7d` (guard blocks, crashes, gate waits); a retired lesson ("(fixed in kit)") seen again = a
-   regression finding. Each pattern -> the smallest durable change.
+   `bossy.ps1 audit -Since 7d` (guard blocks, crashes, gate waits), `kitbag.py faults` (agents' failed commands); a retired
+   lesson ("(fixed in kit)") seen again = a regression finding. Each pattern -> the smallest durable change.
 8. **Fix in `<wt>`:** every finding with a safe fix, each with a test; a change an open kit branch also makes (diff it first)
    or an owner decision -> proposed with the exact edit. Then in `<wt>`: lint 0 (0 counted flow issues), `port` +
    `port --check`, parse touched .ps1, `py_compile` .py, `node --check` .mjs / workflows, `kit-tests.ps1 -Area <touched>`,

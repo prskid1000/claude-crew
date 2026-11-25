@@ -9,6 +9,7 @@
   python -X utf8 kitbag.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (kitbag_admin.py)
   python -X utf8 kitbag.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
   python -X utf8 kitbag.py release [--tag] [--publish]   # next SemVer + notes from Conventional Commits (kitbag_admin.py)
+  python -X utf8 kitbag.py faults [next] [--n 3] [--days 7] [--json]   # agents' failed commands -> recurring script-fault items (kitbag_admin.py)
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show]   # start tokens per role vs START_CAP (lint START-BUDGET); repo and tests totals (INFO)
   python -X utf8 kitbag.py naming check|next|make|scan|rename ...   # the naming standard: keys, titles, docs, runs, branches (kitbag_naming.py)
@@ -22,9 +23,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L466 load · L959 lint ·
-  L1380 README graph · L1498 lint command · L1780 audit · L1928 registry · L1988 tools · L2076 parity · L2677 arch lint ·
-  L2950 prose · L3133 sections · L3265 budget · L3283 migrate · L3431 plugins · L3488 state lint · L3676 main
+Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L467 load · L960 lint ·
+  L1381 README graph · L1499 lint command · L1781 audit · L1929 registry · L1989 tools · L2077 parity · L2678 arch lint ·
+  L2951 prose · L3134 sections · L3266 budget · L3284 migrate · L3432 plugins · L3489 state lint · L3677 main
 """
 import ast, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -3679,7 +3680,7 @@ ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet'}, {'--org-term
   'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
   'budget': (set(), set(), False), 'migrate': (set(), set(), False), 'sections': ({'--fix'}, set(), False),
   'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False), 'parity': ({'--json'}, {'--n'}, False)}
-NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check', 'naming', 'parity')   # positionals: files, verbs or names, never a kit dir
+NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check', 'naming', 'parity', 'faults')   # positionals: files, verbs or names, never a kit dir
 COMMANDS = {'lint': cmd_lint, 'flow': cmd_flow, 'audit': audit_main, 'prose': cmd_prose, 'budget': cmd_budget, 'migrate': cmd_migrate, 'sections': cmd_sections, 'state': cmd_state, 'ui-check': cmd_ui_check, 'parity': cmd_parity}
 
 def parse_opts(a, valued=()):

@@ -1432,7 +1432,7 @@ function CrlfKitFile([string]$p, [string]$base) {
   if ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($p)).Contains("`r`n")) { $p }
 }
 $liveWhy = 'the live kit runs every agent: edit your kit worktree (crafty.ps1 wt) and push; the coordinator pulls'
-# .runtime path kind: kit (<kit>'s, $var, ~), stray (<= 2 folders into the workspace, no kit: lint RUNTIME-STRAY), other
+# .runtime path kind: kit (<kit>'s, $var, ~), stray (<= 2 folders deep, no kit: RUNTIME-STRAY), other
 $rtFull = [IO.Path]::GetFullPath((Get-KitRuntime)).TrimEnd('\', '/'); $rtLeaf = Split-Path $rtFull -Leaf
 $wsRoot = Split-Path $(if ($live) { $live } else { $script:KitRoot })
 function FullOf([string]$p, [string]$base) {
@@ -1525,12 +1525,12 @@ function LayoutCheck {
   if ($kc.guard.layout -eq 'block') { $raw = "$($in.tool_name) $($off -join ' ')"; Deny $lw }
   if ($in.session_id) { Write-KitLog guard warn @{ session = "$($in.session_id)"; tool = "$($in.tool_name)"; why = $lw } }; $script:layoutNote = $lw
 }
-foreach ($e in $edits) { if ($pwWhy = Test-KitLoginLiteral $e "$($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)") { $raw = "$($in.tool_name) $e"; Deny $pwWhy } }
-# a shell write (heredoc or echo redirect, tee, Set-Content / Add-Content / Out-File) gets the same check: 2026-11-24, a heredoc slipped past it
+foreach ($e in $edits) { if (($pwWhy = Test-KitLoginLiteral $e "$($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)") -or ($pwWhy = Test-KitScriptEdit $e $in.tool_input)) { $raw = "$($in.tool_name) $e"; Deny $pwWhy } }
+# a shell write (heredoc, echo redirect, tee, Set-/Add-Content, Out-File) gets the same check (2026-11-24: a heredoc slipped past)
 foreach ($pwSw in [regex]::Matches("$cmd", '(?i)(?:>>?|\btee(?:\s+-a)?|\b(?:Set-Content|Add-Content|Out-File)\b(?:\s+-(?:Path|FilePath|LiteralPath))?)\s*["'']?([^\s"''`;|&<>()]+)')) {
   $pwSwPath = $pwSw.Groups[1].Value; if ($here -and $pwSwPath -notmatch '^([\\/]|[A-Za-z]:)') { $pwSwPath = Join-Path $here $pwSwPath }
   if ($pwWhy = Test-KitLoginLiteral $pwSwPath "$cmd") { $raw = "$($in.tool_name) $pwSwPath"; Deny $pwWhy } }
-# any writing command naming a work/agents path (cd + relative, a variable, -Value before -Path, python / node writes)
+# any writing command naming a work/agents path (cd + relative, a variable, python / node writes)
 if ("$cmd" -match '(?i)>|\btee\b|Tee-Object|Set-Content|Add-Content|Out-File|WriteAll|\.write\(|writeFile|open\(') {
   foreach ($pwP in [regex]::Matches("$cmd", '[^\s"''`;|&<>()=]*[\\/]work[\\/]agents[\\/][^\s"''`;|&<>()]*')) { if ($pwWhy = Test-KitLoginLiteral $pwP.Value "$cmd") { $raw = "$($in.tool_name) $($pwP.Value)"; Deny $pwWhy } } }
 $off = @(foreach ($e in $edits) { OffLayout $e $here })
@@ -1646,7 +1646,7 @@ foreach ($seg in DeleteSegments $raw) {
 }
 # a bare remove leaves junction skeletons no repo lists, and the branch
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+("[^"]*"|\S+)\s+)*worktree\s+remove\b') { Deny "kit guard: use & $($KitCmd.dev) wt remove -Dir <worktree>: it unlinks shared folders first, prunes and deletes the branch once nothing is lost (a bare git worktree remove leaves junctions behind)" }
-# host CLIs from the git-host adapters (lib.ps1 Get-KitHostCli: exe, MR noun, option names), not literals
+# host CLIs from the git-host adapters (lib.ps1 Get-KitHostCli), not literals
 $hostClis = @(Get-KitHostCli); $hcExe = (@($hostClis.exe | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }) -join '|'); $hcNoun = (@($hostClis.noun | Select-Object -Unique | ForEach-Object { [regex]::Escape($_) }) -join '|')
 # an MR fetched into a local branch (mr8520) outlives its reader
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*fetch\b[^;&|\n]*\b(merge-requests|pull)/\d+/head:(?!refs/remotes/)\S' -or ($hcExe -and $raw -match "(?m)(^|[;&|(\n])\s*(\S*[\\/])?($hcExe)(\.exe)?\s+($hcNoun)\s+checkout\b")) {
@@ -2030,8 +2030,8 @@ $bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {
     $(if ($raw -match '(?m)(^\s*|[;&(]\s*)cat\s*(>\s*\S+\s*)?($|[;&|)])') { 'cat with no file reads stdin' }),
     $(if ($raw -match '\bpython\d*(\.exe)?\s+-(\s|$)' -and $raw -notmatch '\bpython\d*(\.exe)?\s+-\s*<|\|\s*python') { 'python - reads its script from stdin' }) | Where-Object { $_ })
   if ($bgWhy) { $bgNote = @("kit guard: this background shell may never end ($($bgWhy -join '; ')): bound it (timeout <s> <cmd>, a loop counter), no stdin reads; supervise flags hung shells (Shells table)") } }
-# adapter rules (Register-KitAdapter 'guard') last: notes only follow commands that run
-$notes = foreach ($rule in @($KitAdapters.guard.Values | Where-Object { $_ })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
+# adapter rules last (script-faults after the bans): notes only follow commands that run
+$notes = foreach ($rule in @($KitAdapters.guard.Keys | Sort-Object { $_ -eq 'script-faults' } | ForEach-Object { $KitAdapters.guard[$_] })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
 LayoutCheck; $notes = @(@($notes) + $script:layoutNote + $bgNote | Where-Object { $_ })
 if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
 elseif ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = (@($notes) -join "`n") } } | ConvertTo-Json -Compress -Depth 4 }

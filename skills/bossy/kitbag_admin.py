@@ -4,10 +4,12 @@ scan, token cost and releases.
   python -X utf8 skills/bossy/kitbag.py audit setup [--fix] | config [--fill] [--ack-caps] | recover [--fix] | scan [--kit <dir>] [--json <file>]
   python -X utf8 skills/bossy/kitbag.py cost [<kit>] [--steps] [--json]   # start tokens per agent type, workflow prompts
   python -X utf8 skills/bossy/kitbag.py release [--tag] [--publish]        # next SemVer + notes from Conventional Commits
+  python -X utf8 skills/bossy/kitbag.py faults [next] [--n 3] [--days 7] [--json]   # agents' failed commands -> recurring script-fault items
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L16 helpers · L57 setup · L178 config · L407 recover · L552 release · L603 cost · L710 registry · L714 scan
+Sections: L18 helpers · L59 setup · L180 config · L409 recover · L554 release · L605 cost · L712 registry · L716 scan ·
+  L852 faults
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -847,8 +849,210 @@ def doc_flags(texts):
                         if fl not in ('file', 'noprofile', 'command', 'whatif', 'verbose', 'erroraction') and not any(p.startswith(fl) for p in params[s]):
                             out('WARN', 'DOC-FLAG', f'{f}:{ln}', f'`{s} -{flag}`: {s} has no such parameter')
 
+# ---- faults: agents' failed commands -> signatures -> recurring script-fault items (owner 2026-11-25; supervise FAULTS ACT)
+# (class, output rx, command rx, prevention, since): first match wins; a prevention shipped on `since`; a hit after it = a leak
+FAULT_GUARD = 'guard (crafty adapters/guard-scripts.ps1): '
+FAULT_KIT = r'\b(crafty|bossy|pokey|envy|phoney|reversy|devtools|kitbag\w*|browser|video)\.(ps1|py|mjs)\b'   # a kit verb in the command
+FAULT_CLASSES = [
+    ('ps-case-clash', None, None, FAULT_GUARD + 'a work/agents .ps1 with $a and $A in one scope is denied at Write / Edit and before it runs', '2026-11-25'),
+    ('tool-missing', r'No such tool available: \w+', None, 'doc: AGENTS.md "Multi-agent work": no PowerShell tool -> pwsh -NoProfile -File <x.ps1> from Bash', '2026-11-25'),
+    ('py-shim-quote', r'goto :error|was unexpected at this time', None,FAULT_GUARD + 'bare python -c code with a newline, \\" or an unquoted & | < > ^ through a .bat shim: write a .py', '2026-11-25'),
+    ('msys-path', r'[A-Za-z]:[\\/]Program Files[\\/]Git[\\/](?!(bin|cmd|usr|mingw64|etc)\b)\w', None, FAULT_GUARD + 'a Git Bash /x argument to a Windows program without MSYS_NO_PATHCONV=1', '2026-11-25'),
+    ('java-escape', r'illegal escape character', None, FAULT_GUARD + 'a Write / Edit adding an illegal \\ escape to a Java string literal', '2026-11-25'),
+    ('wrapper-path', r"(mvnw|gradlew)(\.cmd|\.bat)?['\"]?:? (No such file|not found|is not recognized|command not found)|there is no POM in this directory", None, FAULT_GUARD + './mvnw or ./gradlew run from a folder without it', '2026-11-25'),
+    ('sh-quote', r'unexpected EOF while looking for matching|syntax error near unexpected token|syntax error: unexpected end of file', None, FAULT_GUARD + 'bash -n before every Bash call', '2026-11-25'),
+    ('ps-parse', r'ParserError|Unexpected token|Missing closing|string is missing the terminator|Missing expression', None, FAULT_GUARD + 'PowerShell calls and bash pwsh -Command payloads parsed first; backticks in a double-quoted payload', '2026-11-25'),
+    ('kit-usage', r'^usage:', FAULT_KIT, '', ''),
+    ('kit-verb', r'.', FAULT_KIT, 'accepted: a kit verb refusing by design (calls.jsonl rc; friction: bossy.ps1 learn)', ''),
+    ('file-locked', r'being used by another process|Device or resource busy|Text file busy', None, '', ''),
+    ('json-input', r'JSONDecodeError|is not valid JSON|Unexpected token .* in JSON', None, '', ''),
+    ('not-found', r'command not found|is not recognized as (the name of )?a|No module named', None, '', ''),
+    ('probe', r'^(ls|cat|grep|head|tail|wc|find|stat|cd|du|file|diff|cmp|sed|rg):', None, 'accepted: a look at a path that is not there (no fix)', ''),
+    ('path-missing', r'No such file or directory|Cannot find path|does not exist|cannot find the (file|path)|FileNotFoundError', None, '', ''),
+    ('py-exception', r'^Traceback|^[\w.]+(Error|Exception): ', None, '', ''),
+]
+FAULT_KNOWN = re.compile('|'.join(c[1] for c in FAULT_CLASSES[2:6]))   # error text that marks a fault even under exit 0 (a pipe hides it)
+FAULT_READ = re.compile(r'^\s*(cd\s+\S+\s*(&&|;)\s*)?(cat|grep|rg|sed|head|tail|less|git\s+(show|diff|log|grep)|Get-Content|Select-String)\b')
+FAULT_SECRET = re.compile(r'(?i)(-{1,2}(?:passw\w*|token|secret|api-?key|pwd)[\s=]+|\bmysql\w*\b[^|;&\n]*?\s-p(?=\S)|\s-u\s+[^\s:]+:|//[^/\s:@]+:)[^\s\'"]+')
+
+def fault_known(cmd, text):
+    """Known fault text under exit 0: near the top of the output, never a read of a file that quotes it (a lesson, this code)."""
+    return bool(FAULT_KNOWN.search(str(text)[:400])) and not FAULT_READ.match(cmd or '')
+
+def fault_mask(t, n=200):
+    """mask() plus the spaced and short secret forms (-Password x, -u user:pw, mysql -px), then cut to n."""
+    return FAULT_SECRET.sub(lambda m: m.group(1) + '[redacted]', mask(str(t)))[:n]
+FAULT_SKIP = re.compile(r'(?i)kit guard|PreToolUse|hook (error|denied)|\[(Request|Tool call) interrupted|doesn.t want to proceed|Permission (to use|for this command)|<tool_use_error>(?!Error: No such tool)|user (rejected|denied)')
+FAULT_ERR = re.compile(r"(?i)error|exception|not found|not recognized|denied|cannot|can't|failed|fatal|unexpected|invalid|illegal|no such|missing|refused|timed? ?out|^usage:")
+FAULT_HEAD = re.compile(r'(?i)^(exit code|process exited with code|the command exited with code|chunk id|wall time|original token count|output:|created at|completed at)\b')
+ANSI = re.compile(r'\x1b\[[\d;]*[A-Za-z]')
+
+def fault_norm(line):
+    """A signature line: masked, paths, quoted text and numbers folded, 140 chars."""
+    s = re.sub(r'"[^"]{0,200}"|\'[^\']{0,200}\'|`[^`]{0,200}\'', '<s>', mask(line))
+    s = re.sub(r'(?:[A-Za-z]:)?(?:[\\/][^\s\\/:\'",;()<>]+){2,}[\\/]?|[A-Za-z]:[\\/][^\s:\'",;()<>]*', '<path>', s)
+    return re.sub(r'\s+', ' ', re.sub(r'\b(?=\w*\d)[0-9a-fA-F-]{6,}\b|\b\d+\b', '<n>', s)).strip()[:140]
+
+def fault_line(text):
+    """The first error line of a failed command's output ('' = none: nothing to act on)."""
+    ls = [x.strip() for x in ANSI.sub('', str(text)).splitlines() if x.strip() and not FAULT_HEAD.match(x.strip())]
+    if any(x.startswith('Traceback') for x in ls):
+        return next((x for x in reversed(ls) if re.match(r'[\w.]+(Error|Exception|Exit)\b', x)), ls[-1])
+    return next((x for x in ls if FAULT_ERR.search(x) and not re.match(r'(File "|at |\+ |\||- )', x)), '')   # '- ' / '|': lesson and table lines a kit verb prints
+
+def fault_class(cmd, text):
+    """(class, prevention, since) of one failed command."""
+    for m in re.finditer(r'[^\s\'";|&]+\.ps1\b', cmd or ''):
+        p = re.sub(r'^/([A-Za-z])/', r'\1:/', m.group(0).replace('\\', '/'))
+        if '/work/agents/' in p and osp.isfile(p) and ps_case(read(p)):
+            return FAULT_CLASSES[0][0], FAULT_CLASSES[0][3], FAULT_CLASSES[0][4]
+    text = ANSI.sub('', text)
+    for cls, orx, crx, prev, since in FAULT_CLASSES[1:]:
+        if re.search(orx, text, re.M) and (not crx or re.search(crx, cmd or '')):
+            return cls, prev, since
+    return 'exit', '', ''
+
+def fault_roots():
+    """(harness, root, glob) of every transcript tree (lib.ps1 transcript adapters; KIT_TRANSCRIPTS* override)."""
+    home, ws = osp.expanduser('~'), osp.dirname(main_clone(KIT_DIR))
+    codex = os.environ.get('KIT_TRANSCRIPTS_CODEX') or osp.join(os.environ.get('CODEX_HOME') or osp.join(home, '.codex'), 'sessions')
+    return [('claude', os.environ.get('KIT_TRANSCRIPTS') or osp.join(home, '.claude', 'projects', re.sub(r'[^A-Za-z0-9]', '-', ws)), '**/*.jsonl'),
+            ('codex', codex, '**/rollout-*.jsonl'),
+            ('antigravity', os.environ.get('KIT_TRANSCRIPTS_ANTIGRAVITY') or osp.join(home, '.gemini', 'antigravity-cli', 'brain'), '*/.system_generated/logs/transcript.jsonl')]
+
+def _fault_calls(h, o, pend):
+    """Yield (tool, cmd, rc, text, at) failed calls of one transcript record; pend: call id -> (tool, cmd) across lines."""
+    if h == 'claude':
+        for c in ((o.get('message') or {}).get('content') or []) if isinstance((o.get('message') or {}).get('content'), list) else []:
+            if c.get('type') == 'tool_use' and c.get('name') in FAULT_TOOLS:
+                pend[c.get('id')] = (c['name'], fault_mask((c.get('input') or {}).get('command') or '', 600))
+            elif c.get('type') == 'tool_result' and c.get('tool_use_id') in pend:
+                tool, cmd = pend.pop(c['tool_use_id'])
+                body = c.get('content')
+                text = body if isinstance(body, str) else '\n'.join(str(x.get('text') or '') for x in body or [] if isinstance(x, dict))
+                m = re.match(r'\s*Exit code (\d+)', text)
+                if m or c.get('is_error') or fault_known(cmd, text):
+                    yield tool, cmd, int(m.group(1)) if m else int(bool(c.get('is_error'))), text, o.get('timestamp') or ''
+    elif h == 'codex':
+        p = o.get('payload') or {}
+        if p.get('type') == 'function_call' and p.get('name') in FAULT_TOOLS:
+            try:
+                g = json.loads(p.get('arguments') or '{}')
+            except ValueError:
+                g = {}
+            pend[p.get('call_id')] = (p['name'], fault_mask(g.get('cmd') or g.get('command') or '', 600))
+        elif p.get('type') == 'function_call_output' and p.get('call_id') in pend:
+            tool, cmd = pend.pop(p['call_id'])
+            text = str(p.get('output') or '')
+            m = re.search(r'(?:exited with code|Exit code:?) (\d+)', text) or re.search(r'"exit_code":\s*(\d+)', text)
+            if m and (m.group(1) != '0' or fault_known(cmd, text)):
+                yield tool, cmd, int(m.group(1)), text, o.get('timestamp') or ''
+    else:
+        for c in o.get('tool_calls') or []:
+            if c.get('name') in FAULT_TOOLS:
+                pend['last'] = (c['name'], fault_mask(str((c.get('args') or {}).get('CommandLine') or '').strip('"'), 600))
+        m = re.search(r'The command exited with code (\d+)', str(o.get('content') or '')) if o.get('type') != 'PLANNER_RESPONSE' else None
+        if m and 'last' in pend:
+            tool, cmd = pend.pop('last')
+            if m.group(1) != '0' or fault_known(cmd, o['content']):
+                yield tool, cmd, int(m.group(1)), str(o['content']), o.get('created_at') or ''
+
+FAULT_TOOLS = {'Bash', 'PowerShell', 'exec_command', 'shell', 'run_command'}
+FAULT_WANT = re.compile(r'"tool_use"|"tool_result"|function_call|"tool_calls"|exited with code|"session_meta"')
+
+def fault_scan(days=1):
+    """Read new transcript lines (byte cursor per file, durable faults-cursor) and append each failed command to audit/<day>/faults.jsonl."""
+    cur_f = kit_path('faults-cursor', True)
+    cur = (load_json(cur_f)[0] or {}) if osp.isfile(cur_f) else {}
+    cut, n = time.time() - days * 86400, 0
+    for h, root, pat in fault_roots():
+        for f in glob.glob(osp.join(root, pat), recursive=True) if osp.isdir(root) else []:
+            st = os.stat(f)
+            if st.st_mtime < cut:
+                continue
+            c = cur.get(f) or {}
+            off = c.get('off', 0) if c.get('off', 0) <= st.st_size else 0
+            if off == st.st_size:
+                continue
+            pend = dict(c.get('pend') or {})
+            agent = re.sub(r'^agent-|\.jsonl$|^rollout-[\dT-]+-', '', osp.basename(f)) if h != 'antigravity' else osp.basename(osp.dirname(osp.dirname(osp.dirname(f))))
+            with open(f, 'rb') as fh:
+                fh.seek(off)
+                data = fh.read()
+            end = data.rfind(b'\n') + 1
+            for raw in data[:end].split(b'\n'):
+                line = raw.decode('utf-8', 'replace')
+                if not FAULT_WANT.search(line):
+                    continue
+                try:
+                    o = json.loads(line)
+                except ValueError:
+                    continue
+                if h == 'codex' and o.get('type') == 'session_meta' and not osp.normcase(str((o.get('payload') or {}).get('cwd') or '')).startswith(osp.normcase(osp.dirname(main_clone(KIT_DIR)))):
+                    pend['skip'] = 1
+                for tool, cmd, rc, text, at in ([] if pend.get('skip') else _fault_calls(h, o, pend)):
+                    first = fault_line(text)
+                    if not first or FAULT_SKIP.search(text[:400]):
+                        continue
+                    cls, prev, _ = fault_class(cmd, text)
+                    rec = {'at': at or kit_stamp(), 'harness': h, 'agent': agent, 'tool': tool, 'rc': rc, 'cls': cls, 'sig': f'{cls} {fault_norm(first)}',
+                           'line': fault_mask(first), 'cmd': fault_mask(re.sub(r'\s+', ' ', cmd)), 'prevent': prev}
+                    day = datetime.date.fromisoformat(rec['at'][:10]) if re.match(r'\d{4}-\d\d-\d\d', rec['at']) else None
+                    with open(log_file('faults', day, create=True), 'a', encoding='utf-8') as out_f:
+                        out_f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+                    n += 1
+            cur[f] = {'off': off + end, 'pend': dict(list(pend.items())[-50:])}
+    state_write(cur_f, {f: c for f, c in cur.items() if osp.isfile(f)})
+    return n
+
+def fault_items(days=7):
+    """Signatures of the last `days` days: [{sig, cls, hits, agents, days, open, prevent, examples}], most hits first. Recurring =
+    scriptFaults.minHits hits from scriptFaults.minAgents agents or on 2+ days; open = recurring with no prevention, or a hit after it."""
+    groups, mh, ma = {}, kit_param('scriptFaults.minHits'), kit_param('scriptFaults.minAgents')
+    for i in range(days):
+        f = log_file('faults', datetime.date.today() - datetime.timedelta(days=i))
+        for line in open(f, encoding='utf-8') if osp.isfile(f) else []:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            g = groups.setdefault(r['sig'], {'sig': r['sig'], 'cls': r['cls'], 'hits': 0, 'agents': set(), 'days': set(), 'harness': set(), 'last': '', 'examples': []})
+            g['hits'] += 1; g['agents'].add(r.get('agent')); g['days'].add(r['at'][:10]); g['harness'].add(r.get('harness'))
+            if r.get('harness', 'claude') == 'claude' or not str(r.get('prevent') or '').startswith(FAULT_GUARD):   # Bash-only guard checks skip the others
+                g['last'] = max(g['last'], r['at'])
+            if len(g['examples']) < 3:
+                g['examples'].append(f"{r['at'][:16]} {r.get('agent', '')[:10]} {r['cmd'][:110]} -> {r['line'][:110]}")
+    prev = {c[0]: (c[3], c[4]) for c in FAULT_CLASSES}
+    out_l = []
+    for g in groups.values():
+        p, since = prev.get(g['cls'], ('', ''))
+        rec = g['hits'] >= mh and (len(g['agents']) >= ma or len(g['days']) >= 2)
+        g.update(prevent=p, due=rec and not p.startswith('accepted') and (not p or g['last'][:10] > since), recurring=rec, agents=len(g['agents']), days=len(g['days']), harness=sorted(x for x in g['harness'] if x))
+        out_l.append(g)
+    return sorted(out_l, key=lambda g: (not g['due'], not g['recurring'], -g['hits']))
+
+def cmd_faults(a):
+    """faults [scan] [--days 7] [--json] | faults next [--n 3]: capture new failed commands, then the recurring script-fault items."""
+    flags, rest = parse_opts(a, ('--n', '--days'))
+    days = int(flags.get('--days') or 7)
+    new = fault_scan(min(days, 2))   # transcripts written in the last 2 days (a byte cursor each); items: the whole window
+    items = fault_items(days)
+    if '--json' in flags:
+        print(json.dumps({'new': new, 'items': items}, indent=1))
+        return 0
+    if 'next' in rest:
+        op = [g for g in items if g['due']]
+        for g in op[:int(flags.get('--n') or 3)]:
+            print(f"{g['sig']} · {g['hits']} hit(s), {g['agents']} agent(s), {g['days']} day(s) · {'leak: ' + g['prevent'] if g['prevent'] else 'no prevention'}\n  e.g. {g['examples'][0]}")
+        print(f'faults next: {len(op)} open script-fault(s) ({new} new failed call(s) captured)')
+        return 0
+    for g in items[:40]:
+        print(f"{'OPEN' if g['due'] else 'rec ' if g['recurring'] else '    '} {g['hits']:>4} {g['agents']:>3}a {g['days']}d  {g['sig']}{'  [' + g['prevent'] + ']' if g['prevent'] else ''}")
+    print(f"faults: {len(items)} signature(s), {sum(g['recurring'] for g in items)} recurring, {sum(g['due'] for g in items)} open, {new} new call(s)")
+    return 0
+
 AUDIT_VERBS = {'scan': lambda kit, flags: cmd_scan(kit), 'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags, '--ack-caps' in flags),
   'recover': lambda kit, flags: cmd_recover(kit, '--fix' in flags)}
-COMMANDS = {'cost': cmd_cost, 'release': cmd_release}
+COMMANDS = {'cost': cmd_cost, 'release': cmd_release, 'faults': cmd_faults}
 ARGS = {'audit': ({'--fix', '--fill', '--ack-caps'}, {'--kit', '--json'}, False), 'cost': ({'--steps', '--json'}, set(), True),
-  'release': ({'--tag', '--publish'}, set(), False)}
+  'release': ({'--tag', '--publish'}, set(), False), 'faults': ({'--json'}, {'--n', '--days'}, False)}
