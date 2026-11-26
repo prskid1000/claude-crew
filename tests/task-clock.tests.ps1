@@ -72,7 +72,7 @@ const calls = []; let reviewDone = false, ciAtReview = null
 const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
  if (/^review:/.test(o.label)) { await new Promise((r) => setTimeout(r, 30)); reviewDone = true; return { findings: calls.filter((c) => c.label === 'review:X1').length > 1 ? [] : [{ mr: '1', file: 'a.ts', line: 3, severity: 'blocking', problem: 'null check', fix: 'add it' }] } }
  if (/^ci:/.test(o.label)) { if (ciAtReview === null) ciAtReview = !reviewDone; return { done: true, mrs: calls.filter((c) => /^ci:/.test(c.label)).length > 1 ? [] : [{ mr: '1', status: 'failed', job: 'test', error: 'boom' }] } }
- return /^(build|fix|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, /^sh/.test(o.label) ? _merged(1) : {}) : _ok('[]') }
+ return /^(build|fix|ship):/.test(o.label) ? _rep({ status: 'PASS', failing: [] }, /^sh/.test(o.label) ? _merged(1) : {}) : /^record-args/.test(o.label) ? _rec() : _ok('[]') }
 const args = { brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1', area: 'a' }], mandate: ['m'], ..._kl }
 run(args, agent, _n, _n, pipeline).then(() => {
  const fx = calls.filter((c) => c.label === 'fix:X1')

@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L71 record-args · L92 prepare · L122 config · L151 prompts · L240 local · L268 app · L298 test-prompt ·
-//   L356 verify · L418 run-item · L597 pool · L619 budget · L660 run · L714 learn
+// Sections: L16 args · L70 record-args · L90 prepare · L120 config · L149 prompts · L238 local · L266 app · L296 test-prompt ·
+//   L354 verify · L416 run-item · L595 pool · L617 budget · L658 run · L712 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -56,13 +56,12 @@ const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }
 const MT = { test: TB, verify: TS, audit: TS, close: TF, hold: TF, learn: TF, retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
-tierModels()
+setStr(TIERS, (ARGS0.config || {}).tiers); tierModels()
 // test lanes: qa.lanes { <lane>: { kind, parallel, followUp, devices } }; unset = one web lane
 let QL = { web: { kind: 'web', parallel: 5 } }
+const cfgOf = (s) => { try { return JSON.parse(/^CONFIG (\{.*\})\s*$/m.exec(s)[1]) } catch (e) { } }
 function takeConfig(out) {
- let c = null
- try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { c = null }
- if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, one web lane'); c = {} }
+ const c = cfgOf(out) || {}
  // args.config wins: a resume replays the cached CONFIG step; bossy.ps1 recover passes today's tiers / models
  const ov = ARGS0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  if (c.qaLanes && typeof c.qaLanes === 'object' && Object.keys(c.qaLanes).length) QL = c.qaLanes
@@ -80,13 +79,12 @@ async function recordArgs(run, runDir, phaseName, plan = '') {
 ${json}
 ARGS>>>
 2. Run in PowerShell (pwsh 7): & ${K0}/skills/bossy/bossy.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
-Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
+Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (code parses BUDGET / CONFIG: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
   const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
-  if (r && r.ok) return r.output || ''
+  if (r && r.ok && cfgOf(r.output)) return r.output
  }
- log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
- return ''
+ throw new Error('launch -Self: no RECORDED + CONFIG JSON twice (re-worded?): not started')
 }
 if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')   // recorded again with its plan once its items are known
 // ---- prepare: pokey.ps1 prepare builds the run (args.select, pokey L1) or prints one (runDir); one STEP, last line RUN <json>

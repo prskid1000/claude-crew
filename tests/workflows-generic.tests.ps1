@@ -174,14 +174,14 @@ run({ runDir: 'C:/runs/R9', ..._kl, verify: false, items: [_item('E1')] }, agent
 Expect-Each (Invoke-Js tc-empty $jsE (Join-Path $src 'workflows/testy.js')) 'testy retest: #' 'empty-full' -Show 8
 # K70 (K7 fix): one area over the cap is refused as unsplittable, with no next (a batch of 1 changed nothing: endless refusal)
 $js1a = @'
-const calls = [], agent = async (p, o) => { calls.push(o.label); return /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":100000,"estimate":500000,"stopAt":0.8}') : _ok('[]') }
+const calls = [], agent = async (p, o) => { calls.push(o.label); return /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":100000,"estimate":500000,"stopAt":0.8}\nCONFIG {}') : _ok('[]') }
 const o = await run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }], mandate: ['m'], ..._kl }, agent, _n, _n, pipeline)
 console.log(`one-area:${o.refused === true && o.unsplittable === true && !o.next && !o.batch && !calls.some((c) => /^build:/.test(c))}`)
 '@
 Expect-Each (Invoke-Js wg-one $js1a $wfd) 'buildy budget: #' 'one-area' -Show 5
 # K66: a budget stop after the build hands next a resume map (its MRs and worktrees), never a bare mode resume
 $js1b = @'
-const agent = async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":1000000,"estimate":700000,"stopAt":0.8}') : o.label === 'budget' ? _ok(JSON.stringify({ spent: 900000 }))
+const agent = async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":1000000,"estimate":700000,"stopAt":0.8}\nCONFIG {}') : o.label === 'budget' ? _ok(JSON.stringify({ spent: 900000 }))
  : /^build:/.test(o.label) ? _rep({ status: 'FAIL', env: 'e', rounds: 1, failing: ['G1'], goalsDoc: 'g' }) : _ok('[]')
 const o = await run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }], mandate: ['m'], ..._kl }, agent, _n, _n, pipeline)
 const rs = o.next && o.next.args.resume && o.next.args.resume.X1
@@ -191,7 +191,7 @@ Expect-Each (Invoke-Js wg-res $js1b $wfd) 'buildy budget: #' 'resume-map' -Show 
 # K69: testy next keeps the run options; a mostly NOT_TESTED shared-env item is held (never dropped unpublished); verify corrects the defect class
 $js1c = @'
 const sim = async (args, checks, verdicts, spent = 0) => { const calls = []; const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
-  if (/^record-args/.test(o.label)) return _ok('RECORDED x\nBUDGET {"cap":1000000,"estimate":750000,"stopAt":0.8}')
+  if (/^record-args/.test(o.label)) return _ok('RECORDED x\nBUDGET {"cap":1000000,"estimate":750000,"stopAt":0.8}\nCONFIG {}')
   if (o.label === 'budget') return _ok(JSON.stringify({ spent }))
   if (/^(test|retest)/.test(o.label)) return { ..._res(o.label.split(':')[1], checks.map((c) => _ck(...c))), handoff: '' }
   if (/^verify/.test(o.label)) return { verdicts }

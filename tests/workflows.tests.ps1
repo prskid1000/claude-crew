@@ -6,7 +6,7 @@ Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
 $k = New-TestKit workflows; $O = Join-Path $k 'skills/bossy/bossy.ps1'
-# the sims run on a legacy CONFIG line (qa.lanes web/api/app, repo roles); the neutral defaults have their own sims at the end
+# the sims run on a legacy CONFIG line (qa.lanes web/api/app, repo roles); the neutral defaults: sims at the end
 $legacyCfg = 'CONFIG {"models":null,"roles":{"api":"producer","java":"producer","py":"producer","web":"consumer"},"qaLanes":{"web":{"kind":"web","parallel":5,"followUp":"app"},"api":{"kind":"api","parallel":5,"followUp":"app"},"app":{"kind":"app","devices":"android"}}}'
 $jsLib = [regex]::Replace($jsLib, "(?m)^const _CFG = '.*?'(?=\s)", { "const _CFG = '$legacyCfg'" })
 if ($jsLib -notmatch [regex]::Escape("const _CFG = '$legacyCfg'")) { throw 'workflows tests: harness _CFG changed, update the legacy CONFIG hook' }
@@ -280,7 +280,7 @@ Expect-Each $res 'testy verify: #' 'flaky', 'no-evidence' -Show 5
 # budget: over cap -> refused + split; handoff -> brief + learn; testy at 80%: the rest
 $jsb = @'
 const mk = (out, spent, handoff) => { const calls = []; return { calls, agent: async (p, o) => { calls.push({ label: o.label, prompt: p })
-  if (/^record-args/.test(o.label)) return { ok: true, output: `RECORDED x\nBUDGET ${out}` }
+  if (/^record-args/.test(o.label)) return { ok: true, output: `RECORDED x\nBUDGET ${out}\nCONFIG {}` }
   if (o.label === 'budget') return { ok: true, output: JSON.stringify({ spent }) }
   if (/^(build|handoff):/.test(o.label)) return _rep({ status: 'PASS', env: 'e', rounds: 1, failing: [], goalsDoc: 'g' }, { mrs: [], handoff: o.label.startsWith('build') ? handoff : '' })
   if (/^(test|handoff|retest)/.test(o.label)) return { ..._res(o.label.split(':')[1], [_ck('C1', 'PASS')]), handoff: '' }

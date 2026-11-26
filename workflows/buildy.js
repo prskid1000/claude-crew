@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L154 record-args · L173 budget · L191 build-prompt · L276 ship-prompt · L296 plan · L314 spike ·
-//   L326 local-loop · L408 stages · L563 ship · L599 debate · L712 deploy · L726 learn
+// Sections: L18 args · L153 record-args · L171 budget · L189 build-prompt · L274 ship-prompt · L294 plan · L312 spike ·
+//   L324 local-loop · L406 stages · L561 ship · L597 debate · L710 deploy · L724 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -137,16 +137,15 @@ const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }
 const MT = { spike: TS, debate: TB, build: TB, review: TS, ci: TF, ship: TF, docs: TB, learn: TF, complex: TB, retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
-tierModels()
+setStr(TIERS, (A0.config || {}).tiers); tierModels()
+const cfgOf = (s) => { try { return JSON.parse(/^CONFIG (\{.*\})\s*$/m.exec(s)[1]) } catch (e) { } }
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
 // repos[].role (name / alias): merge order
 const CFG = { roles: {}, local: {}, serial: [] }
 function takeConfig(out) {
- let c
- try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { }
- if (!c) { log('WARNING: no CONFIG line: default models, no repo roles'); c = {} }
- // args.config wins (a resume replays the cached CONFIG; recover passes today's)
+ const c = cfgOf(out) || {}
+ // args.config wins (a resume replays the cached CONFIG)
  const ov = A0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  CFG.roles = c.roles || {}; CFG.serial = ls(c.serial)
  CFG.local = c.local || {}; CFG.humanDoc = c.humanDoc
@@ -162,13 +161,12 @@ async function recordArgs(wf, run, a, phaseName, plan) {
 ${json}
 ARGS>>>
 2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)} -Plan '${plan}'
-Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
+Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (code parses BUDGET / CONFIG: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
   const r = await agent(prompt, { ...SO(label, phaseName, model), agentType: 'kitty' })
-  if (r && r.ok) return r.output || ''
+  if (r && r.ok && cfgOf(r.output)) return r.output
  }
- log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume needs them by hand')
- return ''
+ throw new Error('launch -Self: no RECORDED + CONFIG JSON twice (re-worded?): not started')
 }
 // ---- budget: over the cap -> refused; at stopAt the rest -> next
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }

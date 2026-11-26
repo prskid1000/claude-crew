@@ -36,6 +36,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    -Name <run>` (exists -> never reuse it: another kitty's). Busy check:
    `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into
    the live clone. **Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
+   **Impact** (before each change): `kitbag.py flow --impact <file | function | 'script verb' | config key | hook | event>` in
+   `<wt>`: upstream, downstream, broken chains, cycles; cite it in the change's `Today:` line, run the test areas it lists.
 1. **Setup:** `$A setup [--fix]` (detail for steps 1-3: `kit-admin.md` "kitty steps 1-3").
 2. **Missing config:** `$A config [--fill]` (org values = ASK lines, never guessed).
 3. **Recover:** `$A recover [--fix]` (`--fix` only when nothing runs; unmerged work is listed, never deleted).

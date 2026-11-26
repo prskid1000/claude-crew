@@ -915,7 +915,7 @@ function Resolve-KitPlanModel([string]$Model, [string]$Tool) { if ($Model -and $
 # supervise: one line while the override is live (the coordinator passes the model on every hand spawn: agent files are not dated)
 function Get-KitSuperviseFlagsModelOverride([switch]$AutoFix) {
   if ($ov = Get-KitModelOverride) { [pscustomobject]@{ level = 'INFO'; what = "model override $($ov.model) until $($ov.until.ToString('yyyy-MM-dd HH:mm zzz'))"; kind = 'MODEL OVERRIDE'
-      action = "Pass model: '$($ov.model)' on every Agent spawn and in tidy args.model; workflows and resumes take it from the CONFIG line (kit.local.json models.override)" } }
+      action = "Pass model: '$($ov.model)' on every Agent spawn and in tidy args.model; buildy / testy args: config: { tiers: { fast: '$($ov.model)', balanced: '$($ov.model)', strong: '$($ov.model)' } } (their first step runs before the CONFIG line; the rest and resumes take it from that line); models.tiers stays as it is: after until it applies again (kit.local.json models.override)" } }
 }
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Role = '') {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget

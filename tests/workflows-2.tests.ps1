@@ -28,8 +28,15 @@ const rz = await go('CONFIG {"tiers":{"balanced":"sonnet"},"roles":{},"qaLanes":
 console.log(`resume-tiers:${rz.find((c) => c.label === 'build:G1').model === 'opus'}`)
 const tr = (rz.find((c) => c.label === 'track:G1') || {}).prompt || ''
 console.log(`track-script:${/track add -Discover -Mrs 'https:\/\/github\.com\/o\/storefront\/pull\/4,https:\/\/github\.com\/o\/core\/pull\/4'/.test(tr) && !/group the MRs/.test(tr)}`)
+// 2026-11-26 (two runs on default models under a models.override): a record-args step that re-words the CONFIG line is asked again on
+// the retry model; twice = the run stops, never default models; args.config tiers hold from step 0
+const rw = [], mw = _mock((p, o) => /^(build|ship):G1/.test(o.label) ? _rep(lt, { mrs: [mr('core')] }) : /^review/.test(o.label) ? { findings: [] } : undefined, '[]')
+const aw = async (p, o) => /^record-args/.test(o.label) ? (rw.push(`${o.label}=${o.model}`), _ok(rw.length > 1 ? 'RECORDED\nCONFIG {"tiers":{"balanced":"t-b"},"roles":{}}' : 'RECORDED x (fnv 1).\nCONFIG models: strong/balanced/fast all map to t-b; humanDoc true.')) : mw.agent(p, o)
+await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }], config: { tiers: { fast: 't-f0' } } }, aw, _n, _n, pipeline)
+const dead = await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }] }, async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED x (fnv 1).\nCONFIG models: strong/balanced/fast all map to t-b; humanDoc true.') : _ok('[]'), _n, _n, pipeline).then(() => 'ran', (e) => String(e.message))
+console.log(`config-reworded:${rw.join(',') === 'record-args=t-f0,record-args-retry=sonnet' && mw.calls.find((c) => c.label === 'build:G1').model === 't-b' && /no RECORDED \+ CONFIG JSON twice/.test(dead)}`)
 '@
-Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script' -Show 6
+Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script', 'config-reworded' -Show 6
 # owner 2026-11-26: a pending decision on A2 never holds the review of A1's MR (mrs[].items); a changed head is reviewed again
 $jse = @'
 const mA = { url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false, items: ['A1'], head: 'h1' }, mB = { ...mA, url: 'https://h/g/api/-/merge_requests/2', items: ['A2'], head: 'h2' }
@@ -66,8 +73,11 @@ const lu = await go('CONFIG {"models":{"test":"balanced"},"tiers":{"balanced":"t
 console.log(`limit-up:${(lu.find((x) => x.label === 'test:W1@up') || {}).model === 't-s'}`)
 const ls = await go('CONFIG {"tiers":{"fast":"t-x","balanced":"t-x","strong":"t-x"},"models":{"test":"balanced"},"roles":{},"qaLanes":null}', {}, lim).then((x) => x, (e) => [])
 console.log(`limit-same-tier:${!ls.some((x) => x.label === 'test:W1@up')}`)
+const tw = [], bad = async (p, o) => /^record-args/.test(o.label) ? (tw.push(`${o.label}=${o.model}`), _ok('RECORDED x (fnv 1).\nCONFIG models: strong/balanced/fast all map to t-b; humanDoc true.')) : _ok('[]')
+const td = await run({ runDir: 'C:/runs/G', ..._kl, items: [_item('W1', '')], config: { tiers: { fast: 't-f0', balanced: 't-b0' } } }, bad, _n, _n, null).then(() => 'ran', (e) => String(e.message))
+console.log(`config-reworded:${tw.join(',') === 'record-args=t-f0,record-args-retry=t-b0' && /no RECORDED \+ CONFIG JSON twice/.test(td)}`)
 '@
-Expect-Each (Invoke-Js w2-testy $jst $wf) 'testy: #' 'resume-tiers', 'limit-up', 'limit-same-tier' -Show 6
+Expect-Each (Invoke-Js w2-testy $jst $wf) 'testy: #' 'resume-tiers', 'limit-up', 'limit-same-tier', 'config-reworded' -Show 6
 # step retry (2026-11-25 login race): a tester step with no result runs once more as <label>~retry1; close (publishes) never
 $jsSr = @'
 const labels = []
