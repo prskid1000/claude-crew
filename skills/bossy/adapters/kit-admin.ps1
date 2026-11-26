@@ -6,7 +6,7 @@ kit-admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L159 health · L168 browser policy · L211 prepush · L275 weekly tests · L311 state lint · L320 precommit
+Sections: L13 learn · L159 health · L168 browser policy · L212 prepush · L276 weekly tests · L312 state lint · L321 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -167,6 +167,7 @@ function Get-KitHealthLinesAudit {
 }
 # ---- browser policy: setup lines (bossy.ps1 setup [-BrowserPolicy [-Undo] [-Clean]])
 # browsers.chromePolicies -> HKCU\Software\Policies\<key> (this user's hive, admin-only ACL): test Chromium downloads no AI / optimization-guide models
+# (e.g. Google/Chrome: GenAILocalFoundationalModelSettings 1 + ComponentUpdatesEnabled 0)
 function Set-KitBrowserPolicy([switch]$Undo, [string]$Root = 'HKCU:\Software\Policies') {
   $pol = Get-KitSetting 'browsers.chromePolicies' $null
   if (-not $pol -or -not @(Get-KitProps $pol).Count) { return $null }

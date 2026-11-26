@@ -124,7 +124,7 @@ const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, age
  try { return await agent1(p, o) } catch (e) { const em = String(e.message || e); if (o.agentType === 'steppy' && /steppy/.test(em)) return agent1(p, { ...o, agentType: 'kitty' }); if (!up || !LIMIT.test(em)) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
- return agent1(p.replace(/^(STEP: )?/, `$1No report came back: ${ed ? 'first find what is done (wt lease + wt status, git log, the board, MR state), never apply a change twice; then ' : ''}do it now (a merged / scheduled MR: report it, never merge twice).\n`), { agentType: 'devy', ...o, label: `${o.label}@redo` }) } } catch { log('WARNING: no step retry') }
+ return agentUp(p.replace(/^(STEP: )?/, `$1No report came back: ${ed ? 'first find what is done (wt lease + wt status, git log, the board, MR state), never apply a change twice; then ' : ''}do it now (a merged / scheduled MR: report it, never merge twice).\n`), { agentType: 'devy', ...o, label: `${o.label}@redo` }) } } catch { log('WARNING: no step retry') }
 // STEP agent: kit commands steppy, MRs devy
 const SO = (label, phase, model = MODELS.step) => ({ label, phase, schema: OK_SCHEMA, model, effort: 'low' })
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>

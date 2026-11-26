@@ -1047,9 +1047,9 @@ Register-KitAdapter 'transcript' 'antigravity' @{
 Register-KitAdapter 'transcript' 'none' @{ caps = @{ agentMeta = $false }; 'root' = { $null }; 'last' = { $null } }
 # adapter-end:transcript
 # SessionStart output: Antigravity (input has conversationId) takes injectSteps, others a systemMessage
-# $Context: model-only text (ROUTER.md), never shown to the owner; Antigravity has one channel (a system message)
+# $Context: model-only text (ROUTER.md), first so a long $Text never pushes it past the hook cap; Antigravity: one channel
 function Format-KitSessionStart([string]$Text, $Hook, [string]$Context = '') {
-  $all = (@($Text, $Context) | Where-Object { $_ }) -join "`n`n"
+  $all = (@($Context, $Text) | Where-Object { $_ }) -join "`n`n"
   if ($Hook.conversationId) { @{ injectSteps = @($(if ($all) { @{ systemMessage = @{ systemMessage = $all } } })) } | ConvertTo-Json -Compress -Depth 5 }
   elseif ($all) { $o = @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $all } }; if ($Text) { $o.systemMessage = $Text }; $o | ConvertTo-Json -Compress -Depth 4 }
 }

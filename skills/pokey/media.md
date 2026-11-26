@@ -1,7 +1,7 @@
 # Evidence media (`pokey.ps1 evidence`, `vidy`)
 - What: tester evidence links (videos, screen recordings, screenshots) -> a time-indexed text index (~100 tokens per 30 s
   chunk) plus frames on demand, so no agent watches a bug video whole: `pokey.ps1 evidence index <link>` (fetch + index, prints
-  the index) -> unread keyframes: the `vidy` agent (AGENTS.md R19) reads them and writes the screen text back -> later agents
+  the index) -> unread keyframes: the `vidy` agent (ROUTER.md R19) reads them and writes the screen text back -> later agents
   read the index -> `pokey.ps1 evidence read-chunk <key> <start> <end> | -At <m:ss> -Window <s> | -AroundError [-Frames 3]
   [-Size 1280] [-Item <task>]` (that window's events, speech, screen text, unread keyframe paths + JPEG frames for the Read
   tool). Also `fetch <link>`, `frames <key> [-Segment <n>]`, `write-vision <key> -File <items>`, `feedback <key> -File

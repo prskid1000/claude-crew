@@ -43,7 +43,7 @@ ARGS>>>
  (MISMATCH = the file differs: write it again once, re-run.) record = its full output.
 3. Run in PowerShell (takes up to 2 min): & ${C}/skills/bossy/bossy.ps1 tidy prep -Json
  prep = its last output line (one line of JSON), verbatim.
-Return ok=true when step 3 printed the JSON line.`, { label, phase: 'Prep', schema: STEP, agentType: 'steppy', ...(label !== 'prep' && { agentType: 'kitty' }), model, effort: 'low' })   // retry: kitty (a session without steppy)
+Return ok=true when step 3 printed the JSON line.`, { label, phase: 'Prep', schema: STEP, agentType: 'steppy', ...(label !== 'prep' && { agentType: 'kitty' }), model, effort: 'low' }).catch((e) => log(`${label}: ${String(e.message || e).slice(0, 200)}`))   // a throw (no steppy here): the kitty retry runs
  try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy(?:-[a-z0-9]+)*$/.test(r.run) ? r.run : 'tidy'; break } catch (e) { P = null }
 }
 if (!P) return { applied: [], proposedForApproval: [], rejected: [], report: 'tidy prep failed twice: run bossy.ps1 tidy prep by hand' }

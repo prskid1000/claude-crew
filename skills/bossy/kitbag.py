@@ -1435,8 +1435,8 @@ def readme_sections(k, g):
         shape = {'skill': '[{}]', 'workflow': '[/{}/]', 'agent': '({})'}[nodes[f]['kind']]
         lines.append(f'  {nid(f)}' + shape.format(mq(label(f))))
     for (a, b), typ in sorted(edges.items()):
-        if a in ('ROUTER.md', 'AGENTS.md') and b in tops and typ == 'route':
-            lines.append(f'  {nid(a)} --> {nid(b)}')
+        if a == 'ROUTER.md' and b in tops and typ == 'route' and any(re.search(r'[`/]' + re.escape(label(b)) + r'[`\s]', ' '.join(c[2:3]) + ' ') for c in table_rows(k.router or '')):
+            lines.append(f'  ROUTER_md --> {nid(b)}')   # table targets only (steppy: spawned by workflows)
         elif a in tops and b in tops and typ == 'spawn' and nodes[a]['kind'] == 'workflow':
             lines.append(f'  {nid(a)} -->|{mq("spawns")}| {nid(b)}')
     for a, p in sorted(k.agents.items()):   # the skill on its "Load first" line

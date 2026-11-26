@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L260 budget · L290 launch · L523 recover · L612 pause · L623 resume · L690 program · L718 param ·
   L724 track · L1117 supervise · L1470 report · L1550 audit · L1610 storage · L1613 bugbrief · L1615 cleanup · L1702 learn ·
-  L1731 decide · L1905 debate · L1949 health · L2019 setup
+  L1731 decide · L1905 debate · L1949 health · L2020 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -2011,7 +2011,8 @@ if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn th
 $msgs += @(Invoke-KitHooks Get-KitHealthLines)   # adapters/kit-admin.ps1: weekly audit nudge
 # the router reaches the main session only (SessionStart; spawned agents never load it: AGENTS.md "Crew and routing")
 $routerFile = Join-Path $kit 'ROUTER.md'; $routerText = if (Test-Path -LiteralPath $routerFile) { [IO.File]::ReadAllText($routerFile).Trim() }
-Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook $routerText
+$hText = if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }; if ($hText.Length -gt 3000) { $hText = $hText.Substring(0, 3000) + ' ... (bossy.ps1 health for all)' }
+Format-KitSessionStart $hText $hook $routerText
 exit 0
 }
 
@@ -2112,7 +2113,9 @@ Say 'kit ready.'
 }
 
 # SessionStart hooks: one warning line, detail in the hook log
-function Write-KitHookError([string]$Verb, $Err) { "kit: $Verb failed ($($Err.Exception.Message)); see bossy.ps1 audit -Since 1h"; exit 0 }
+# a failed health still hands the main session its router (ROUTER.md)
+function Write-KitHookError([string]$Verb, $Err) { $hm = "kit: $Verb failed ($($Err.Exception.Message)); see bossy.ps1 audit -Since 1h"; $rf = if ($KitConf.Kit) { Join-Path $KitConf.Kit 'ROUTER.md' }
+  if ($Verb -eq 'health' -and $rf -and (Test-Path -LiteralPath $rf) -and (Get-Command Format-KitSessionStart -ErrorAction SilentlyContinue)) { Format-KitSessionStart $hm $null ([IO.File]::ReadAllText($rf).Trim()) } else { $hm }; exit 0 }
 if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions only
   trap { if ($__verb -in 'health', 'cleanup') { Write-KitHookError $__verb $_ } else { break } }
   $KitVerbOnError = { param($e) if ($__verb -in 'health', 'cleanup') { Write-KitHookError $__verb $e } }   # Invoke-KitVerb catches first

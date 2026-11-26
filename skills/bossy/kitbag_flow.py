@@ -1227,7 +1227,7 @@ const G = D.files.map((f, i) => ({i, id: f.id, kind: f.kind, m: N.filter(n => n.
 G.forEach(g => g.fn = g.m.find(n => n.k === 'file'));
 N.forEach(n => { n.kk = n.k === 'file' ? 'file-' + (G[n.g].kind || 'doc') : n.k; if (!KD[n.kk]) n.kk = 'file-doc'; n.fam = KD[n.kk][0]; n.col = FAM[n.fam][1];
  n.r = n.k === 'file' ? 11 : 5 + Math.min(7, Math.sqrt(n.out.length + n.in.length)) });
-const LV0 = n => (n.k === 'file' && n.fam === 'crew') || n.k === 'event' || /^AGENTS\.md#§Router\?$/.test(n.id);
+const LV0 = n => (n.k === 'file' && n.fam === 'crew') || n.k === 'event' || /^(ROUTER|AGENTS)\.md#§Router\?$/.test(n.id);
 const lvOf = n => LV0(n) ? 0 : n.k === 'decision' ? (/\.md#|^workflows\//.test(n.id) ? 1 : 2) : (n.k === 'file' || /slash|phase|call|step|section|cmd|timer|human|row/.test(n.k)) ? 1 : 2;
 N.forEach(n => n.lv = lvOf(n));
 const bad = new Map(); D.issues.forEach(it => it.node != null && bad.set(it.node, (bad.get(it.node) || []).concat(it)));

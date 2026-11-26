@@ -41,8 +41,12 @@ const _B = 'BUDGET {"cap":1000000,"estimate":10,"stopAt":0.8}', _C = 'CONFIG {"t
 const _stop = (out) => run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }] }, async (p, o) => /^record-args/.test(o.label) ? _ok(out) : _ok('[]'), _n, _n, pipeline).then(() => 'ran', (e) => String(e.message))
 const _sb = [await _stop(`RECORDED x\nBUDGET cap 1000000, estimate 10 (80%)\n${_C}\n${_S}`), await _stop(`RECORDED x\n${_B}\nCONFIG {"tiers":{"balanced":"t-b"}}\n${_S}`), await _stop(`RECORDED x\n${_C}\n${_S}`), await _stop(`${_B}\n${_C}\n${_S}`)]
 console.log(`budget-reworded:${_sb.every((x) => /re-worded twice: not started/.test(x)) && !/re-worded/.test(await _stop(`RECORDED x\n${_B}\n${_C}\n${_S}`))}`)
+// 2026-11-26 (steppy review): a session that predates steppy throws on its agentType: its STEPs run on kitty (record-args, release)
+const seenAt = [], noStep = await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }] }, async (p, o) => { seenAt.push(`${o.label}=${o.agentType}`); if (o.agentType === 'steppy') throw new Error("Agent type 'steppy' not found")
+ return /^record-args/.test(o.label) ? _ok(`RECORDED x\n${_B}\n${_C}\n${_S}`) : _ok('[]') }, _n, _n, pipeline).then(() => 'ran', (e) => String(e.message))
+const okNoStep = !/steppy/.test(noStep) && seenAt.includes('record-args=kitty') && seenAt.includes('release-G1=kitty'); console.log(`no-steppy:${okNoStep}`); if (!okNoStep) console.log(`  ${noStep.slice(0, 80)} | ${seenAt.join(' ').slice(0, 300)}`)
 '@
-Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script', 'config-reworded', 'budget-reworded' -Show 6
+Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script', 'config-reworded', 'budget-reworded', 'no-steppy' -Show 6
 # owner 2026-11-26: a pending decision on A2 never holds the review of A1's MR (mrs[].items); a changed head is reviewed again
 $jse = @'
 const mA = { url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false, items: ['A1'], head: 'h1' }, mB = { ...mA, url: 'https://h/g/api/-/merge_requests/2', items: ['A2'], head: 'h2' }
