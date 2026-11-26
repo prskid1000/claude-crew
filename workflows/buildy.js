@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L153 record-args · L171 budget · L189 build-prompt · L274 ship-prompt · L294 plan · L312 spike ·
-//   L324 local-loop · L406 stages · L561 ship · L597 debate · L710 deploy · L724 learn
+// Sections: L18 args · L155 record-args · L173 budget · L188 build-prompt · L273 ship-prompt · L293 plan · L311 spike ·
+//   L323 local-loop · L405 stages · L560 ship · L596 debate · L709 deploy · L723 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -138,13 +138,15 @@ const MT = { spike: TS, debate: TB, build: TB, review: TS, ci: TF, ship: TF, doc
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
 setStr(TIERS, (A0.config || {}).tiers); tierModels()
-const cfgOf = (s) => { try { return JSON.parse(/^CONFIG (\{.*\})\s*$/m.exec(s)[1]) } catch (e) { } }
+const jl = (k, s) => { try { return JSON.parse(new RegExp(`^${k} (\\{.*\\})`, 'm').exec(s)[1]) } catch { } }
+// SUM = launch -Self's fnv of BUDGET / CONFIG lines
+const recOk = (s) => /^RECORDED\b/m.test(s) && jl('CONFIG', s) && jl('BUDGET', s) && (/^SUM (\w+)/m.exec(s) || [])[1] === fnv((s.match(/^(BUDGET|CONFIG) \{.*\}/gm) || []).join('\n'))
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
 // repos[].role (name / alias): merge order
 const CFG = { roles: {}, local: {}, serial: [] }
 function takeConfig(out) {
- const c = cfgOf(out) || {}
+ const c = jl('CONFIG', out)
  // args.config wins (a resume replays the cached CONFIG)
  const ov = A0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  CFG.roles = c.roles || {}; CFG.serial = ls(c.serial)
@@ -161,21 +163,18 @@ async function recordArgs(wf, run, a, phaseName, plan) {
 ${json}
 ARGS>>>
 2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)} -Plan '${plan}'
-Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (code parses BUDGET / CONFIG: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
+Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (its SUM is checked: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
   const r = await agent(prompt, { ...SO(label, phaseName, model), agentType: 'kitty' })
-  if (r && r.ok && cfgOf(r.output)) return r.output
+  if (r && r.ok && recOk(r.output)) return r.output
  }
- throw new Error('launch -Self: no RECORDED + CONFIG JSON twice (re-worded?): not started')
+ throw new Error('launch -Self output re-worded twice: not started')
 }
 // ---- budget: over the cap -> refused; at stopAt the rest -> next
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
-function takeBudget(out, units) {
- try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(out) || [])[1])); BUD.unit = BUD.estimate / Math.max(1, units) } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
-}
 async function measure(phaseName) {
  const r = await runStep(`& ${ORCH} budget -Run '${RUN}' -Json`, 'budget', phaseName).catch(() => null)
- try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {}
+ try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch {}
 }
 async function gate(phaseName) {
  if (BUD.stop || !BUD.cap) return !BUD.stop
@@ -297,7 +296,7 @@ const PLAN = [...(OQ.length ? [`rechy/${PM('spike')}:1`] : []), ...A.agents.map(
  `step/${PM('step')}:2,kitty/${PM('learn')}:1`].join(',')
 if (A.agents.every(allDone)) { log('RESUME: every area is done: nothing to run'); return { resumedDone: A.agents.map((a) => ({ agent: a.id, mrs: RES[a.id].mrs || [] })) } }
 const REC = await recordArgs('buildy', RUN, A0, 'Build', PLAN), GAPS = REC.match(/^TASKS REFUSED .*$/gm)
-takeBudget(REC, A.agents.length)
+Object.assign(BUD, jl('BUDGET', REC)); BUD.unit = BUD.estimate / A.agents.length
 takeConfig(REC)
 const AREA_TASK = Object.fromEntries([...REC.matchAll(/^AREA TASK (\S+) (?!FAILED)(\S+)/gm)].map((m) => [m[1], m[2]]))
 const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, config: undefined, ...extra } })

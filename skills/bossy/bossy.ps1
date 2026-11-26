@@ -309,8 +309,8 @@ if ($Self) {
   $sf = Get-SelfLaunchFile $leaf $Run $got
   $prev = if (Test-Path -LiteralPath $sf) { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json }   # a live run re-recording keeps its pause
   Write-KitState $sf $rec
-  "RECORDED $leaf $Run (fnv $got)"; if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }
-  "CONFIG $(Get-KitWorkflowConfig | ConvertTo-Json -Compress -Depth 10)"
+  $ln = @(if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }) + "CONFIG $(Get-KitWorkflowConfig | ConvertTo-Json -Compress -Depth 10)"
+  "RECORDED $leaf $Run (fnv $got)"; $ln; "SUM $(Get-KitFnv ($ln -join "`n"))"   # buildy / testy refuse a relay that changed these lines
   if (-not $prev -or $prev.completed -or $prev.paused) { Clear-KitPauseFor $Run }
   if ($leaf -like 'buildy*') { Invoke-KitLaunchTaskSteps $a $Run $sf }   # TASKS REFUSED: buildy.js refuses; AREA TASK lines
   exit 0

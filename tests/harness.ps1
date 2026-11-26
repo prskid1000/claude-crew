@@ -241,7 +241,12 @@ const _n = () => {}
 const _kl = { kitDir: 'C:/kit', learn: false }
 const _item = (code, lane = 'api', x = {}) => ({ code, title: code, guideFile: 'g.md', lane, subtasks: [{ id: 'T1' }], ...x })
 const setTimeout = (f) => f()   // a step retry's wait is instant in sims
-const run = async (args, agent, log, phase, pipeline, parallel) => { __BODY__ }
+// a record-args fake without a SUM line gets launch -Self's own: a zero BUDGET when it has none, then SUM (fnv of the BUDGET / CONFIG JSON lines)
+const _sum = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
+const _seal = (o, r) => { if (!r || typeof r.output !== 'string' || !/^record-args/.test((o || {}).label || '') || /^SUM /m.test(r.output)) return r
+ const out = /^BUDGET /m.test(r.output) ? r.output : r.output.replace(/^(?=CONFIG )/m, 'BUDGET {"cap":0,"estimate":0,"stopAt":0.8}\n')
+ return { ...r, output: `${out}\nSUM ${_sum((out.match(/^(BUDGET|CONFIG) \{.*\}/gm) || []).join('\n'))}` } }
+const run = async (args, _agent0, log, phase, pipeline, parallel) => { let agent = (p, o) => /^record-args/.test((o || {}).label || '') ? Promise.resolve(_agent0(p, o)).then((r) => _seal(o, r)) : _agent0(p, o); __BODY__ }
 const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
 '@
 function Invoke-Js($name, $js, $wf) { $f = Join-Path (Kd) "$name.mjs"; [IO.File]::WriteAllText($f, ($jsLib + "`n" + $js).Replace('__BODY__', ([IO.File]::ReadAllText($wf) -replace '(?m)^export const meta', 'const meta'))); @(node $f 2>&1) }

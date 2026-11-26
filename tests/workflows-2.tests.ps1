@@ -34,9 +34,15 @@ const rw = [], mw = _mock((p, o) => /^(build|ship):G1/.test(o.label) ? _rep(lt, 
 const aw = async (p, o) => /^record-args/.test(o.label) ? (rw.push(`${o.label}=${o.model}`), _ok(rw.length > 1 ? 'RECORDED\nCONFIG {"tiers":{"balanced":"t-b"},"roles":{}}' : 'RECORDED x (fnv 1).\nCONFIG models: strong/balanced/fast all map to t-b; humanDoc true.')) : mw.agent(p, o)
 await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }], config: { tiers: { fast: 't-f0' } } }, aw, _n, _n, pipeline)
 const dead = await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }] }, async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED x (fnv 1).\nCONFIG models: strong/balanced/fast all map to t-b; humanDoc true.') : _ok('[]'), _n, _n, pipeline).then(() => 'ran', (e) => String(e.message))
-console.log(`config-reworded:${rw.join(',') === 'record-args=t-f0,record-args-retry=sonnet' && mw.calls.find((c) => c.label === 'build:G1').model === 't-b' && /no RECORDED \+ CONFIG JSON twice/.test(dead)}`)
+console.log(`config-reworded:${rw.join(',') === 'record-args=t-f0,record-args-retry=sonnet' && mw.calls.find((c) => c.label === 'build:G1').model === 't-b' && /re-worded twice: not started/.test(dead)}`)
+// 2026-11-26 (review of the CONFIG fix): a re-worded BUDGET line, a shortened CONFIG (valid JSON, another SUM), a dropped BUDGET or
+// RECORDED line is asked again, twice = stop: never a run without its budget gate; the lines relayed whole pass
+const _B = 'BUDGET {"cap":1000000,"estimate":10,"stopAt":0.8}', _C = 'CONFIG {"tiers":{"balanced":"t-b"},"roles":{"api":"producer"}}', _S = `SUM ${_sum(`${_B}\n${_C}`)}`
+const _stop = (out) => run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }] }, async (p, o) => /^record-args/.test(o.label) ? _ok(out) : _ok('[]'), _n, _n, pipeline).then(() => 'ran', (e) => String(e.message))
+const _sb = [await _stop(`RECORDED x\nBUDGET cap 1000000, estimate 10 (80%)\n${_C}\n${_S}`), await _stop(`RECORDED x\n${_B}\nCONFIG {"tiers":{"balanced":"t-b"}}\n${_S}`), await _stop(`RECORDED x\n${_C}\n${_S}`), await _stop(`${_B}\n${_C}\n${_S}`)]
+console.log(`budget-reworded:${_sb.every((x) => /re-worded twice: not started/.test(x)) && !/re-worded/.test(await _stop(`RECORDED x\n${_B}\n${_C}\n${_S}`))}`)
 '@
-Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script', 'config-reworded' -Show 6
+Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script', 'config-reworded', 'budget-reworded' -Show 6
 # owner 2026-11-26: a pending decision on A2 never holds the review of A1's MR (mrs[].items); a changed head is reviewed again
 $jse = @'
 const mA = { url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false, items: ['A1'], head: 'h1' }, mB = { ...mA, url: 'https://h/g/api/-/merge_requests/2', items: ['A2'], head: 'h2' }
@@ -75,9 +81,15 @@ const ls = await go('CONFIG {"tiers":{"fast":"t-x","balanced":"t-x","strong":"t-
 console.log(`limit-same-tier:${!ls.some((x) => x.label === 'test:W1@up')}`)
 const tw = [], bad = async (p, o) => /^record-args/.test(o.label) ? (tw.push(`${o.label}=${o.model}`), _ok('RECORDED x (fnv 1).\nCONFIG models: strong/balanced/fast all map to t-b; humanDoc true.')) : _ok('[]')
 const td = await run({ runDir: 'C:/runs/G', ..._kl, items: [_item('W1', '')], config: { tiers: { fast: 't-f0', balanced: 't-b0' } } }, bad, _n, _n, null).then(() => 'ran', (e) => String(e.message))
-console.log(`config-reworded:${tw.join(',') === 'record-args=t-f0,record-args-retry=t-b0' && /no RECORDED \+ CONFIG JSON twice/.test(td)}`)
+console.log(`config-reworded:${tw.join(',') === 'record-args=t-f0,record-args-retry=t-b0' && /re-worded twice: not started/.test(td)}`)
+// 2026-11-26 (review of the CONFIG fix): a re-worded BUDGET line, a shortened CONFIG (valid JSON, another SUM), a dropped BUDGET or
+// RECORDED line is asked again, twice = stop: never a run without its budget gate; the lines relayed whole pass
+const _B = 'BUDGET {"cap":1000000,"estimate":10,"stopAt":0.8}', _C = 'CONFIG {"tiers":{"balanced":"t-b"},"roles":{"api":"producer"}}', _S = `SUM ${_sum(`${_B}\n${_C}`)}`
+const _stop = (out) => run({ runDir: 'C:/runs/G', ..._kl, items: [_item('W1', '')] }, async (p, o) => /^record-args/.test(o.label) ? _ok(out) : _ok('[]'), _n, _n, null).then(() => 'ran', (e) => String(e.message))
+const _sb = [await _stop(`RECORDED x\nBUDGET cap 1000000, estimate 10 (80%)\n${_C}\n${_S}`), await _stop(`RECORDED x\n${_B}\nCONFIG {"tiers":{"balanced":"t-b"}}\n${_S}`), await _stop(`RECORDED x\n${_C}\n${_S}`), await _stop(`${_B}\n${_C}\n${_S}`)]
+console.log(`budget-reworded:${_sb.every((x) => /re-worded twice: not started/.test(x)) && !/re-worded/.test(await _stop(`RECORDED x\n${_B}\n${_C}\n${_S}`))}`)
 '@
-Expect-Each (Invoke-Js w2-testy $jst $wf) 'testy: #' 'resume-tiers', 'limit-up', 'limit-same-tier', 'config-reworded' -Show 6
+Expect-Each (Invoke-Js w2-testy $jst $wf) 'testy: #' 'resume-tiers', 'limit-up', 'limit-same-tier', 'config-reworded', 'budget-reworded' -Show 6
 # step retry (2026-11-25 login race): a tester step with no result runs once more as <label>~retry1; close (publishes) never
 $jsSr = @'
 const labels = []

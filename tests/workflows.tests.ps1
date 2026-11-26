@@ -236,7 +236,7 @@ const mk = (rec) => async (p, o) => { first = first || { l: o.label, p }
 const args = { runDir: 'C:/runs/R9', ..._kl, only: ['F1', 'F2', 'F3'], lanes: ['L'], instance: 'w2', batch: 1 }
 const keep = (n, only) => !!n && n.args.lanes[0] === 'L' && n.args.instance === 'w2' && n.args.only.join() === only
 run(args, mk('RECORDED\n' + _CFG), _n, _n, null).then(async (o) => {
- const r = await run(args, mk('RECORDED BUDGET {"cap":100,"estimate":1000}\n' + _CFG), _n, _n, null)
+ const r = await run(args, mk('RECORDED\nBUDGET {"cap":100,"estimate":1000}\n' + _CFG), _n, _n, null)
  console.log(`kept:${first.l === 'record-args' && first.p.includes("-RunDir 'C:/runs/R9'") && keep(o.next, 'F2,F3') && r.refused && keep(r.next, 'F1,F2,F3')}`)
 }).catch(_err)
 '@

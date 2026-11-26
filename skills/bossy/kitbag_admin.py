@@ -9,8 +9,8 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L19 helpers · L60 setup · L181 config · L410 recover · L555 release · L606 cost · L713 registry · L717 scan ·
-  L853 faults · L1068 popups
+Sections: L19 helpers · L60 setup · L181 config · L410 recover · L555 release · L606 cost · L716 registry · L720 scan ·
+  L856 faults · L1071 popups
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -633,7 +633,10 @@ function mock(label) {
   case 'prep': case 'prep-retry': return { ok: true, record: 'ok', prep: JSON.stringify({ work: 3, groups: 1, sec: 20, steps: ['signals'], digest: '/ws/.claude/<runtime>/logs/retros/digest.md', at: '2026-01-01T00:00:00', minutes: 30 }) }
   case 'analyse': return { proposals: [{ file: `${kit}/skills/crafty/LESSONS.md`, change: 'add-lesson', text: 'x', evidence: '2 signals', occurrences: 2, confidence: 'high' }] }
   case 'apply': return { applied: ['x'], proposedForApproval: [], rejected: [], report: 'r.md' }
-  case 'record-args': case 'record-args-retry': return { ok: true, output: 'RECORDED\nCONFIG {"roles":{"api":"producer","app":"consumer"},"qaLanes":{"web":{"kind":"web","parallel":5,"followUp":"app"},"api":{"kind":"api","parallel":5,"followUp":"app"},"app":{"kind":"app","devices":"android"}}}' }
+  case 'record-args': case 'record-args-retry': {   // launch -Self's lines + their SUM (FNV-1a, as the workflows check it)
+   const ln = 'BUDGET {"cap":0,"estimate":0,"stopAt":0.8}\nCONFIG {"roles":{"api":"producer","app":"consumer"},"qaLanes":{"web":{"kind":"web","parallel":5,"followUp":"app"},"api":{"kind":"api","parallel":5,"followUp":"app"},"app":{"kind":"app","devices":"android"}}}'
+   let h = 0x811c9dc5; for (let i = 0; i < ln.length; i++) { h ^= ln.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+   return { ok: true, output: `RECORDED\n${ln}\nSUM ${h.toString(16).padStart(8, '0')}` } }
   default: return 'ok'
  }
 }

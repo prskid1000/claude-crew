@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L70 record-args · L90 prepare · L120 config · L149 prompts · L238 local · L266 app · L296 test-prompt ·
-//   L354 verify · L416 run-item · L595 pool · L617 budget · L658 run · L712 learn
+// Sections: L16 args · L72 record-args · L92 prepare · L122 config · L151 prompts · L240 local · L268 app · L298 test-prompt ·
+//   L356 verify · L418 run-item · L597 pool · L619 budget · L660 run · L714 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -59,9 +59,11 @@ const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = 
 setStr(TIERS, (ARGS0.config || {}).tiers); tierModels()
 // test lanes: qa.lanes { <lane>: { kind, parallel, followUp, devices } }; unset = one web lane
 let QL = { web: { kind: 'web', parallel: 5 } }
-const cfgOf = (s) => { try { return JSON.parse(/^CONFIG (\{.*\})\s*$/m.exec(s)[1]) } catch (e) { } }
+const jl = (k, s) => { try { return JSON.parse(new RegExp(`^${k} (\\{.*\\})`, 'm').exec(s)[1]) } catch { } }
+// SUM = launch -Self's fnv of its BUDGET / CONFIG lines
+const recOk = (s, plan) => /^RECORDED\b/m.test(s) && jl('CONFIG', s) && (!plan || jl('BUDGET', s)) && (/^SUM (\w+)/m.exec(s) || [])[1] === fnv((s.match(/^(BUDGET|CONFIG) \{.*\}/gm) || []).join('\n'))
 function takeConfig(out) {
- const c = cfgOf(out) || {}
+ const c = jl('CONFIG', out)
  // args.config wins: a resume replays the cached CONFIG step; bossy.ps1 recover passes today's tiers / models
  const ov = ARGS0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  if (c.qaLanes && typeof c.qaLanes === 'object' && Object.keys(c.qaLanes).length) QL = c.qaLanes
@@ -79,12 +81,12 @@ async function recordArgs(run, runDir, phaseName, plan = '') {
 ${json}
 ARGS>>>
 2. Run in PowerShell (pwsh 7): & ${K0}/skills/bossy/bossy.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
-Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (code parses BUDGET / CONFIG: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
+Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (its SUM is checked: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
   const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
-  if (r && r.ok && cfgOf(r.output)) return r.output
+  if (r && r.ok && recOk(r.output, plan)) return r.output
  }
- throw new Error('launch -Self: no RECORDED + CONFIG JSON twice (re-worded?): not started')
+ throw new Error('launch -Self output re-worded twice: not started')
 }
 if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? 'Test' : 'Prepare')   // recorded again with its plan once its items are known
 // ---- prepare: pokey.ps1 prepare builds the run (args.select, pokey L1) or prints one (runDir); one STEP, last line RUN <json>
@@ -623,7 +625,7 @@ const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false,
 const PLAN = [...R.items.map((it) => `checky/${it.model || PM('test')}:1,checky/${PM('verify')}:1,step/${PM('close')}:1,item:1`), `step/${PM('step')}:6,kitty/${PM('learn')}:1`].join(',')
 const REC = await recordArgs(RUN0, R.runDir, 'Test', PLAN)
 takeConfig(REC)
-try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(REC) || [])[1])); BUD.unit = BUD.estimate / R.items.length } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
+Object.assign(BUD, jl('BUDGET', REC)); BUD.unit = BUD.estimate / R.items.length
 // the caller's run options carry into next (a short-form call reads the rest from run.json)
 const OPTS = Object.fromEntries('maxMinutes devices verify learn webParallel apiParallel skipClose context contextFiles outOfScope envFixCycles envFixWaitMinutes alsoTargets'.split(' ').filter((k) => ARGS0[k] !== undefined).map((k) => [k, ARGS0[k]]))
 const nextCall = (only, extra) => ({ scriptPath: `${KIT}/workflows/testy.js`, args: { runDir: R.runDir, kitDir: K0, ...OPTS, ...(only && { only }), ...(ARGS0.lanes && { lanes: ARGS0.lanes }), ...(ARGS0.instance && { instance: ARGS0.instance }), ...extra } })
