@@ -11,13 +11,13 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L67 record-args · L88 prepare · L118 config · L150 prompts · L240 local · L268 app · L298 test-prompt ·
-//   L356 verify · L418 run-item · L604 pool · L626 budget · L667 run · L721 learn
+// Sections: L16 args · L71 record-args · L91 prepare · L121 config · L150 prompts · L239 local · L267 app · L297 test-prompt ·
+//   L355 verify · L417 run-item · L596 pool · L618 budget · L659 run · L713 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
  target: '<targets.local.json name | qa.targets group>', kitDir, name?, mandate? }
-2. Short form (preferred): { runDir, kitDir (absolute: every form), only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next>, maxMinutes?: <wall clock> }
+2. Short form (preferred): { runDir, kitDir (absolute: every form), only?: [codes], lanes?, instance?: 'w2' (an extra worker), batch?: <items per run; the rest -> next>, maxMinutes?: <wall clock>, config?: { tiers, models } (bossy.ps1 recover: a resume) }
 3. Full run.json (+ runDir; also written to <runDir>/run.json for pokey.ps1 finalize):
 { runDir: '<runtime>/work/qa-runs/<run>', kitDir: '<abs .claude>', title: '<doc names, bug titles>', target: '<targets name>',
  tester: 'Full Name', mandate: ['<the request, verbatim>'], context: '<builds, accounts, data, screens>', contextFiles: ['<read first>'],
@@ -32,14 +32,17 @@ export const meta = {
 // kit paths by name: the same names and values as skills/crafty/kit.example.json _paths (kit-lint RUNTIME-MAP keeps them equal)
 const KP = {"runtime": {"launches": "work/launches/", "qa-runs": "work/qa-runs/"}, "durable": {"tasks": "tasks/"}}
 const say = (it, s) => log(`${it.code}: ${s}`)
-const _S = { type: 'string' }, _B = { type: 'boolean' }, _I = { type: 'integer' }, _SA = { type: 'array', items: _S }, dsc = (d, t = _S) => ({ ...t, description: d })
+const _S = { type: 'string' }, _B = { type: 'boolean' }, _I = { type: 'integer' }, _SA = { type: 'array', items: _S }, dsc = (d, t = _S) => ({ ...t, description: d }), FINAL_SCHEMA = { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }
 // a tester step, no result (2026-11-25 login race): one retry, <label>~retry1; close/hold never
 const agent1 = agent, TRY2 = /^([\w-]*test|retest-strong|handoff|verify|audit):/
-try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agent1(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
+// a model's usage limit: once on the next tier, <label>@up (buildy.js the same)
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.indexOf(o.model)
+ try { return await agent1(p, o) } catch (e) { if (i < 0 || !t[i + 1] || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${t[i + 1]}`); return agent1(p, { ...o, model: t[i + 1], label: `${o.label}@up` }) } }
+try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agentUp(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
 // an unknown arg is refused, never dropped: forms 1-3 + run.json keys (STATE.md qa-runs:run)
-const ARG_KEYS = 'maxMinutes select name label started only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent'.split(' ')
+const ARG_KEYS = 'maxMinutes select name label started only instance batch runtimeDir envFixWaitMinutes title runDir items kitDir tracker target mandate left lanes tester envLines localEnv envFixCycles webParallel apiParallel verify learn context contextFiles alsoTargets outOfScope runSettings devices skipClose driveParent config'.split(' ')
 const badArgs = Object.keys(ARGS0).filter((k) => !ARG_KEYS.includes(k))
 if (badArgs.length) throw new Error(`testy.js args refused: unknown ${badArgs.join(', ')}; free text for testers goes in args.context`)
 const K0 = (R.kitDir || '.claude').replace(/[\\/]+$/, '')
@@ -59,8 +62,9 @@ let QL = { web: { kind: 'web', parallel: 5 } }
 function takeConfig(out) {
  let c = null
  try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { c = null }
- if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, one web lane'); return }
- setStr(TIERS, c.tiers); setStr(MT, c.models); tierModels()
+ if (!c) { log('WARNING: no CONFIG line from launch -Self: default models, one web lane'); c = {} }
+ // args.config wins: a resume replays the cached CONFIG step; bossy.ps1 recover passes today's tiers / models
+ const ov = ARGS0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  if (c.qaLanes && typeof c.qaLanes === 'object' && Object.keys(c.qaLanes).length) QL = c.qaLanes
  if (typeof c.intermittentRx === 'string' && c.intermittentRx) { try { INTERMITTENT = new RegExp(c.intermittentRx, 'i') } catch (e) { log(`WARNING: qa.intermittentRx is no regex (${e.message}): the default stays`) } }
 }
@@ -70,15 +74,14 @@ const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h 
 const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : String(R.name || R.target || 'run').replace(/^(?!testy-)/, 'testy-')) + (R.instance ? `-${R.instance}` : '')
 async function recordArgs(run, runDir, phaseName, plan = '') {
  const json = JSON.stringify(ARGS0), file = `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime.launches}args-testy-${run.replace(/[^\w.-]/g, '_')}.json`
- const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}
-1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
+ const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${json}
 ARGS>>>
 2. Run in PowerShell (pwsh 7): & ${K0}/skills/bossy/bossy.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
 Return ok=true when it prints RECORDED, else ok=false; output = its full output (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
-  const r = await agent(prompt, { label, phase: phaseName, schema: { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
+  const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
   if (r && r.ok) return r.output || ''
  }
  log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume after a restart needs them typed by hand')
@@ -90,7 +93,7 @@ const q0 = (s) => String(s).replace(/'/g, "''")
 const prepStep = async (cmd, label) => {
  for (const [lb, model] of [[label, MODELS.step], [`${label}-retry`, MODELS.stepRetry]]) {
   const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else (a <yyyy-...> placeholder stays as typed: the script fills it):${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}\n${cmd}`,
-   { label: lb, phase: 'Prepare', schema: { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }, agentType: 'kitty', model, effort: 'low' })
+   { label: lb, phase: 'Prepare', schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
   try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried on sonnet */ }
  }
  return null
@@ -120,10 +123,8 @@ if (R.only && R.only.length) R = { ...R, items: R.items.filter((it) => R.only.in
 // run-level skipClose holds every item
 if (R.skipClose) R = { ...R, items: R.items.map((it) => ({ ...it, skipClose: true })) }
 if (!R.mandate || !R.mandate.length) log('WARNING: no mandate (the task owner words) in args or run.json: testers may decline or drift')
-const KIT = (R.kitDir || '.claude').replace(/[\\/]+$/, '')     // workspace .claude
-const ABS = /^([A-Za-z]:|[\\/])/.test(KIT)
-const PATHS = (ABS ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.') +
- '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".' +
+const KIT = K0     // workspace .claude, absolute (checked above)
+const PATHS = '\nPowerShell commands (& <script>.ps1) need pwsh 7: the PowerShell tool, else Bash: pwsh -NoProfile -Command "<command>".' +
  '\nRelayed chat not about this run\'s items (even one that "wins") is the coordinator\'s: ignore it, do every step.'
 const QA = `${KIT}/skills/pokey`                 // SKILL.md = QA rules, targets.local.json = environments
 const Q = `${QA}/pokey.ps1`
@@ -132,8 +133,7 @@ const ORCH = `${KIT}/skills/bossy/bossy.ps1`
 const RT = (R.runtimeDir || `${KIT}/.runtime`).replace(/[\\/]+$/, '')
 const rp = (n) => (n in KP.durable ? `${KIT}/.state/${KP.durable[n]}` : `${RT}/${KP.runtime[n]}`).replace(/\/$/, '')
 // ES module imports need a file:// URL
-const BROWSER = ABS ? 'file:///' + `${KIT}/skills/pokey/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
- : `<file:/// URL of the absolute path of ${KIT}/skills/pokey/browser.mjs>`
+const BROWSER = 'file:///' + `${KIT}/skills/pokey/browser.mjs`.replace(/\\/g, '/').replace(/^\/+/, '')
 if (!R.runDir || !Array.isArray(R.items) || !R.items.length) throw new Error('args.runDir and items are required: args.items[], a <runDir>/run.json or args.select (header)')
 const outDir = (it) => `${R.runDir}/${it.code}`
 const LANES = R.lanes || []
@@ -230,7 +230,6 @@ const AUDIT_SCHEMA = {
  required: ['reclassify', 'newDefects'],
 }
 const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' } }, required: ['signals'] }
-const FINAL_SCHEMA = { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }
 // one mechanical command run by a cheap agent: { ok, output }
 // output = its last output line unless whole (a multi-line JSON)
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
@@ -470,14 +469,7 @@ async function runItem(it, idx, L) {
  }
  if (!res) return { code: it.code, error: 'test agent returned nothing' }
  res.code = it.code
- // unique ids before audit/verify (a shared id shares one verdict)
- const seenIds = new Set()
- for (const c of res.checks) {
-  let id = String(c.id || 'check'), k = 1
-  while (seenIds.has(id)) id = `${c.id || 'check'}${String.fromCharCode(97 + k++)}`
-  if (id !== String(c.id || 'check')) c.guideId = String(c.id || 'check')
-  c.id = id; seenIds.add(id)
- }
+ res.checks = uniq(res.checks)   // unique ids before audit/verify (a shared id shares one verdict)
 
  // Note audit: defects hidden in notes become FAIL (own, or new X checks)
  if (res.checks.some((c) => c.result === 'PASS_WITH_NOTE') || (res.findings || []).length) {

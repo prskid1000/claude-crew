@@ -13,15 +13,15 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L152 record-args · L171 budget · L189 build-prompt · L275 ship-prompt · L292 plan · L311 spike ·
-//   L323 local-loop · L409 stages · L563 ship · L603 debate · L712 deploy · L727 learn
+// Sections: L18 args · L156 record-args · L175 budget · L193 build-prompt · L279 ship-prompt · L296 plan · L315 spike ·
+//   L327 local-loop · L413 stages · L563 ship · L600 debate · L708 deploy · L723 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
   migrations (datay reviews), debate: { item, question, options: [A, B], owner } }], debateModels: [A, B], openQuestions: [q] (rechy first),
  mandate: [owner words], mode: feature | bugfix | resume, resume: { X1: { state, skip: [STEPS], mrs, doc, worktrees, uncommitted } } (bossy.ps1 recover),
  complex: [ids], phases: true | false, holdMerge: [repo] | true, learn: true | false | 'auto', batch: <areas per run>,
- kitDir: '<abs .claude>', runtimeDir, run: '<board run>' }
+ kitDir: '<abs .claude>', runtimeDir, run: '<board run>', config: { tiers, models } (bossy.ps1 recover: today's, a resume) }
 Returns { resumedDone } or { agents, deferred, blocked, decisions, envFixes, needsLiveCheck, seed, openFindings, testerGuides, deployBatch, budget, next?, retroDue } or { refused, batch | taskGaps, next } or { spikeOpen, next }. */
 const A0 = args || {}   // as given (resume); A = this run's batch
 const cnt = (x) => (x || []).length, ltOf = (r) => r.localTest || {}, ls = (x) => [].concat(x || []), say = (a, s) => log(`${a.id}: ${s}`), halt = (x) => ({ ...x, budgetStopped: true }), urls = (l, s = ', ') => l.map((m) => m.url).join(s)
@@ -59,7 +59,7 @@ const skips = (a, s) => [].concat((RES[a.id] || {}).skip || []).includes(s)
 const allDone = (a) => STEPS.every((s) => skips(a, s))
 if (!['feature', 'bugfix', 'resume'].includes(MODE)) throw new Error(`args.mode '${MODE}' is not supported`)
 const unk = (o, keys, pre = '') => Object.keys(o).filter((k) => !keys.split(' ').includes(k)).map((k) => pre + k)
-const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex phases holdMerge learn batch kitDir runtimeDir run label debateModels task'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate task', `agents.${a.id}.`),
+const badArgs = [...unk(A0, 'brief agents openQuestions mandate mode resume complex phases holdMerge learn batch kitDir runtimeDir run label debateModels task config'), ...A.agents.flatMap((a) => [...unk(a, 'id items area paths note kind complex model effort dependsOn migrations branch branches debate task', `agents.${a.id}.`),
  ...(a.debate && ls(a.debate.options).length !== 2 ? [`agents.${a.id}.debate.options (2)`] : [])])]
 if (badArgs.length) throw new Error(`buildy.js args refused: unknown ${badArgs.join(', ')}; free text: agents[].note or the brief`)
 if (!A.mandate || !A.mandate.length) log('WARNING: no args.mandate (owner words): agents may drop items for the latest chat message (bossy step 3).')
@@ -120,8 +120,11 @@ const mustFix = (f) => FIXES[f.severity] !== false
 const CI_SCHEMA = obj({ done: B, mrs: arr(obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status'])) })
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
 // no result (2026-11-25 login race): one retry after a wait, <label>@redo; edit steps check state first; never asks, debates, deploy, learn
-const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|ci|followups)(?=:|$)/, EDIT = /^(ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
-try { agent = async (p, o = {}) => { const r = await agent1(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
+const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
+// a model's usage limit: once on the next tier, <label>@up (testy.js the same)
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.indexOf(o.model)
+ try { return await agent1(p, o) } catch (e) { if (i < 0 || !t[i + 1] || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${t[i + 1]}`); return agent1(p, { ...o, model: t[i + 1], label: `${o.label}@up` }) } }
+try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
  return agent1(p.replace(/^(STEP: )?/, `$1No report came back: ${ed ? 'first find what is done (wt lease + wt status, git log, the board, MR state), never apply a change twice; then ' : ''}do it now (a merged / scheduled MR: report it, never merge twice).\n`), { agentType: 'devy', ...o, label: `${o.label}@redo` }) } } catch { log('WARNING: no step retry') }
 // STEP agent: kit commands as kitty, product MRs as devy
@@ -144,8 +147,9 @@ const CFG = { roles: {}, local: {} }
 function takeConfig(out) {
  let c
  try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { }
- if (!c) { log('WARNING: no CONFIG line: default models, no repo roles'); return }
- setStr(TIERS, c.tiers); setStr(MT, c.models); tierModels()
+ if (!c) { log('WARNING: no CONFIG line: default models, no repo roles'); c = {} }
+ // args.config wins: a resume replays the cached CONFIG step; bossy.ps1 recover passes today's tiers / models
+ const ov = A0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  CFG.roles = c.roles || {}
  CFG.local = c.local || {}; CFG.humanDoc = c.humanDoc
 }
@@ -423,8 +427,7 @@ const results = await pipeline(
   return releasing(a, 'Build', async () => {
   const dbt = a.debate && MODE !== 'resume' ? debateOrAsk(a, { ...a.debate, trigger: 'brief' }, 'Build') : null
   const ph = PHASED && !['spike', 'repro'].includes(a.kind)
-  let r = await agent(buildPrompt(a) + (ph ? PH.code : ''), dvo(a, 'build', 'Build'))
-  if (!r) { say(a, `build agent returned nothing - one retry (infra flake)`); r = await agent(continuePrompt(a, {}, 'No report came back: find what is done (wt lease + wt status, the board), continue.'), dvo(a, 'build-retry', 'Build')) }
+  let r = await agent(buildPrompt(a) + (ph ? PH.code : ''), dvo(a, 'build', 'Build'))   // nothing back: build@redo
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
   // a HANDOFF stays in its phase; no report after a redo: the phase before stands
   const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)
@@ -550,11 +553,8 @@ const results = await pipeline(
   const deferred = (x.report.deferred || []).filter((d) => !d.ownerDecided && d.kind !== 'people')
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) say(a, `tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
-  const tr = await agent(`STEP: register devy ${a.id}'s tracker task for its MRs. Change no code, merge nothing.${ENV(`track-${a.id}`)}
-MRs: ${urls(x.report.mrs)}
-1. The task id is in each MR's title after the tracker tag (the title wins over the branch); group the MRs by task.
-2. Per task: & ${ORCH} track add -Task <task id> -Discover -Mrs '<repo>!<iid>','<repo>!<iid>'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}
-Return ok=true and the output lines.`, { label: `track:${a.id}`, phase: 'Fix', schema: OK_SCHEMA, agentType: 'kitty', model: MODELS.ship || MODELS.step, effort: 'low' })
+  // track add groups the MRs by the task in each title (else branch): script logic, no agent judgement
+  const tr = await runStep(`& ${ORCH} track add -Discover -Mrs '${urls(x.report.mrs, ',')}'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}`, `track:${a.id}`, 'Fix', { ok: 'when it exits 0', whole: true })
   if (!tr || !tr.ok) say(a, `WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
   return why ? { ...x, trackHeld: why } : x
  },
@@ -574,10 +574,7 @@ async function followUps(a, r, soft) {
  const file = `${rp('agents')}/${a.id}/followups.json`, mrs = r.mrs.filter((m) => !m.merged)
  const has = (f, u) => new RegExp(u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)').test(String(f.mr || ''))
  if (!mrs.length) return []
- for (const m of mrs) {
-  const mine = soft.filter((f) => has(f, m.url) || !mrs.some((o) => has(f, o.url)))
-  say(a, `${m.url}: ${mine.length} re-review finding(s) -> Follow-ups${mine.length ? `: ${mine.map((f) => `${f.severity} ${fkey(f)}`).join(', ')}` : ''}`)
- }
+ for (const m of mrs) say(a, `${m.url}: ${soft.filter((f) => has(f, m.url) || !mrs.some((o) => has(f, o.url))).map((f) => `${f.severity} ${fkey(f)}`).join(', ') || 'no'} re-review finding(s) -> Follow-ups`)
  const st = await agent(`STEP: put review follow-ups into the MR descriptions. Do exactly this, nothing else:${PATHS}
 1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers); read it back: it parses:
 <<<JSON
@@ -669,10 +666,9 @@ async function ship(a, x) {
  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'MERGED' : 'OPEN')]))
  const mrs = uniqMr(x.report.mrs).map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })
  const conflicts = mrs.filter((m) => m.mergeState === 'CONFLICT').map((m) => BLOCK([m], `Merge conflict outside append-only files: ${r3.summary}`.slice(0, 1500), 'wt sync, resolve by hand, re-check, push --force-with-lease, devtools.py merge again.'))
- const NEXT = { 'WAIT': 'devtools.py merge again in a few minutes (or bossy.ps1 track run once the producer merged)',
-  'PIPELINE_FAILED': 'reproduce the failing job locally through the gate (crafty.ps1 check), fix it on the branch, push, merge again (a follow-up /buildy fix round)',
-  'NOT_MERGED': 'read the MR state (approvals, draft, permissions), then devtools.py merge again or merge by hand',
-  'OPEN': 'the ship step did not reach a merge: devtools.py merge again' }
+ const NEXT = { 'WAIT': 'devtools.py merge again later (or bossy.ps1 track run once the producer merged)',
+  'PIPELINE_FAILED': 'reproduce the failing job through the gate (crafty.ps1 check), fix, push, merge again (a /buildy fix round)',
+  'NOT_MERGED': 'read the MR state (approvals, draft, permissions), then devtools.py merge again or by hand', 'OPEN': 'devtools.py merge again' }
  for (const m of mrs.filter((m) => !isHeld(m) && m.mergeState in NEXT)) {
   conflicts.push({ mr: m.url, file: '-', severity: 'blocking', problem: `Not merged (${m.mergeState}): ${r3.summary}`.slice(0, 1500), fix: NEXT[m.mergeState] })
  }
@@ -736,8 +732,7 @@ const learned = await agent(`Kind retro (learn step): record this /buildy run's 
 Outcome (JSON):
 ${JSON.stringify(outcome).slice(0, 60000)}
 
-1. One signal per notable event (failures, local-test rounds, blocked items, decisions, review findings, deferrals, budget stops / handoffs, anything that cost
- time or worked unusually well): & ${ORCH} learn -Skill <crafty|envy|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
+1. One signal per notable event (failures, local rounds, blocks, decisions, findings, deferrals, budget stops, handoffs, slow or unusually good): & ${ORCH} learn -Skill <crafty|envy|other skill> -Kind <friction|failure|defect-missed|false-positive|stale-env|flaky|idea|win> -Text "<what + fix>" -Ref <id> -Source workflow
 2. & ${ORCH} cleanup -WorktreeIdleHours 0: mention what it freed.
 Return how many signals you recorded.`, { label: 'learn', phase: 'Learn', schema: LEARN_SCHEMA, agentType: 'kitty', ...pick('learn'), effort: 'low' })
 if (learned) log(`learn: ${learned.signals} signal(s)`)

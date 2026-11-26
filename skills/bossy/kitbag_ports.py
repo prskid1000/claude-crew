@@ -420,8 +420,8 @@ GATES = {
     ('Fix', r"--no-docs 'foundation", "Merge per MR, producers first, consumers last: `crafty.ps1 wt lease`, then `python -X utf8 "
       "<kit>/skills/crafty/devtools.py merge <wt> <iid> --scope '<area paths>'`; kind `foundation` adds `--no-docs 'foundation <area>'`; "
       "a WAIT \"waiting for producer\" is never merged another way."),
-    ('Fix', r"track add -Task <task id> -Discover", "Register each task: `bossy.ps1 track add -Task <id> -Discover -Mrs '<repo>!<iid>'` "
-      "(`-HoldPromotion '<why>'` when blocked, budget-stopped or items deferred)."),
+    ('Fix', r"track add -Discover -Mrs", "Register the tasks: `bossy.ps1 track add -Discover -Mrs '<url>,<url>'` (one add per task named in "
+      "the MR titles; `-HoldPromotion '<why>'` when blocked, budget-stopped or items deferred)."),
     ('Deploy', r"deploy request -Mrs", "Merged MRs: `bossy.ps1 deploy request -Mrs <urls> -Run <run>`, then `deploy plan -Json`; nobody deploys "
       "or asks (a `trigger: ask` env: one ask per env)."),
   ],

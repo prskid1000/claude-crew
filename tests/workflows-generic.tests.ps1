@@ -120,7 +120,7 @@ $jsir = Join-Path (Kd) 'ir.mjs'; [IO.File]::WriteAllText($jsir, @'
 import fs from 'node:fs'
 const src = fs.readFileSync(process.argv[2], 'utf8'), cut = (a, b) => src.slice(src.indexOf(a), src.indexOf(b, src.indexOf(a)))
 const body = cut('let QL =', '// ---- record-args') + cut('let INTERMITTENT', '\nfunction verifyPrompt') + '\nreturn { takeConfig, attemptsNeeded }'
-const mk = (logs) => new Function('log', 'MODELS', 'TIERS', 'MT', 'tierModels', 'setStr', body)((m) => logs.push(m), {}, {}, {}, () => {}, () => {}), at = (t, s) => t.attemptsNeeded({ observed: s })
+const mk = (logs) => new Function('log', 'MODELS', 'TIERS', 'MT', 'tierModels', 'setStr', 'ARGS0', body)((m) => logs.push(m), {}, {}, {}, () => {}, () => {}, {}), at = (t, s) => t.attemptsNeeded({ observed: s })
 const d = mk([]); d.takeConfig('CONFIG {"intermittentRx":""}')
 const c = mk([]); c.takeConfig('CONFIG {"intermittentRx":"boom"}')
 const bl = [], b = mk(bl); b.takeConfig('CONFIG {"intermittentRx":"("}')
@@ -172,18 +172,6 @@ run({ runDir: 'C:/runs/R9', ..._kl, verify: false, items: [_item('E1')] }, agent
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-empty $jsE (Join-Path $src 'workflows/testy.js')) 'testy retest: #' 'empty-full' -Show 8
-# step retry (2026-11-25 login race): a tester step with no result runs once more as <label>~retry1; close (publishes) never
-$jsSr = @'
-const labels = []
-const agent = async (p, o) => { labels.push(o.label)
- if (/^record-args/.test(o.label)) return _rec()
- if (o.label === 'test:S1' || /^close:S2/.test(o.label)) return null
- return /^test:/.test(o.label) ? _res(o.label.slice(5, 7), [_ck('C1', 'PASS')]) : _ok('published') }
-run({ runDir: 'C:/runs/R8', ..._kl, verify: false, items: [_item('S1'), _item('S2')] }, agent, _n, _n, null).then(() => {
- console.log(`sr-once:${labels.includes('test:S1~retry1') && labels.includes('close-retry:S2') && !labels.some((l) => /close.*~retry|~retry2/.test(l))}`)
-}).catch(_err)
-'@
-Expect-Each (Invoke-Js tc-stepretry $jsSr (Join-Path $src 'workflows/testy.js')) 'workflow step retry: #' 'sr-once' -Show 8
 # K70 (K7 fix): one area over the cap is refused as unsplittable, with no next (a batch of 1 changed nothing: endless refusal)
 $js1a = @'
 const calls = [], agent = async (p, o) => { calls.push(o.label); return /^record-args/.test(o.label) ? _ok('RECORDED x\nBUDGET {"cap":100000,"estimate":500000,"stopAt":0.8}') : _ok('[]') }
@@ -268,7 +256,7 @@ Expect-Each (Invoke-Js dw-areatask $jsat $wfd) 'buildy: #' 'area-task', 'no-rele
 $stT = foreach ($wn in 'buildy', 'testy') { $wt = Get-Content (Join-Path (Split-Path $PSScriptRoot) "workflows/$wn.js") -Raw
   @([regex]::Matches($wt, "(?s)STEP: (?:run exactly this|record this workflow)[^\n]*\n.{0,900}?agentType: '(\w+)'") | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique) -join '/' }
 $stS = [regex]::Matches((Get-Content (Join-Path (Split-Path $PSScriptRoot) 'workflows/buildy.js') -Raw), "label: ``(ship|track|ci):[^\n]*?agentType: '(\w+)'") | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" }
-Expect "workflows: kit-command STEP agents are kitty, ship stays devy ($($stT -join ' ') | $($stS -join ' '))" (($stT -join ' ') -eq 'kitty kitty' -and ($stS -join ' ') -eq 'track=kitty ci=kitty ship=devy')
+Expect "workflows: kit-command STEP agents are kitty, ship stays devy ($($stT -join ' ') | $($stS -join ' '))" (($stT -join ' ') -eq 'kitty kitty' -and ($stS -join ' ') -eq 'ci=kitty ship=devy')
 # model tiers (T4): budget.models picks the claude row; models.tiers.<tool> with a missing tier = the next stronger, then inherit
 $mt = Invoke-PsTest ctx-tiers @'
 $null = . $args[0] 6>$null

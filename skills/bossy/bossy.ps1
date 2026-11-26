@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L251 budget · L281 launch · L515 recover · L602 pause · L613 resume · L680 program · L708 param ·
-  L714 track · L1107 supervise · L1459 report · L1539 audit · L1599 storage · L1602 bugbrief · L1604 cleanup · L1691 learn ·
-  L1729 decide · L1911 debate · L1955 health · L2023 setup
+Sections: L40 init · L51 board · L251 budget · L281 launch · L515 recover · L604 pause · L615 resume · L682 program · L710 param ·
+  L716 track · L1110 supervise · L1462 report · L1542 audit · L1602 storage · L1605 bugbrief · L1607 cleanup · L1694 learn ·
+  L1732 decide · L1914 debate · L1958 health · L2026 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -584,6 +584,8 @@ foreach ($s in $runs) {
     Write-KitAtomic $rf (($txt -join "`n") + "`n")
     "  resume brief: $rf"
   }
+  # + config: today's tiers / models (a resume replays the cached CONFIG step); the recorded args stay a byte-exact prefix
+  $ajT = "$aj".TrimEnd(); if ($ajT -match '^\{[\s\S]*\S[\s\S]*\}$' -and $ajT -notmatch '"config"\s*:') { $wc = Get-KitWorkflowConfig; $aj = "$($ajT.Substring(0, $ajT.Length - 1)),""config"":$(ConvertTo-Json ([ordered]@{ tiers = $wc.tiers; models = $wc.models }) -Depth 5 -Compress)}" }
   if ($s.runId) { "  RESUME$(if ((Test-KitHolder $(if ($s.record) { $s.record } else { $lr })) -eq $false) { ' (refused: its session ended, use RELAUNCH)' }): Workflow({ scriptPath: '$($s.script -replace '\\', '/')', resumeFromRunId: '$($s.runId)', args: $aj })" }
   if ($s.leaf -eq 'buildy.js' -and $agents.Count) { $na = $aj | ConvertFrom-Json -AsHashtable; $na.brief = $rf -replace '\\', '/'; $na.mode = 'resume'; $na.resume = $resume; if (-not $na.agents) { $na.agents = @($agents | ForEach-Object { [ordered]@{ id = $_.id; items = $_.items } }) }
     foreach ($ra in $resume.Keys) { foreach ($u in $resume[$ra].uncommitted) { "  UNCOMMITTED: $ra $u`: the relaunched agent keeps them (never reset)" } }
@@ -869,7 +871,8 @@ switch ($Action) {
     $titled = @($refs | ForEach-Object { TaskOfMr $_ } | Where-Object { $_ } | Select-Object -Unique)
     if ($Task) { if ($titled.Count -and $titled -notcontains $Task) { "NOTE: the MR title names $($titled -join ', '); registering under -Task $Task" } }
     elseif ($titled.Count -eq 1) { $Task = $titled[0]; "NOTE: registering under $Task (MR title)" }
-    elseif ($titled.Count) { Fail "add: the MRs name different tasks in their titles ($($titled -join ', ')): register each task with its own MRs" }
+    elseif ($titled.Count) { $hp = @{}; if ($PSBoundParameters.ContainsKey('HoldPromotion')) { $hp.HoldPromotion = $HoldPromotion }   # one add per task named in the titles
+      foreach ($t in $titled) { Invoke-Track add -Task $t -Mrs @($refs | Where-Object { (TaskOfMr $_) -eq $t }) -Discover:$Discover -Quiet:$Quiet @hp }; return }
     if (-not $Task) { Fail "add needs a real -Task id (got '$given'; the tracker id without its tag, as in the MR title)" }
     try { $Task = Resolve-TrackerId $Task } catch { Fail "add: $_" }   # kit key -> native id
     $o = Load $Task; if (-not $o) { $o = @{ task = $Task; mrs = @(); onMerged = @($OnMerged -split '\s*,\s*'); done = $false; created = (Get-KitStamp) } }

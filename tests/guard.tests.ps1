@@ -161,9 +161,11 @@ $c = @(Get-TrackerComments m1)
 $tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
 "tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| done$')"
 "ref:$((& $args[1] tracker comment m1 "MRs (merge order)`n- x !1") -match 'refused: no MRs comment' -and $LASTEXITCODE -eq 1)"
+$tg = Invoke-Track add -Mrs 'g/web!9,g/web!13' -HoldPromotion 'x' | Out-String
+"tg:$($tg -match 'tracking m1 : g/web!9, g/web!30 [^\n]*HELD: x' -and $tg -match 'tracking b9 : g/web!13 [^\n]*HELD: x')"
 '@) @($O, $D)
 Expect "track add: no MRs comment written (MR links live in the Items checklist), a person's comment kept ($mc)" ("$mc" -match 'mrs:True')
-Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task; a tracker comment of an MRs comment refused ($mc)" ("$mc" -match 'tb:True.*ref:True')
+Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task; a tracker comment of an MRs comment refused; no -Task, MRs titled for 2 tasks: one add per task (buildy track step) ($mc)" ("$mc" -match 'tb:True.*ref:True.*tg:True')
 git -C $shop worktree add -q -b gone "$(Kd)/gone" 2>$null; Remove-Item -Recurse -Force "$(Kd)/gone"; $wg = "$(pwsh @np $D wt remove -Dir "$(Kd)/gone" -Repo $shop 2>&1) rc=$LASTEXITCODE"
 $wt = "$(pwsh @np $D wt remove -Dir "$(Kd)/typo" -Repo $shop 2>&1) rc=$LASTEXITCODE"
 Expect "wt remove, folder gone: said, exit 0, record pruned; a path git never listed: error ($wg | $wt)" ($wg -match 'already gone.*rc=0$' -and "$(git -C $shop worktree list)" -notmatch 'gone' -and $wt -match 'no such folder.*rc=1$')

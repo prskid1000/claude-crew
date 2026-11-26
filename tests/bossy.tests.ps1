@@ -45,7 +45,8 @@ $null = pwsh @np $O launch -RunId wf_t1 -Script (Join-Path $k 'workflows/buildy.
 $rj = Read-Json (Join-Path $ld 'wf_t1.json'); $rj.holderPid = 999999; & $J $rj (Join-Path $ld 'wf_t1.json') 10   # its session is gone
 $l = pwsh @np $O launch -List -Brief | Out-String
 $rc = pwsh @np $O recover | Out-String
-Expect 'launch -List / recover: stopped run resumes, its RESUME line has the recorded args byte for byte' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf-t1.resume.md')) -and $rc.Contains("resumeFromRunId: 'wf_t1', args: $full })") -and $rc -match 'RESUME \(refused: its session ended')
+$rsRx = "resumeFromRunId: 'wf_t1', args: " + [regex]::Escape($full.Substring(0, $full.Length - 1)) + ',"config":\{"tiers":\{[^\r\n]*"balanced":"[^"]+"[^\r\n]*\}\} \}\)'
+Expect 'launch -List / recover: stopped run resumes, its RESUME line has the recorded args byte for byte + config (today''s tiers: a resume replays the cached CONFIG step)' ($l -match 'wf_t1' -and $l -match 'self-buildy-wave-x' -and $rc -match 'written by the workflow: exact' -and (Test-Path (Join-Path $ld 'wf-t1.resume.md')) -and $rc -match $rsRx -and $rc -match 'RESUME \(refused: its session ended')
 $bwt = Join-Path (Kd) 'bwt'
 $j1 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt | Out-String; $s1 = if ($j1 -match 'SESSION (\S+)') { $Matches[1] }
 $j2 = pwsh @np $O board join -Agent BX -Run rb -Claims $bwt -Resume | Out-String
