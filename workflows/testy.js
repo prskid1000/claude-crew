@@ -52,7 +52,7 @@ const ABS0 = /^([A-Za-z]:|[\\/])/
 if (!ABS0.test(K0)) throw new Error(`testy.js args.kitDir '${K0}': the absolute <workspace>/.claude path (bossy SKILL "Launch")`)
 if (R.runDir && !ABS0.test(R.runDir) && ABS0.test(K0)) R = { ...R, runDir: `${K0.replace(/[\\/][^\\/]+$/, '')}/${String(R.runDir).replace(/^\.[\\/]/, '')}` }
 // tier (fast | balanced | strong | inherit) -> model, never the session model; CONFIG tiers + models.<phase> win
-const TIERS = { fast: 'fable', balanced: 'fable', strong: 'fable', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
+const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
 const MT = { test: TB, verify: TB, audit: TB, close: TF, hold: TF, learn: TF, retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }

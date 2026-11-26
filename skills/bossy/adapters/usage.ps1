@@ -3,8 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L945 handoffs · L957 limits ·
-  L976 workflow config · L986 dead runs
+Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L958 handoffs · L970 limits ·
+  L989 workflow config · L1001 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -896,8 +896,21 @@ function Get-KitTiers([string]$Tool = '') {
   $ex = Get-KitMember (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models.tiers $Tool
   $t = [ordered]@{}; $up = ''
   $lo = Get-KitSetting "models.tiers.$Tool" $null   # a local key set to '' = unset: the next stronger tier, not the sample's
-  foreach ($k in 'strong', 'balanced', 'fast') { $v = "$(if ($lo -and (Get-KitProps $lo).Name -contains $k) { Get-KitMember $lo $k } else { Get-KitMember $ex $k })"; if ($v) { $up = $v }; $t[$k] = $up }
+  $ov = if ($Tool -eq 'claude') { Get-KitModelOverride }
+  foreach ($k in 'strong', 'balanced', 'fast') { $v = "$(if ($lo -and (Get-KitProps $lo).Name -contains $k) { Get-KitMember $lo $k } else { Get-KitMember $ex $k })"; if ($v) { $up = $v }; $t[$k] = if ($ov) { $ov.model } else { $up } }
   $t['inherit'] = ''; $t
+}
+# models.override {model, until}: a dated owner word ("all on <model> until Monday"): while Get-KitNow is before `until`, every claude
+# tier and every models.<phase> model id is that model; after it (or no / a bad `until`) the config applies again, nothing to undo
+function Get-KitModelOverride {
+  $m = "$(Get-KitSetting 'models.override.model' '')".Trim(); $u = "$(Get-KitSetting 'models.override.until' '')".Trim(); if (-not $m -or -not $u) { return }
+  $end = [datetimeoffset]::MinValue; if (-not [datetimeoffset]::TryParse($u, [cultureinfo]::InvariantCulture, 'AssumeLocal', [ref]$end)) { return }
+  if ([datetimeoffset](Get-KitNow) -lt $end) { [pscustomobject]@{ model = $m; until = $end } }
+}
+# supervise: one line while the override is live (the coordinator passes the model on every hand spawn: agent files are not dated)
+function Get-KitSuperviseFlagsModelOverride([switch]$AutoFix) {
+  if ($ov = Get-KitModelOverride) { [pscustomobject]@{ level = 'INFO'; what = "model override $($ov.model) until $($ov.until.ToString('yyyy-MM-dd HH:mm zzz'))"; kind = 'MODEL OVERRIDE'
+      action = "Pass model: '$($ov.model)' on every Agent spawn and in tidy args.model; workflows and resumes take it from the CONFIG line (kit.local.json models.override)" } }
 }
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Role = '') {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
@@ -981,7 +994,9 @@ function Get-KitWorkflowConfig {
     # repos[].localTest optional / none: its localFallback; ci needs MR pipelines, else unit
     if ("$($r.localTest)" -in 'optional', 'none') { foreach ($n in $nm) { $local[$n] = $(if ("$($r.localFallback)" -eq 'unit' -or ($r.ci -and $r.ci.mrPipelines -eq $false)) { 'unit' } else { 'ci' }) } } }
   $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }
-  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); tiers = Get-KitTiers; roles = $roles; local = $local; humanDoc = [bool]@(Get-KitProcessDocs | Where-Object key -eq 'testing-doc').Count; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
+  $md = & $plain (Get-KitSetting 'models' $null); $ov = if ((Get-KitTool) -eq 'claude') { Get-KitModelOverride }
+  if ($ov) { if (-not $md) { $md = [ordered]@{} }; foreach ($k in @($md.Keys)) { if ($md[$k] -is [string] -and $md[$k] -and $md[$k] -notin 'fast', 'balanced', 'strong', 'inherit' -and $k -notlike '*Effort') { $md[$k] = $ov.model } } }
+  [ordered]@{ models = $md; tiers = Get-KitTiers; roles = $roles; local = $local; humanDoc = [bool]@(Get-KitProcessDocs | Where-Object key -eq 'testing-doc').Count; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
 }
 # ---- dead runs: a wave record (waves/<run>.json) whose open steps and findings hold no promotion (owner 2026-11-26; bossy.ps1
 # track): its run marked done (launch -Done), or its workflow folder quiet 3x supervise.stuckMinutes (a step died: usage limit, crash)

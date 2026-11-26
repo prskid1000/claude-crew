@@ -25,7 +25,7 @@ a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L987 lint ·
   L1409 README graph · L1527 lint command · L1840 audit · L1988 registry · L2048 tools · L2136 parity · L2742 arch lint ·
-  L3061 prose · L3244 sections · L3376 budget · L3394 migrate · L3546 plugins · L3603 state lint · L3791 main
+  L3061 prose · L3244 sections · L3376 budget · L3394 migrate · L3542 plugins · L3599 state lint · L3787 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -3465,7 +3465,7 @@ def cmd_migrate(a):
 # Changed defaults: a kit.local.json older than a version gets, once, the value that reproduced the old default for each key it
 # does not set; a new one (setup -WriteLocal: kit.example.json) starts at CONFIG_VERSION. Only kit-shaped rows ship here; an org's
 # own old values (hosts, branch names, stack, tracker patterns) go in the git-ignored LEGACY_LOCAL next to kit.local.json.
-CONFIG_VERSION = 4
+CONFIG_VERSION = 3
 # legacy-defaults:start
 LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README "Configuration" has today's)
     2: {
@@ -3481,10 +3481,6 @@ LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README
     3: {
         'tests.fallbackRunner': 'spec',
         'build.mavenOffline': True,
-    },
-    4: {
-        'models.tiers.claude': {'fast': 'haiku', 'balanced': 'sonnet', 'strong': 'opus'},
-        'media.vidy.model': 'sonnet',
     },
 }
 # legacy-defaults:end
@@ -3515,7 +3511,7 @@ def migrate_config(path):
         return err, []
     added = []
     for dotted, value in rows:
-        if (dotted.split('.')[0] in ('localEnv', 'masking') and 'localEnv' not in cfg) or (dotted.startswith('media.') and 'media' not in cfg):   # no local env / media: nothing used them
+        if dotted.split('.')[0] in ('localEnv', 'masking') and 'localEnv' not in cfg:   # no local env: nothing used them
             continue
         cur, parts = cfg, dotted.split('.')
         for part in parts[:-1]:

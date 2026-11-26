@@ -18,8 +18,8 @@
 In: kit.local.json `media` (pokey media.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media-grab.mjs: headless grabs), gws,
 env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
 link, busy, stage failed) · 2 usage.
-Sections: L33 config · L149 fetchers · L404 probe · L423 detect · L1680 transcribe · L1800 vision · L1903 index · L2025 read ·
-  L2100 bench · L2791 verbs · L2937 cli
+Sections: L33 config · L162 fetchers · L417 probe · L436 detect · L1693 transcribe · L1813 vision · L1916 index · L2038 read ·
+  L2113 bench · L2804 verbs · L2950 cli
 """
 import base64, contextlib, hashlib, http.client, json, math, os, re, shutil, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
@@ -44,7 +44,7 @@ DEFAULTS = {
     'chunk': {'minSec': 20, 'maxSec': 60, 'sectionSec': 300, 'twoLevelOverSec': 3600},
     'stt': {'baseUrl': '', 'model': 'whisper-1', 'path': '/v1/audio/transcriptions', 'pieceSec': 30, 'timeoutSec': 300},
     'corpus': {'keep': 10, 'pin': []},   # media kept for the newest <keep> corpus clips; pin: keys or links never evicted
-    'vidy': {'model': 'fable', 'batch': 8, 'segmentSec': 300, 'labelTokens': 80000},   # one vidy per segment; labelTokens: the verify phase's cap per video
+    'vidy': {'model': 'sonnet', 'batch': 8, 'segmentSec': 300, 'labelTokens': 80000},   # one vidy per segment; labelTokens: the verify phase's cap per video
 }
 
 def merge(a, b):
@@ -74,6 +74,19 @@ def local_config_file():
 CFG = merge(DEFAULTS, (load_json(local_config_file(), {}) or {}).get('media') or {})
 if os.environ.get('KIT_MEDIA_CONFIG'):   # a JSON file with a media object on top (tests, a one-off run)
     CFG = merge(CFG, load_json(os.environ['KIT_MEDIA_CONFIG'], {}) or {})
+
+def model_override(models, now=None):
+    """models.override {model, until} while live (usage.ps1 Get-KitModelOverride; KIT_NOW: the tests' clock), else ''."""
+    from datetime import datetime
+    ov = (models or {}).get('override') or {}
+    try:
+        end, at = datetime.fromisoformat(str(ov.get('until') or '')).astimezone(), datetime.fromisoformat(now or os.environ.get('KIT_NOW') or datetime.now().isoformat()).astimezone()
+    except ValueError:
+        return ''
+    return str(ov.get('model') or '').strip() if at < end else ''
+
+if model_override((load_json(local_config_file(), {}) or {}).get('models')):   # segment vidys follow the owner's dated override
+    CFG['vidy']['model'] = model_override((load_json(local_config_file(), {}) or {}).get('models'))
 
 def cache_root():
     sys.path.insert(0, osp.join(KIT, 'skills', 'bossy'))

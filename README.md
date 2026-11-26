@@ -85,7 +85,7 @@ Board and disagreements: AGENTS.md "Crew".
 
 ## Budget and handoff
 The rule: "Configuration" `budget`; per-tool defaults in the table. Models (`MODELS` in each workflow; `agents[].model` / `items[].model`
-win): every `models.tiers.claude` tier = fable (distinct tiers: cheaper steps, the usage-limit step-up); `complex` (buildy,
+win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, learn = haiku; one stronger retry = opus; `complex` (buildy,
 `bugbrief -Complex`) = the session model. Agents spawned by hand: their agent file's `model`.
 <!-- kit-graph:start table-budget -->
 | Tool / window | Budget | Source |
@@ -200,7 +200,7 @@ fallbacks: `skills/crafty/parity.json` `harness`; `kitbag.py parity`, lint PARIT
 | workflow testy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/testy.py |
 | workflow tidy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/tidy.py |
 | test-login read deny | fallback: kit.rules exec policy + the shell guard (best-effort) | port: guard_client.mjs denies view_file of the logins file, an always-on rule, the shell guard |
-| agent and tier models (agents/*.md model, models.tiers.claude: fable) | fallback: .codex/agents/*.toml carry no model (the session's model runs each agent); workflow tiers = models.tiers.codex | fallback: .agents/agents/*.md say model: inherit; a workflow model outside ports.models (fable) inherits the session's model; tiers = models.tiers.antigravity |
+| dated model override (models.override: every tier and model id on one model until a time) | fallback: Claude tiers only (usage.ps1 Get-KitModelOverride); a Codex session sets models.tiers.codex by hand and removes it after | fallback: Claude tiers only; an Antigravity session sets models.tiers.antigravity / ports.models by hand and removes it after |
 | per-agent tool and MCP lists | gap: no such feature: https://learn.chatgpt.com/docs/agent-configuration/subagents a custom agent has no tools allow-list and its mcp_servers / sandbox_mode do not override the parent: the ported note names the allowlist, the guard covers both | port: tools: [<agy names>] in .agents/agents/*.md (https://antigravity.google/docs/subagents/; kitbag_ports.py GRAVITY_TOOL_MAP + call_mcp_tool); an agent with a tool agy cannot name (WebFetch, WebSearch) keeps all tools |
 | Artifacts | fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; the Codex CLI has no viewer (https://learn.chatgpt.com/docs/artifacts-viewer) | fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; agy Artifacts are its own plans and walkthroughs (https://antigravity.google/docs/artifacts/) |
 | heartbeat cron (CronList) | fallback: bossy.ps1 heartbeat (OS timer) | fallback: schedule |
@@ -319,7 +319,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `api`, `auth` |  | api.defaultUser (unset: a target's only user), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 / oidc; userAuth.&lt;user&gt; = that login's auth fields (path, body, tokenField, ...) over auth + its tenant; profiles.&lt;name&gt; {login, secret, auth, fields (tenant, {placeholders})} |
 | `secrets` |  | store: file (default: targets.local.json) / env (KIT_SECRET_&lt;NAME&gt;) / keychain / command (secrets.command.&lt;verb&gt;); &lt;store&gt;.paths: guard-denied; secret:&lt;name&gt; values resolve through it |
 | `masking`, `migrations` |  | masking.rules {table.column glob: kind}, logins, names {first, last, streets} (envy db.md); migrations.tool (none), lbcheck.*, historyTables (envy db.md) |
-| `configVersion` | 4 | below 4: migrate adds old defaults |
+| `configVersion` | 3 | below 3: migrate adds old defaults |
 | `gitHostApi` | {"commands": {}} | commands: host verb -&gt; command; hostCli: more MR CLIs [{exe, noun, type, allow (setup -Allow entries), source, target, title, valued}] |
 | `ci` | {"type": "host"} |  |
 | `naming` | {"products": {}} | products / areas {CODE: name}, digits (3): &lt;PRODUCT&gt;-&lt;AREA&gt;-&lt;nnn&gt; keys in the description's kit table, plain titles (dec-60); tags.&lt;group&gt;: [values] / false (kitbag.py naming tags); tags.areaMap: {AREA code: broad tag} (wide modules, default the area name); titleStrip: [regex] old codes tracker retag cuts (old title kept in the description) |

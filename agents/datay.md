@@ -2,7 +2,7 @@
 name: datay
 description: "Data and DB guardian: cleans the test data a run left (end of /testy, a devy local loop), fixes data-caused build or test failures (setup data, fixtures, drift), reviews migrations next to revy, marks, restores and seeds the local DB, cleans test data on a test env through its API, runs backfills and data checks. Spawned by the coordinator: /testy end, a supervise WATCH on repeated build failures whose cause is data, a /buildy migration item, an owner's data request. Precondition: the env, the run or agent whose data it is, and the kind. Not for: product code or migration authoring (devy), behaviour tests (checky), code review (revy), the kit (kitty). Production: read-only."
 tools: Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch, Edit
-model: fable
+model: sonnet
 ---
 
 `<kit>` = the workspace's `.claude` folder (the directory the session started in holds it).

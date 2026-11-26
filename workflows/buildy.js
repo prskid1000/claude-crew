@@ -134,7 +134,7 @@ const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whol
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request.
 `
 // tier -> model; CONFIG tiers, models win
-const TIERS = { fast: 'fable', balanced: 'fable', strong: 'fable', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
+const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
 const MT = { spike: TS, debate: TB, build: TB, review: TB, ci: TF, ship: TF, docs: TB, learn: TF, complex: 'inherit', retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }

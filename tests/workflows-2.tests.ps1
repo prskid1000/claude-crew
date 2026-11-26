@@ -18,8 +18,8 @@ const go = async (cfg, ex = {}, pre = null) => { const m = _mock((p, o) => /^rec
 const lim = (o) => { if (o.label === 'build:G1') throw new Error("You've hit your weekly limit · resets Dec 2, 8:30am") }
 const up = await go('CONFIG {"tiers":{"balanced":"t-b","strong":"t-s"},"roles":{},"qaLanes":null}', {}, lim)
 console.log(`limit-up:${(up.find((c) => c.label === 'build:G1@up') || {}).model === 't-s'}`)
-// default tiers are one model (fable): no next tier, the limit error surfaces, no @up retry on the same model
-const same = await go('CONFIG {"roles":{},"qaLanes":null}', {}, lim).catch((e) => e.message)
+// one model in every tier (a models.override): no next tier, the limit error surfaces, no @up retry on the same model
+const same = await go('CONFIG {"tiers":{"fast":"t-x","balanced":"t-x","strong":"t-x"},"roles":{},"qaLanes":null}', {}, lim).catch((e) => e.message)
 console.log(`limit-same-tier:${/weekly limit/.test(String(same))}`)
 const no = await go('CONFIG {"roles":{},"qaLanes":null}', {}, (o) => { if (o.label === 'build:G1') throw new Error('socket hang up') }).catch((e) => e.message)
 console.log(`other-error:${no === 'socket hang up'}`)
@@ -64,7 +64,7 @@ console.log(`resume-tiers:${(rz.find((x) => x.label === 'test:W1') || {}).model 
 const lim = (o) => { if (o.label === 'test:W1') throw new Error('usage_limit_reached: weekly limit') }
 const lu = await go('CONFIG {"models":{"test":"balanced"},"tiers":{"balanced":"t-b","strong":"t-s"},"roles":{},"qaLanes":null}', {}, lim)
 console.log(`limit-up:${(lu.find((x) => x.label === 'test:W1@up') || {}).model === 't-s'}`)
-const ls = await go('CONFIG {"models":{"test":"balanced"},"roles":{},"qaLanes":null}', {}, lim).then((x) => x, (e) => [])
+const ls = await go('CONFIG {"tiers":{"fast":"t-x","balanced":"t-x","strong":"t-x"},"models":{"test":"balanced"},"roles":{},"qaLanes":null}', {}, lim).then((x) => x, (e) => [])
 console.log(`limit-same-tier:${!ls.some((x) => x.label === 'test:W1@up')}`)
 '@
 Expect-Each (Invoke-Js w2-testy $jst $wf) 'testy: #' 'resume-tiers', 'limit-up', 'limit-same-tier' -Show 6
@@ -80,12 +80,19 @@ run({ runDir: 'C:/runs/R8', ..._kl, verify: false, items: [_item('S1'), _item('S
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-stepretry $jsSr $wf) 'workflow step retry: #' 'sr-once' -Show 8
-# owner 2026-11-26 "all agents to fable": every agent file, the example's claude tiers, the workflow tier defaults and tidy's steps
-$notFable = @(Get-ChildItem (Join-Path $src 'agents') -Filter *.md | Where-Object { (Get-Content $_.FullName -Raw) -notmatch '(?m)^model: fable\r?$' } | ForEach-Object Name)
-$exTiers = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models.tiers.claude
-$wfOld = @('buildy.js', 'testy.js', 'tidy.js' | Where-Object { (Get-Content (Join-Path $src "workflows/$_") -Raw) -match "'(sonnet|opus|haiku)'|/(sonnet|opus|haiku):" })
-Expect "models: every agent file, models.tiers.claude and the workflow defaults = fable; the schema takes it ($($notFable -join ',') $($wfOld -join ','))" (-not $notFable -and -not $wfOld -and
-  "$($exTiers.fast)/$($exTiers.balanced)/$($exTiers.strong)" -eq 'fable/fable/fable' -and (Get-Content (Join-Path $src 'workflows/tidy.js') -Raw) -match "label: 'apply'[^\n]*agentType: 'kitty', model: 'fable'" -and
-  (Get-Content (Join-Path $src 'skills/bossy/kitbag.py') -Raw) -match "'enum': \['fable'," -and (Get-Content (Join-Path $src 'skills/bossy/SKILL.md') -Raw) -notmatch 'sonnet|haiku')
+# owner 2026-11-26: "all on fable until Monday" = models.override {model, until}, never new defaults; KIT_NOW is the fake clock
+$O = Join-Path $k 'skills/bossy/bossy.ps1'; $ovPy = Join-Path (Kd) 'ov.py'
+"import sys; sys.path.insert(0, sys.argv[1]); import video; o = {'override': {'model': 'm-all', 'until': '2026-11-30T00:00+05:30'}}`nprint(video.model_override(o, '2026-11-29T23:59+05:30') + '|' + video.model_override(o, '2026-11-30T00:01+05:30') + '|' + video.model_override({'override': {'model': 'm-all'}}))" | Set-Content $ovPy
+$ovV = python -X utf8 $ovPy (Join-Path $src 'skills/pokey') | Out-String
+$ov = Invoke-PsTest ov @'
+$null = . $args[0] 6>$null; $env:KIT_TOOL = 'claude'
+$__cfg = [pscustomobject]@{ models = [pscustomobject]@{ build = 'm-own'; docs = 'fast'; retestEffort = 'high'; override = [pscustomobject]@{ model = 'm-all'; until = '2026-11-30T00:00+05:30' } } }
+foreach ($now in '2026-11-29T23:59+05:30', '2026-11-30T00:01+05:30') { $env:KIT_NOW = $now; $t = Get-KitTiers claude; $c = Get-KitWorkflowConfig; $f = @(Get-KitSuperviseFlagsModelOverride)
+  "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)|$($c.models.build)/$($c.models.docs)/$($c.models.retestEffort)|$($c.tiers.strong)|$((Get-KitTiers codex).strong)|$($f.what)" }
+'@ @($O)
+$exM = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models
+Expect "models.override: before until every claude tier and model id = the model (tier names, efforts, codex untouched), supervise says so; after it the config again; python the same; defaults unchanged ($($ov -join ' // ') $($ovV.Trim()))" (
+  $ov[0] -eq 'm-all/m-all/m-all/|m-all/fast/high|m-all|gpt-5.5|model override m-all until 2026-11-30 00:00 +05:30' -and $ov[1] -eq 'haiku/sonnet/opus/|m-own/fast/high|opus|gpt-5.5|' -and $ovV.Trim() -eq 'm-all||' -and
+  "$($exM.tiers.claude.fast)/$($exM.tiers.claude.strong)/$($exM.override.model)" -eq 'haiku/opus/' -and (Get-Content (Join-Path $src 'agents/devy.md') -Raw) -match '(?m)^model: sonnet\r?$')
 Remove-TestKit $k
 Complete-Tests
