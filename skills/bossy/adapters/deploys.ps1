@@ -1,7 +1,7 @@
 <#
 deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/bossy/adapters/).
   bossy.ps1 deploy plan [-Env <target>] [-Json] [-Offline <fixture>] [-TimeoutSec <deploy.deployedTimeoutSec, 100>]   merged-not-deployed MRs per test env, trigger, window; per MR its source / test files and OUT-OF-AREA (crafty.ps1 scope)
-  bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] [-Json] (a summary; the full plan: crafty.ps1 dir -Agent <run> -Name deploy-request.json) · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
+  bossy.ps1 deploy request -Mrs <refs> -Run <run> [-Note ..] [-Json] [-Quiet: recorded only, no plan] (a summary; the full plan: crafty.ps1 dir -Agent <run> -Name deploy-request.json) · record -Env <target> [-Mrs <refs>] [-By ..] [-Note ..]
   bossy.ps1 deploy intest [-Apply] [-Quiet] [-Task <ids> | -Mrs <refs> | -Env <targets>] [-Days 14]   promoted tasks (tracked: done in -Days; the owner's in trackerLists; -Mrs: only their tasks; -Env: its deploy records' MRs; pages: deploys/intest-cursor-<env>.json) whose MRs are live on a test env -> inTest; last line: tasks checked, where from, a count per outcome
   bossy.ps1 deploy merge ...   adapters/deploy-merge.ps1
   bossy.ps1 deploy run -To <target> [-Repo <name>] [-Mrs <refs>] [-Decision <id>]   each deploys[] row of <target> through its kind's deploy verb (a person's word first)
@@ -9,7 +9,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy watch -Env <target>[,..] [-Started <name>=<sha>,..] [-Finished <name>=success|failed,..] [-WaitMinutes <deploy.pipelineWaitMinutes>] [-Json]   one bounded poll loop over the schedule's started pipelines: START (a gate opened) · DONE (verify it) · FAILED (its dependents held) · WAIT; logs actual vs predicted
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated] [-Agent <ids> (laneApk: phones free or leased by them only)]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L17 helpers · L108 intest · L314 deploy · L525 schedule · L766 restart · L850 supervise
+Sections: L17 helpers · L108 intest · L314 deploy · L527 schedule · L768 restart · L852 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -340,6 +340,8 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     $Mrs = @($Mrs | ForEach-Object { ConvertTo-MrRef $_ })
     & $pendEdit { param($p) $p.requests = @(@($p.requests) + [pscustomobject]@{ at = (Get-Date).ToString('s'); run = $Run; mrs = $Mrs; note = $Note }) }
     if (-not $Json) { "requested a deploy for $($Mrs -join ', ') ($Run)" }
+    # -Quiet (buildy.js deploy step): recorded only; the plan probes the host for minutes (the step's calls ran up to 594 s, 37 of 276 failed): supervise plans, cached
+    if ($Quiet) { if ($Json) { ConvertTo-Json @([ordered]@{ trigger = ([string](Get-KitSetting 'deploy.trigger' 'owner')).ToLower(); mrs = @($Mrs) }) -Compress -Depth 4 }; return }
   }
   if ($Action -eq 'record') {
     if (-not $Env) { 'usage: deploy record -Env <target>[,<target>..] [-Mrs ..] [-By ..] [-Note ..]'; exit 2 }

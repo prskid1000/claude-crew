@@ -4,7 +4,7 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   seat capacity -Kind <lane> · seat cleanup [-Run <run> | -RunDir <run>] [-DryRun]   parallel seats free RAM allows · seat logins deactivated (a run's, else idle)
   deployed -Mrs <repo>!<iid>,... [-Target <t>,..] [-Detail] [-Json] [-TimeoutSec <deploy.deployedTimeoutSec>]  live on a test env?
   api -Target <t> -As <user> -Method <M> -Path '/...' (or api <M> '/...') [-Body <json>] [-ContentType <type>] [-Save <name | full path> -OutDir <abs dir>]
-  finalize -RunDir <run> -Code <code> [-Check] [-FixNames] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; ends EXIT=<n> (a crash too)
+  finalize -RunDir <run> -Code <code> [-Check] [-FixNames: + notes over their cap fitted] [-NoTracker] [-ExpectChecks <n>] [-Results <file>]   publish; ends EXIT=<n> (a crash too)
   annotate -In <image> -Rect 'x,y,w,h,label' [-Copy]   red boxes on a screenshot
   evidence fetch|index|read-chunk|frames|write-vision|label|verify|tune|feedback|bench|status <link | key> ...   videos -> text index
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
@@ -20,7 +20,7 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
 Sections: L30 lanes · L44 report · L161 seat · L310 api · L585 users · L717 login surfaces (parity.json login) · L750 finalize ·
-  L1301 results · L1336 retest · L1393 prepare
+  L1304 results · L1339 retest · L1396 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -773,6 +773,9 @@ $D = "$RunDir/$Code"
 # one report per task (else per run item); a human testing doc of the task gets this run's Result / Evidence per row
 $pubKey = if (@($item.subtasks).Count -eq 1) { [string]@($item.subtasks)[0].id } else { "$(Split-Path $RunDir -Leaf)-$Code" }
 $hDoc = Test-Path -LiteralPath (Join-Path (Get-KitPath published) "$($pubKey -replace '[^\w.-]+', '_')_testing-doc.json")
+# -FixNames fits notes too (owner 2026-11-26: 365 prose-check stops in 6 days): an observed / what_was_done over the result-note cap keeps
+# its first words, the full text becomes an evidence file its row cites (kitbag.py notes_fit): nothing cut, no rewrite round
+if ($FixNames) { @(& (Get-Python) -X utf8 $KitCmd.kitbag prose --kind result-note (Join-Path $D $Results) --fit "$D/evidence" --code $Code 2>$null) -match '^FIT ' | ForEach-Object { "  $_" } }
 $res = Get-Content (Join-Path $D $Results) -Raw | ConvertFrom-Json
 if ($ExpectChecks -ge 0 -and @($res.checks).Count -ne $ExpectChecks) {
   $m = "$Code`: $Results has $(@($res.checks).Count) check(s), the workflow sent $ExpectChecks - a truncated copy; nothing published. Write the JSON again, complete."

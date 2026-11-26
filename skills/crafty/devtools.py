@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck, keepboth: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L996 merge · L1330 docs ·
-  L1567 publish · L2127 render · L2737 spec · L3281 plugins · L3295 selftest · L4044 CLI
+Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L998 merge · L1332 docs ·
+  L1569 publish · L2129 render · L2739 spec · L3283 plugins · L3297 selftest · L4046 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs: shutil.which.
@@ -252,7 +252,7 @@ def prose(kind, text, tool=None):
         r = subprocess.run([sys.executable, '-X', 'utf8', tool, 'prose', '--kind', kind, '-', '--json'], input=text, capture_output=True,
             text=True, encoding='utf-8', timeout=30)
         found = json.loads(r.stdout).get('findings', [])
-    except (ValueError, OSError, subprocess.SubprocessError):   # tool path or call failed: same check in-process, never unchecked (retro 2026-11-23)
+    except (ValueError, OSError, subprocess.SubprocessError):   # tool path or call failed: same check in-process, never unchecked
         try:
             from kitbag import writing_standards, prose_check
             kinds, banned = writing_standards(KIT_DIR)
@@ -363,15 +363,15 @@ def prose_gate(kind, text):
     """prose() before a write: over a limit -> exit 1 before anything is written, unless --prose-ok."""
     found = prose(kind, text)
     if found and not PROSE_OK:
-        lim = prose_limits(kind)   # the rendered text, not the agent's file, is what failed (48 refusals guessed at it)
+        lim = prose_limits(kind)   # the rendered text, not the agent's file, is what failed
         print(f'[prose] {kind} as checked ({len(text.split())} words, {len(text)} chars):\n{text[:4000]}', file=sys.stderr)
-        secs = re.split(r'(?m)^## +', text)[1:]   # per field next to the limits (retro 1709: 8 mr refusals guessed which field)
+        secs = re.split(r'(?m)^## +', text)[1:]   # per field next to the limits
         if secs:
             mk = r'(?m)^\s*(?:[-*]|\d+\.)\s'
             cnt = lambda b: f'{len(re.sub(mk, "", b).split())}w {len(re.findall(mk, b))}b'
             print(f'[prose] {kind} per section ({lim or "limits: templates.md"}): '
                   + ' · '.join(f'{s.split(chr(10), 1)[0].strip()} {cnt(s.split(chr(10), 1)[1] if chr(10) in s else "")}' for s in secs), file=sys.stderr)
-        raise SystemExit(f'[prose] {kind} refused: {" | ".join(found[:3])}{f" (+{len(found) - 3} above)" if len(found) > 3 else ""}; limits: {lim or "templates.md Writing standards"}; rewrite (same facts),'   # the last line is all a caller sees (7 refusals, retro 1124)
+        raise SystemExit(f'[prose] {kind} refused: {" | ".join(found[:3])}{f" (+{len(found) - 3} above)" if len(found) > 3 else ""}; limits: {lim or "templates.md Writing standards"}; rewrite (same facts),'   # the last line is all a caller sees
                          ' or pass --prose-ok "<why>" for a format the brief fixes. Nothing was written.')
     return found
 
@@ -871,10 +871,12 @@ def mr_create(worktree, title, body_md, tgt=None, check=False):
     missing = [h for h in MR_SECTIONS if h not in body_md]
     if missing:
         print(f'[mr] body is missing {missing} - templates.md "MR spec"', file=sys.stderr)
-    for kind in ('mr-title', 'mr-body'):   # the limits first: 29 refusals came from guessing them
+    for kind in ('mr-title', 'mr-body'):   # the limits first
         if lim := prose_limits(kind):
             print(f'[prose] {lim}', file=sys.stderr)
     prose_gate('mr-title', title)
+    with contextlib.suppress(ImportError):   # bullets over a cap joined, nothing cut
+        from kitbag import prose_fit; body_md = prose_fit('mr-body', body_md, KIT_DIR)
     prose_gate('mr-body', body_md)
     if _verified_gaps(body_md):
         print('[mr] "## How tested" has neither a "Not run: <gate and why>" nor a "Pure logic: <spec file or node output>" line'
@@ -2705,7 +2707,7 @@ def render_wave_brief(s):
             f'{t} v{r.get("version")} {r.get("url")}' for t in s['specs'] if (r := spec_rec(t)).get('url') and not r.get('retired'))] if s.get('specs') else []),
         f'**Branch:** `{s.get("branch") or "f/<tag><task>-<slug>"}`, pool slots leased as the agent id · **Tracker:** {s.get("tracker") or "—"}.',
         *wrap(f'**MR limits** (`devtools.py mr` refuses over them; `devtools.py mr <worktree> --spec <mr.json> --check` first: the same gates, nothing opened): {prose_limits("mr-title") or "mr-title"}; '
-                                     f'{prose_limits("mr-body") or "mr-body"}'),   # where devy reads first (retro 2026-11-22)
+                                     f'{prose_limits("mr-body") or "mr-body"}'),   # where devy reads first
         'Rule changes during the wave are appended below and to the contracts file: re-read both before every push.', '',
         '## Order (waves: a row runs in parallel; `crafty.ps1 tracker order <parent> -Apply <brief>.order.json` links the tasks)', _table(['Wave', 'Areas (parallel)', 'Tasks', 'Waits on'], [[str(w), ', '.join(g), ', '.join(sorted({a.get('task') or s.get('task') or '—' for a in s['agents'] if a['id'] in g})), ', '.join(sorted({d for x in g for d in wo[x]})) or '—'] for wv in [wave_order(s)] for wo in [wv[1]] for w, g in wv[0]]),
         '## openQuestions', *(qs or ['n/a — no open question']), '## Findings (rechy)', 'n/a — no spike yet (the Spike phase appends here)',

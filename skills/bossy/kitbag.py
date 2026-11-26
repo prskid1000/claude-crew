@@ -25,7 +25,7 @@ a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L987 lint ·
   L1409 README graph · L1527 lint command · L1840 audit · L1988 registry · L2048 tools · L2136 parity · L2742 arch lint ·
-  L3061 prose · L3244 sections · L3376 budget · L3394 migrate · L3542 plugins · L3599 state lint · L3787 main
+  L3061 prose · L3307 sections · L3439 budget · L3457 migrate · L3605 plugins · L3662 state lint · L3850 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -3167,6 +3167,38 @@ def prose_check(kind, text, spec, banned):
             out.append(f'local path "{mm.group(0).strip()}": link the doc / MR URL instead, or leave it out')
     return out
 
+def prose_fit(kind, text, kit=None):
+    """A text whose `##` sections hold more bullets than their cap (`each:Nb`, `<Section>:Nb`): the bullets past the cap are joined
+    to the last allowed one with '; ' (every fact kept, nothing cut), so the generator's call is not refused for the count alone
+    (2026-11-26: 724 of 2755 `devtools.py mr` calls were refused, bullet counts the most frequent finding). Any other finding stays prose_check's."""
+    try:
+        lim = (writing_standards(kit or KIT_DIR)[0].get(kind) or {}).get('limits', '')
+    except OSError:
+        return text
+    caps = {m.group(1).replace('_', ' '): int(m.group(2)) for t in lim.replace(';', ' ').split() if (m := re.match(r'^(each|[A-Z][\w ()/-]*?):(\d+)b$', t))}
+    out, sec, n, fence, joined = [], None, 0, False, {}
+    for l in text.replace('\r\n', '\n').split('\n'):
+        if l.lstrip().startswith('```'):
+            fence = not fence
+        h = None if fence else re.match(r'^##\s+(.+?)\s*$', l)
+        if h:
+            sec, n = h.group(1), 0
+        cap = caps.get(sec, caps.get('each')) if sec else None
+        b = None if fence or not cap else re.match(r'^(?:[-*]|\d+\.)\s+(.*)$', l)
+        if b:
+            n += 1
+        last = next((i for i in range(len(out) - 1, -1, -1) if out[i].strip()), None)
+        if b and n > cap and last is not None:
+            out[last] = out[last].rstrip().rstrip(';.') + '; ' + b.group(1).strip()
+            joined[sec] = n
+            continue
+        out.append(l)
+    if not joined:
+        return text
+    for s, total in joined.items():
+        print(f'[prose] {kind} fitted: {s} {total} bullets -> {caps.get(s, caps.get("each"))} (the rest joined to the last one; nothing cut)', file=sys.stderr)
+    return '\n'.join(out)
+
 NA_BARE = re.compile(r'(?i)^\s*(?:[-*]\s*)?(?:none|n/?a|-|—|tbd|todo|nothing)\.?\s*$')
 
 
@@ -3214,10 +3246,39 @@ def result_notes(obj, at=''):
         for i, v in enumerate(obj):
             yield from result_notes(v, f'{at}[{v.get("id") or v.get("code") or i if isinstance(v, dict) else i}]')
 
+def notes_fit(path, evdir, code):
+    """results.json rows whose `observed` / `what_was_done` break the result-note cap (words, one line): the field keeps its first
+    words + ' … (full text: <file>)', the whole text becomes that evidence file, cited by the row (nothing cut; owner 2026-11-26:
+    365 finalize prose stops in 6 days). -> one 'FIT ...' line per fitted field."""
+    lim = (writing_standards(KIT_DIR)[0].get('result-note') or {}).get('limits', '')
+    m, one = re.search(r'(?<![\w:])(\d+)w\b', lim), bool(re.search(r'(?<![\w:])1l\b', lim))
+    data, out = json.loads(read(path)), []
+    for c in (data.get('checks') or []) if m and isinstance(data, dict) else []:
+        for fld, what in (('observed', '90_full-observed'), ('what_was_done', '91_full-steps')):
+            t = c.get(fld) if isinstance(c, dict) else None
+            if not isinstance(t, str) or (words(t) <= int(m.group(1)) and not (one and '\n' in t.strip())):
+                continue
+            name = f"{code}-{re.sub(r'[^A-Za-z0-9-]', '', str(c.get('id')))}_{what}.txt"
+            tail, keep = f' … (full text: {name})', []
+            for w in t.split():
+                if words(' '.join(keep + [w]) + tail) > int(m.group(1)):
+                    break
+                keep.append(w)
+            os.makedirs(evdir, exist_ok=True)
+            with open(osp.join(evdir, name), 'w', encoding='utf-8', newline='\n') as f:
+                f.write(f"{c.get('id')} — {c.get('screen') or ''}: {fld} in full\n\n{t}\n")
+            c[fld] = ' '.join(keep) + tail
+            c['evidence'] = [e for e in (c.get('evidence') or []) if e != name] + [name]
+            out.append(f'FIT {osp.basename(path)} checks[{c.get("id")}].{fld}: {words(t)} words -> {words(c[fld])}, the full text in {name} (nothing cut)')
+    if out:
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    return out
+
 def cmd_prose(a):
-    """kitbag.py prose --kind <kind> <file | -> [--json] | --kinds"""
+    """kitbag.py prose --kind <kind> <file | -> [--json] | --kinds; result-note <results.json> --fit <evidence dir> --code <CODE>: notes_fit first"""
     kinds, banned = writing_standards(KIT_DIR)
-    flags, files = parse_opts(a, {'--kind'})
+    flags, files = parse_opts(a, {'--kind', '--fit', '--code'})
     if '--kinds' in flags:
         for name, spec in kinds.items():
             print(f'{name:17} {spec["limits"]:32} {spec["purpose"]}')
@@ -3227,6 +3288,8 @@ def cmd_prose(a):
         print(f'kitbag prose: --kind <{"|".join(kinds)}> <file | -> [--json]', file=sys.stderr)
         return 2
     src = files[0]
+    if kind == 'result-note' and src.endswith('.json') and flags.get('--fit'):
+        print('\n'.join(notes_fit(src, flags['--fit'], flags.get('--code', ''))))
     text = sys.stdin.read() if src == '-' else read(src)
     if kind == 'result-note' and src.endswith('.json'):
         found = []
@@ -3787,7 +3850,7 @@ def collections_counter(items):
 # ---- main: argument checks, command dispatch
 # per command: switches, value flags, kit dir positional? (`lint --help` once became a kit dir)
 ARGS = {'lint': ({'--summary', '--warn', '--no-flow', '--ratchet', '--reuse'}, {'--org-terms', '--json'}, True),
-  'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind'}, False),
+  'flow': ({'--readme'}, set(), True), 'audit': (set(), {'--kit', '--json'}, False), 'prose': ({'--json', '--kinds'}, {'--kind', '--fit', '--code'}, False),
   'budget': (set(), set(), False), 'migrate': (set(), set(), False), 'sections': ({'--fix'}, set(), False),
   'state': ({'--json'}, {'--since'}, False), 'ui-check': (set(), {'--widths', '--click'}, False), 'parity': ({'--json'}, {'--n'}, False)}
 NAMED_ARGS = ('prose', 'budget', 'sections', 'new', 'rename', 'remove', 'state', 'ui-check', 'naming', 'parity', 'faults')   # positionals: files, verbs or names, never a kit dir

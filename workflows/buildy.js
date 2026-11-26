@@ -1,20 +1,20 @@
 export const meta = {
  name: 'buildy',
- description: 'The dev flow for any multi-item build (any stack): devy code, goals, local loop, decisions; review, CI, merge (producers first), testing docs + tracker; deploys on a person\'s word',
+ description: 'The dev flow for a multi-item build (any stack): devy code, goals, local loop, decisions; review, CI, merge, testing docs + tracker; deploys on a person\'s word',
  whenToUse: 'Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)',
  phases: [
-  { title: 'Spike', detail: 'one rechy answers args.openQuestions in the brief before any devy' },
+  { title: 'Spike', detail: 'rechy answers args.openQuestions in the brief first' },
   { title: 'Build', detail: 'a devy per area: worktree, code, testing goals, local loop, MRs, testing docs' },
-  { title: 'Decide', detail: 'items paused for an owner decision or ENV-FIX resume after the answer' },
-  { title: 'Review', detail: 'a revy per devy (+ datay on migrations) while the CI pipelines run' },
-  { title: 'Fix', detail: 'fix round + local tests; re-review holds on blocking (a round, then a decide ask; rest -> Follow-ups); merge in order, tracker' },
-  { title: 'Deploy', detail: 'merged work joins the deploy batch (bossy.ps1 deploy); a person says deploy <env>, never asked' },
+  { title: 'Decide', detail: 'items waiting on an owner decision or ENV-FIX resume after it' },
+  { title: 'Review', detail: 'a revy per devy (+ datay on migrations) while CI runs' },
+  { title: 'Fix', detail: 'fix round (blocking, CI) + local tests; re-review, then a decide ask; should-fix -> Follow-ups; merge in order, tracker' },
+  { title: 'Deploy', detail: 'merged work joins the deploy batch; a person says deploy <env>, never asked' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy makes lessons)' },
  ],
 }
 
-// Sections: L18 args · L155 record-args · L174 budget · L192 build-prompt · L277 ship-prompt · L294 plan · L312 spike ·
-//   L324 local-loop · L406 stages · L561 ship · L597 debate · L705 deploy · L719 learn
+// Sections: L18 args · L154 record-args · L173 budget · L191 build-prompt · L276 ship-prompt · L296 plan · L314 spike ·
+//   L326 local-loop · L408 stages · L563 ship · L599 debate · L712 deploy · L726 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -49,7 +49,7 @@ const cyclic = (id, seen = []) => seen.includes(id) || DEPS[id].some((p) => cycl
 for (const id of Object.keys(DEPS)) if (cyclic(id)) throw new Error(`agents[].dependsOn has a cycle through ${id}`)
 const SETTLED = {}, EARLY = {}
 for (const a of A.agents) { let res; SETTLED[a.id] = { p: new Promise((r) => { res = r }), done: (x) => res(x) } }
-const MERGED_SEEN = new Set()   // producer MRs seen merged
+const MERGED_SEEN = new Set()   // MRs seen merged
 const BLOCK = (mrs, problem, fix) => ({ mr: urls(mrs), file: '-', severity: 'blocking', problem, fix }), REREVIEW = 'Re-run the review (one-off revy, kind mr), then merge.'
 const consumersOf = (id) => A.agents.filter((c) => DEPS[c.id].includes(id)).map((c) => c.id)
 const MODE = A.mode || 'feature'
@@ -114,19 +114,18 @@ const REPORT = {
  required: ['mrs', 'worktrees', 'done', 'deferred', 'needsDecision', 'localTest', 'needsLiveCheck', 'seed', 'foreignHooks', 'summary', 'testerGuide'],
 }
 const REVIEW_SCHEMA = obj({ findings: arr(obj({ mr: S, file: S, line: N, severity: { ...S, enum: ['blocking', 'should-fix', 'nit'] }, problem: S, fix: S }, ['mr', 'file', 'severity', 'problem', 'fix'])) })
-const FIXES = { blocking: true, 'should-fix': true, nit: false }
-const mustFix = (f) => FIXES[f.severity] !== false
+const mustFix = (f) => f.severity === 'blocking'   // should-fix -> MR Follow-ups (owner 2026-11-26)
 const CI_SCHEMA = obj({ done: B, mrs: arr(obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status'])) })
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
-// no result (2026-11-25 login race): one retry after a wait, <label>@redo; edit steps check state first; never asks, debates, deploy, learn
-const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
-// a model's usage limit: once on the next tier, <label>@up (testy.js the same)
+// no result: one retry after a wait, <label>@redo; edit steps check state first
+const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|merge-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
+// a model's usage limit: once on the next tier, <label>@up
 const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
  try { return await agent1(p, o) } catch (e) { if (!up || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
  return agent1(p.replace(/^(STEP: )?/, `$1No report came back: ${ed ? 'first find what is done (wt lease + wt status, git log, the board, MR state), never apply a change twice; then ' : ''}do it now (a merged / scheduled MR: report it, never merge twice).\n`), { agentType: 'devy', ...o, label: `${o.label}@redo` }) } } catch { log('WARNING: no step retry') }
-// STEP agent: kit commands as kitty, product MRs as devy
+// STEP agent: kit commands kitty, product MRs devy
 const SO = (label, phase, model = MODELS.step) => ({ label, phase, schema: OK_SCHEMA, model, effort: 'low' })
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
  agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`, { ...SO(label, phaseName), agentType: 'kitty' })
@@ -135,25 +134,25 @@ const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, v
 `
 // tier -> model; CONFIG tiers, models win
 const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
-const MT = { spike: TS, debate: TB, build: TB, review: TB, ci: TF, ship: TF, docs: TB, learn: TF, complex: 'inherit', retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
+const MT = { spike: TS, debate: TB, build: TB, review: TS, ci: TF, ship: TF, docs: TB, learn: TF, complex: TB, retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
 tierModels()
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
 // repos[].role (name / alias): merge order
-const CFG = { roles: {}, local: {} }
+const CFG = { roles: {}, local: {}, serial: [] }
 function takeConfig(out) {
  let c
  try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { }
  if (!c) { log('WARNING: no CONFIG line: default models, no repo roles'); c = {} }
- // args.config wins: a resume replays the cached CONFIG step; recover passes today's tiers / models
+ // args.config wins (a resume replays the cached CONFIG; recover passes today's)
  const ov = A0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
- CFG.roles = c.roles || {}
+ CFG.roles = c.roles || {}; CFG.serial = ls(c.serial)
  CFG.local = c.local || {}; CFG.humanDoc = c.humanDoc
 }
-// ---- record-args: the launch record (byte-exact: a resume reads it)
-function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }   // hoisted: RUN needs it
+// ---- record-args: the launch record (a resume reads it)
+function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 async function recordArgs(wf, run, a, phaseName, plan) {
  const json = JSON.stringify(a)
  const file = `${rp('launches')}/args-${wf}-${run.replace(/[^\w.-]/g, '_')}.json`
@@ -171,7 +170,7 @@ Return ok=true when it prints RECORDED, else ok=false; output = its full output 
  log('WARNING: launch args not recorded (bossy.ps1 launch -Self failed twice): a resume needs them by hand')
  return ''
 }
-// ---- budget: over the cap -> refused + split; at stopAt the rest -> next
+// ---- budget: over the cap -> refused; at stopAt the rest -> next
 const BUD = { cap: 0, estimate: 0, stopAt: 0.8, spent: 0, guess: 0, stop: false, unit: 0 }
 function takeBudget(out, units) {
  try { Object.assign(BUD, JSON.parse((/BUDGET (\{.*\})/.exec(out) || [])[1])); BUD.unit = BUD.estimate / Math.max(1, units) } catch (e) { log('WARNING: no BUDGET line from launch -Self: this run is not budget-gated') }
@@ -180,7 +179,7 @@ async function measure(phaseName) {
  const r = await runStep(`& ${ORCH} budget -Run '${RUN}' -Json`, 'budget', phaseName).catch(() => null)
  try { BUD.spent = JSON.parse(r.output).spent; BUD.guess = 0 } catch (e) {}
 }
-async function gate(phaseName) {   // before a new round
+async function gate(phaseName) {
  if (BUD.stop || !BUD.cap) return !BUD.stop
  BUD.guess += BUD.unit
  if (BUD.spent + BUD.guess < 0.6 * BUD.stopAt * BUD.cap) return true
@@ -200,11 +199,11 @@ function depNote(a) {
   (cs.length ? `MERGE ORDER: ${cs.join(', ')} consume your work: open your MRs early, say which MR carries the contract.\n` : '')
 }
 const globs = (a) => ls(a.paths).join(',')
-const isFnd = (a) => (a || {}).kind === 'foundation'   // no human-facing change: no human doc, merge --no-docs (logged)
+const isFnd = (a) => (a || {}).kind === 'foundation'   // no human-facing change: no human doc, merge --no-docs
 const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : '') + (AREA_TASK[a.id] ? `TRACKER TASK: ${AREA_TASK[a.id]} (subtask of ${a.task || A.task}) = <task> in every tracker step (status, MR title, track add); never the parent's status.\n` : '')
 const SW = `${K}/ship.md "In a /buildy wave"`
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules with your agent definition's "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
-// args.phases: a devy goes on under 80% budget (tidy-6: 20x a fresh one wasted)
+// args.phases: a devy goes on under 80% budget
 const GO = ' Under 80% of your budget (beat) go on yourself; at 80%: checkpoint, HANDOFF.'
 const PH = {
  code: `\nPHASE code (1 of 3): crafty steps 0-4 (code, cases spec, unit tests, commit, push), checkpoint -Step commit; then step 5, its PASS: ${K}/ship.md steps 6-9.${GO}`,
@@ -264,7 +263,7 @@ const DEB = { used: 0 }, DM = ls(A.debateModels)
 const debated = (o, item, id, question) => id ? { ...o, needsDecision: [...(o.needsDecision || []), { item, decisionId: id, question }] } : { ...o, deferred: [...(o.deferred || []), { id: item, reason: 'debate and ask failed: the coordinator decides' }] }
 const defer = (o, l) => ({ ...o, deferred: byId([...(o.deferred || []), ...l]) })
 function fixPrompt(a, r, findings) {
- return continuePrompt(a, r, `Review or CI found these problems in your MRs (blocking, should-fix): fix each, or CONTEST one you can
+ return continuePrompt(a, r, `Review or CI found these blocking problems in your MRs: fix each, or CONTEST one you can
 disprove in disputes[] (evidence: file:line, a test, a measurement; revy answers once, then the owner); never skip one silently:
 ${findings.map((f) => `- ${f.mr} ${fkey(f)}: ${f.problem} -> ${f.fix}`).join('\n')}
 Then ${SW} FIX round; devtools.py precheck <task> --dir <wt> = 0 problems before you report.`)
@@ -280,6 +279,9 @@ const repoNames = (m) => [m.repo, String(m.url || '').replace(/[?#].*$/, '').rep
 const roleOf = (m) => repoNames(m).map((n) => CFG.roles[n]).find(Boolean) || ''
 const isConsumer = (m) => roleOf(m) === 'consumer'
 const isProducer = (m) => roleOf(m) === 'producer'
+// CONFIG serial (repos[].appendOnly): one merge at a time, merged (<= ~1 h) before the next syncs
+let LINE = Promise.resolve()
+const isSerial = (m) => repoNames(m).some((n) => CFG.serial.includes(n))
 const toShip = (r) => { const open = uniqMr(r.mrs).filter((m) => !m.merged && !isHeld(m)); return [...open.filter(isProducer), ...open.filter((m) => !isProducer(m) && !isConsumer(m)), ...open.filter(isConsumer)] }
 function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${ENV(`ship-${a.id}`)}
@@ -309,7 +311,7 @@ if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
 }
 log(`wave: ${A.agents.length} agents, mode ${MODE}, brief ${A.brief}`)
 
-// ---- spike: rechy answers openQuestions before any devy
+// ---- spike: rechy answers openQuestions first
 if (OQ.length) {
  phase('Spike')
  const sp = await agent(`Kind spike: answer the open questions of the brief ${A.brief} before any devy starts, as your agent definition says.${PATHS}
@@ -321,10 +323,10 @@ Append one block per question under "## Findings (rechy)" at the bottom of the b
  log(`spike: ${OQ.length} open question(s) answered in the brief`)
 }
 
-// ---- local-loop: waits, report merges, the local test loop
+// ---- local-loop: waits, report merges, the loop
 // merge, don't replace: a later round reports only its own work
 const uniq = (x) => [...new Set(x)], fails = (lt) => (lt.failing || []).join('; ')
-// C:\a\b and c:/a/b/ = one worktree (first spelling kept)
+// C:\a\b and c:/a/b/ = one worktree
 const uniqPath = (x) => { const seen = new Set(); return x.filter((p) => { const k = String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); return k && !seen.has(k) && seen.add(k) }) }
 const byKey = (x, k) => [...new Map(x.map((d) => [d[k], d])).values()], byId = (x) => byKey(x, 'id')
 // slices fit the agent's tool timeout
@@ -370,9 +372,9 @@ async function noneWordOk(a, r, id) {
  return /^WORD /.test(out)
 }
 const mergeHeld = async (lt, a, r) => holdsMerge(lt, a, r) || (noneGated(lt, a, r) && !(await noneWordOk(a, r, lt.decisionId)))
-// each handoff records the previous devy's signals first (tidy-3)
+// each handoff records the previous devy's signals first
 const LEARN_NOW = LEARN === false ? '' : ` First record its notable events (failures, rounds, blockers, decisions) as signals: & ${ORCH} learn -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref ${RUN} -Source workflow.`
-// tidy-5: a code handoff before a passing loop resumes with it
+// a code handoff before a passing loop resumes with it
 const LOOPED = new Set(), loopFirst = (a, x) => (['doc', 'spike', 'repro'].includes(a.kind) || LOOPED.has(a.id) || ltOf(x).status === 'PASS' ? '' : 'LOOP FIRST: finish the open code, then the local test loop (step 5). ')
 async function localLoop(a, r, retries, stage) {
  for (let h = 0; r && r.handoff && h < 3; h++) {
@@ -384,7 +386,7 @@ async function localLoop(a, r, retries, stage) {
  if (cnt(r.needsEnvFix)) return r
  const go = async (s, why, l, note, more) => { say(a, s); const r2 = await agent(continuePrompt(a, r, why), { ...dvo(a, l, stage), ...more }); if (r2 && Array.isArray(r2.mrs)) r = normLocal(mergeReports(r, r2, note)) }
  const failing = () => ltOf(r).status === 'FAIL' && holdsMerge(r.localTest)
- // done with no local loop (1124): one local round before review, never a fix round
+ // done with no local loop: one local round before review
  if (retries && cnt(r.mrs) && (r.localTest || { status: 'NONE' }).status === 'NONE' && await mergeHeld({ status: 'NONE', ...r.localTest }, a, r)) {
   if (!(await gate(stage))) return halt(r)
   await go('reported done with no local loop - local round before review', 'You reported done without the local test loop (localTest NONE). Run it now on the local env: every goal, then report localTest.', 'local', 'Local loop round')
@@ -406,7 +408,7 @@ From the evidence (logs, DB state, the reproduction): root cause, fix, redeploy,
 // ---- stages: build -> review -> fix per area
 const results = await pipeline(
  A.agents,
- // Build (a dead agent: one retry)
+ // Build
  (a) => settleOnThrow(a, async () => {
   if (skips(a, 'build')) {
    const r0 = synth(a)
@@ -434,12 +436,12 @@ const results = await pipeline(
   return dbt ? debated(o, a.debate.item, await dbt, a.debate.question) : o
   })
  }),
- // Decide: answers, ENV-FIXes, debates
+ // Decide
  (r, a) => settleOnThrow(a, async () => {
   if (!r || r.error || r.budgetStopped || !(cnt(r.needsDecision) || cnt(r.needsEnvFix) || cnt(r.debate))) return r
   return releasing(a, 'Decide', async () => {
   let cur = r, envCycles = 0
-  // local PASS: MRs with no waiting item (mrs[].items) reviewed now, reused at the same head (owner 2026-11-26)
+  // local PASS: MRs with no waiting item reviewed now, reused at the same head (owner 2026-11-26)
   const wt = [...ls(r.needsDecision), ...ls(r.needsEnvFix), ...ls(r.debate)].map((d) => d.item), fr = r.mrs.filter((m) => m.head && cnt(m.items) && !m.items.some((i) => wt.includes(i)))
   if (fr.length && !a.migrations && ltOf(r).status === 'PASS') EARLY[a.id] = { h: fr.map((m) => nu(m.url) + m.head), p: reviews(a, { ...r, mrs: fr }).then(([v]) => v, () => null) }
   const goOn = async (c, why, l, note) => localLoop(a, mergeReports(c, await agent(continuePrompt(a, c, why), dvo(a, l, 'Decide')), note), LOCAL_RETRIES, 'Decide')
@@ -487,7 +489,7 @@ const results = await pipeline(
   return { ...cur, needsDecision: [], needsEnvFix: [] }
   })
  }),
- // Review + CI (+ one fix round), ship
+ // Review + CI, fix, ship
  (r, a) => settleOnThrow(a, async () => {
   if (!r || r.error) return r && r.error ? r : { id: a.id, error: 'agent returned nothing' }
   if (r.budgetStopped) return { id: a.id, report: r, findings: [], budgetStopped: true }
@@ -500,7 +502,7 @@ const results = await pipeline(
    return { id: a.id, report: r, findings: [], blocked: `local test ${lt.status}${lt.status === 'FAIL' ? ' after the stronger fix round' : ''}: ${why}` }
   }
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }
-  // review and CI together (owner 2026-11-25: a task under budget.taskMinutes): one fix round takes both
+  // review and CI together (owner 2026-11-25): one fix round takes both
   const E = EARLY[a.id], ev = E && (await E.p), same = ev ? r.mrs.filter((m) => E.h.includes(nu(m.url) + m.head)) : [], rest = { ...r, mrs: r.mrs.filter((m) => !same.includes(m)) }
   if (ev) E.pin = E.h
   if (same.length) say(a, `${urls(same)}: reviewed in the owner wait`)
@@ -509,7 +511,7 @@ const results = await pipeline(
   if (!rv || (a.migrations && !mv)) return { id: a.id, report: r, findings: [BLOCK(r.mrs, `The ${rv ? 'migration review (datay)' : 'review agent'} returned nothing: unreviewed, not merged.`, rv ? 'Re-run datay kind migration on these MRs, then merge.' : REREVIEW)], reviewFailed: true }
   const findings = [...rv.findings, ...ls(mv && mv.findings)]
   let x = { id: a.id, report: r, findings }
-  const blocking = [...findings.filter(mustFix), ...ciFails]
+  const blocking = [...findings.filter(mustFix), ...ciFails], sf = findings.filter((f) => f.severity === 'should-fix')
   if (blocking.length) {
    if (!(await gate('Fix'))) return halt(x)
    say(a, `${blocking.length} blocking finding(s) / failed pipeline(s) -> fix round`)
@@ -519,10 +521,10 @@ const results = await pipeline(
 
    const loop2 = async (b, r5, n) => { x = { ...x, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(b, r5, n), 0, 'Fix')) }; const l = ltOf(x.report); return (await mergeHeld(l, a, x.report)) && `local test ${l.status} after ${n.toLowerCase()}` }
    let lh = await loop2(r, r2, 'Fix round'); if (lh) return { ...x, fixed: false, blocked: lh }
-   // re-review: blocking holds (a round, then a decision); rest -> Follow-ups
+   // re-review: blocking holds (a round, then a decision)
    const gone = [], decided = new Map()   // finding key -> 'A' | 'B' | a pending decision id
    const settle = async (rep, l) => { const k = await settleDisputes(a, rep, l, decided); gone.push(...l.filter((f) => !k.includes(f))); x = { ...x, findings: x.findings.filter((f) => !gone.includes(f)) }; return k }
-   let open = await settle(r2, findings.filter(mustFix)), soft = []
+   let open = await settle(r2, findings.filter(mustFix)), soft = [...sf]
    const held = async (y, more = []) => ({ ...x, ...y, fixed: false, findings: [...x.findings, ...open], ...((soft.length || more.length) && { followUps: await followUps(a, x.report, [...soft, ...more]) }) })
    for (let round = 1; open.length; round++) {
     const rr = `\nRE-REVIEW after fix round ${round}: check that these findings are resolved and that the fix added no new problem:\n${open.map((f) => `- ${fkey(f)}: ${f.problem}`).join('\n')}${gone.length ? `\nSettled in a dispute, never raise again: ${gone.map(fkey).join(', ')}` : ''}`
@@ -542,16 +544,16 @@ const results = await pipeline(
    if (soft.length) x = { ...x, followUps: await followUps(a, x.report, soft) }
    const failures = await ciGate(a, x.report)
    if (failures.length) { say(a, `pipelines still failing after the fix round - left open`); return { ...x, fixed: false, findings: [...x.findings, ...failures] } }
-  }
+  } else if (sf.length) x = { ...x, followUps: await followUps(a, r, sf) }
   return ship(a, x)
  }).then((y) => { SETTLED[a.id].done(y); return y }),
- // Track: the tracker task
+ // Track
  async (x, a) => {
   if (!x || x.error || !x.report || !x.report.mrs.length || (x.resumed && skips(a, 'tracker'))) return x
   const deferred = (x.report.deferred || []).filter((d) => !d.ownerDecided && d.kind !== 'people')
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) say(a, `tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
-  // track add groups MRs by task (title, else branch)
+  // track add groups MRs by task
   const tr = await runStep(`& ${ORCH} track add -Discover -Mrs '${urls(x.report.mrs, ',')}'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}`, `track:${a.id}`, 'Fix', { ok: 'when it exits 0', whole: true })
   if (!tr || !tr.ok) say(a, `WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
   return why ? { ...x, trackHeld: why } : x
@@ -567,11 +569,11 @@ async function ciGate(a, r) {
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
   fix: 'Reproduce the failing job locally through the gate (crafty.ps1 check), fix the cause, push, green pipeline.' }))
 }
-// re-review should-fix / nit findings -> MR "## Follow-ups"
+// should-fix (+ re-review nits) -> MR "## Follow-ups"
 async function followUps(a, r, soft) {
  const file = `${rp('agents')}/${a.id}/followups.json`, mrs = r.mrs.filter((m) => !m.merged)
  if (!mrs.length) return []
- for (const m of mrs) say(a, `${m.url}: ${soft.filter((f) => has(f, m.url) || !mrs.some((o) => has(f, o.url))).map((f) => `${f.severity} ${fkey(f)}`).join(', ') || 'no'} re-review finding(s) -> Follow-ups`)
+ for (const m of mrs) say(a, `${m.url}: ${soft.filter((f) => has(f, m.url) || !mrs.some((o) => has(f, o.url))).map((f) => `${f.severity} ${fkey(f)}`).join(', ') || 'no'} finding(s) -> Follow-ups`)
  const st = await agent(`STEP: put review follow-ups into the MR descriptions. Do exactly this, nothing else:${PATHS}
 1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers); read it back: it parses:
 <<<JSON
@@ -582,7 +584,7 @@ Return ok=true when it exits 0, output = its full output.`, { ...SO(`followups:$
  if (!st || !st.ok) { say(a, `WARNING Follow-ups not written (${st ? st.output : 'the step returned nothing'}): add them by hand`); return soft.map((f) => ({ ...f, written: false })) }
  return soft
 }
-// blocking after 2 fix rounds: an owner decision with both sides
+// blocking after 2 fix rounds: an owner decision
 async function askBlocking(a, r, open, decided) {
  const pend = open.map((f) => decided.get(fkey(f))).filter((v) => v && !['A', 'B'].includes(v))
  if (pend.length === open.length) { say(a, `still blocking; the owner's answer to ${pend[0]} is pending - not merged`); return pend[0] }
@@ -594,7 +596,7 @@ async function askBlocking(a, r, open, decided) {
  if (id) decisions.push({ agent: a.id, item: mrs, decisionId: id, question: `still blocking: ${q}` })
  return id
 }
-// ---- debate: a dispute gets one revy answer; still split -> a debate or an A/B ask
+// ---- debate: one revy answer per dispute; still split -> a debate or an A/B ask
 async function settleDisputes(a, rep, open, decided) {
  const of = (d) => open.find((f) => fkey(f) === d.finding), ds = ((rep && rep.disputes) || []).filter((d) => d && d.evidence && of(d) && !decided.has(d.finding))
  if (!ds.length) return open
@@ -615,7 +617,7 @@ ${ds.map((d) => `- ${d.finding}: ${of(d).problem} | devy: ${d.evidence}`).join('
  }))
  return open.filter((f) => decided.get(fkey(f)) !== 'A').map((f) => (said.has(fkey(f)) ? { ...f, fix: `${f.fix || ''} (owner: ${cl(said.get(fkey(f)), 300)})` } : f))
 }
-// one debate per run (owner: always), else or failed: an A/B ask
+// one debate per run (owner: always), else an A/B ask
 async function debateOrAsk(a, d, ph) {
  const arg = `-Item '${cl(d.item, 200)}' -Question "${cl(d.question, 400)}" -Options ${[].concat(d.options).slice(0, 2).map((o) => `"${cl(o, 300)}"`).join(',')}`
  const did = (s) => (((s && s.output) || '').match(/DECISION (\S+)/) || [])[1] || '', DOK = { ok: 'when it prints DECISION <id>' }
@@ -628,21 +630,23 @@ as your agent definition says (advocate models: ${DM.join(', ') || MODELS.debate
  }
  return did(await runStep(`& ${ORCH} decide ask -Run ${RUN} -Agent ${a.id} -Context "${cl(d.why || `${d.trigger || 'a review'} left 2 valid paths`, 200)}" ${arg}${d.recommend ? ` -Recommend ${d.recommend}` : ''}`, `decide:${a.id}`, ph, DOK))
 }
-// open producer ids (polled): consumers wait
-async function producersOpen(a) {
- if (!DEPS[a.id].length) return []
- const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))
- const unmerged = (i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length ? [{ url: '' }] : prods[i].report.mrs.filter((m) => !m.merged && !MERGED_SEEN.has(nu(m.url)))
- let wait = DEPS[a.id].flatMap((id, i) => unmerged(i))
- if (!wait.every((m) => m.url && ['SCHEDULED', 'WAIT'].includes(m.mergeState) && !isHeld(m))) wait = []
- for (let t = 0; t < WAIT_SLICES && wait.length; t++) {
-  const w = await runStep(`& ${DEV} pipes -Mrs ${urls(wait, ',')} -MaxMinutes 9 -UntilMerged`, `producer-wait:${a.id}`, 'Fix', { ok: 'when it prints JSON', slow: true, whole: true })
+// open producer ids: consumers wait
+async function waitMerged(wait, label, tries = WAIT_SLICES) {
+ for (let t = 0; t < tries && wait.length; t++) {
+  const w = await runStep(`& ${DEV} pipes -Mrs ${urls(wait, ',')} -MaxMinutes 9 -UntilMerged`, label, 'Fix', { ok: 'when it prints JSON', slow: true, whole: true })
   let st
   try { st = JSON.parse((w && w.output) || '').mrs || [] } catch (e) { break }
   for (const s of st) if (s.status === 'merged') MERGED_SEEN.add(nu(s.mr))
   wait = wait.filter((m) => !MERGED_SEEN.has(nu(m.url)))
   if (st.some((s) => ['failed', 'canceled', 'closed', 'bad-url'].includes(s.status))) break
  }
+}
+async function producersOpen(a) {
+ if (!DEPS[a.id].length) return []
+ const prods = await Promise.all(DEPS[a.id].map((id) => SETTLED[id].p))
+ const unmerged = (i) => !prods[i] || !prods[i].report || !prods[i].report.mrs.length ? [{ url: '' }] : prods[i].report.mrs.filter((m) => !m.merged && !MERGED_SEEN.has(nu(m.url)))
+ const wait = DEPS[a.id].flatMap((id, i) => unmerged(i))
+ if (wait.every((m) => m.url && ['SCHEDULED', 'WAIT'].includes(m.mergeState) && !isHeld(m))) await waitMerged(wait, `producer-wait:${a.id}`)
  return DEPS[a.id].filter((id, i) => unmerged(i).length)
 }
 async function ship(a, x) {
@@ -658,7 +662,10 @@ async function ship(a, x) {
    `order:${a.id}`, 'Fix', { ok: 'when its last line lists "merge-after:"' })
   if (!reg || !reg.ok || !/merge-after:/.test(reg.output)) return { ...x, mergeOrderHeld: true, shipFindings: [BLOCK(open, `Merge order not registered (${reg ? reg.output : 'the step returned nothing'}): nothing merged.`, `bossy.ps1 track add -Task <id> -MergeAfter '${pairs.join(',')}', then devtools.py merge`)] }
  }
- const r3 = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
+ const go = async () => { const s = await agent(shipPrompt(a, x.report), { label: `ship:${a.id}`, phase: 'Fix', schema: REPORT, agentType: 'devy', ...pick('ship'), effort: 'low' })
+  if (s) await waitMerged(s.mrs.filter((m) => m.mergeState === 'SCHEDULED' && isSerial(m)), `merge-wait:${a.id}`, 7)
+  return s }
+ const r3 = await (open.some(isSerial) ? (LINE = LINE.then(go, go)) : go())
  if (!r3) { say(a, `WARNING ship agent returned nothing - MRs not scheduled`); return x }
  const state = new Map(r3.mrs.map((m) => [nu(m.url), m.mergeState || (m.merged ? 'MERGED' : 'OPEN')]))
  const mrs = uniqMr(x.report.mrs).map((m) => { const s = m.merged ? 'MERGED' : (state.get(nu(m.url)) || m.mergeState || 'OPEN'); return { ...m, mergeState: s, merged: s === 'MERGED' } })
@@ -679,7 +686,7 @@ for (const x of out) {
  say(x, `${r.mrs.filter((m) => m.merged).length}/${r.mrs.length} MRs merged, scheduled ${r.mrs.filter((m) => m.mergeState === 'SCHEDULED').length}, local ${ltOf(r).status || '?'}, done ${r.done.length}, deferred ${r.deferred.length}${x.blocked ? `, BLOCKED (${x.blocked})` : ''}`)
 }
 await measure('Fix')
-await releaseAll(A.agents.map((a) => a.id), 'Fix')   // backstop, also an area that threw
+await releaseAll(A.agents.map((a) => a.id), 'Fix')   // backstop
 const outcome = {
  agents: out,
  deferred: out.flatMap((x) => (x.report ? x.report.deferred.map((d) => ({ agent: x.id, ...d })) : [])),
@@ -693,7 +700,7 @@ const outcome = {
  testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, ...(isFnd(A.agents.find((g) => g.id === x.id)) ? { guide: 'exempt: foundation (merge --no-docs)', docsExempt: true } : { guide: x.report.testerGuide || 'MISSING' }) })),
  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop, handoffs: out.filter((x) => /Handoff:/.test((x.report || {}).summary || '')).map((x) => x.id) },
 }
-// budget-stopped areas + those past args.batch: a relaunch
+// budget-stopped areas + those past args.batch: next
 const orig = (id) => A0.agents.find((g) => g.id === id)
 const leftover = [...out.filter((x) => x.budgetStopped).map((x) => orig(x.id)).filter(Boolean), ...(BATCH ? A0.agents.slice(BATCH) : [])]
 const resMap = Object.fromEntries(out.filter((x) => x.budgetStopped).map((x) => { const r = x.report || {}; return [x.id, { ...(RES[x.id] || {}), state: 'budget stop', skip: [...new Set([].concat((RES[x.id] || {}).skip || [], cnt(r.mrs) && ltOf(r).status === 'PASS' ? ['build'] : []))], mrs: r.mrs || [], doc: r.testerGuide || '', worktrees: r.worktrees || [] }] }))
@@ -702,12 +709,12 @@ const held = out.filter((x) => x.waitFor)
 if (held.length) outcome.afterMerge = { waitFor: uniq(held.flatMap((x) => x.waitFor)), next: nextCall(held.map((x) => orig(x.id))) }
 for (const g of outcome.testerGuides) if (g.docsExempt) log(`${g.agent}: ${g.guide}`); else if (CFG.humanDoc !== false && (!g.guide || g.guide === 'MISSING' || /^none/i.test(g.guide))) log(`${g.agent}: no human testing doc (${g.guide}): the coordinator gets one before testers start`)
 
-// ---- deploy: merged work joins the deploy batch; never deploys (bossy E5)
+// ---- deploy: merged work joins the deploy batch (bossy E5)
 phase('Deploy')
 const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const dp = shipped.length ? await runStep(`# record the merged MRs as pending only: this step deploys nothing and asks nobody
-if (Test-Path '${KIT}/skills/bossy/adapters/deploys.ps1') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" -Json } else { 'NO-DEPLOYS' }`,
- 'deploy-batch', 'Deploy', { whole: true, slow: true }) : null
+if (Test-Path '${KIT}/skills/bossy/adapters/deploys.ps1') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" -Json -Quiet } else { 'NO-DEPLOYS' }`,
+ 'deploy-batch', 'Deploy', { whole: true }) : null
 if (dp && /NO-DEPLOYS/.test(dp.output || '')) log('deploy batch skipped: no deploys adapter in this kit (merged work waits for a person)')
 else if (shipped.length) {
  try { outcome.deployBatch = JSON.parse((dp && dp.output) || '[]') } catch (e) { outcome.deployBatch = { raw: dp ? dp.output : 'deploy-batch agent returned nothing' } }

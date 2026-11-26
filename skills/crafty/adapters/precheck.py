@@ -6,10 +6,11 @@ Git (diff, commits, line endings, scope, loop head): --dir, else the repos[] che
 Rules: TITLE (mrTitleFormat / keyed form, task id) · SECTIONS (mr.sections, empty, order) · PROSE (mr-title, mr-body; footer,
 doc lines, Tags, Follow-ups uncounted) · HOW-TESTED (table, Not run / Pure logic line, a mark against its verdict) · UI (UI files
 changed: a UI line, never "not a UI change") · DOCS (each required process doc linked by URL) · TRACKER (task link) · LINKS (every
-Links bullet naming an MR / PR has its URL or ref) · COMMITS (commit prose: commitStyle subject, caps; no wip subject) · EOL (a file
+Links bullet naming an MR / PR has its URL or ref) · COMMITS (commit prose: commitStyle subject, caps; no wip subject; the head
+carries repos[].commitMarker) · EOL (a file
 whose diff is mostly line endings) · SCOPE (files outside the area globs) · LOOP (a local loop PASS whose head is the MR head, or only
 docs changed since) · PROOF (devtools.py proof <task> gaps).
-Sections: L22 rules · L164 context · L283 verb · L314 selftest · L365 areas"""
+Sections: L23 rules · L168 context · L290 verb · L321 selftest · L373 areas"""
 import contextlib, io, json, os, re, subprocess, sys
 
 DT = None
@@ -119,6 +120,9 @@ def r_commits(c):
         if WIP.search(subj):
             out.append(('COMMITS', f'{sha[:10]} "{subj[:60]}" is a WIP commit', 'squash it into a real commit (crafty.ps1 wt commit), push'))
         out += [('COMMITS', f'{sha[:10]}: {f}', 'reword it (amend the head, push --force-with-lease: your own branch only)') for f in found]
+    if c.get('marker') and c['marker'] not in (c.get('headMsg') or ''):   # CI fails a head the repo's commit hook did not mark
+        out.append(('COMMITS', f'the head commit lacks repos[].commitMarker "{c["marker"]}" (its commit hook did not run)',
+                    'fix the hook setup (core.hooksPath, its deps), git commit --amend --no-edit (the hook runs again; never type the marker), push --force-with-lease'))
     return out
 
 
@@ -205,6 +209,9 @@ def context(tid, title, body, gdir='', base='', head='', ref='', branch=''):
         files, commits, eol = git_facts(gdir, base, head)
         c.update(head=head, uiFiles=[f for f in files if DT.UI_FILES.search(f)], eol=eol, commits=[(s, m, prose('commit', m)) for s, m in commits],
                  codeFiles=[f for f in files if not DOC_ONLY.search(f)])
+        rn = (c['repo'] or '').split('/')[-1] or os.path.basename(os.path.normpath(gdir))
+        c['marker'] = next((r.get('commitMarker') or '' for r in DT.CFG.get('repos') or [] if rn in [r.get('name'), *(r.get('aliases') or [])]), '')
+        c['headMsg'] = git(gdir, 'log', '-1', '--format=%B', head) if c['marker'] else ''
         c['globs'] = DT.scope_of(gdir, DT.SCOPE, ref)
         c['outside'] = DT.scope_outside(files, c['globs']) if DT.scope_refusal(files, c['globs'], branch, ref, 'precheck') else []   # a recorded scope word passes
     if tid:
@@ -339,6 +346,7 @@ def selftest():
     ex('TRACKER: no task link', 'TRACKER' in codes({**good, 'body': body.replace('https://t/t/T1', 'T1')}))
     ex('LINKS: a sibling MR named without its URL', 'LINKS' in codes({**good, 'body': body + '- JT java MR (producer)\n'}))
     ex('COMMITS: a WIP head and a prose finding', len([x for x in run_rules({**good, 'commits': [('b' * 40, 'wip: java released with uncommitted work', []), ('c' * 40, 'Fix', ['subject misses conv'])]}) if x[0] == 'COMMITS']) == 2)
+    ex('COMMITS: a head without repos[].commitMarker; with it, or no marker set: none', 'COMMITS' in codes({**good, 'marker': '☑ hooks', 'headMsg': 'fix: x'}) and 'COMMITS' not in codes({**good, 'marker': '☑ hooks', 'headMsg': 'fix: x\n\n☑ hooks'}) and 'COMMITS' not in codes({**good, 'headMsg': 'fix: x'}))
     ex('EOL: 486 lines of which 8 real', 'EOL' in codes({**good, 'eol': [('A.java', 486, 8)]}))
     ex('SCOPE: a file outside the globs', 'SCOPE' in codes({**good, 'globs': ['src/orders/**'], 'outside': ['src/chat/a.ts']}))
     ex('LOOP: none, not PASS, and code changed after the PASS head', all('LOOP' in codes({**good, **x}) for x in ({'loopOk': None}, {'loopOk': False}, {'head': 'def5678', 'sinceLoop': ['src/a.ts']})))

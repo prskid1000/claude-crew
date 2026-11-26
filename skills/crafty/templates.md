@@ -5,8 +5,9 @@ Copy a section, fill the `<...>` parts; which step fills which: the using skill'
 ## Writing standards (every artefact the kit reads or writes)
 Rules: AGENTS.md "Writing"; every limit is a ceiling. `skills/bossy/kitbag.py prose --kind <kind> <file>` measures a text (exit 1 =
 findings); the generators (`devtools.py mr/comment/finish`, `crafty.ps1 wt commit`, `bossy.ps1 bugbrief/decide`,
-`pokey.ps1 finalize`) run it, print findings, never truncate; fix by rewriting. Listed `##` sections: always, in
-order, never empty or bare "none": `n/a — <why>` (prose; `devtools.py doc` / `finish` refuse a doc without).
+`pokey.ps1 finalize`) run it, print findings, never truncate; fix by rewriting (fitted, nothing cut: `mr` joins bullets over
+a cap into the last, `finalize -FixNames` moves a long note's full text to an evidence file). Listed `##` sections: always,
+in order, never empty or bare "none": `n/a — <why>` (prose; `devtools.py doc` / `finish` refuse a doc without).
 Limits: `Nw` words · `Nl` lines · `Nch` line width · `Nsw` words per sentence · `Nb` bullets · `each:` per `##` section ·
 `<Section>:` that section (`_` for a space) · `prose:` without table rows (cells: their own kind) and image lines. Required facts: `link` URL / MR / PR ref · `id` task or check id · `path` file or `file:line` ·
 `cmd` a command in backticks · `evidence` a screenshot / JSON / log path or link · `expected` an `Expected:` line ·

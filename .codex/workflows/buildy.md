@@ -1,6 +1,6 @@
 # buildy (ported procedure, not a native Codex workflow)
 
-> The dev flow for any multi-item build (any stack): devy code, goals, local loop, decisions; review, CI, merge (producers first), testing docs + tracker; deploys on a person\'s word
+> The dev flow for a multi-item build (any stack): devy code, goals, local loop, decisions; review, CI, merge, testing docs + tracker; deploys on a person\'s word
 
 **When to run it:** Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)
 
@@ -14,23 +14,23 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 
 ## Phases
 
-1. **Spike** -- one rechy answers args.openQuestions in the brief before any devy
+1. **Spike** -- rechy answers args.openQuestions in the brief first
    - A question still open after rechy: no devy starts.
 2. **Build** -- a devy per area: worktree, code, testing goals, local loop, MRs, testing docs
    - An area with `dependsOn` starts only once its producers' MRs are merged.
    - Before each new devy round (build, fix, decide resume): `& <kit>/skills/bossy/bossy.ps1 budget -Run '<run>' -Json`; spent >= stopAt x cap -> no new one starts (running ones finish), the rest -> `next`.
    - A devy returning `handoff`: a fresh devy continues from that resume brief (at most 3 times).
-3. **Decide** -- items paused for an owner decision or ENV-FIX resume after the answer
-4. **Review** -- a revy per devy (+ datay on migrations) while the CI pipelines run
+3. **Decide** -- items waiting on an owner decision or ENV-FIX resume after it
+4. **Review** -- a revy per devy (+ datay on migrations) while CI runs
    - Not reviewed, not merged (the coordinator decides) when the local test is BLOCKED, FAIL beyond env gaps, or NONE in a code area (kind not doc / spike / repro) without an owner word.
    - NONE needs `localTest.decisionId` = `dec-<words>` (older: `dec-<n>`, `dec-<nnnn>`, `d-<14 digits>-<suffix>`) and `& <kit>/skills/bossy/bossy.ps1 decide check -Id <id> -Gate 'merge,scope,other' -Item '<area>,<task>,<branch>,<items>,<repo>!<iid>' -MaxHours 720` printing `WORD ` (any other output: held).
    - One revy per area, plus datay on an area with `migrations`; an empty review blocks the merge.
-5. **Fix** -- fix round + local tests; re-review holds on blocking (a round, then a decide ask; rest -> Follow-ups); merge in order, tracker
+5. **Fix** -- fix round (blocking, CI) + local tests; re-review, then a decide ask; should-fix -> Follow-ups; merge in order, tracker
    - Blocking findings or a failed pipeline -> one fix round (local loop again), re-review; still blocking after round 2 -> `decide ask` (A merge + Follow-ups / B hold), not merged; non-blocking re-review findings -> MR Follow-ups (`devtools.py followups`).
    - `holdMerge` repos (`true` = all): reviewed + green, never merged.
    - Merge per MR, producers first, consumers last: `crafty.ps1 wt lease`, then `python -X utf8 <kit>/skills/crafty/devtools.py merge <wt> <iid> --scope '<area paths>'`; kind `foundation` adds `--no-docs 'foundation <area>'`; a WAIT "waiting for producer" is never merged another way.
    - Register the tasks: `bossy.ps1 track add -Discover -Mrs '<url>,<url>'` (one add per task named in the MR titles; `-HoldPromotion '<why>'` when blocked, budget-stopped or items deferred).
-6. **Deploy** -- merged work joins the deploy batch (bossy.ps1 deploy); a person says deploy <env>, never asked
+6. **Deploy** -- merged work joins the deploy batch; a person says deploy <env>, never asked
    - Merged MRs: `bossy.ps1 deploy request -Mrs <urls> -Run <run>`, then `deploy plan -Json`; nobody deploys or asks (a `trigger: ask` env: one ask per env).
 7. **Learn** -- signals from this wave, cleanup (/tidy makes lessons)
 

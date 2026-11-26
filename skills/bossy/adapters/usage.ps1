@@ -4,7 +4,7 @@ budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (s
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L963 handoffs · L975 limits ·
-  L994 workflow config · L1006 dead runs
+  L994 workflow config · L1008 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -994,14 +994,16 @@ function Get-KitSuperviseFlagsUsageLimit([switch]$AutoFix, [double]$Hours = 3) {
 # ---- workflow config: the CONFIG line of launch -Self (from bossy.ps1: its cap)
 # a workflow's config (CONFIG line of launch -Self): models.<phase>, repos[].role by name + alias, qa.lanes
 function Get-KitWorkflowConfig {
-  $roles = [ordered]@{}; $local = [ordered]@{}
+  $roles = [ordered]@{}; $local = [ordered]@{}; $serial = @()
   foreach ($r in @(Get-KitSetting 'repos' @())) { $nm = @(@($r.name) + @($r.aliases) | Where-Object { $_ } | ForEach-Object { "$_".ToLower() }); if ($r.role) { foreach ($n in $nm) { $roles[$n] = "$($r.role)".ToLower() } }
     # repos[].localTest optional / none: its localFallback; ci needs MR pipelines, else unit
+    # append-only files: parallel merges conflict, so buildy.js merges this repo's MRs one at a time
+    if (@($r.appendOnly | Where-Object { $_ }).Count) { $serial += $nm }
     if ("$($r.localTest)" -in 'optional', 'none') { foreach ($n in $nm) { $local[$n] = $(if ("$($r.localFallback)" -eq 'unit' -or ($r.ci -and $r.ci.mrPipelines -eq $false)) { 'unit' } else { 'ci' }) } } }
   $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }
   $md = & $plain (Get-KitSetting 'models' $null); $ov = if ((Get-KitTool) -eq 'claude') { Get-KitModelOverride }
   if ($ov) { if (-not $md) { $md = [ordered]@{} }; foreach ($k in @($md.Keys)) { if ($md[$k] -is [string] -and $md[$k] -and $md[$k] -notin 'fast', 'balanced', 'strong', 'inherit' -and $k -notlike '*Effort') { $md[$k] = $ov.model } } }
-  [ordered]@{ models = $md; tiers = Get-KitTiers; roles = $roles; local = $local; humanDoc = [bool]@(Get-KitProcessDocs | Where-Object key -eq 'testing-doc').Count; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
+  [ordered]@{ models = $md; tiers = Get-KitTiers; roles = $roles; local = $local; serial = @($serial); humanDoc = [bool]@(Get-KitProcessDocs | Where-Object key -eq 'testing-doc').Count; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
 }
 # ---- dead runs: a wave record (waves/<run>.json) whose open steps and findings hold no promotion (owner 2026-11-26; bossy.ps1
 # track): its run marked done (launch -Done), or its workflow folder quiet 3x supervise.stuckMinutes (a step died: usage limit, crash)

@@ -18,9 +18,9 @@ const a = await run(base, mk('NO-DEPLOYS', seen), (m) => logs.push(m), _n, pipel
 const b = await run(base, mk('[{"target":"t1","trigger":"owner"}]', []), _n, _n, pipeline)
 console.log(`deploy-skip:${!a.deployBatch && logs.some((l) => /no deploys adapter in this kit/.test(l)) && seen[0].includes("Test-Path 'C:/kit/skills/bossy/adapters/deploys.ps1'")}`)
 console.log(`deploy-batch:${Array.isArray(b.deployBatch) && b.deployBatch[0].target === 't1'}`)
-console.log(`deploy-slow:${/\(tool timeout 600000\)/.test(seen[0])}`)
+console.log(`deploy-quick:${/ -Json -Quiet \}/.test(seen[0]) && !/tool timeout/.test(seen[0])}`)
 '@
-Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: # (slow: the plan ran past a 120 s tool timeout, 2026-11-21)' 'deploy-skip', 'deploy-batch', 'deploy-slow' -Show 5
+Expect-Each (Invoke-Js dw-deploy $jsdp $wfd) 'buildy deploy: # (quick: request -Quiet records only; the plan ran up to 594 s, 2026-11-26)' 'deploy-skip', 'deploy-batch', 'deploy-quick' -Show 5
 # buildy: localTest NONE never merges a code area (an MR merged without one, 2026-11-21) unless the owner allowed it (decisionId); kind doc needs no loop
 $jsn0 = @'
 const none = (extra = {}) => ({ status: 'NONE', env: 'none: no local env', rounds: 0, failing: [], goalsDoc: '', ...extra }), logs = []
@@ -81,7 +81,7 @@ console.log(`tiers:${t.find((c) => c.label === 'build:G1').model === 't-s' && /^
 const sh = (c) => c.find((x) => x.label === 'ship:G1').prompt
 console.log(`no-roles:${!n.some((c) => c.label === 'order:G1') && /storefront\/pull\/4 \(, independent\)/.test(sh(n)) && n.find((c) => c.label === 'build:G1').model === 'sonnet'}`)
 console.log(`roles:${/storefront\/pull\/4>https:\/\/github\.com\/o\/core\/pull\/4/.test(r.find((c) => c.label === 'order:G1').prompt) && /1\. \S+core\/pull\/4 \(, producer\)[\s\S]*2\. \S+storefront/.test(sh(r))}`)
-console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' && r.find((c) => c.label === 'order:G1').model === 'm-small' && /-Plan 'devy\/@build=sonnet:2,devy\/@docs=sonnet:1,revy\/@review=sonnet:1,step\/@ship=haiku:3,item:1,step\/@step=haiku:2,kitty\/@learn=haiku:1'/.test(r.find((c) => c.label === 'record-args').prompt)}`)
+console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' && r.find((c) => c.label === 'order:G1').model === 'm-small' && /-Plan 'devy\/@build=sonnet:2,devy\/@docs=sonnet:1,revy\/@review=opus:1,step\/@ship=haiku:3,item:1,step\/@step=haiku:2,kitty\/@learn=haiku:1'/.test(r.find((c) => c.label === 'record-args').prompt)}`)
 '@
 Expect-Each (Invoke-Js dw-generic $jsg $wfd) 'buildy generic: #' 'no-roles', 'roles', 'models', 'tiers' -Show 6
 # testy generic: qa.lanes unset = one web lane (an api item refused); a desktop lane with followUp web; models.test

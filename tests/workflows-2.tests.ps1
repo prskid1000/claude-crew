@@ -80,8 +80,48 @@ run({ runDir: 'C:/runs/R8', ..._kl, verify: false, items: [_item('S1'), _item('S
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-stepretry $jsSr $wf) 'workflow step retry: #' 'sr-once' -Show 8
+# owner 2026-11-26 (dec-stage-model A, speed fixes): the stage -> tier map; should-fix -> Follow-ups, no fix round; repos[].appendOnly = one merge at a time
+$jsS = @'
+const P = { status: 'PASS', failing: [] }, mrOf = (n, st) => ({ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged: false, mergeState: st })
+const F = (severity, problem) => ({ mr: 'api!1', file: 'a.ts', severity, problem, fix: 'f' })
+const go = async (cfg, ags, rv = []) => { const calls = [], order = [], seen = {}
+ const agent = async (p, o) => { calls.push({ label: o.label, model: o.model, prompt: p }); const n = Number((/:S(\d)/.exec(o.label) || [0, 1])[1])
+  if (/^record-args/.test(o.label)) return _ok(`RECORDED\n${cfg}`)
+  if (/^ci:/.test(o.label)) return { done: true, mrs: [] }
+  if (/^review/.test(o.label)) return { findings: seen[o.label]++ ? [] : (seen[o.label] = 1, rv) }
+  if (/^ship:/.test(o.label)) { order.push(`ship${n}`); return _rep(P, { mrs: [mrOf(n, 'SCHEDULED')] }) }
+  if (/^merge-wait:/.test(o.label)) { order.push(`merged${n}`); return _ok(JSON.stringify({ mrs: [{ mr: mrOf(n).url, status: 'merged' }] })) }
+  return /^(build|fix):/.test(o.label) ? _rep(P, { mrs: [mrOf(n)] }) : _ok('[]') }
+ return { calls, order, out: await run({ brief: 'C:/b/s.md', ..._kl, phases: false, agents: ags }, agent, _n, _n, pipeline) } }
+const two = [{ id: 'S1', items: 'A1' }, { id: 'S2', items: 'A2', complex: true }], md = (r, l) => (r.calls.find((c) => c.label === l) || {}).model, pr = (r, l) => (r.calls.find((c) => c.label === l) || {}).prompt || ''
+const d = await go('CONFIG {"roles":{},"qaLanes":null}', [...two, { id: 'S3', items: 'A3', model: 'm-flagged' }])
+console.log(`stage-map:${['build:S1', 'build:S2', 'build:S3', 'review:S1', 'ci:S1', 'ship:S1', 'track:S1'].map((l) => md(d, l)).join() === 'sonnet,sonnet,m-flagged,opus,haiku,haiku,haiku'}`)
+console.log(`parallel-merge:${d.order.slice(0, 2).join() === 'ship1,ship2' && !d.calls.some((c) => /^merge-wait/.test(c.label))}`)
+const s = await go('CONFIG {"roles":{},"qaLanes":null,"serial":["api"]}', two)
+console.log(`serial-merge:${s.order.join() === 'ship1,merged1,ship2,merged2' && /pipes -Mrs \S+merge_requests\/1 -MaxMinutes 9 -UntilMerged/.test(pr(s, 'merge-wait:S1'))}`)
+const sf = await go('CONFIG {"roles":{},"qaLanes":null}', [two[0]], [F('should-fix', 'soft-p'), F('nit', 'nit-p')])
+console.log(`should-fix-followup:${!sf.calls.some((c) => /^fix:/.test(c.label)) && /soft-p/.test(pr(sf, 'followups:S1')) && !/nit-p/.test(pr(sf, 'followups:S1')) && sf.order.join() === 'ship1' && sf.out.followUps.length === 1 && !sf.out.openFindings.length}`)
+const bl = await go('CONFIG {"roles":{},"qaLanes":null}', [two[0]], [F('should-fix', 'soft-p'), F('blocking', 'hard-p')])
+console.log(`blocking-fix:${/hard-p/.test(pr(bl, 'fix:S1')) && !/soft-p/.test(pr(bl, 'fix:S1')) && /soft-p/.test(pr(bl, 'followups:S1')) && bl.order.join() === 'ship1'}`)
+'@
+Expect-Each (Invoke-Js w2-stage $jsS $wfd) 'buildy 2026-11-26: # (map: build / complex sonnet, a brief model wins, review opus, ci / ship / track haiku; serial: the next area ships after the first merged)' 'stage-map', 'parallel-merge', 'serial-merge', 'should-fix-followup', 'blocking-fix' -Show 8
+$jsV = @'
+const { calls, agent } = _mock((p, o) => /^test:/.test(o.label) ? _res('W1', [_ck('C1', 'FAIL'), _ck('C2', 'PASS_WITH_NOTE')]) : /^close/.test(o.label) ? _ok('published') : undefined)
+await run({ runDir: 'C:/runs/V', ..._kl, items: [_item('W1', '')] }, async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED\nCONFIG {"roles":{},"qaLanes":null}') : agent(p, o), _n, _n, null).catch(_err)
+const md = (rx) => (calls.find((c) => rx.test(c.label)) || {}).model
+console.log(`stage-map:${[/^test:W1/, /^verify:W1/, /^audit:W1/, /^(close|hold):W1/].map(md).join()}`)
+'@
+$stV = @(Invoke-Js w2-stage-testy $jsV $wf) -join ' '
+Expect "testy 2026-11-26 stage map: test sonnet, verify and audit opus, close haiku ($stV)" ($stV -match 'stage-map:sonnet,opus,opus,haiku')
+$O = Join-Path $k 'skills/bossy/bossy.ps1'
+$sr = Invoke-PsTest serial @'
+$null = . $args[0] 6>$null
+$__cfg = [pscustomobject]@{ repos = @([pscustomobject]@{ name = 'api'; aliases = @('Core'); appendOnly = @('**/changelog-master.xml') }, [pscustomobject]@{ name = 'web'; appendOnly = @() }, [pscustomobject]@{ name = 'app' }) }
+"serial:$((Get-KitWorkflowConfig).serial -join ',')"
+'@ @($O)
+Expect "CONFIG serial: the names and aliases of repos with appendOnly globs, lower case ($sr)" ("$sr" -match 'serial:api,core$' -and (Get-Content (Join-Path $src 'agents/revy.md') -Raw) -match '(?m)^model: opus\r?$')
 # owner 2026-11-26: "all on fable until Monday" = models.override {model, until}, never new defaults; KIT_NOW is the fake clock
-$O = Join-Path $k 'skills/bossy/bossy.ps1'; $ovPy = Join-Path (Kd) 'ov.py'
+$ovPy = Join-Path (Kd) 'ov.py'
 "import sys; sys.path.insert(0, sys.argv[1]); import video; o = {'override': {'model': 'm-all', 'until': '2026-11-30T00:00+05:30'}}`nprint('|'.join([video.model_override(o, '2026-11-29T23:59+05:30'), video.model_override(o, '2026-11-30T00:01+05:30'), video.model_override({'override': {'model': 'm-all'}}), video.model_override({'override': 'm-all'}), video.model_override({'override': {'model': 'm-all', 'until': '20261130'}}, '2026-11-29T23:59+05:30')]))" | Set-Content $ovPy
 $ovV = python -X utf8 $ovPy (Join-Path $src 'skills/pokey') | Out-String
 $ov = Invoke-PsTest ov @'

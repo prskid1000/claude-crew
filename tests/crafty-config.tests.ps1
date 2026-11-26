@@ -156,6 +156,12 @@ $csNo = pwsh @np $D wt commit -Dir $csr -Message 'fix: no repo prefix here' -Pro
 $null = pwsh @np $D wt commit -Dir $csr -Message 'web/ui: with the repo prefix' 2>&1; $csOk = $LASTEXITCODE; $csLog = "$(git -C $csr log -1 --format=%s)"
 & $J @{ repos = @(@{ name = 'cs-repo'; commitStyle = '([' }) } $dkl; 'c2' | Set-Content "$csr/c2.txt"; $csBad = pwsh @np $D wt commit -Dir $csr -Message 'web/ui: a bad regex now' 2>&1 | Out-String; $csBadc = $LASTEXITCODE; Remove-Item $dkl
 Expect "wt commit: repos[].commitStyle refuses a miss even with -ProseOk, a match commits, a bad regex is named ($csNoc $csOk $csBadc)" ($csNoc -eq 1 -and $csNo -match 'misses repos\[\]\.commitStyle' -and $csOk -eq 0 -and $csLog -eq 'web/ui: with the repo prefix' -and $csBadc -eq 1 -and $csBad -match 'is no valid regex')
+# repos[].commitMarker (owner 2026-11-26: CI failed 22 of 51 MR heads the repo's commit hook had not marked): wt commit says so at once, before any push
+& $J @{ repos = @(@{ name = 'cs-repo'; commitMarker = '☑ hooks' }) } $dkl; 'm1' | Set-Content "$csr/m1.txt"
+$cmNo = pwsh @np $D wt commit -Dir $csr -Message 'fix: no hook ran for this one' 2>&1 | Out-String; $cmNoc = $LASTEXITCODE
+$null = New-Item -ItemType Directory -Force "$csr/.git/hooks"; [IO.File]::WriteAllText("$csr/.git/hooks/prepare-commit-msg", "#!/bin/sh`nprintf '\n☑ hooks\n' >> `"`$1`"`n"); 'm2' | Set-Content "$csr/m2.txt"
+$cmOk = pwsh @np $D wt commit -Dir $csr -Message 'fix: the hook marks this one' 2>&1 | Out-String; $cmOkc = $LASTEXITCODE; Remove-Item $dkl
+Expect "wt commit: a head without repos[].commitMarker exits 1 naming it and the amend, a hook-marked one passes ($cmNoc $cmOkc $($cmOk.Trim()))" ($cmNoc -eq 1 -and $cmNo -match "(?s)lacks repos\[\]\.commitMarker '.{1,4} hooks'.*commit --amend --no-edit" -and $cmOkc -eq 0 -and $cmOk -notmatch 'commitMarker')
 # wt sync, a real-code conflict (no repos[].regenerate): refused mid-rebase (sync and commit), resolved + added -> continued on the branch (retro 2026-11-25)
 $rcBare = Join-Path (Kd) 'rc.git'; $rcRepo = Join-Path (Kd) 'rc'; git init -q --bare $rcBare; git clone -q $rcBare $rcRepo 2>$null; 'a' | Set-Content "$rcRepo/a.txt"; Save-GitRepo $rcRepo base
 git -C $rcRepo branch -M main; git -C $rcRepo push -q origin main 2>$null; git -C $rcRepo checkout -q -b rc; 'mine' | Set-Content "$rcRepo/c.txt"; Save-GitRepo $rcRepo rc1

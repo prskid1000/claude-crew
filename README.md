@@ -85,8 +85,8 @@ Board and disagreements: AGENTS.md "Crew".
 
 ## Budget and handoff
 The rule: "Configuration" `budget`; per-tool defaults in the table. Models (`MODELS` in each workflow; `agents[].model` / `items[].model`
-win): devy, revy, checky test / verify / prepare = sonnet; close, ci, ship, learn = haiku; one stronger retry = opus; `complex` (buildy,
-`bugbrief -Complex`) = the session model. Agents spawned by hand: their agent file's `model`.
+win; owner 2026-11-26): build, fix, docs, test, debate, `complex` = sonnet; review, verify, audit, spike, one stronger
+retry = opus; steps (ci, ship, track, close, learn) = haiku. Agents spawned by hand: their agent file's `model`.
 <!-- kit-graph:start table-budget -->
 | Tool / window | Budget | Source |
 |---|---|---|
@@ -299,7 +299,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `devices` | {"type": "none"} | type: none (default: verbs refuse, app checks NOT_TESTED) / android / ios (swarm-ios.ps1); avd {api, device, tag, extra: {config.ini key: value}}; phoneGB (4.5: memory gate need per phone); snapshotSave (false: no multi-GB snapshot save on each close) |
 | `trackerRepos`, `trackerLists`, `productTargets` | ["backend", "frontend", "mobile-app"] | repos searched for a task's MRs; containers for deploy intest and tracker list without -List / tracker.list; env per path |
 | `holdMerge` | [] | repos (or true = all) whose MRs a person merges (their target deploys): merge prints NOT_MERGED, held |
-| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | poolSize: worktree slots (pool.size; 0 = none); role producer / consumer; migrations.check, else migrations.tool (envy db.md); exclusiveTests: README Leases; regenerate: wt sync conflicts -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = CI on deploy branches only: pipes no-ci, devtools.py merge on review + local checks; deploys[] per env (production: untested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths, serves, after [repos], lock (one deploy at a time per name); kind: bossy deploys.md; localTest required (default) / optional / none -&gt; localFallback ci (default) / unit; commitStyle: subject regex: wt commit refuses a miss, -ProseOk too; hooksPath: hook folder (default .husky; its _ copied into new worktrees); appendOnly: globs a lane train merges keeping both sides |
+| `repos` | [{"name": "backend", "aliases": ["api"], "checkout":… | poolSize: worktree slots (pool.size; 0 = none); role producer / consumer; migrations.check, else migrations.tool (envy db.md); exclusiveTests: README Leases; regenerate: wt sync conflicts -&gt; target's copy, run ({mr} {target}), amend, push; ci.mrPipelines false = CI on deploy branches only: pipes no-ci, merge on review + local checks; deploys[] per env (production: untested): CI branch + job (= target: trunk), laneApk; ssh, awsStack, probe, tag, manual, from, paths, serves, after [repos], lock (one deploy per name); kind: bossy deploys.md; localTest required (default) / optional / none -&gt; localFallback ci (default) / unit; commitStyle: subject regex: wt commit refuses a miss, -ProseOk too; commitMarker: text the commit hook adds; a head without it: wt commit / precheck error; hooksPath: hook folder (default .husky; its _ copied into new worktrees); appendOnly: globs a lane train merges keeping both sides |
 | `driveParent` | &lt;Drive folder or shared-drive id (gdocs)&gt; | Drive folder or shared drive for testing docs, reports (gdocs) |
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "briefSeconds": 40,… | heartbeat: ramActPct, ramCleanupPct (85: RAM % to clean), minDiskFreeGB, ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent = STUCK / a shell with no CPU, IO, output = STALLED; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: section cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
@@ -307,18 +307,18 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger) |
 | `localOnly`, `orgTerms` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words pre-push blocks |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example only (setup -WriteLocal) |
-| `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (shape, example: envy reference.md); baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
-| `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match, needsOwnerClick (true or the step's text: the start waits on a person, e.g. a UAC prompt; the coordinator gets a hold msg, the start waits runtimeProbe.ownerWaitMinutes) |
+| `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (envy reference.md); baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
+| `runtimes` |  | runtimes agents lease (container engine, WSL distro, VM): &lt;name&gt;: isUp, up, down, match, needsOwnerClick (true or the step's text: the start waits on a person, e.g. a UAC prompt, runtimeProbe.ownerWaitMinutes; the coordinator gets a hold msg) |
 | `media` |  | evidence videos -&gt; text index (pokey media.md); stt {baseUrl, model, maxConcurrent (1), ramGB (2)}: local speech-to-text |
 | `writes` |  | tracer {csv, time, kind, process, folder, mb, disk}: a disk-write tracer CSV and its column names (tracerCsv: older csv key); softGBPerHour, hardGBPerHour: params pins |
-| `findings` |  | required: the fields every module-audit finding fills (revy kind module; default root_cause, why_today, why_not_prod, db_migration, code_location) |
+| `findings` |  | required: fields every module-audit finding fills (default root_cause, why_today, why_not_prod, db_migration, code_location) |
 | `gpu` |  | exclusive.&lt;kind&gt;.processes (regex): one kind on the GPU at a time; unset: no limit |
 | `process` |  | gates.&lt;promote/merge/finish/bugFix/mrBody&gt;: unset = pass, builtin:testingDocs / builtin:reproRow, or a hook (payload JSON on stdin, exit 0 = pass); docs[] {key, label, linkRx, headerRx, required, columns} (unset: vocab.json pair, [] = none); humanDocUiOnly (default true); bugFixRx; qaResult {fail: role (default) / reopen / none, newDefect: collector (default) / per-defect / none} |
 | `mr` |  | footer: last line of every MR body ("" = none); sections, uiFilesRx: devtools.py render |
 | `protectedBranchesBase`, `linkDefaults`, `stack.presets` |  | protected branches (main/master/develop/release/*): never swept, force-pushed or pushed to (MR only), a deploy-MR source; dep folders wt lease / new link; false = no built-in stack presets |
 | `api`, `auth` |  | api.defaultUser (unset: a target's only user), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 / oidc; userAuth.&lt;user&gt; = that login's auth fields (path, body, tokenField, ...) over auth + its tenant; profiles.&lt;name&gt; {login, secret, auth, fields (tenant, {placeholders})} |
 | `secrets` |  | store: file (default: targets.local.json) / env (KIT_SECRET_&lt;NAME&gt;) / keychain / command (secrets.command.&lt;verb&gt;); &lt;store&gt;.paths: guard-denied; secret:&lt;name&gt; values resolve through it |
-| `masking`, `migrations` |  | masking.rules {table.column glob: kind}, logins, names {first, last, streets} (envy db.md); migrations.tool (none), lbcheck.*, historyTables (envy db.md) |
+| `masking`, `migrations` |  | masking.rules {table.column glob: kind}, logins, names {first, last, streets}; migrations.tool (none), lbcheck.*, historyTables (envy db.md) |
 | `configVersion` | 3 | below 3: migrate adds old defaults |
 | `gitHostApi` | {"commands": {}} | commands: host verb -&gt; command; hostCli: more MR CLIs [{exe, noun, type, allow (setup -Allow entries), source, target, title, valued}] |
 | `ci` | {"type": "host"} |  |

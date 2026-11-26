@@ -227,5 +227,8 @@ $rqFx = Join-Path (Kd) 'rq-fixture.json'; & $J @{ mrs = @{ 'api!5' = @{ rows = @
 $rqT = Px $O deploy request -Mrs 'api!5' -Run w4 -Offline $rqFx | Out-String; $rqJ = @(Px $O deploy request -Mrs 'api!5' -Run w4 -Offline $rqFx -Json | ConvertFrom-Json)
 Expect "deploy request: a summary (-Json: target, status, trigger, mrs, file), the full plan in the run's agent folder ($($rqJ.Count))" ($rqT -match 'DEPLOY stage: UNKNOWN: the deploy check failed: api!5: cannot reach the host' -and $rqT -match 'full plan: .*w4[\\/]deploy-request\.json' -and
   $rqJ.Count -eq 1 -and $rqJ[0].status -eq 'UNKNOWN' -and (Test-Path -LiteralPath $rqJ[0].file) -and @(Get-Content -Raw -LiteralPath $rqJ[0].file | ConvertFrom-Json)[0].why -match 'cannot reach')
+# owner 2026-11-26: buildy's deploy step records only (-Quiet): no plan, no host call (the plan ran up to 594 s in the step, 37 of 276 calls failed)
+$rqRaw = Px $O deploy request -Mrs 'api!6' -Run w5 -Json -Quiet 2>&1 | Out-String; $rqQ = @(try { $rqRaw | ConvertFrom-Json } catch { }); $rqP = @((Read-Json (Join-Path (TkPath $k deploys) 'pending.json')).requests | Where-Object run -eq 'w5')
+Expect "deploy request -Quiet: pending holds the MR, the JSON its trigger, no plan file ($($rqRaw.Trim()))" ($rqQ.Count -eq 1 -and $rqQ[0].trigger -eq 'owner' -and "$($rqP.mrs)" -eq 'api!6' -and -not (Test-Path (Join-Path (TkPath $k agents) 'w5/deploy-request.json')))
 Remove-TestKit $k
 Complete-Tests

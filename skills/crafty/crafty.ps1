@@ -186,7 +186,7 @@ switch ($Action) {
     }
     $stagePaths = @(Split-KitList $Paths)   # -Paths: a split commit stages only its group, the next group stays out
     if ($stagePaths.Count -and $NoStage) { throw 'commit: -Paths or -NoStage, not both' }
-    # test-run output (reports, screenshots, videos) never blocks a commit or lands in an MR
+    # test-run output never blocks a commit or lands in an MR
     $skipGlobs = @(@(Get-KitSetting 'commit.ignore' @(Get-KitTestRunners | ForEach-Object { $_.ignore })) | Where-Object { $_ } | ForEach-Object { ":(exclude,glob)$_" })
     if ($stagePaths.Count) { git -C $Dir add -A -- @($stagePaths) @($skipGlobs); if ($LASTEXITCODE) { throw "commit -Paths: git add failed for $($stagePaths -join ', ')" } } elseif (-not $NoStage) { git -C $Dir add -A -- . @($skipGlobs) }
     if (($area = @(Meta $Dir 'scope' | Where-Object { $_ })).Count) {   # the branch's diff and this commit stay in the brief area
@@ -199,7 +199,7 @@ switch ($Action) {
     }
     # merge subjects name branches
     $isMerge = [bool](git -C $Dir rev-parse -q --verify MERGE_HEAD 2>$null)
-    # testing.md "Impact map": a task branch's code commit needs the map first (adapters/proof.py; WIP passes)
+    # testing.md "Impact map": a task branch's code commit needs the map first
     if (-not $isMerge -and $Message -notmatch '^(wip|chore\(wip\))[:(]' -and (Test-Path (Join-Path $PSScriptRoot 'adapters/proof.py')) -and -not (Test-Path (Join-Path $Dir 'skills/crafty/crafty.ps1'))) {
       $im = @(& (Get-Python) -X utf8 $KitCmd.devtools proof --branch "$(git -C $Dir rev-parse --abbrev-ref HEAD)" --impact 2>&1); if ($LASTEXITCODE -and ($im -match '^GAP ')) { [Console]::Error.WriteLine("commit refused: $($im -join ' · ')"); exit 1 } elseif ($LASTEXITCODE) { Write-Warning "impact check failed: $($im -join ' · ')" } }
     $pf = @(Test-KitProse -Kind $(if ($isMerge) { 'merge-commit' } else { 'commit' }) -Text $Message)
@@ -207,7 +207,7 @@ switch ($Action) {
     if ($pf.Count -and -not $ProseOk -and $Message -notmatch '^(wip|chore\(wip\))[:(]') { [Console]::Error.WriteLine("commit refused: $($pf.Count) prose finding(s): rewrite the message (same facts), or -ProseOk '<why>' for a format the brief fixes: $($pf -join '; ')"); exit 1 }   # stderr: a chained call shows it
     if (-not $isMerge -and ($csw = Test-KitCommitStyle $(if ($main) { $main } else { $Dir }) $Message)) { [Console]::Error.WriteLine("commit refused: $csw"); exit 1 }
     git -C $Dir @c commit -m $Message @(if ($AllowEmpty) { '--allow-empty' })   # a deploy MR on a branch equal to its target
-    exit $LASTEXITCODE
+    exit (Test-KitCommitMarker $(if ($main) { $main } else { $Dir }) $Dir $LASTEXITCODE)
   }
   'status' {
     $Dir = Resolve-Wt $Dir

@@ -3,7 +3,7 @@
 # process-gate: Test-KitProcessGate (devtools.py process_gate is the python twin). Kind process-gate: verbs = gate names
 # (promote merge finish bugFix mrBody); built-ins testingDocs (promote here; devtools.py: merge, finish, mrBody) and reproRow (bugFix, devtools.py).
 # process.gates.<gate>: unset = pass · builtin:<name> · a command line (payload JSON on stdin, exit 0 = pass, stdout = why).
-# Sections: L7 gate · L44 process docs · L110 waits · L134 api budget
+# Sections: L7 gate · L52 process docs · L118 waits · L142 api budget
 # ---- gate: process gates, a bounded stdin command
 # a command with text on stdin, bounded: { code; out; err }
 function Invoke-KitStdinExe([string]$Exe, [string[]]$A, [string]$In, [Alias('TimeoutSeconds')][int]$TimeoutSec = 120) {
@@ -22,6 +22,14 @@ function Test-KitCommitStyle([string]$Repo, [string]$Message) {
   $cs = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'commitStyle' '')"; $sj = ("$Message" -split '\r?\n')[0]
   if (-not $cs -or $Message -match '^(wip|chore\(wip\))[:(]') { return '' }
   try { if ($sj -notmatch $cs) { "subject '$sj' misses repos[].commitStyle '$cs' (-ProseOk does not pass it)" } } catch { "repos[].commitStyle '$cs' is no valid regex: fix kit.local.json" }
+}
+# wt commit: repos[].commitMarker = the text the repo's commit hook adds to a message (its CI fails a head without it): the commit's
+# exit code, or 1 naming the miss right after the commit, before any push (owner 2026-11-26: 22 of 51 failed MR pipelines)
+function Test-KitCommitMarker([string]$Repo, [string]$Dir, [int]$Code) {
+  $mk = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'commitMarker' '')"; if ($Code -or -not $mk) { return $Code }
+  if ("$(git -C $Dir log -1 --format=%B)".Contains($mk)) { return 0 }
+  [Console]::Error.WriteLine("commit made, but its message lacks repos[].commitMarker '$mk': the repo's commit hook did not run or add it, and CI fails a head without it. Fix the hook setup (core.hooksPath, its _ folder and deps), then git -C $Dir commit --amend --no-edit (the hook runs again); never type the marker, never push this head")
+  1
 }
 # -> { ok; why; how }: how = none | builtin:<name> | the command
 function Test-KitProcessGate([Parameter(Mandatory)][ValidateSet('promote', 'merge', 'finish', 'bugFix', 'mrBody')][string]$Gate, [hashtable]$Payload = @{}) {

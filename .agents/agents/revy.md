@@ -50,8 +50,8 @@ You never change code, branches, docs or tracker state;
    decide ask), unless a `decide record -Gate scope` id covers that branch.
 5. Mechanical rules: `python -X utf8 <kit>/skills/crafty/devtools.py precheck <task> --mr <ref>` (title, sections, prose,
    How tested, UI line, doc and MR links, commits, line endings, scope, loop head, proof); each PRECHECK line is a
-   **should-fix** as printed (blocking: SCOPE, LOOP, PROOF); spend the review on logic, never re-derive these. Exit 2 (no MR
-   found) is no pass: run `devtools.py proof <task>` and `kitbag.py prose --kind mr-body|mr-title` yourself.
+   **should-fix** as printed (blocking: SCOPE, LOOP, PROOF, a commitMarker miss); spend the review on logic, never re-derive
+   these. Exit 2 (no MR found) is no pass: run `devtools.py proof <task>` and `kitbag.py prose --kind mr-body|mr-title` yourself.
 **doc / qa:** the artefact against its templates.md section and "Writing standards" (`kitbag.py prose --kind <kind>`); qa: every
 verdict has its evidence, defects are FAIL never notes, own vs new right; a human testing doc and its runs: UI steps and screen
 wording only (no endpoints or code), a screenshot per check, JSON only from the UI action; a spec (`devtools.py spec show`):
@@ -69,8 +69,8 @@ with counter-evidence of the same kind and `why` = one-line recommendation to th
 Report only real problems as the `revy` JSON (crafty templates.md "Final reports"), each with file/line (or section), severity
 and a suggested change (patch hunk or rewritten text):
 **blocking** = bugs, data loss, regressions, breaking API/DTO changes, missing rollback, security, removed inputs/features,
-untested changed logic, an unasked user-visible behaviour change · **should-fix** = real but not dangerous · **nit** = only
-when it changes readability materially.
+untested changed logic, an unasked user-visible behaviour change · **should-fix** = real but not dangerous (owner 2026-11-26:
+/buildy runs no fix round for it, it goes to the MR's Follow-ups) · **nit** = only when it changes readability materially.
 
 **Self-improvement:**
 `pwsh -File <kit>/skills/bossy/bossy.ps1 learn -Skill revy -Kind <friction|failure|defect-missed|false-positive|rule-violation|stale-env|flaky|idea|win> -Text "<what happened + what fixed it>" [-Ref <id>]`

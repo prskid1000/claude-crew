@@ -119,6 +119,11 @@ Expect "A3: a runbook missing ## Rollback and a bare 'none' refused ($a3BadC), c
 $pgBody = "## Summary`n$((@('word') * 60) -join ' ')`n## Changes`n- a`n- b`n- c`n- d`n## How tested`nunit`n## Risks`nnone`n## Links`nx"
 $pgOut = $pgBody | & $py -X utf8 -c "import sys; sys.path.insert(0, r'$(Split-Path $DT)'); import devtools as d; d.prose_gate('mr-body', sys.stdin.read())" 2>&1 | Out-String
 Expect "mr prose refusal: per-section word / bullet counts with the limits ($(($pgOut -split "`n" | Where-Object { $_ -match 'per section' }) -join ''))" ($pgOut -match 'per section \(mr-body: .*limits .*\): Summary 60w 0b · Changes 4w 4b · How tested 1w 0b' -and $pgOut -match 'refused')
+# owner 2026-11-26: bullets over a section's cap are joined into the last one before the mr gate, nothing cut (724 of 2755 mr calls were refused, bullet counts the most frequent finding)
+$pfPy = Join-Path (Kd) 'fit.py'
+[IO.File]::WriteAllText($pfPy, "import sys; sys.path.insert(0, sys.argv[1]); import devtools as d, kitbag as kb`nb = '## Summary\nhttps://t.example.com/T-1 one\n## Changes\n- a\n- b\n- c.\n- d\n- e\n## How tested\n| Check | Result |\n|---|---|\n| unit | PASS |\n\nNot run: nothing\n## Risks\n- r1\n## Links\n' + '- l\n' * 9`nf = kb.prose_fit('mr-body', b, d.KIT_DIR)`nprint('FIT', '- c; d; e' in f, f.count('\n- '), kb.prose_fit('mr-body', f, d.KIT_DIR) is f, kb.prose_fit('nope', b, d.KIT_DIR) is b)`nprint(d.mr_create('x', 'feat(api): add x (T-1)', b, check=True))")
+$pfOut = & $py -X utf8 $pfPy (Split-Path $DT) 2>&1 | Out-String
+Expect "mr prose fit: 5 Changes bullets -> 3 (c; d; e joined), 9 Links kept, a fitting text and an unknown kind unchanged; mr --check passes it ($(($pfOut -split "`n" | Where-Object { $_ -match 'FIT|fitted|CHECK' }) -join ' | '))" ($pfOut -match 'FIT True 13 True True' -and $pfOut -match 'mr-body fitted: Changes 5 bullets -> 3' -and $pfOut -match 'CHECK OK' -and $pfOut -notmatch 'refused')
 $pgLast = @($pgOut -split "`r?`n" | Where-Object { $_.Trim() })[-1]
 Expect "mr prose refusal: its last line names the finding and the limits (retro 1124: 7 refusals showed only the count) ($pgLast)" ($pgLast -match 'mr-body refused: .*\(max \d+\).*; limits: mr-body: ')
 # kept-doc tags (parity, moved from devtools selftest for its cap): Markdown front matter, HTML meta keywords

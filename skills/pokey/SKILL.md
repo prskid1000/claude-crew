@@ -79,7 +79,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
    - **PENDING**: tested later in another lane (the workflow adds `<code>A`). **findings**: context only.
 6. **Leave:** write `results.json` (each `observed`: `<observed> vs <expected>; <evidence>`; retest/audit text: `verify`;
    limits: 40 words per observed or finding, 25 per sentence, 900 per report; same for run.json `envLines`), run `pokey.ps1
-   finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0;
+   finalize -RunDir <run> -Code <CODE> -Check -FixNames` (scoped retry: `-Results results-retry.json`) until exit 0 (it fits an
+   over-cap `observed` / `what_was_done`: first words kept, the full text an evidence file the row cites);
    kill your background shells, `board leave`, release seat / phone, close your tab (`s.done()`, never `killSession`);
    return the results.
 

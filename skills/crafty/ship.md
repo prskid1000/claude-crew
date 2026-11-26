@@ -37,8 +37,9 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
   spec), then `devtools.py mr` again with the doc links (edits it). A fix round (review, CI, failedTesting): a new AI doc round,
   then the same commands update the same docs (cases result / round), comment and MR after its own PASS; never a new doc,
   never an earlier round removed.
-- FIX round (review or CI findings): a blocking review finding first sets the task `failedReview`, then `inProgress`
-  (`tracker status`). Fix each, or contest a review finding in `disputes` (never a silent skip). Then run
+- FIX round (blocking review findings, CI; should-fix: the MR's Follow-ups, no round): a blocking review finding first sets
+  the task `failedReview`, then `inProgress` (`tracker status`). Fix each, or contest a review finding in `disputes` (never a
+  silent skip). Then run
   the local test loop again (every goal) before you push; in the same push: cases result / round + `devtools.py doc "<t>"
   cases --key <task>:testing-ai`, cases add for new checks, `mr --spec` again. An already-merged MR: the fix on a new
   branch from the target (`crafty.ps1 wt lease`), a follow-up MR.
@@ -50,7 +51,8 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
   A rebase conflict ONLY in append-only files (changelog includes, route/nav lists, i18n keys, barrel/DI lists):
   `python devtools.py keepboth <file>`, no conflict marker left, git add, `git -c core.editor=true rebase --continue`,
   `crafty.ps1 check -Dir <module>`, `git push --force-with-lease` (the MR's own branch only), then `devtools.py merge` again.
-  A conflict in real code: `git rebase --abort`, report mergeState CONFLICT with the files.
+  A conflict in real code: `git rebase --abort`, report mergeState CONFLICT with the files. A repo with `repos[].appendOnly`:
+  the workflow ships one area at a time, the next after the first merged (its sync then keeps both sides once).
 - Merge results: the LAST line of `devtools.py merge` (MERGED / SCHEDULED / WAIT / CONFLICT / PIPELINE_FAILED / NOT_MERGED)
   is that MR's mergeState; merged=true ONLY for MERGED. WAIT: rerun about 2 minutes later (at most 3), except "waiting
   for producer <ref>": report WAIT. Others: say why.
