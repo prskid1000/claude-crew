@@ -76,9 +76,9 @@ Read before you call anything a lane limit; `phoney.ps1 status` and the acquire 
 
 | Need | On a lane | The check that confirms it |
 |---|---|---|
-| Google Play services modules (installed through the Play Store) | the `play` lane only: `acquire -Cap play`; a plain lane: `play: off (slim)` | `phoney.ps1 status` (`play: on`); `adb shell pm list packages -d com.android.vending` (listed = off) |
-| Camera | back: emulated scene, front: virtual image (`pokey.ps1 ui photo`) | the lane's AVD `config.ini`: `hw.camera.back`, `hw.camera.front` |
-| Hardware barcode scanner, Bluetooth printer (e.g. Zebra), NFC, real GPS | not supported: NOT_TESTED `phone-only`, a tester on a real device (GPS: a set point only, `adb emu geo fix`) | `adb shell getprop ro.boot.qemu` = 1 (an emulator: no radio, no peripheral) |
+| Google Play services modules (installed through the Play Store) | the `play` lane only: `acquire -Cap play`; a plain lane: `play: off (slim)` | `phoney.ps1 status` (`play: on`); `adb shell pm list packages -e com.android.vending` (listed = on) |
+| Camera | back: virtual scene, front: emulated image (`pokey.ps1 ui photo`) | the lane's AVD `config.ini`: `hw.camera.back`, `hw.camera.front` |
+| Hardware barcode scanner, Bluetooth printer (e.g. Zebra), NFC, real GPS | not supported: NOT_TESTED `phone-only`, a tester on a real device (GPS: a set point only, `adb emu geo fix <longitude> <latitude>`) | `adb shell getprop ro.boot.qemu` = 1 (an emulator: no NFC, no paired Bluetooth or USB peripheral) |
 | Push through FCM | needs the lane's token (the app registers it after login) | `pokey.ps1 ui log <tag>`: the token registration line |
 | iOS | macOS only (Simulators need Xcode); on Windows / Linux app checks are NOT_TESTED with that reason | `phoney.ps1 status`: `devices.type ios needs a macOS host` |
 

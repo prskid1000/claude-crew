@@ -38,12 +38,12 @@ Remove-Item "$capDir/L2.json" -Force
 $capAdb4 = "$tmp/adb4.cmd"; Set-Content $capAdb4 "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& echo emulator-5560	device& echo emulator-5564	device& echo emulator-5566	device& exit /b 0)`r`necho Success" -Encoding ascii
 $capLanes0 = $script:SwarmCfg.lanes; $script:SwarmCfg.lanes = @([pscustomobject]@{ name = 'P1'; port = 5564; caps = @('play') }, [pscustomobject]@{ name = 'P2'; port = 5566; caps = @('play') }, [pscustomobject]@{ name = 'L1'; port = 5560 }); $script:SwarmCfg.adb = $capAdb4
 foreach ($capBusy in 'P1', 'P2') { @{ agent = 'manual'; lane = $capBusy; serial = 'x'; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content "$capDir/$capBusy.json" }
-$script:capPoll = { $script:capPoll = { throw 'the plain acquire waited behind the -Cap waiter' }; [Threading.Thread]::Sleep(1100)
-  $capW2 = Get-Content "$script:capDir/wait/G.json" -Raw | ConvertFrom-Json; $script:capTwo = "$(@($capW2.lanes) -join ',')|$($capW2.lane)|$(Test-LaneWaiter $capW2 @('L1'))|$(Test-LaneWaiter $capW2 @('P2'))|$(@(Invoke-Phone status) -match '^waiting: G for P1 / P2 \(cap play\)')"
-  $script:capTwoPlain = (Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'H') | Select-Object -Last 1 | ConvertFrom-Json).lane; Remove-Item "$script:capDir/P2.json" -Force; $script:capPoll = { } }
+$script:capPoll = { $script:capPoll = { throw 'the plain acquire waited behind the -Cap waiter' }
+  $capW2 = Get-Content "$script:capDir/wait/G.json" -Raw | ConvertFrom-Json; $capW2.since = (Get-Date).AddSeconds(-5).ToString('s'); $capW2 | ConvertTo-Json | Set-Content "$script:capDir/wait/G.json"; $script:capTwo = "$(@($capW2.lanes) -join ',')|$($capW2.lane)|$(Test-LaneWaiter $capW2 @('L1'))|$(Test-LaneWaiter $capW2 @('P2'))|$(@(Invoke-Phone status) -match '^waiting: G for P1 / P2 \(cap play\)')"
+  $script:capTwoPlain = (Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'H') | Select-Object -Last 1 | ConvertFrom-Json).lane; Remove-Item "$script:capDir/P2.json" -Force; $script:capPoll = { throw 'G not served after P2 freed' } }
 $capTwoGot = try { (Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'G', '-Cap', 'play') | Select-Object -Last 1 | ConvertFrom-Json).lane } catch { "$_" }
 "two:$($capTwo -match '^P1,P2\|\|False\|True\|waiting: G for P1 / P2 \(cap play\)' -and $capTwoPlain -eq 'L1' -and $capTwoGot -eq 'P2')"; $script:SwarmCfg.lanes = $capLanes0
-if ($args[2] -eq 'ios') { return }
+if ($args[2] -eq 'ios') { $script:SwarmCfg | Add-Member -Force kind 'ios'; "sim:$((Get-LaneLimits $null).play -match 'Simulator has no Play Store')"; return }
 # slim keeps the Play Store on the play lane only
 $capAdb3 = "$tmp/adb3.cmd"; Set-Content $capAdb3 "@echo off`r`necho %*>> `"$tmp\sh.txt`"`r`necho package:com.android.vending`r`necho package:com.google.android.youtube`r`necho disabled" -Encoding ascii; $script:SwarmCfg.adb = $capAdb3
 $null = Invoke-Slim -Serial emulator-5560; $null = Invoke-Slim -Serial emulator-5562; $slimLog = @(Get-Content "$tmp/sh.txt" | Where-Object { $_ -match 'disable-user' })
@@ -61,7 +61,7 @@ Expect-Each $capRes 'phoney lane caps: plain lanes first and -Cap play picks the
 # the iOS variant: the same lane choice and queue
 Copy-Item (Join-Path $src 'skills/phoney/swarm-ios.ps1') (Join-Path $capKit 'skills/phoney')
 $capIos = @(Px "$capFile.ps1" (Join-Path $capKit 'skills/phoney/swarm-ios.ps1') "$capFile-ios" 'ios' 2>&1)
-Expect-Each $capIos 'swarm-ios lane caps: the same -Cap lane choice, queue, refusals, limits and waiter caps: #' @('acquire', 'limits', 'holder', 'running', 'two') -Show 12
+Expect-Each $capIos 'swarm-ios lane caps: the same -Cap lane choice, queue, refusals, limits (a Simulator: no Play Store) and waiter caps: #' @('acquire', 'limits', 'holder', 'running', 'two', 'sim') -Show 12
 # bossy wait lists: a -Cap waiter shows its capability and every lane that offers it (supervise WAIT OVER CAP, status wait rows)
 $capO = Join-Path $capKit 'skills/bossy/bossy.ps1'
 $capWaits = & { . $capO; $capNow = Get-Date; $capPd = Get-KitPath phones -Create; Set-JsonFile (Join-Path $capPd 'P1.json') @{ lane = 'P1'; agent = 'test:T2' }
@@ -69,7 +69,7 @@ $capWaits = & { . $capO; $capNow = Get-Date; $capPd = Get-KitPath phones -Create
   "$(@(Get-KitWaitsOverCap $capNow 20 | ForEach-Object { "$($_.why)/$($_.holder)" }) -join ',')|$(@(Get-KitStatusWaitResources | Where-Object agent -eq 'test:T5').why)" }
 Expect "bossy wait lists: a -Cap waiter shows its capability and its lanes, held by their holders ($capWaits)" ($capWaits -eq 'phone lane P1 / P2 (cap play)/test:T2 (P1)|phone lane (cap play)')
 # decide ask (owner 2026-11-26): an ask that blames a lane or the env is refused until -Diagnostic says what was checked and names an existing ENV-FIX
-$capFix = if ((Px $capO decide ask -Kind envfix -Run w1 -Agent X1 -Item A6 -Question 'the store is off on the lane' | Out-String) -match 'ENV-FIX (\S+) pending') { $Matches[1] }
+$capFix = if ((Px $capO decide ask -Kind envfix -Run w1 -Agent X1 -Item A6 -Question 'the lane cannot install the module' | Out-String) -match 'ENV-FIX (\S+) pending') { $Matches[1] }
 $capAsk = @('decide', 'ask', '-Run', 'w1', '-Agent', 'X1', '-Item', 'A7', '-Context', 'today: the scan check stops at the module download', '-Options', 'A: skip — the scan stays untested', 'B: wait — the item waits', '-Recommend', 'B')
 $capQ = 'The lane cannot install the scanner module: skip the scan check?'
 $capB1 = Px $capO @capAsk -Question $capQ | Out-String; $capC1 = $LASTEXITCODE
@@ -78,8 +78,9 @@ $null = Px $capO @capAsk -Question $capQ -Diagnostic "checked $capFix"; $capC3 =
 $null = Px $capO @capAsk -Question 'Scans are not supported on the emulator: waive them?'; $capC5 = $LASTEXITCODE
 $capB4 = Px $capO @capAsk -Question $capQ -Diagnostic "store package disabled, status says play off, no play lane; $capFix" | Out-String
 $capD4 = @(Px $capO decide list -Json | ConvertFrom-Json | Where-Object { $_.item -eq 'A7' })
-$capB6 = Px $capO decide ask -Run w1 -Agent X1 -Item A8 -Context 'today: totals round up' -Question 'Keep the rounding?' -Options 'A: keep — no change','B: exact — totals change' -Recommend A | Out-String
-Expect "decide ask: an env-blamed ask is refused (2) without -Diagnostic, with an unknown ENV-FIX id or a 2-word one; asked once it says what was checked + its ENV-FIX; a product ask passes ($capFix $capC1 $capC2 $capC3 $capC5)" ($capFix -and $capC1 -eq 2 -and $capB1 -match 'blames the env' -and $capB1 -match '-Kind envfix' -and $capC2 -eq 2 -and $capC3 -eq 2 -and $capC5 -eq 2 -and
+$capWords = @('could not install', 'couldn''t install', 'won''t boot with', 'fails to install', 'is not able to install', 'does not work with') | ForEach-Object { $null = Px $capO @capAsk -Question "The lane $_ the scanner module: skip it?"; $LASTEXITCODE }
+$capB6 = Px $capO decide ask -Run w1 -Agent X1 -Item A8 -Context 'today: closed lanes are hidden, drivers cannot see a note in the lane list' -Question 'The lane list hides closed lanes: show them?' -Options 'A: show — more rows','B: hide — as today' -Recommend B | Out-String
+Expect "decide ask: an env-blamed ask is refused (2) without -Diagnostic, with an unknown ENV-FIX id or a 2-word one (could not, won't, fails to ... too: $capWords); asked once it says what was checked + its ENV-FIX; an ENV-FIX and a product ask about lanes pass ($capFix $capC1 $capC2 $capC3 $capC5)" ($capFix -and "$capWords" -eq '2 2 2 2 2 2' -and $capC1 -eq 2 -and $capB1 -match 'blames the env' -and $capB1 -match '-Kind envfix' -and $capC2 -eq 2 -and $capC3 -eq 2 -and $capC5 -eq 2 -and
   $capB4 -match 'DECISION \S+ pending' -and $capD4.Count -eq 1 -and $capD4[0].question -match 'checked: store package disabled' -and $capB6 -match 'DECISION \S+ pending')
 Remove-Item "$capFile.ps1", $capFile, "$capFile-ios" -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $capKit
 Complete-Tests

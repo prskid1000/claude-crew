@@ -66,7 +66,7 @@ function LaneSerial($l) { if ($l.udid) { [string]$l.udid } else { "emulator-$($l
 # what a lane offers and what it cannot do (SKILL.md "Lane capabilities"): status and the acquire JSON print it, so no agent guesses a limit
 function Get-LaneLimits($l) {
   if ((Get-SwarmConfig).kind -eq 'ios') { return [ordered]@{ play = 'none (a Simulator has no Play Store)'; camera = 'none (no Simulator camera)'; push = 'simctl push (no device token)'; unsupported = 'hardware barcode scanner, Bluetooth printer, NFC, real GPS: a tester on a real device' } }
-  [ordered]@{ play = $(if ($l -and @($l.caps) -contains 'play') { 'on' } else { 'off (slim): acquire -Cap play' }); camera = 'emulated scene / virtual image'; push = "needs the lane's FCM token"
+  [ordered]@{ play = $(if ($l -and @($l.caps) -contains 'play') { 'on' } else { 'off (slim): acquire -Cap play' }); camera = 'virtual scene (back), emulated image (front)'; push = "needs the lane's FCM token"
     unsupported = 'hardware barcode scanner, Bluetooth printer, NFC, real GPS: a tester on a real device' }
 }
 # a waiter's lanes: its -Cap lanes (lanes), else its -Lane, else any

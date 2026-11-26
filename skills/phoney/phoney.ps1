@@ -76,7 +76,7 @@ function LaneSerial($l) { "emulator-$($l.port)" }
 function Test-LaneCap($l, [string]$Cap) { [bool]($l -and @($l.caps | Where-Object { $_ }) -contains $Cap) }
 # what a lane offers and what it cannot do (SKILL.md "Lane capabilities"): status and the acquire JSON print it, so no agent guesses a limit
 function Get-LaneLimits($l) {
-  [ordered]@{ play = $(if (Test-LaneCap $l 'play') { 'on' } else { 'off (slim): acquire -Cap play' }); camera = 'emulated scene / virtual image'; push = "needs the lane's FCM token"
+  [ordered]@{ play = $(if (Test-LaneCap $l 'play') { 'on' } else { 'off (slim): acquire -Cap play' }); camera = 'virtual scene (back), emulated image (front)'; push = "needs the lane's FCM token"
     unsupported = 'hardware barcode scanner, Bluetooth printer, NFC, real GPS: a tester on a real device' }
 }
 # a waiter's lanes: its -Cap lanes (lanes), else its -Lane, else any

@@ -1757,7 +1757,7 @@ function Invoke-Decide {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Context "today: <what happens now>" -Question "<q>" -Options "A: <label> — <its effect>","B: .." -Recommend A [-Fyi] [-Contracts <file>]'; exit 2 }
       $opts = @(Get-KitDecisionChoices @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) $Recommend)
       if ($askGap = Get-KitAskGap $Kind $Context $Question $opts $Recommend "$Options" $Diagnostic $dir) { $askGap; exit 2 }
-      if ($Diagnostic) { $Context = "$Context; checked: $Diagnostic".TrimStart('; ') }
+      if ($Diagnostic) { $Question += " (checked: $Diagnostic)" }
       $shown = "$(if ($Context) { "Today: $(($Context.Trim() -replace '^(?i)today\s*:\s*').TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }
