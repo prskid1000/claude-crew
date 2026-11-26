@@ -2,7 +2,7 @@
 swarm-ios.ps1 (ios-simulator; phoney.ps1 forwards here when devices.type is ios): device lanes + the app under test. devices.type: none (default: verbs refuse; app checks NOT_TESTED) |
 android (emulators) | ios (Simulators, macOS).
   pwsh 7: & <kit>/skills/phoney/phoney.ps1 <verb> [args]
-  acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall]   lease a phone
+  acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall] [-Cap play]   lease a phone
   ensure -Agent <id> · release -Agent <id> [-Keep] · status
   build [-AppDir <checkout>] [-Local] [-Shared] [-Clean]   apk/app.apk; -Local: release + cleartext apk/app-local.apk
   install [-Apk <path>] [-Serials <s>,..] [-Launch] · launch -Serial <s> [-Clear] [-Stop]
@@ -11,8 +11,8 @@ android (emulators) | ios (Simulators, macOS).
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
-Sections: L21 config · L113 phone · L309 build · L458 install · L485 launch · L499 avd · L588 up · L680 down · L710 slim ·
-  L737 arrange
+Sections: L21 config · L113 phone · L313 build · L462 install · L489 launch · L503 avd · L592 up · L684 down · L714 slim ·
+  L741 arrange
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -116,10 +116,11 @@ param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'ensure', 'release', 'status')][string]$Action,
   [string]$Agent, [string]$Lane, [int]$WaitMinutes = 90, [switch]$Keep, [switch]$NoInstall, [string]$Holder,
   [string]$Apk, # 'local' = apk/app-local.apk
-  [string[]]$Reverse   # adb reverse these ports
+  [string[]]$Reverse,   # adb reverse these ports
+  [string[]]$Cap   # acquire: only a lane whose caps hold each one (play: Android lanes, a Simulator has no Play Store)
 )
 $ErrorActionPreference = 'Stop'
-$Reverse = @(Split-KitList $Reverse | ForEach-Object { [int]$_ })
+$Reverse = @(Split-KitList $Reverse | ForEach-Object { [int]$_ }); $Cap = @(Split-KitList $Cap)
 $c = Get-SwarmConfig
 $adb = $c.adb; $pkg = $c.app.package
 $dir = Get-KitPath phones; $waitDir = Join-Path $dir 'wait'
@@ -175,6 +176,9 @@ switch ($Action) {
     if (-not $Agent) { throw 'acquire needs -Agent' }
     $lanes = @($c.lanes | Where-Object { -not $Lane -or $_.name -eq $Lane })
     if (-not $lanes) { throw "unknown lane $Lane (lanes: $($c.lanes.name -join ', '))" }
+    # -Cap: only lanes that offer each one (lanes[].caps); plain lanes first
+    $lanes = @($lanes | Where-Object { $capLane = $_; -not @($Cap | Where-Object { @($capLane.caps) -notcontains $_ }).Count } | Sort-Object -Stable { [bool]$_.caps })
+    if (-not $lanes) { throw "no lane$(if ($Lane) { " $Lane" }) with capability $($Cap -join ', ') (swarm.config.json lanes[].caps)" }
     $wf = Join-Path $waitDir "$Agent.json"
     $since = (Get-Date).ToString('s')
     Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf
@@ -182,7 +186,7 @@ switch ($Action) {
     while (-not $got) {
       $got = Locked {
         if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf }   # heartbeat
-        $mine = @($c.lanes | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
+        $mine = @($(if ($Cap) { $lanes } else { $c.lanes }) | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
         if ($mine) {   # already ours (offline too)
           $script:had = $true
           if ($Holder) { $lf = Join-Path $dir "$($mine[0].name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; if ($o.holder -ne $Holder) { $o | Add-Member -Force holder $Holder; Save-Json $o $lf } }

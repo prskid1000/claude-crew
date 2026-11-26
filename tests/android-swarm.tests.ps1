@@ -164,13 +164,17 @@ Set-Content '$gt/adb.cmd' "@echo off``r``nexit /b 0" -Encoding ascii; Set-Conten
 `$w = @(Invoke-Up -Lanes G1 -Mode None -Headless 3>&1 | Where-Object { `$_ -is [Management.Automation.WarningRecord] })
 "blocked:`$((`$w.Message -match 'G1 not started: no memory turn \(waiting for GPU\)').Count -eq 1 -and -not (Test-Path '$gt/started.txt'))"
 # avd.gpu swiftshader (software rendering, no GPU memory): boots although another kind holds the GPU
-Set-Content '$gt/adb.cmd' "@echo off``r``necho 1``r``nexit /b 0" -Encoding ascii; Set-Content '$gt/emu.cmd' "@echo off``r``necho started> $gt\started.txt" -Encoding ascii; Set-Content '$gt/noop.ps1' 'exit 0'; `$KitCmd.swarm = '$gt/noop.ps1'; `$KitCmd.dev = '$gt/noop.ps1'
+Set-Content '$gt/adb.cmd' "@echo off``r``necho %*>> $gt\adb.txt``r``necho 1``r``nexit /b 0" -Encoding ascii; Set-Content '$gt/emu.cmd' "@echo off``r``necho started> $gt\started.txt" -Encoding ascii; Set-Content '$gt/noop.ps1' 'exit 0'; `$KitCmd.swarm = '$gt/noop.ps1'; `$KitCmd.dev = '$gt/noop.ps1'
 `$script:SwarmCfg | Add-Member -Force avd ([pscustomobject]@{ gpu = 'swiftshader' })
 `$null = Invoke-Up -Lanes G1 -Mode None -Headless 3>&1; for (`$i = 0; `$i -lt 20 -and -not (Test-Path '$gt/started.txt'); `$i++) { Start-Sleep -Milliseconds 250 }
 "software:`$(Test-Path '$gt/started.txt')"
+# a play lane (lanes[].caps): up turns its Play Store back on; a plain lane's boot never touches it
+`$plainBoot = @(Get-Content '$gt/adb.txt' | Where-Object { `$_ -match 'pm enable com.android.vending' }).Count; `$script:SwarmCfg.lanes[0] | Add-Member caps @('play')
+`$null = Invoke-Up -Lanes G1 -Mode None -Headless 3>&1
+"store:`$(`$plainBoot -eq 0 -and @(Get-Content '$gt/adb.txt' | Where-Object { `$_ -match '-s emulator-5590 shell pm enable com.android.vending' }).Count -eq 1)"
 "@
 Stop-Process -Id $vis.Id -Force -ErrorAction SilentlyContinue
-Expect-Each $gu 'swarm gpu: another kind holding the GPU -> no lane boot, a software-rendered lane boots: #' @('blocked', 'software') -Show 8
+Expect-Each $gu 'swarm gpu: another kind holding the GPU -> no lane boot, a software-rendered lane boots, a play lane gets its store on: #' @('blocked', 'software', 'store') -Show 8
 Remove-Item $gt -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $k
 # defaults: app.kind native; AVD neutral < kit.local.json devices.avd < swarm.config.json avd; installs by argv, no Invoke-Expression
 $k = New-TestKit swarm-defaults; Copy-Item (Join-Path $src 'skills/phoney') (Join-Path $k 'skills') -Recurse -Force; Copy-Item (Join-Path $src 'skills/crafty/adapters/android-sdk.ps1') (New-Item -ItemType Directory -Force (Join-Path $k 'skills/crafty/adapters'))

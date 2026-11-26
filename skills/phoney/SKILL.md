@@ -33,7 +33,9 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
 - A1. `phoney.ps1 acquire -Agent <id> -Lane <name> [-Holder <board code>] [-Apk local]`: returns at once if it is yours, else
   waits its fair turn, boots it through the memory gate, installs the app ("installed: updated" / a side APK = log in again;
   the local APK: pick the app's local-server setting at login, per org lessons). Prints serial, login, notes, app commit.
-  Put the serial in your board entry's claims (or pass `-Holder`).
+  Put the serial in your board entry's claims (or pass `-Holder`). A check that needs the Play Store (a Google Play services
+  module such as the ML Kit document scanner, which installs through it): `-Cap play` instead of `-Lane` (the lane whose
+  `caps` holds `play`; none configured -> refused: NOT_TESTED `phone-only`); every other check leaves that lane free.
 - A2. `$env:ANDROID_SERIAL='<serial>'` on every command; touch only your phone; never `adb kill-server`, never
   `up`/`down`/`install` for others. Relaunch / clear: `phoney.ps1 launch -Serial <s> [-Clear]`. Logs: `pokey.ps1 ui log <tag>`.
   Camera: the app's camera icon, then `pokey.ps1 ui photo [shutterId]`. Voice: start the app's listening, then
@@ -55,7 +57,11 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
 - L2. `phoney.ps1 avd create` once per machine; a stuck or corrupt lane: `avd reset -Lanes <name> -Level
   cold|snapshots|wipe|recreate` (image: `swarm.config.json` `avd`; default `abi` = the host's: `arm64-v8a` or `x86_64`; `gpu`:
   `host` (default) or a software mode (`swiftshader`: no GPU memory, no GPU lease; emulator 36.4 on Windows crashes on exit
-  with it); a lane made before the virtual mic needs `recreate` for `ui mic`).
+  with it); a lane made before the virtual mic needs `recreate` for `ui mic`). `slim` turns the Play Store off (it updates
+  apps on each boot: + 0.7 GB data, + 80 MB RAM measured), so Play services cannot fetch modules; ONE lane keeps it:
+  `"caps": ["play"]` on its `lanes[]` row (a `google_apis_playstore` image whatever `avd.tag` says), then once, while it is
+  free, `avd reset -Lanes <name> -Level cold` (its next shutdown saves the snapshot with the store on). No Google
+  account, no root: lanes install APKs by `adb install` and never write the system image.
 - L3. Never boot or shut phones yourself: agents lease them, the workflow releases a lane after its last item, `acquire` and
   `supervise -AutoFix` reclaim leases with no live holder (README "Leases"), supervise stops idle phones. At most 2 app lanes
   while a web pool or a dev wave runs.
@@ -68,7 +74,7 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
 ```json
 {
  "swarm.config.json": {
-   "_readme": "Lanes = AVD names lane-<nn> (phoney.ps1 avd create; iOS: a udid; -Lane lane-<nn> or an old bird name also picks the nn-th lane), each with its test login (user: targets.local.json) and notes. avd {abi, api, device, tag} over kit.local.json devices.avd (default android-35, pixel_7, google_apis). app.kind: native (default) | react-native | kmp; flutter, maui, capacitor (adapters/app-kinds.ps1). localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
+   "_readme": "Lanes = AVD names lane-<nn> (phoney.ps1 avd create; iOS: a udid; -Lane lane-<nn> or an old bird name also picks the nn-th lane), each with its test login (user: targets.local.json) and notes; caps: [\"play\"] on one lane = its Play Store stays on (acquire -Cap play). avd {abi, api, device, tag} over kit.local.json devices.avd (default android-35, pixel_7, google_apis). app.kind: native (default) | react-native | kmp; flutter, maui, capacitor (adapters/app-kinds.ps1). localManifests: cleartext manifests build -Local merges; localReverse: ports acquire -Apk local reverses (local API).",
    "avdDir": "",
    "outDir": "",
    "headless": false,

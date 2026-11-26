@@ -2,7 +2,7 @@
 phoney.ps1: device lanes + the app under test (android-swarm SKILL.md). devices.type: none (default) | android (emulators) | ios
 (verbs refuse; app checks NOT_TESTED) | ios (this script forwards to swarm-ios.ps1).
   pwsh 7: & <kit>/skills/phoney/phoney.ps1 <verb> [args]
-  acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall]   lease a phone
+  acquire -Agent <id> [-Lane <name>] [-Holder <board code>] [-Apk local|<path>] [-Reverse <port>,..] [-NoInstall] [-Cap play]   lease a phone
   ensure -Agent <id> · release -Agent <id> [-Keep] · status
   build [-AppDir <checkout>] [-Local] [-Shared]   apk/app.apk; -Local: release + cleartext apk/app-local.apk
   install [-Apk <path>] [-Serials <s>,..] [-Launch] · launch -Serial <s> [-Clear] [-Stop]
@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app-kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L122 phone · L322 build · L468 install · L495 launch · L507 avd · L595 up · L694 down · L724 events ·
-  L781 slim
+Sections: L24 config · L124 phone · L328 build · L474 install · L501 launch · L513 avd · L603 up · L704 down · L734 events ·
+  L791 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -72,6 +72,8 @@ function SnapshotFlag($c, [string]$name, [bool]$cold) {
 }
 function EmuProcs($port) { Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$port\b" } }
 function LaneSerial($l) { "emulator-$($l.port)" }
+# lanes[].caps: what only this lane offers; play = the Play Store stays on (Play services modules install through it): acquire -Cap play
+function Test-LaneCap($l, [string]$Cap) { [bool]($l -and @($l.caps | Where-Object { $_ }) -contains $Cap) }
 function Test-LaneUp($l) { [bool]((& (Get-SwarmConfig).adb devices) -match "^emulator-$($l.port)\s+device") }
 # lane AVD hardware; {{X}} = swarm.config.json avd (abi, api, device, tag); devices.avd.extra {key: value} sets or adds config.ini lines
 # (hw.ramSize, hw.cpu.ncore, hw.lcd.*, disk.dataPartition.size); devices.phoneGB: the memory gate's need per booted phone
@@ -125,10 +127,11 @@ param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('acquire', 'ensure', 'release', 'status')][string]$Action,
   [string]$Agent, [string]$Lane, [int]$WaitMinutes = 90, [switch]$Keep, [switch]$NoInstall, [string]$Holder,
   [string]$Apk, # 'local' = apk/app-local.apk
-  [string[]]$Reverse   # adb reverse these ports
+  [string[]]$Reverse,   # adb reverse these ports
+  [string[]]$Cap   # acquire: only a lane whose caps hold each one
 )
 $ErrorActionPreference = 'Stop'
-$Reverse = @(Split-KitList $Reverse | ForEach-Object { [int]$_ })
+$Reverse = @(Split-KitList $Reverse | ForEach-Object { [int]$_ }); $Cap = @(Split-KitList $Cap)
 $c = Get-SwarmConfig
 $adb = $c.adb; $pkg = $c.app.package
 $dir = Get-KitPath phones; $waitDir = Join-Path $dir 'wait'
@@ -177,7 +180,7 @@ switch ($Action) {
       $ls = Lease $l.name
       $up = Running $l
       $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)$(if ($ls.seen) { ", seen $(([datetime]$ls.seen).ToString('HH:mm'))" })" } else { 'free' }
-      '{0,-8} {1,-14} {2} · last used {3}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" }), (Format-KitLeaseLast $lu["lane|$($l.name)"])
+      '{0,-8} {1,-14} {2} · last used {3}{4}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" }), (Format-KitLeaseLast $lu["lane|$($l.name)"]), $(if ($l.caps) { " · caps $(@($l.caps) -join ', ')" })
     }
     "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (~$($script:PhoneGB) GB a phone)"
     Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
@@ -187,6 +190,9 @@ switch ($Action) {
     if (-not $Agent) { throw 'acquire needs -Agent' }
     $Lane = Resolve-PhoneLane $Lane; $lanes = @($c.lanes | Where-Object { -not $Lane -or $_.name -eq $Lane })
     if (-not $lanes) { throw "unknown lane $Lane (lanes: $($c.lanes.name -join ', '))" }
+    # -Cap: only lanes that offer each one; plain lanes first, so a capability lane stays free for the checks that need it
+    $lanes = @($lanes | Where-Object { $capLane = $_; -not @($Cap | Where-Object { -not (Test-LaneCap $capLane $_) }).Count } | Sort-Object -Stable { [bool]$_.caps })
+    if (-not $lanes) { throw "no lane$(if ($Lane) { " $Lane" }) with capability $($Cap -join ', ') (swarm.config.json lanes[].caps: $(@($c.lanes | Where-Object caps | ForEach-Object { "$($_.name) $(@($_.caps) -join ' ')" }) -join '; '))" }
     $wf = Join-Path $waitDir "$(ConvertTo-KitSlug $Agent).json"   # test:CL1 is no Windows file name
     $since = (Get-Date).ToString('s')
     Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf
@@ -195,7 +201,7 @@ switch ($Action) {
       $got = Locked {
         if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf }   # heartbeat
         $ls = @{}; foreach ($x in $c.lanes) { $ls[$x.name] = Lease $x.name }   # one locked read per lane a round (3 made each lock churn)
-        $mine = @($(if ($Lane) { $c.lanes | Where-Object name -eq $Lane } else { $c.lanes }) | Where-Object { $ls[$_.name].agent -eq $Agent } | Select-Object -First 1)   # -Lane: that lane only
+        $mine = @($lanes | Where-Object { $ls[$_.name].agent -eq $Agent } | Select-Object -First 1)   # -Lane / -Cap: those lanes only
         if ($mine) {   # already ours (offline too)
           $script:had = $true
           if ($Holder) { $lf = Join-Path $dir "$($mine[0].name).json"; $o = Get-Content $lf -Raw | ConvertFrom-Json; if ($o.holder -ne $Holder) { $o | Add-Member -Force holder $Holder; Save-Json $o $lf } }
@@ -275,7 +281,7 @@ switch ($Action) {
         } catch { Write-Warning "$serial : $_"; $installed = "install FAILED (the phone runs an older app): $_" }   # no stamp: next acquire retries
       }
     }
-    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; installed = $installed; reverse = @($rev); apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
+    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; caps = @($got.caps | Where-Object { $_ }); installed = $installed; reverse = @($rev); apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
   }
 
   'ensure' {
@@ -525,9 +531,11 @@ function Holder($l) { $f = Join-Path $leases "$($l.name).json"; if (Test-Path $f
 
 function New-Avd($name) {
   $v = $c.avd
-  $tpl = $script:AvdTemplate.Replace('{{ABI}}', $v.abi).Replace('{{ARCH}}', ($v.abi -replace '-v8a$')).Replace('{{API}}', $v.api).Replace('{{TAG}}', $v.tag).Replace('{{DEVICE}}', $v.device).Replace('{{PLAY}}', "$($v.tag -match 'playstore')".ToLower())
-  $sys = Join-Path $sdk "system-images/$($v.api)/$($v.tag)/$($v.abi)"
-  if (-not (Test-Path $sys)) { throw "system image missing: $sys - install it: sdkmanager `"system-images;$($v.api);$($v.tag);$($v.abi)`" (or set swarm.config.json avd)" }
+  # a play lane needs a Play Store image, whatever avd.tag the other lanes use
+  $tag = if ((Test-LaneCap ($c.lanes | Where-Object name -eq $name | Select-Object -First 1) 'play') -and $v.tag -notmatch 'playstore') { 'google_apis_playstore' } else { $v.tag }
+  $tpl = $script:AvdTemplate.Replace('{{ABI}}', $v.abi).Replace('{{ARCH}}', ($v.abi -replace '-v8a$')).Replace('{{API}}', $v.api).Replace('{{TAG}}', $tag).Replace('{{DEVICE}}', $v.device).Replace('{{PLAY}}', "$($tag -match 'playstore')".ToLower())
+  $sys = Join-Path $sdk "system-images/$($v.api)/$tag/$($v.abi)"
+  if (-not (Test-Path $sys)) { throw "system image missing: $sys - install it: sdkmanager `"system-images;$($v.api);$tag;$($v.abi)`" (or set swarm.config.json avd)" }
   $d = Join-Path $avdHome "$name.avd"
   New-Item -ItemType Directory -Force $d | Out-Null
   $cfg = $tpl.Replace('{{NAME}}', $name).Replace('{{SDK}}', $sdk)
@@ -673,6 +681,8 @@ foreach ($o in $out) {
   }
   $ready += $o
   if (-not ((& $adb -s $o.serial shell 'cat /sdcard/.qa-slimmed 2>/dev/null') -match 'slimmed')) { & $KitCmd.swarm slim -Serial $o.serial }
+  # a lane slimmed before it got the play capability: its store back on (kept for good by avd reset -Level cold: the snapshot is saved)
+  if (Test-LaneCap ($all | Where-Object name -eq $o.lane | Select-Object -First 1) 'play') { & $adb -s $o.serial shell pm enable com.android.vending | Out-Null }
   foreach ($k in 'window_animation_scale', 'transition_animation_scale', 'animator_duration_scale') { & $adb -s $o.serial shell settings put global $k 0 }
   "$($o.lane) ready: $($o.serial)"
 }
@@ -786,7 +796,8 @@ $adb = (Get-SwarmConfig).adb
 function A { & $adb -s $Serial shell @args 2>&1 }
 
 # KEEP: gms, gsf, maps, phone, messaging, documentsui, Gboard, camera, chrome, the app, SystemUI, Settings, as + as.oss (on-device speech)
-$disable = @('com.android.vending') + @('googlequicksearchbox', 'youtube', 'apps.youtube.music', 'apps.youtube.kids', 'gm', 'apps.photos', 'apps.docs', 'apps.tachyon', 'calendar',
+# the Play Store goes too (it updates apps on every boot), except on a play lane: Play services modules (ML Kit scanner) install through it
+$disable = @(if (-not (Test-LaneCap ((Get-SwarmConfig).lanes | Where-Object { (LaneSerial $_) -eq $Serial } | Select-Object -First 1) 'play')) { 'com.android.vending' }) + @('googlequicksearchbox', 'youtube', 'apps.youtube.music', 'apps.youtube.kids', 'gm', 'apps.photos', 'apps.docs', 'apps.tachyon', 'calendar',
   'apps.subscriptions.red', 'apps.wellbeing', 'apps.turbo', 'projection.gearhead', 'apps.safetyhub', 'feedback', 'printservice.recommendation', 'apps.wallpaper',
   'apps.nbu.files', 'videos', 'apps.restore', 'apps.pixelmigrate' | ForEach-Object { "com.google.android.$_" })
 $installed = (A pm list packages) -replace '^package:', ''
