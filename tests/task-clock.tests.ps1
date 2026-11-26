@@ -104,6 +104,29 @@ function Get-TrackerTask($id) { [pscustomobject]@{ status = 'review'; subtasks =
 foreach ($t in @('dh31', 31), @('dh32', 32), @('dh33', 33), @('dh35', 35)) { Invoke-Track add -Task $t[0] -Mrs "g/web!$($t[1])" -Detail }
 '@ @($O) | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
 Expect "track run: a dead workflow's open fix step or blocking finding never holds promotion (run done: wf_dn1; quiet 90 min: wf_qt1, wf_qt2); a live one holds (wf_lv1) ($($dh.Trim() -replace '\s+', ' '))" ($dh -match 'finished:[^\r\n]*wf_dn1' -and $dh -notmatch 'finished:[^\r\n]*wf_lv1' -and $dh -notmatch 'HOLD dh3[125]' -and $dh -match 'DONE dh35' -and $dh -match 'HOLD dh33: MRs merged but fix:W1 \(wf_lv1\) still in review/fix')
+# owner 2026-11-26 (a dev-env change: a task for the MR, no testing docs, no QA, closed on merge): tags chore + dev-env, track add -OnMerged closed
+$dvTag = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') naming tags --have feature,website kind=chore flow=dev-env 2>&1 | Out-String; $dvBad = & $py -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') naming tags flow=staging 2>&1 | Out-String
+Expect "naming tags kind=chore flow=dev-env: chore replaces feature, dev-env added, another's tag kept; an unknown flow value refused ($($dvTag.Trim()))" ((($dvTag | ConvertFrom-Json).tags -join ',') -eq 'chore,website,dev-env' -and $dvBad -match "flow tag 'staging': not in the vocabulary")
+$dvOut = Invoke-PsTest 'dev-env-close' @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]
+$global:dvSets = @()
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }
+function Get-TrackerTask($id) { [pscustomobject]@{ status = 'review'; subtasks = @() } }
+function Set-TrackerStatus($id, $s) { $global:dvSets += "$id=$s" }
+function Get-TrackerComments { }; function Start-Process { }
+Invoke-Track add -Task dv1 -Mrs 'g/web!41' -OnMerged closed; Invoke-Track add -Task dv2 -Mrs 'g/web!42'
+"sets:$($global:dvSets -join ',')"
+'@ @($O) | Out-String
+Expect "track add -OnMerged closed (a dev-env change): closed once its MRs merge, no missing-testing-comment line; a plain task is promoted and gets that line ($(@($dvOut -split "`n" | Where-Object { $_ -match '^sets:|^(DONE|ATTENTION) dv\d' } | ForEach-Object { $_.Trim() }) -join ' // '))" ($dvOut -match 'sets:dv1=closed,dv2=promoted' -and $dvOut -match 'DONE dv1: all 1 MRs merged -> status closed' -and $dvOut -notmatch 'ATTENTION dv1' -and $dvOut -match 'ATTENTION dv2: merged, but no solution/testing comment')
+# precheck --kind dev-env on a branch diff: a new key keeps every default; a changed value = DEFAULTS; no kind: no DEFAULTS; an unknown kind: usage
+$dvRepo = Join-Path (Kd) 'dv-repo'; New-Item -ItemType Directory -Force $dvRepo | Out-Null; 'retries = 3' | Set-Content "$dvRepo/app.cfg"; Save-GitRepo $dvRepo i
+git -C $dvRepo update-ref refs/remotes/origin/main HEAD; git -C $dvRepo checkout -q -b feat/DV9-lane
+Set-JsonFile (Join-Path (Kd) 'dv-mr.json') @{ task = 'DV9'; type = 'chore'; scope = ''; change = 'lane host key'; summary = 'Lane host'; changes = @(@{ text = 'New key' }); checksRun = @(@{ name = 'env'; result = 'PASS' }); notRun = 'nothing'; risks = @(@{ text = 'none: one key' }) }
+$dvPc = { param($dvKind) @((& $py -X utf8 $P precheck DV9 --dir $dvRepo --spec (Join-Path (Kd) 'dv-mr.json') @dvKind --json 2>$null | Out-String | ConvertFrom-Json) | ForEach-Object code) }
+"retries = 3`nlane_host = lane" | Set-Content "$dvRepo/app.cfg"; Save-GitRepo $dvRepo 'chore: lane host key'; $dvNew = & $dvPc @('--kind', 'dev-env')
+"retries = 5`nlane_host = lane" | Set-Content "$dvRepo/app.cfg"; Save-GitRepo $dvRepo 'chore: more retries'; $dvChg = & $dvPc @('--kind', 'dev-env'); $dvPlain = & $dvPc @()
+$null = & $py -X utf8 $P precheck DV9 --kind staging 2>&1; $dvBadKind = $LASTEXITCODE
+Expect "precheck --kind dev-env: a new key passes DEFAULTS, a changed value fails it, no kind runs no DEFAULTS, an unknown kind exits 2 ($($dvNew -join ',') | $($dvChg -join ',') | $($dvPlain -join ',') | $dvBadKind)" ('DEFAULTS' -notin $dvNew -and 'LOOP' -in $dvNew -and 'DEFAULTS' -in $dvChg -and 'DEFAULTS' -notin $dvPlain -and 'LOOP' -in $dvPlain -and $dvBadKind -eq 2)
 # usage limit (owner 2026-11-26): two agents of two runs hit one weekly limit -> ONE ACT naming it, its reset, the models and runs; an older one (4 h) none
 $ulT = Join-Path (Kd) 'txul'
 foreach ($ul in @('wf_ul1', 'claude-m-a', 0), @('wf_ul2', 'claude-m-b', 0), @('wf_ul3', 'claude-m-c', 240)) {

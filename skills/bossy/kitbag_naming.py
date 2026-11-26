@@ -221,6 +221,7 @@ TAG_GROUPS = {   # this order is the tags' order (owner 2026-11-25: type, broad 
     'wave': (True, r'wave-\d+'),                                            # RETIRED (owner 2026-11-25: no numbers): any wave= clears; old wave-N tags go
     'phase': (True, ('spec', 'build', 'review', 'qa')),                     # RETIRED (owner 2026-11-25: unused): the status says it
     'repo': (False, None),                                                  # by hand / brief repos: api-code -> api
+    'flow': (True, ('dev-env',)),                                           # by hand (crafty ship.md "Dev-env change", owner 2026-11-26): no testing docs, no QA, closed on merge
     'env': (True, r'needs-deploy|on-[a-z0-9]+(?:-[a-z0-9]+)*'),           # RETIRED: the status and deploys.jsonl say it
     'risk': (False, ('migration', 'security', 'breaking', 'feature-flag-off')),   # RETIRED (owner 2026-11-25: unused): the brief and MR Risks say it
     'decision': (True, ('needs-owner', 'blocked')),                         # RETIRED: the Decisions checklist and decisions.jsonl say it

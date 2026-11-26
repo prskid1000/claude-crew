@@ -564,7 +564,7 @@ function Test-KitBugTask($T) {   # a subtask row without .tags (jira, azure, fal
 # title, the kit table, tags (kitbag.py naming rename --plan; table in cache retag-<parent>.md), then the parents' Items; -DryRun: counts + table
 function Invoke-KitTagVerb([string]$Verb, [string]$Id, [string[]]$Rest, [hashtable]$Opt = @{}) {
   if ($Verb -eq 'tags' -and $Id -eq 'prune') { return Invoke-KitTagPrune @("$($Opt.Name)" -split ',') "$($Opt.List)" -Unused:([bool]$Opt.Unused) -Json:([bool]$Opt.Json) }   # a tag name may hold spaces: comma-split only
-  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product repo) | tracker tags prune -Unused [-DryRun]'; exit 2 }; return Set-KitTaskTags $Id $Rest }
+  if ($Verb -eq 'tags') { if (-not ($Id -and $Rest.Count)) { 'usage: tracker tags <id> <group>=<value> ... (kitbag.py naming tags: kind area product repo flow) | tracker tags prune -Unused [-DryRun]'; exit 2 }; return Set-KitTaskTags $Id $Rest }
   if (-not $Id) { 'usage: tracker retag <parent>[,<parent>] [-DryRun]'; exit 2 }
   $Out = Join-Path (Get-KitPath cache -Create) "retag-$((Split-KitList $Id)[0] -replace '[^\w.-]', '_').md"
   $dry = $__trDry; $script:__trDry = $false   # the reads run for real; the writes below only without -DryRun

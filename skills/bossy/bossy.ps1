@@ -1028,7 +1028,7 @@ switch ($Action) {
       if ($ciTask) { Set-KitTaskMrItems $o.task; $cj = Close-KitCiTask $o.task $ciTask @($o.mrs)
         if ($cj.state -eq 'wait') { Hold "HOLD $($o.task): $($cj.why)" } elseif ($cj.state -ne 'closed') { if (-not $Quiet) { "ATTENTION $($o.task): $($cj.why)" } } else { $o.done = $true; $o.doneAt = (Get-KitStamp); Save $o -Run; "DONE $($o.task): $($cj.why)"; $script:merged = $true }; continue }
       Update-KitSolutionMrs $o.task; $cmts =@(try { Get-TrackerComments $o.task } catch {}) | ForEach-Object { [string]$_.text }
-      if ((Test-KitTaskDocLink $o.task) -ne $true -and -not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
+      if ('promoted' -in $o.onMerged -and (Test-KitTaskDocLink $o.task) -ne $true -and -not ($cmts | Where-Object { $_ -match [string](Get-KitSetting 'locale.testCommentPattern' '(?i)how to test|test(ing)? (steps|guide|instructions|doc)|tester guide|live check') })) {
         $steps = @(Get-KitWorkflowDirs | ForEach-Object { Get-Item (Join-Path $_.FullName 'journal.jsonl') -ErrorAction SilentlyContinue } | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-3) } | Sort-Object LastWriteTime -Descending | ForEach-Object {
             foreach ($line in Get-Content $_.FullName) {
               $j = try { $line | ConvertFrom-Json } catch { $null }

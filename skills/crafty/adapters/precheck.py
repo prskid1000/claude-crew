@@ -1,4 +1,4 @@
-# Usage: loaded by devtools.py from adapters/ (a plugin); its verb: python -X utf8 devtools.py precheck <task> [--mr <repo>!<iid> ...] [--dir <wt>] [--spec <mr.json>] [--scope-ok <id>] [--json] | selftest. Exit codes: 0 ok · 1 problems · 2 usage.
+# Usage: loaded by devtools.py from adapters/ (a plugin); its verb: python -X utf8 devtools.py precheck <task> [--mr <repo>!<iid> ...] [--dir <wt>] [--spec <mr.json>] [--scope-ok <id>] [--kind dev-env] [--json] | selftest. Exit codes: 0 ok · 1 problems · 2 usage.
 """Precheck plugin: the mechanical rules review findings repeat (kitty-precheck mined 1848 revy findings, 2026-11-25), run by devy
 before it asks for review (crafty ship.md) so revy reads logic. Each problem prints `PRECHECK <ref> <CODE>: <problem> -> <fix>`.
 MRs: --mr refs, else the task's tracked MRs, else the open MR of --dir's branch (or --spec rendered: before the MR opens).
@@ -10,7 +10,16 @@ Links bullet naming an MR / PR has its URL or ref) · COMMITS (commit prose: com
 carries repos[].commitMarker) · EOL (a file
 whose diff is mostly line endings) · SCOPE (files outside the area globs) · LOOP (a local loop PASS whose head is the MR head, or only
 docs changed since) · PROOF (devtools.py proof <task> gaps).
-Sections: L23 rules · L168 context · L290 verb · L321 selftest · L373 areas"""
+--kind dev-env (crafty ship.md "Dev-env change"; also read from the task's track record, onMerged closed): DOCS and PROOF off, DEFAULTS
+on (a removed line of a code / config file whose value no added line of its hunk keeps = a changed default: no dev-env change).
+Dev-env change, the steps (a new key or an env override whose unset path is today's value; instead of finish, plain track add, deploy request):
+  crafty.ps1 tracker create -Spec <json> (kind Chore); crafty.ps1 tracker tags <task> kind=chore flow=dev-env
+  crafty.ps1 checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Dir <wt> -Evidence "round 1 PASS: <the env run that used it>"
+  devtools.py mr <wt> --spec mr.json; bossy.ps1 track add -Task <task> -Mrs <repo>!<iid> -OnMerged closed   (closed once merged, never promoted)
+  devtools.py comment <task> --spec solution.json comment-solution; crafty.ps1 tracker status <task> review
+  devtools.py precheck <task> --dir <wt> --kind dev-env
+  devtools.py merge <wt> <iid> --no-docs 'dev-env <what>'   (runs DEFAULTS again: a changed default = NOT_MERGED, no override)
+Sections: L32 rules · L224 context · L350 verb · L390 selftest · L460 areas"""
 import contextlib, io, json, os, re, subprocess, sys
 
 DT = None
@@ -158,11 +167,58 @@ def r_proof(c):
     return [('PROOF', g, 'testing.md "Proof": close the gap (devtools.py cases result)') for g in c.get('proofGaps') or []]
 
 
-RULES = (r_title, r_sections, r_prose, r_how_tested, r_ui, r_docs, r_tracker, r_links, r_commits, r_eol, r_scope, r_loop, r_proof)
+TEST_FILE = re.compile(r'(?i)(^|/)(tests?|specs?|__tests__|e2e|cypress|fixtures?)/|[._-](test|spec)s?\.\w+$|(^|/)test_[^/]+$|Tests?\.\w+$')
+LITERAL = re.compile(r'''"((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)'|(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])''')
+COMMENT = re.compile(r'^\s*(#|//|/?\*|--|<!--|;|$)')
+
+
+def default_changes(diff):
+    """[(file, old line, lost values)] of a `git diff -U0`: a removed line of a code / config file (no test, no doc, no comment)
+    whose values (string and number literals; none: the text after its first = or :) no added line of the same hunk keeps.
+    `X = "a"` -> `X = env("X") or "a"` keeps "a"; `X = "b"`, a dropped line or a new number is a changed default."""
+    out, f, rem, add, hunk = [], '', [], [], False
+
+    def flush():
+        new = '\n'.join(add)
+        for ln in rem:
+            vals = [next(x for x in m if x) for m in LITERAL.findall(ln)] or [v for v in [re.sub(r'^[^=:]*[=:]\s*', '', ln, count=1).strip(' \t,;')] if v != ln.strip(' \t,;') and v]
+            lost = [v for v in vals if not re.search(r'(?<![\w.])' + re.escape(v) + r'(?![\w.])', new)]
+            if lost and f and not TEST_FILE.search(f) and not DOC_ONLY.search(f):
+                out.append((f, ln.strip()[:80], lost))
+        rem.clear(), add.clear()
+
+    for ln in diff.replace('\r\n', '\n').split('\n'):
+        if ln.startswith('diff --git '):
+            flush()
+            hunk, f = False, ''
+        elif not hunk and ln[:6] in ('--- a/', '+++ b/'):   # a deleted file keeps its a/ name (+++ /dev/null)
+            f = ln[6:]
+        elif ln.startswith('@@'):
+            flush()
+            hunk = True
+        elif hunk and ln.startswith('-') and not COMMENT.match(ln[1:]):
+            rem.append(ln[1:])
+        elif hunk and ln.startswith('+'):
+            add.append(ln[1:])
+    flush()
+    return out
+
+
+def r_defaults(c):
+    if c.get('kind') != 'dev-env':
+        return []
+    fix = "keep today's value as the fallback (a new key, or an env / config override whose unset path is the old line); a real change of behaviour is no dev-env change: the normal flow (docs, QA), no --kind dev-env"
+    if not c.get('diff'):
+        return [('DEFAULTS', 'the diff is not readable: no proof the defaults are unchanged', 'pass --dir <wt> (the branch checked out, origin fetched)')]
+    return [('DEFAULTS', f'{f}: "{old}" loses {", ".join(lost[:3])}', fix) for f, old, lost in default_changes(c['diff'])[:5]]
+
+
+RULES = (r_title, r_sections, r_prose, r_how_tested, r_ui, r_docs, r_tracker, r_links, r_commits, r_eol, r_scope, r_loop, r_proof, r_defaults)
+KIND_OFF = {'dev-env': {'DOCS', 'PROOF'}}   # a kind's rules that do not apply (no testing docs, no cases)
 
 
 def run_rules(c):
-    return [x for r in RULES for x in r(c)]
+    return [x for r in RULES for x in r(c) if x[0] not in KIND_OFF.get(c.get('kind'), ())]
 
 
 # ---- context: texts from the host or the spec, facts from git and the kit's records
@@ -244,6 +300,10 @@ def loop_gap(tid, gdir, base, head):
 
 def merge_loop_gap(m, proj, iid, worktree):
     """devtools.py merge: NOT_MERGED text when the LOOP rule refuses the MR head; '' when no task, it passes or --override (logged)."""
+    if str(DT.NO_DOCS).lower().startswith('dev-env'):   # the claim that passed the docs gate is checked here, never taken on word (no override)
+        tgt, ok = f'origin/{m.get("target_branch") or "main"}', bool(worktree and os.path.isdir(worktree))
+        if bad := r_defaults({'kind': 'dev-env', 'diff': git(worktree, 'diff', '-U0', f'{tgt}...{m.get("sha") or "HEAD"}') if ok else ''}):
+            return f'!{iid}: precheck DEFAULTS: {bad[0][1]} -> {bad[0][2]}\nNOT_MERGED'
     tid = DT._mr_task(m, proj, iid)
     gaps = loop_gap(tid, worktree if worktree and os.path.isdir(worktree) else '', f'origin/{m.get("target_branch") or "main"}', m.get('sha') or '') if tid else []
     for g in [g for g in gaps if 'has no head' in g[1]]:   # SKILL.md's checkpoint lines wrote no head (150 of 343): a warning, never a refusal
@@ -287,13 +347,17 @@ def mr_targets(tid, refs, wt, spec):
     return out
 
 
-# ---- verb: precheck <task> [--mr <ref> ...] [--dir <wt>] [--spec <mr.json>] [--json] | selftest
+# ---- verb: precheck <task> [--mr <ref> ...] [--dir <wt>] [--spec <mr.json>] [--kind dev-env] [--json] | selftest
 def precheck_cmd(argv):
     if argv[:1] == ['selftest']:
         return selftest()
     opt = lambda k: argv[argv.index(k) + 1] if k in argv[:-1] else ''
     refs = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == '--mr']
-    vals = {opt(k) for k in ('--dir', '--spec', '--scope-ok')} | set(refs)
+    vals = {opt(k) for k in ('--dir', '--spec', '--scope-ok', '--kind')} | set(refs)
+    kind = opt('--kind')
+    if kind not in KIND_OFF and '--kind' in argv:
+        print(f'precheck: --kind {kind!r} is no kind ({", ".join(KIND_OFF)})', file=sys.stderr)
+        return 2
     DT.SCOPE_OK = opt('--scope-ok') or DT.SCOPE_OK   # a person's scope word (decide record -Gate scope)
     tid = next((a for a in argv if not a.startswith('-') and a not in vals), '')
     if not (tid or refs or opt('--dir')) or argv[:1] in (['-h'], ['--help']):
@@ -302,12 +366,17 @@ def precheck_cmd(argv):
     wt = opt('--dir')
     if wt and not tid:
         tid = DT.task_of_branch(DT._run(['git', '-C', wt, 'rev-parse', '--abbrev-ref', 'HEAD']).strip())
+    if not kind and tid and ((DT.read_tracking().get('tasks') or {}).get(tid) or {}).get('onMerged') == ['closed']:
+        kind = 'dev-env'   # its track record (track add -OnMerged closed): revy's plain precheck reads the same rules
     found, todo = [], mr_targets(tid, refs, wt, opt('--spec'))
     if not todo:
         print(f'precheck {tid}: no MR (pass --mr, --dir with an open MR, or --spec mr.json)', file=sys.stderr)
         return 2
     for ref, title, body, gdir, base, head, branch in todo:
-        for code, problem, fix in run_rules(context(tid, title, body.replace('\r\n', '\n'), gdir, base, head, ref, branch)):
+        c = context(tid, title, body.replace('\r\n', '\n'), gdir, base, head, ref, branch)
+        if kind:
+            c.update(kind=kind, diff=git(gdir, 'diff', '-U0', f'{base}...{head}') if gdir and base and head else '')
+        for code, problem, fix in run_rules(c):
             found.append({'mr': ref, 'code': code, 'problem': problem, 'fix': fix})
     if '--json' in argv:
         print(json.dumps(found, indent=1, ensure_ascii=False))
@@ -354,6 +423,15 @@ def selftest():
     ex('LOOP: only docs changed after the PASS head', 'LOOP' not in codes({**good, 'head': 'def5678', 'sinceLoop': []}))
     ex('LOOP: an owner word in the PASS evidence passes a changed head', 'LOOP' not in codes({**good, 'head': 'def5678', 'sinceLoop': ['a.ts'], 'loopEv': 'PASS owner word: ship it'}))
     ex('PROOF: proof gaps', 'PROOF' in codes({**good, 'proofGaps': ["check T1 (ui): no PASS case with UI evidence"]}))
+    # --kind dev-env (owner 2026-11-26): no testing docs or cases; the diff keeps every default
+    hd = lambda f, old, new: f'diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1 +1 @@\n' + ''.join(f'-{x}\n' for x in old) + ''.join(f'+{x}\n' for x in new)
+    keep = hd('app/config.py', ['    BASE_URL = "https://svc.example"', 'def run_it('], ['    # a lane sets BASE_URL; unset = today', '    BASE_URL = (os.getenv("BASE_URL") or "https://svc.example").rstrip("/")', 'def run_proc('])
+    dev = {**good, 'kind': 'dev-env', 'docs': [{'label': 'Testing doc', 'rx': re.compile('never'), 'url': ''}], 'proofGaps': ['no cases'], 'diff': keep}
+    ex('dev-env: DOCS and PROOF off, an env override that keeps the old value as its fallback passes; without the kind both fire, no DEFAULTS', run_rules(dev) == [] and {'DOCS', 'PROOF'} <= codes({**dev, 'kind': ''}) and 'DEFAULTS' not in codes({**dev, 'kind': '', 'diff': hd('a.py', ['T = 30'], ['T = 60'])}))
+    lost = [default_changes(hd(f, o, n)) for f, o, n in (('a.py', ['TIMEOUT = 30'], ['TIMEOUT = 60']), ('conf/app.yml', ['host: db.internal'], ['host: db.lane']), ('a.py', ['x = "keep"'], []), ('a.py', ['mode = fast_path(a)'], ['mode = slow_path(a)']))]
+    ex('DEFAULTS: a changed number, an unquoted config value, a dropped line and a changed call each lose the old value', all(len(x) == 1 for x in lost) and lost[0][0][2] == ['30'] and lost[1][0][2] == ['db.internal'] and 'DEFAULTS' in codes({**dev, 'diff': hd('a.py', ['TIMEOUT = 30'], ['TIMEOUT = 60'])}))
+    same = [default_changes(hd(f, o, n)) for f, o, n in (('tests/test_a.py', ['assert x == 3'], ['assert x == 4']), ('docs/a.md', ['port 80'], ['port 81']), ('a.py', ['# was 30'], ['# now 60']), ('a.py', ['import os'], ['import os, sys']), ('a.py', ["name = 'a'"], ['name = "a"']))]
+    ex('DEFAULTS: tests, docs, comments, a line with no value and a quote-style change are no default; an unread diff fails closed', same == [[], [], [], [], []] and 'DEFAULTS' in codes({**dev, 'diff': ''}))
     # devtools.py merge runs the LOOP rule too (2026-11-26: a merge passed while precheck refused LOOP); an owner word passes
     mt, lf, gt, g = DT._mr_task, loop_facts, git, globals()
     try:
@@ -365,6 +443,15 @@ def selftest():
         with contextlib.redirect_stdout(io.StringIO()) as o:
             headless = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', os.getcwd())
         ex('merge: no loop checkpoint -> NOT_MERGED naming LOOP; an owner word merges; a headless PASS warns, merges', 'precheck LOOP' in none and none.endswith('NOT_MERGED') and own == '' and headless == '' and 'has no head' in o.getvalue())
+        nd, DT.NO_DOCS, g['loop_facts'] = getattr(DT, 'NO_DOCS', ''), 'dev-env lane settings', (lambda t: (True, 'PASS owner word: ship', ''))
+        g['git'] = lambda d, *a: hd('a.py', ['TIMEOUT = 30'], ['TIMEOUT = 60'])
+        chg = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', os.getcwd())
+        g['git'] = lambda d, *a: keep
+        kept, unread = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', os.getcwd()), merge_loop_gap({'sha': 'abc'}, 'g/r', '7', '')
+        DT.NO_DOCS = 'foundation area M'
+        g['git'] = lambda d, *a: hd('a.py', ['TIMEOUT = 30'], ['TIMEOUT = 60'])
+        fnd, DT.NO_DOCS = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', os.getcwd()), nd
+        ex("merge --no-docs 'dev-env ...': a changed default or an unread diff -> NOT_MERGED naming DEFAULTS, kept defaults merge; a foundation reason runs no DEFAULTS", 'precheck DEFAULTS' in chg and chg.endswith('NOT_MERGED') and kept == '' and 'DEFAULTS' in unread and fnd == '')
     finally:
         DT._mr_task, g['loop_facts'], g['git'] = mt, lf, gt
     return 0 if all(res) else 1
