@@ -20,7 +20,7 @@ Dev-env change, the steps (a new key or an env override whose unset path is toda
   devtools.py comment <task> --spec solution.json comment-solution; crafty.ps1 tracker status <task> review
   devtools.py precheck <task> --dir <wt> --kind dev-env
   devtools.py merge <wt> <iid> --no-docs 'dev-env <what>'   (runs DEFAULTS again: a changed default = NOT_MERGED, no override)
-Sections: L33 rules · L250 context · L376 verb · L417 selftest · L498 areas"""
+Sections: L33 rules · L270 context · L396 verb · L437 selftest · L526 areas"""
 import contextlib, io, json, os, re, subprocess, sys
 
 DT = None
@@ -169,22 +169,26 @@ def r_proof(c):
 
 
 TEST_FILE = re.compile(r'(?i)(^|/)(tests?|specs?|__tests__|e2e|cypress|fixtures?)/|[._-](test|spec)s?\.\w+$|(^|/)test_[^/]+$|Tests?\.\w+$')
-TOKEN = re.compile(r""""((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)'|((?<![\w.)\]])-?\d+(?:\.\d+)?(?![\w.]))|([A-Za-z_][\w.]*)""")   # string, number (its sign), word
+TOKEN = re.compile(r""""((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)'|((?<![\w.)\]])-?\d[\w.]*)|([A-Za-z_][\w.]*)""")   # string, number (sign, 8.0.42, 30s), word
 COMMENT = re.compile(r'^\s*(#(?!define|include)|//|/?\*|--(?=\s|$)|<!--|;|$)')
 FLAG = re.compile(r'(?i)^(true|false|yes|no|on|off|null|none|nil)$')
-TAIL = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:^|(?<=\s))(?:#|//)(?=\s|$).*$""")   # a trailing comment outside quotes
+TAIL = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:^|(?<=\s))(?:#|//)(?=\s|$).*$""")   # a removed line: only a sure trailing comment goes
+TAIL_NEW = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|/\*.*?\*/|<!--.*?-->|(?<=\s)(?:#|//|--\s|;\s).*$""")   # an added line: all that may be one
 
 
-def code_of(ln):
+def code_of(ln, added=False):
     """A line without its trailing comment ('' = a comment or blank line): a value kept only in a comment is not kept."""
-    return '' if COMMENT.match(ln) else TAIL.sub(lambda m: m.group(0) if m.group(0)[:1] in '"\'' else '', ln).rstrip()
+    return '' if COMMENT.match(ln) else (TAIL_NEW if added else TAIL).sub(lambda m: m.group(0) if m.group(0)[:1] in '"\'' else '', ln).rstrip()
 
 
 def default_changes(diff):
-    """[(file, old line, lost tokens)] of a `git diff -U0` (diff_u0): a removed line of a code / config file (no test, no doc, no
-    comment) with a token (string, number with its sign, word: a name, true, a host) no added code line of the same hunk keeps;
-    a line moved whole within its file is kept. `X = "a"` -> `X = env("X") or "a"` keeps every token; `X = "b"`, 30 -> 60,
-    true -> false, a dropped or commented-out line, a changed binary and a file whose name the header hides are changed defaults."""
+    """[(file, old line, lost tokens)], at most 5, of a `git diff -U0` (diff_u0): a removed line of a code / config file (no test,
+    no doc, no comment) with a token the added code no longer holds. A number (its sign, 8.0.42, 30s), a flag word and a plain name
+    stay in their hunk; a string literal stays whole in its file; a dotted name keeps its object in the hunk and its members in the
+    file (a call moved into a helper); a line moved whole within its file is kept. `X = "a"` -> `X = env("X") or "a"` keeps every
+    token; `X = "b"`, 30 -> 60, true -> false, a dropped or commented-out line, a replaced binary and a file whose name the header
+    hides are changed defaults. Limits (revy reads the diff): token presence, not order or operators (30 -> 30 * 2, two values
+    swapped in one hunk pass); a rename or a refactor is flagged too."""
     files, f, hunk = [], None, None
     for ln in diff.replace('\r\n', '\n').split('\n'):
         if ln.startswith('diff --git '):
@@ -200,28 +204,44 @@ def default_changes(diff):
         elif ln.startswith('@@'):
             hunk = ([], [])
             f['hunks'].append(hunk)
-        elif hunk is not None and ln[:1] in '-+' and ln[:1]:
-            hunk[ln[0] == '+'].append(code_of(ln[1:]))
+        elif hunk is not None and ln[:1] and ln[:1] in '-+':
+            hunk[ln[0] == '+'].append(ln[1:])
     out = []
+    lits = lambda w: {x for g in TOKEN.findall(w) for x in g[:2] if x}
+    has = lambda t, where, num=False: re.search((r'(?<![\w.-])' if num else r'(?<![\w.])') + re.escape(t) + r'(?!\w)' + (r'(?!\.\d)' if num else ''), where)
     for f in files:
         name = f['name']
         if name and (TEST_FILE.search(name) or DOC_ONLY.search(name)):
             continue
         if f['binary']:
             out.append((name, 'binary file', ['its old content']))
-        moved, whole = {a.strip() for h in f['hunks'] for a in h[1] if a.strip()}, '\n'.join(a for h in f['hunks'] for a in h[1])
-        has = lambda t, where, num=False: re.search((r'(?<![\w.-])' if num else r'(?<![\w.])') + re.escape(t) + r'(?!\w)' + (r'(?!\.\d)' if num else ''), where)
-        for rem, add in f['hunks']:
-            new = '\n'.join(add)
-            for ln in [r for r in rem if r.strip() and r.strip() not in moved]:
-                lost = []
+        moved = {a.strip() for h in f['hunks'] for a in h[1] if a.strip()}
+        codes = [[code_of(a, True) for a in h[1]] for h in f['hunks']]
+        whole = '\n'.join(c for h in codes for c in h)
+        whole_lits = lits(whole)
+        for (rem, _), added in zip(f['hunks'], codes):
+            new = '\n'.join(added)
+            new_lits = lits(new)
+            for raw in rem:
+                ln, lost = code_of(raw), []
+                if not ln.strip() or raw.strip() in moved:
+                    continue
                 for m in TOKEN.findall(ln):
-                    t = next(x for x in m if x).rstrip('.') if m[3] else next(x for x in m if x)
-                    # a string, a number and a flag word stay in their hunk; a name may move into a helper of the same file (its dotted parts)
-                    kept = t in new if m[0] or m[1] else has(t, new, bool(m[2])) or bool(m[3] and not FLAG.match(t) and all(re.search(r'(?<!\w)' + re.escape(p) + r'(?!\w)', whole) for p in t.split('.')))
+                    if m[0] or m[1]:
+                        t = m[0] or m[1]
+                        kept = t in new_lits or t in whole_lits
+                    elif m[2]:
+                        t = m[2].rstrip('.')
+                        kept = has(t, new, True)
+                    else:
+                        t = m[3].rstrip('.')
+                        p = t.split('.')
+                        kept = has(t, new) or (len(p) > 1 and not FLAG.match(p[-1]) and has(p[0], new) and all(re.search(r'\.' + re.escape(x) + r'(?!\w)', whole) for x in p[1:]))
                     lost += [] if kept else [t]
                 if lost or not name:
                     out.append((name or '(a file the diff header does not name)', ln.strip()[:80], lost or ['its file name']))
+                if len(out) >= 5:
+                    return out
     return out
 
 
@@ -468,6 +488,14 @@ def selftest():
             dc('a.py', ['T = 30  # seconds'], ['T = int(env("T", 30))  # sec']), default_changes(hd('my notes.md', ['port 80'], ['port 81']).replace('my notes.md\n', 'my notes.md\t\n')),
             default_changes(hd('a.py', ['TIMEOUT = 30'], ['import lane']) + '@@ -9 +9 @@\n+TIMEOUT = 30\n'), default_changes('diff --git a/k.bin b/k.bin\nnew file mode 100644\nBinary files /dev/null and b/k.bin differ\n')]
     ex('DEFAULTS: tests, docs, comments, an added name, a quote-style change, a changed trailing comment, a doc path with a space, a line moved between hunks and a new binary are no default; an unread diff fails closed', same == [[]] * 9 and 'DEFAULTS' in codes({**dev, 'diff': ''}))
+    # second review round: dotted numbers, a longer string, a swapped object, a value kept only in an added comment; a call moved into a helper passes
+    two = lambda f, old, new, more: hd(f, old, new) + '@@ -9,0 +9 @@\n' + ''.join(f'+{x}\n' for x in more)
+    hole = [dc('.env', ['DB_HOST=127.0.0.1'], ['DB_HOST=10.0.0.5']), dc('compose.yml', ['image: mysql:8.0.42'], ['image: mysql:8.0.43']), dc('a.py', ['p = "db"'], ['p = "db2"']), dc('a.py', ['h = c.get("host")'], ['h = c.get("port") or ghost']),
+            default_changes(two('a.py', ['h = creds.get("host")'], ['h = other.get("host")'], ['def f(creds):'])), default_changes(two('a.py', ['h = cfg.dev.host'], ['h = cfg.prod.host'], ['dev = 1'])),
+            dc('a.py', ['T = 30'], ['T = 60 #30']), dc('a.c', ['T = 30;'], ['T = 60; /* 30 */']), dc('a.sql', ['SET t = 30'], ['SET t = 60 -- 30']), dc('a.py', ['T = SHORT'], ['T = LONG'])]
+    ex(f'DEFAULTS: a dotted number, a longer string, another key, a swapped object, a value left only in an added comment each lose a token ({[i for i, x in enumerate(hole) if not x]})', all(hole))
+    helper = two('config.py', ['    "host": creds.get("host"),'], ['    "host": _lane_host("DB_HOST", creds),'], ['def _lane_host(name, creds):', '    return os.getenv(name) or creds.get("host")'])
+    ex('DEFAULTS: a call moved into a new helper of the same file keeps its object, member and string; at most 5 rows', default_changes(helper) == [] and len(default_changes(''.join(hd(f'f{i}.py', ['T = 30'], ['T = 60']) for i in range(9)))) == 5)
     hid = [default_changes('diff --git k.py k.py\n--- k.py\n+++ k.py\n@@ -1 +1 @@\n-TIMEOUT = 30\n+TIMEOUT = 60\n'), default_changes('diff --git a/k.jks b/k.jks\nBinary files a/k.jks and b/k.jks differ\n')]
     ex('DEFAULTS: a diff whose header names no file (diff.noprefix) and a replaced binary fail closed', all(len(x) == 1 for x in hid) and hid[1][0][0] == 'k.jks')
     # devtools.py merge runs the LOOP rule too (2026-11-26: a merge passed while precheck refused LOOP); an owner word passes
