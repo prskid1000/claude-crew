@@ -242,7 +242,7 @@
         "codex": "fallback: kit.rules exec policy + the shell guard (best-effort)",
         "antigravity": "port: guard_client.mjs denies view_file of the logins file, an always-on rule, the shell guard"
       },
-      "dated model override (models.override: every tier and model id on one model until a time)": {
+      "dated model override (kit.local.json models.override {model, until: ISO time}: every claude tier and models.<phase> id until then; brief agents[].model / items[].model, debateModels and inherit keep theirs)": {
         "codex": "fallback: Claude tiers only (usage.ps1 Get-KitModelOverride); a Codex session sets models.tiers.codex by hand and removes it after",
         "antigravity": "fallback: Claude tiers only; an Antigravity session sets models.tiers.antigravity / ports.models by hand and removes it after"
       },

@@ -18,8 +18,8 @@
 In: kit.local.json `media` (pokey media.md), yt-dlp, ffmpeg + ffprobe, OpenCV, node (adapters/media-grab.mjs: headless grabs), gws,
 env JIRA_*, CLAUDE_AGENT. Out: text, JSON, files under <runtime>/cache/media/<key>/. Exit codes: 0 ok · 1 problem (unreadable
 link, busy, stage failed) · 2 usage.
-Sections: L33 config · L162 fetchers · L417 probe · L436 detect · L1693 transcribe · L1813 vision · L1916 index · L2038 read ·
-  L2113 bench · L2804 verbs · L2950 cli
+Sections: L33 config · L164 fetchers · L419 probe · L438 detect · L1695 transcribe · L1815 vision · L1918 index · L2040 read ·
+  L2115 bench · L2806 verbs · L2952 cli
 """
 import base64, contextlib, hashlib, http.client, json, math, os, re, shutil, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 import os.path as osp
@@ -78,7 +78,9 @@ if os.environ.get('KIT_MEDIA_CONFIG'):   # a JSON file with a media object on to
 def model_override(models, now=None):
     """models.override {model, until} while live (usage.ps1 Get-KitModelOverride; KIT_NOW: the tests' clock), else ''."""
     from datetime import datetime
-    ov = (models or {}).get('override') or {}
+    ov = models.get('override') if isinstance(models, dict) else None
+    if not isinstance(ov, dict) or not re.match(r'\d{4}-\d\d-\d\d', str(ov.get('until') or '')):   # ISO only, as usage.ps1
+        return ''
     try:
         end, at = datetime.fromisoformat(str(ov.get('until') or '')).astimezone(), datetime.fromisoformat(now or os.environ.get('KIT_NOW') or datetime.now().isoformat()).astimezone()
     except ValueError:

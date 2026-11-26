@@ -82,17 +82,23 @@ run({ runDir: 'C:/runs/R8', ..._kl, verify: false, items: [_item('S1'), _item('S
 Expect-Each (Invoke-Js tc-stepretry $jsSr $wf) 'workflow step retry: #' 'sr-once' -Show 8
 # owner 2026-11-26: "all on fable until Monday" = models.override {model, until}, never new defaults; KIT_NOW is the fake clock
 $O = Join-Path $k 'skills/bossy/bossy.ps1'; $ovPy = Join-Path (Kd) 'ov.py'
-"import sys; sys.path.insert(0, sys.argv[1]); import video; o = {'override': {'model': 'm-all', 'until': '2026-11-30T00:00+05:30'}}`nprint(video.model_override(o, '2026-11-29T23:59+05:30') + '|' + video.model_override(o, '2026-11-30T00:01+05:30') + '|' + video.model_override({'override': {'model': 'm-all'}}))" | Set-Content $ovPy
+"import sys; sys.path.insert(0, sys.argv[1]); import video; o = {'override': {'model': 'm-all', 'until': '2026-11-30T00:00+05:30'}}`nprint('|'.join([video.model_override(o, '2026-11-29T23:59+05:30'), video.model_override(o, '2026-11-30T00:01+05:30'), video.model_override({'override': {'model': 'm-all'}}), video.model_override({'override': 'm-all'}), video.model_override({'override': {'model': 'm-all', 'until': '20261130'}}, '2026-11-29T23:59+05:30')]))" | Set-Content $ovPy
 $ovV = python -X utf8 $ovPy (Join-Path $src 'skills/pokey') | Out-String
 $ov = Invoke-PsTest ov @'
 $null = . $args[0] 6>$null; $env:KIT_TOOL = 'claude'
 $__cfg = [pscustomobject]@{ models = [pscustomobject]@{ build = 'm-own'; docs = 'fast'; retestEffort = 'high'; override = [pscustomobject]@{ model = 'm-all'; until = '2026-11-30T00:00+05:30' } } }
 foreach ($now in '2026-11-29T23:59+05:30', '2026-11-30T00:01+05:30') { $env:KIT_NOW = $now; $t = Get-KitTiers claude; $c = Get-KitWorkflowConfig; $f = @(Get-KitSuperviseFlagsModelOverride)
   "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)|$($c.models.build)/$($c.models.docs)/$($c.models.retestEffort)|$($c.tiers.strong)|$((Get-KitTiers codex).strong)|$($f.what)" }
+$env:KIT_NOW = '2026-11-29T23:59+05:30'; $d = [pscustomobject]@{ at = (Get-Date); rows = @(); flags = @(Get-KitSuperviseFlagsModelOverride) }
+"brief:$(@(Format-KitSuperviseOut $d @() 'C:/r/supervise-report.html') -match '^INFO · model override m-all until')"
+"sites:$(Get-KitModelNote)|$(Get-KitModelArg)|$(Resolve-KitPlanModel 'sonnet' 'claude')/$(Resolve-KitPlanModel 'inherit' 'claude')/$(Resolve-KitPlanModel 'gpt-5.5' 'codex')|$((Get-KitPlanCap 'devy/@build=sonnet:1' claude).cap -eq (Get-KitPlanCap 'devy/m-all:1' claude).cap)"
+foreach ($u in ('{"u":"2026-11-30T00:00:00+05:30"}' | ConvertFrom-Json).u, '30 Nov 2026', '') { $__cfg.models.override.until = $u; "until:$([bool](Get-KitModelOverride))" }
+$__cfg.models.override = 'm-all'; "string:$([bool](Get-KitModelOverride))"
 '@ @($O)
 $exM = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models
 Expect "models.override: before until every claude tier and model id = the model (tier names, efforts, codex untouched), supervise says so; after it the config again; python the same; defaults unchanged ($($ov -join ' // ') $($ovV.Trim()))" (
-  $ov[0] -eq 'm-all/m-all/m-all/|m-all/fast/high|m-all|gpt-5.5|model override m-all until 2026-11-30 00:00 +05:30' -and $ov[1] -eq 'haiku/sonnet/opus/|m-own/fast/high|opus|gpt-5.5|' -and $ovV.Trim() -eq 'm-all||' -and
+  $ov[0] -eq 'm-all/m-all/m-all/|m-all/fast/high|m-all|gpt-5.5|model override m-all until 2026-11-30 00:00 +05:30' -and $ov[1] -eq 'haiku/sonnet/opus/|m-own/fast/high|opus|gpt-5.5|' -and $ovV.Trim() -eq 'm-all||||' -and
+  ($ov -join ' ') -match 'brief:INFO · model override' -and ($ov -join ' ') -match "sites:MODEL m-all until 2026-11-30 00:00 \+05:30: pass model: 'm-all'[^|]*\|, model: 'm-all'\|m-all/inherit/gpt-5\.5\|True" -and ($ov -join ' ') -match 'until:True until:False until:False string:False' -and
   "$($exM.tiers.claude.fast)/$($exM.tiers.claude.strong)/$($exM.override.model)" -eq 'haiku/opus/' -and (Get-Content (Join-Path $src 'agents/devy.md') -Raw) -match '(?m)^model: sonnet\r?$')
 Remove-TestKit $k
 Complete-Tests

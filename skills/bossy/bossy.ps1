@@ -120,8 +120,8 @@ switch ($Action) {
     if ($auto) { $Agent = @(All | Where-Object { $Run -and $Area -and $_.type -eq $Type -and $_.run -eq $Run -and $_.area -eq $Area -and ($_.agent -like "$($Type.ToLower())-*" -or $_.agent -in @($Area, "$Type-$Run")) } | Sort-Object { [datetime]$_.joined })[-1].agent
       if (-not $Agent) { $Agent = New-KitAgentId $Type $(if ($Run) { "$Type-$Run" }) $Area $Items $Subject }; $notes += "RUN-ID: you are $Agent (checkpoint, inbox: -Agent $Agent)" }
     if ($auto -and $Run) { try { $null = Invoke-KitNaming @('check', 'run', $Run) } catch { $notes += "$_" -replace '^kitbag\.py naming check run \S+: ' } }   # a warning, never a refusal
-    if (-not $Agent) { $Agent = $Type }
-    Remove-Item -LiteralPath ([IO.Path]::ChangeExtension((Get-InboxFile $Agent), 'pushed')) -Force -ErrorAction SilentlyContinue   # a successor reads what the hook pushed to the one before
+    if (-not $Agent) { $Agent = $Type }; $notes += @(Get-KitModelNote)
+    Remove-Item -LiteralPath ([IO.Path]::ChangeExtension((Get-InboxFile $Agent), 'pushed')) -Force -ErrorAction SilentlyContinue   # a successor rereads them
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
     $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })
@@ -255,7 +255,7 @@ function Get-KitPlanCap([string]$Plan, [string]$Tool = '') {   # 'role/model:n,.
   foreach ($p in @("$Plan" -split ',' | Where-Object { $_ -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$' })) {
     $null = $p -match '^\s*([\w-]+)(?:/([^:]*))?:(\d+)\s*$'; $role = $Matches[1]; $m = $Matches[2]; $n = [int]$Matches[3]; $hasM = $p -match '/'
     if ($m -match '^@([\w-]+)=(.*)$') { $m = [string](Get-KitSetting "models.$($Matches[1])" $Matches[2]) }
-    if ($hasM) { if (-not $memo.ContainsKey($m)) { $memo[$m] = (Get-KitBudget -Tool $Tool -Model $m).budget }; $cap += $n * $memo[$m] }
+    if ($hasM) { $m = Resolve-KitPlanModel $m $Tool; if (-not $memo.ContainsKey($m)) { $memo[$m] = (Get-KitBudget -Tool $Tool -Model $m).budget }; $cap += $n * $memo[$m] }
     $est += $n * [double](Get-KitParam 'budget.estimate' ([double](Get-KitMember $ex.estimate $role)) $role)
   }
   [pscustomobject]@{ cap = [int]$cap; estimate = [int]$est; perModel = $memo }
@@ -1413,7 +1413,7 @@ Phase 'retro'; if (-not $runTotal -and -not $wfOpen -and -not $pausedRuns.Count)
   $since = Get-KitRetroSince
   $finished = @($wfDirs | Where-Object { $_.LastWriteTime -gt $since -and (Select-String (Join-Path $_.FullName 'journal.jsonl') -Pattern '"label":"(build|test|retest|verify|fix):' -Quiet) }).Count
   $due = Get-KitRetroDue -RunFinished:([bool]$finished)
-  if ($due) { Flag 'ACT' "retro due: $due, $finished dev/QA run(s) finished or stopped since, no workflow running" "E10, no owner ask: Workflow({ scriptPath: '$($KitConf.Kit -replace '\\', '/')/workflows/tidy.js', args: { kitDir: '$($KitConf.Kit -replace '\\', '/')' } })" }
+  if ($due) { Flag 'ACT' "retro due: $due, $finished dev/QA run(s) finished or stopped since, no workflow running" "E10, no owner ask: Workflow({ scriptPath: '$($KitConf.Kit -replace '\\', '/')/workflows/tidy.js', args: { kitDir: '$($KitConf.Kit -replace '\\', '/')'$(Get-KitModelArg) } })" }
 }
 foreach ($e in $active | Where-Object { $_.budget -and $_.spend -ge $_.handoff }) { Flag 'WATCH' "$($e.agent) ($($e.run)) past its handoff point: $($e.spend) of $($e.budget) tokens" 'It hands off at its next beat; silent 20 min -> stop it, continue fresh (bossy.ps1 recover).' @{ kind = 'BUDGET'; who = "$($e.agent) ($($e.run))"; problem = "past its handoff point: $($e.spend) of $($e.budget) tokens" } }
 foreach ($h in Get-KitHandoffs 24 | Where-Object { ($now - [datetime]$_.beat).TotalMinutes -ge 15 }) { Flag 'ACT' "HANDOFF $($h.agent) ($($h.run)) $([int]($now - [datetime]$h.beat).TotalMinutes) min ago, no fresh agent yet" "Spawn a fresh $(if ($h.type) { $h.type } else { 'agent' }) (-Agent $($h.agent) -Run $($h.run) in its prompt): continue from $($h.handoffBrief)" @{ kind = 'HANDOFF'; who = "$($h.agent) ($($h.run))"; age = "$([int]($now - [datetime]$h.beat).TotalMinutes) min"; problem = 'handed off, no fresh agent yet' } }

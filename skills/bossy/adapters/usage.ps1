@@ -3,8 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L958 handoffs · L970 limits ·
-  L989 workflow config · L1001 dead runs
+Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L963 handoffs · L975 limits ·
+  L994 workflow config · L1006 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -903,10 +903,15 @@ function Get-KitTiers([string]$Tool = '') {
 # models.override {model, until}: a dated owner word ("all on <model> until Monday"): while Get-KitNow is before `until`, every claude
 # tier and every models.<phase> model id is that model; after it (or no / a bad `until`) the config applies again, nothing to undo
 function Get-KitModelOverride {
-  $m = "$(Get-KitSetting 'models.override.model' '')".Trim(); $u = "$(Get-KitSetting 'models.override.until' '')".Trim(); if (-not $m -or -not $u) { return }
-  $end = [datetimeoffset]::MinValue; if (-not [datetimeoffset]::TryParse($u, [cultureinfo]::InvariantCulture, 'AssumeLocal', [ref]$end)) { return }
+  $m = "$(Get-KitSetting 'models.override.model' '')".Trim(); $u = Get-KitSetting 'models.override.until' ''; if (-not $m -or -not $u) { return }
+  $end = [datetimeoffset]::MinValue   # ISO only (video.py model_override reads the same text); ConvertFrom-Json may hand a datetime
+  if ($u -is [datetime]) { $end = [datetimeoffset]$u } elseif ("$u" -notmatch '^\d{4}-\d\d-\d\d' -or -not [datetimeoffset]::TryParse("$u", [cultureinfo]::InvariantCulture, 'AssumeLocal', [ref]$end)) { return }
   if ([datetimeoffset](Get-KitNow) -lt $end) { [pscustomobject]@{ model = $m; until = $end } }
 }
+# bossy.ps1 call sites (its cap): the join note for agents that spawn agents, the tidy args of the retro-due line, a plan token's model
+function Get-KitModelNote { if ($ov = Get-KitModelOverride) { "MODEL $($ov.model) until $($ov.until.ToString('yyyy-MM-dd HH:mm zzz')): pass model: '$($ov.model)' to every agent you spawn (models.override)" } }
+function Get-KitModelArg { if ($ov = Get-KitModelOverride) { ", model: '$($ov.model)'" } }
+function Resolve-KitPlanModel([string]$Model, [string]$Tool) { if ($Model -and $Model -ne 'inherit' -and $(if ($Tool) { $Tool } else { Get-KitTool }) -eq 'claude' -and ($ov = Get-KitModelOverride)) { $ov.model } else { $Model } }
 # supervise: one line while the override is live (the coordinator passes the model on every hand spawn: agent files are not dated)
 function Get-KitSuperviseFlagsModelOverride([switch]$AutoFix) {
   if ($ov = Get-KitModelOverride) { [pscustomobject]@{ level = 'INFO'; what = "model override $($ov.model) until $($ov.until.ToString('yyyy-MM-dd HH:mm zzz'))"; kind = 'MODEL OVERRIDE'

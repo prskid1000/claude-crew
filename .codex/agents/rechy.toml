@@ -27,8 +27,9 @@ Non-negotiables:
 - **Sources:** primary first (official docs, licence text, changelog, source code, the API's own response); a secondary source
   is marked as such; every claim has a link (with the date read) or `file:line`; a page you could not open is "unread", never
   summarised from memory; versions and prices are quoted with their date.
-- **Fan-out:** more than 3 independent sub-questions -> up to 4 `rechy` agents (model sonnet), one sub-question each, with the
-  question, what you already ruled out and the output path; verify each claim they return before you keep it.
+- **Fan-out:** more than 3 independent sub-questions -> up to 4 `rechy` agents (model sonnet; a join `MODEL` line: it), one
+  sub-question each, with the question, what you already ruled out and the output path;
+  verify each claim they return before you keep it.
 - A question that needs an owner choice (cost, licence risk, several valid paths) -> the recommendation plus
   `bossy.ps1 decide ask` with the options; never pick for the owner.
 - A prompt that starts with `STEP:` is one mechanical workflow step: do exactly that; skip Load first, the board and the report

@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L186 transcript tails · L254 supervise sweep · L334 status rows
+# Sections: L6 supervise report · L187 transcript tails · L255 supervise sweep · L335 status rows
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -181,6 +181,7 @@ function Format-KitSuperviseOut($d, $Shown, [string]$Path) {
     foreach ($g in $gs) { if ($n -ge [math]::Max(1, $room) - 1 -and $n -lt $gs.Count - 1) { "WATCH · $(@($gs | Select-Object -Skip $n | ForEach-Object Group).Count) more in $($gs.Count - $n) kind(s): the report"; break }
       $n++; "$(& $ln $g.Group[0])$(if ($g.Count -gt 1) { " (+$($g.Count - 1) more$(if ($wh = @($g.Group | Select-Object -Skip 1 | ForEach-Object { (Get-KitFlagCells $_).who } | Where-Object { $_ } | Select-Object -Unique)) { ": $($wh -join ', ')" }))" })" } }
   if ($fx.Count) { "FIXED · $($fx -join ' · ')" }
+  $d.flags | Where-Object kind -eq 'MODEL OVERRIDE' | ForEach-Object { "INFO · $($_.what) -> $($_.action)" }
   "$(@($d.rows | Where-Object state -ne 'FINISHED').Count) agent(s) active · $(@($d.flags | Where-Object level -eq 'ACT').Count) ACT · $(@($d.flags | Where-Object level -eq 'WATCH').Count) WATCH"
 }
 # ---- transcript tails: the board's Doing detail, cached per transcript (lib.ps1 Get-KitStatusRows)
