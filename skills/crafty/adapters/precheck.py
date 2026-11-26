@@ -11,7 +11,8 @@ carries repos[].commitMarker) · EOL (a file
 whose diff is mostly line endings) · SCOPE (files outside the area globs) · LOOP (a local loop PASS whose head is the MR head, or only
 docs changed since) · PROOF (devtools.py proof <task> gaps).
 --kind dev-env (crafty ship.md "Dev-env change"; also read from the task's track record, onMerged closed): DOCS and PROOF off, DEFAULTS
-on (a removed line of a code / config file whose value no added line of its hunk keeps = a changed default: no dev-env change).
+on (a removed line of a code / config file with a string, number, flag or name its hunk's added code no longer holds = a changed
+default: no dev-env change; a heuristic that fails closed: a rename or a refactor is flagged too).
 Dev-env change, the steps (a new key or an env override whose unset path is today's value; instead of finish, plain track add, deploy request):
   crafty.ps1 tracker create -Spec <json> (kind Chore); crafty.ps1 tracker tags <task> kind=chore flow=dev-env
   crafty.ps1 checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Dir <wt> -Evidence "round 1 PASS: <the env run that used it>"
@@ -19,7 +20,7 @@ Dev-env change, the steps (a new key or an env override whose unset path is toda
   devtools.py comment <task> --spec solution.json comment-solution; crafty.ps1 tracker status <task> review
   devtools.py precheck <task> --dir <wt> --kind dev-env
   devtools.py merge <wt> <iid> --no-docs 'dev-env <what>'   (runs DEFAULTS again: a changed default = NOT_MERGED, no override)
-Sections: L32 rules · L224 context · L350 verb · L390 selftest · L460 areas"""
+Sections: L33 rules · L250 context · L376 verb · L417 selftest · L498 areas"""
 import contextlib, io, json, os, re, subprocess, sys
 
 DT = None
@@ -168,40 +169,65 @@ def r_proof(c):
 
 
 TEST_FILE = re.compile(r'(?i)(^|/)(tests?|specs?|__tests__|e2e|cypress|fixtures?)/|[._-](test|spec)s?\.\w+$|(^|/)test_[^/]+$|Tests?\.\w+$')
-LITERAL = re.compile(r'''"((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)'|(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])''')
-COMMENT = re.compile(r'^\s*(#|//|/?\*|--|<!--|;|$)')
+TOKEN = re.compile(r""""((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)'|((?<![\w.)\]])-?\d+(?:\.\d+)?(?![\w.]))|([A-Za-z_][\w.]*)""")   # string, number (its sign), word
+COMMENT = re.compile(r'^\s*(#(?!define|include)|//|/?\*|--(?=\s|$)|<!--|;|$)')
+FLAG = re.compile(r'(?i)^(true|false|yes|no|on|off|null|none|nil)$')
+TAIL = re.compile(r""""(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:^|(?<=\s))(?:#|//)(?=\s|$).*$""")   # a trailing comment outside quotes
+
+
+def code_of(ln):
+    """A line without its trailing comment ('' = a comment or blank line): a value kept only in a comment is not kept."""
+    return '' if COMMENT.match(ln) else TAIL.sub(lambda m: m.group(0) if m.group(0)[:1] in '"\'' else '', ln).rstrip()
 
 
 def default_changes(diff):
-    """[(file, old line, lost values)] of a `git diff -U0`: a removed line of a code / config file (no test, no doc, no comment)
-    whose values (string and number literals; none: the text after its first = or :) no added line of the same hunk keeps.
-    `X = "a"` -> `X = env("X") or "a"` keeps "a"; `X = "b"`, a dropped line or a new number is a changed default."""
-    out, f, rem, add, hunk = [], '', [], [], False
-
-    def flush():
-        new = '\n'.join(add)
-        for ln in rem:
-            vals = [next(x for x in m if x) for m in LITERAL.findall(ln)] or [v for v in [re.sub(r'^[^=:]*[=:]\s*', '', ln, count=1).strip(' \t,;')] if v != ln.strip(' \t,;') and v]
-            lost = [v for v in vals if not re.search(r'(?<![\w.])' + re.escape(v) + r'(?![\w.])', new)]
-            if lost and f and not TEST_FILE.search(f) and not DOC_ONLY.search(f):
-                out.append((f, ln.strip()[:80], lost))
-        rem.clear(), add.clear()
-
+    """[(file, old line, lost tokens)] of a `git diff -U0` (diff_u0): a removed line of a code / config file (no test, no doc, no
+    comment) with a token (string, number with its sign, word: a name, true, a host) no added code line of the same hunk keeps;
+    a line moved whole within its file is kept. `X = "a"` -> `X = env("X") or "a"` keeps every token; `X = "b"`, 30 -> 60,
+    true -> false, a dropped or commented-out line, a changed binary and a file whose name the header hides are changed defaults."""
+    files, f, hunk = [], None, None
     for ln in diff.replace('\r\n', '\n').split('\n'):
         if ln.startswith('diff --git '):
-            flush()
-            hunk, f = False, ''
-        elif not hunk and ln[:6] in ('--- a/', '+++ b/'):   # a deleted file keeps its a/ name (+++ /dev/null)
-            f = ln[6:]
+            f = {'name': '', 'hunks': [], 'binary': False}
+            files.append(f)
+            hunk = None
+        elif f is None:
+            continue
+        elif hunk is None and ln[:6] in ('--- a/', '+++ b/'):   # a deleted file keeps its a/ name (+++ /dev/null); a path with a space ends in a tab
+            f['name'] = ln[6:].rstrip('\t')
+        elif hunk is None and ln.startswith('Binary files a/'):   # an old binary replaced or deleted (a new one: /dev/null first)
+            f['binary'], f['name'] = True, f['name'] or ln[15:].split(' and ')[0]
         elif ln.startswith('@@'):
-            flush()
-            hunk = True
-        elif hunk and ln.startswith('-') and not COMMENT.match(ln[1:]):
-            rem.append(ln[1:])
-        elif hunk and ln.startswith('+'):
-            add.append(ln[1:])
-    flush()
+            hunk = ([], [])
+            f['hunks'].append(hunk)
+        elif hunk is not None and ln[:1] in '-+' and ln[:1]:
+            hunk[ln[0] == '+'].append(code_of(ln[1:]))
+    out = []
+    for f in files:
+        name = f['name']
+        if name and (TEST_FILE.search(name) or DOC_ONLY.search(name)):
+            continue
+        if f['binary']:
+            out.append((name, 'binary file', ['its old content']))
+        moved, whole = {a.strip() for h in f['hunks'] for a in h[1] if a.strip()}, '\n'.join(a for h in f['hunks'] for a in h[1])
+        has = lambda t, where, num=False: re.search((r'(?<![\w.-])' if num else r'(?<![\w.])') + re.escape(t) + r'(?!\w)' + (r'(?!\.\d)' if num else ''), where)
+        for rem, add in f['hunks']:
+            new = '\n'.join(add)
+            for ln in [r for r in rem if r.strip() and r.strip() not in moved]:
+                lost = []
+                for m in TOKEN.findall(ln):
+                    t = next(x for x in m if x).rstrip('.') if m[3] else next(x for x in m if x)
+                    # a string, a number and a flag word stay in their hunk; a name may move into a helper of the same file (its dotted parts)
+                    kept = t in new if m[0] or m[1] else has(t, new, bool(m[2])) or bool(m[3] and not FLAG.match(t) and all(re.search(r'(?<!\w)' + re.escape(p) + r'(?!\w)', whole) for p in t.split('.')))
+                    lost += [] if kept else [t]
+                if lost or not name:
+                    out.append((name or '(a file the diff header does not name)', ln.strip()[:80], lost or ['its file name']))
     return out
+
+
+def diff_u0(gdir, rng):
+    """The diff DEFAULTS reads: fixed a/ b/ prefixes, no external diff or textconv (a user's diff.noprefix or diff.external hides files)."""
+    return git(gdir, 'diff', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '-U0', rng)
 
 
 def r_defaults(c):
@@ -302,7 +328,7 @@ def merge_loop_gap(m, proj, iid, worktree):
     """devtools.py merge: NOT_MERGED text when the LOOP rule refuses the MR head; '' when no task, it passes or --override (logged)."""
     if str(DT.NO_DOCS).lower().startswith('dev-env'):   # the claim that passed the docs gate is checked here, never taken on word (no override)
         tgt, ok = f'origin/{m.get("target_branch") or "main"}', bool(worktree and os.path.isdir(worktree))
-        if bad := r_defaults({'kind': 'dev-env', 'diff': git(worktree, 'diff', '-U0', f'{tgt}...{m.get("sha") or "HEAD"}') if ok else ''}):
+        if bad := r_defaults({'kind': 'dev-env', 'diff': diff_u0(worktree, f'{tgt}...{m.get("sha") or "HEAD"}') if ok else ''}):
             return f'!{iid}: precheck DEFAULTS: {bad[0][1]} -> {bad[0][2]}\nNOT_MERGED'
     tid = DT._mr_task(m, proj, iid)
     gaps = loop_gap(tid, worktree if worktree and os.path.isdir(worktree) else '', f'origin/{m.get("target_branch") or "main"}', m.get('sha') or '') if tid else []
@@ -368,6 +394,7 @@ def precheck_cmd(argv):
         tid = DT.task_of_branch(DT._run(['git', '-C', wt, 'rev-parse', '--abbrev-ref', 'HEAD']).strip())
     if not kind and tid and ((DT.read_tracking().get('tasks') or {}).get(tid) or {}).get('onMerged') == ['closed']:
         kind = 'dev-env'   # its track record (track add -OnMerged closed): revy's plain precheck reads the same rules
+        print(f'precheck {tid}: kind dev-env from its track record (onMerged closed): DOCS and PROOF off, DEFAULTS on', file=sys.stderr)
     found, todo = [], mr_targets(tid, refs, wt, opt('--spec'))
     if not todo:
         print(f'precheck {tid}: no MR (pass --mr, --dir with an open MR, or --spec mr.json)', file=sys.stderr)
@@ -375,7 +402,7 @@ def precheck_cmd(argv):
     for ref, title, body, gdir, base, head, branch in todo:
         c = context(tid, title, body.replace('\r\n', '\n'), gdir, base, head, ref, branch)
         if kind:
-            c.update(kind=kind, diff=git(gdir, 'diff', '-U0', f'{base}...{head}') if gdir and base and head else '')
+            c.update(kind=kind, diff=diff_u0(gdir, f'{base}...{head}') if gdir and base and head else '')
         for code, problem, fix in run_rules(c):
             found.append({'mr': ref, 'code': code, 'problem': problem, 'fix': fix})
     if '--json' in argv:
@@ -425,13 +452,24 @@ def selftest():
     ex('PROOF: proof gaps', 'PROOF' in codes({**good, 'proofGaps': ["check T1 (ui): no PASS case with UI evidence"]}))
     # --kind dev-env (owner 2026-11-26): no testing docs or cases; the diff keeps every default
     hd = lambda f, old, new: f'diff --git a/{f} b/{f}\n--- a/{f}\n+++ b/{f}\n@@ -1 +1 @@\n' + ''.join(f'-{x}\n' for x in old) + ''.join(f'+{x}\n' for x in new)
-    keep = hd('app/config.py', ['    BASE_URL = "https://svc.example"', 'def run_it('], ['    # a lane sets BASE_URL; unset = today', '    BASE_URL = (os.getenv("BASE_URL") or "https://svc.example").rstrip("/")', 'def run_proc('])
+    keep = hd('app/config.py', ['    BASE_URL = "https://svc.example"', 'def run_it('], ['    # a lane sets BASE_URL; unset = today', '    BASE_URL = (os.getenv("BASE_URL") or "https://svc.example").rstrip("/")', 'def run_it(*, cmd, **kw):', 'def run_proc('])
     dev = {**good, 'kind': 'dev-env', 'docs': [{'label': 'Testing doc', 'rx': re.compile('never'), 'url': ''}], 'proofGaps': ['no cases'], 'diff': keep}
     ex('dev-env: DOCS and PROOF off, an env override that keeps the old value as its fallback passes; without the kind both fire, no DEFAULTS', run_rules(dev) == [] and {'DOCS', 'PROOF'} <= codes({**dev, 'kind': ''}) and 'DEFAULTS' not in codes({**dev, 'kind': '', 'diff': hd('a.py', ['T = 30'], ['T = 60'])}))
-    lost = [default_changes(hd(f, o, n)) for f, o, n in (('a.py', ['TIMEOUT = 30'], ['TIMEOUT = 60']), ('conf/app.yml', ['host: db.internal'], ['host: db.lane']), ('a.py', ['x = "keep"'], []), ('a.py', ['mode = fast_path(a)'], ['mode = slow_path(a)']))]
+    dc = lambda f, old, new: default_changes(hd(f, old, new))
+    lost = [dc('a.py', ['TIMEOUT = 30'], ['TIMEOUT = 60']), dc('conf/app.yml', ['host: db.internal'], ['host: db.lane']), dc('a.py', ['x = "keep"'], []), dc('a.py', ['mode = fast_path(a)'], ['mode = slow_path(a)'])]
     ex('DEFAULTS: a changed number, an unquoted config value, a dropped line and a changed call each lose the old value', all(len(x) == 1 for x in lost) and lost[0][0][2] == ['30'] and lost[1][0][2] == ['db.internal'] and 'DEFAULTS' in codes({**dev, 'diff': hd('a.py', ['TIMEOUT = 30'], ['TIMEOUT = 60'])}))
-    same = [default_changes(hd(f, o, n)) for f, o, n in (('tests/test_a.py', ['assert x == 3'], ['assert x == 4']), ('docs/a.md', ['port 80'], ['port 81']), ('a.py', ['# was 30'], ['# now 60']), ('a.py', ['import os'], ['import os, sys']), ('a.py', ["name = 'a'"], ['name = "a"']))]
-    ex('DEFAULTS: tests, docs, comments, a line with no value and a quote-style change are no default; an unread diff fails closed', same == [[], [], [], [], []] and 'DEFAULTS' in codes({**dev, 'diff': ''}))
+    # review of 755f8356: each of these passed the first cut of the rule
+    rows = (('a.json', '"enabled": true,', '"enabled": false,', 'true'), ('a.py', 'x = cfg.get("debug", False)', 'x = cfg.get("debug", True)', 'False'), ('a.py', 'c = make_client(PROD_HOST, "api")', 'c = make_client(LANE_HOST, "api")', 'PROD_HOST'),
+            ('a.py', 'timeout = 30', '# timeout = 30', 'timeout'), ('a.py', 'timeout = 30', 'timeout = 60  # was 30', '30'), ('a.py', 'x = -1', 'x = 1', '-1'), ('a.py', 'x = 1', 'x = -1', '1'), ('pom.xml', '<profile>prod</profile>', '<profile>lane</profile>', 'prod'),
+            ('a.js', 'audit.log(event)', '', 'audit.log'), ('A.java', 'throw new ForbiddenException();', '', 'throw'), ('run.sh', '--spring.profiles.active=prod', '--spring.profiles.active=lane', 'prod'), ('a.h', '#define TIMEOUT 30', '#define TIMEOUT 60', '30'), ('a.css', 'color: #fff', 'color: #000', 'fff'))
+    miss = [r for r in rows if not any(r[3] in x[2] for x in dc(r[0], [r[1]], [r[2]] if r[2] else []))]
+    ex(f'DEFAULTS: a flipped boolean, a swapped name, a commented-out or comment-kept value, a sign, an XML value, a dropped call, a -- flag, a #define and a colour each lose a token ({miss})', not miss)
+    same = [dc('tests/test_a.py', ['assert x == 3'], ['assert x == 4']), dc('docs/a.md', ['port 80'], ['port 81']), dc('a.py', ['# was 30'], ['# now 60']), dc('a.py', ['import os'], ['import os, sys']), dc('a.py', ["name = 'a'"], ['name = "a"']),
+            dc('a.py', ['T = 30  # seconds'], ['T = int(env("T", 30))  # sec']), default_changes(hd('my notes.md', ['port 80'], ['port 81']).replace('my notes.md\n', 'my notes.md\t\n')),
+            default_changes(hd('a.py', ['TIMEOUT = 30'], ['import lane']) + '@@ -9 +9 @@\n+TIMEOUT = 30\n'), default_changes('diff --git a/k.bin b/k.bin\nnew file mode 100644\nBinary files /dev/null and b/k.bin differ\n')]
+    ex('DEFAULTS: tests, docs, comments, an added name, a quote-style change, a changed trailing comment, a doc path with a space, a line moved between hunks and a new binary are no default; an unread diff fails closed', same == [[]] * 9 and 'DEFAULTS' in codes({**dev, 'diff': ''}))
+    hid = [default_changes('diff --git k.py k.py\n--- k.py\n+++ k.py\n@@ -1 +1 @@\n-TIMEOUT = 30\n+TIMEOUT = 60\n'), default_changes('diff --git a/k.jks b/k.jks\nBinary files a/k.jks and b/k.jks differ\n')]
+    ex('DEFAULTS: a diff whose header names no file (diff.noprefix) and a replaced binary fail closed', all(len(x) == 1 for x in hid) and hid[1][0][0] == 'k.jks')
     # devtools.py merge runs the LOOP rule too (2026-11-26: a merge passed while precheck refused LOOP); an owner word passes
     mt, lf, gt, g = DT._mr_task, loop_facts, git, globals()
     try:

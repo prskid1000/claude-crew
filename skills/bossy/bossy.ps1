@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L252 budget · L282 launch · L516 recover · L605 pause · L616 resume · L683 program · L711 param ·
-  L717 track · L1110 supervise · L1462 report · L1542 audit · L1602 storage · L1605 bugbrief · L1607 cleanup · L1694 learn ·
-  L1732 decide · L1911 debate · L1955 health · L2023 setup
+Sections: L40 init · L51 board · L252 budget · L282 launch · L517 recover · L606 pause · L617 resume · L684 program · L712 param ·
+  L718 track · L1111 supervise · L1463 report · L1543 audit · L1603 storage · L1606 bugbrief · L1608 cleanup · L1695 learn ·
+  L1733 decide · L1912 debate · L1956 health · L2024 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -309,10 +309,11 @@ if ($Self) {
   $sf = Get-SelfLaunchFile $leaf $Run $got
   $prev = if (Test-Path -LiteralPath $sf) { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json }   # a live run re-recording keeps its pause
   Write-KitState $sf $rec
-  $ln = @(if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }) + "CONFIG $(Get-KitWorkflowConfig | ConvertTo-Json -Compress -Depth 10)"
-  "RECORDED $leaf $Run (fnv $got)"; $ln; "SUM $(Get-KitFnv ($ln -join "`n"))"   # buildy / testy refuse a relay that changed these lines
+  $ln = @(if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }) + "CONFIG $(Get-KitWorkflowConfig | ConvertTo-Json -Compress -Depth 10 -EscapeHandling EscapeNonAscii)"
+  "RECORDED $leaf $Run (fnv $got)"; $ln
   if (-not $prev -or $prev.completed -or $prev.paused) { Clear-KitPauseFor $Run }
   if ($leaf -like 'buildy*') { Invoke-KitLaunchTaskSteps $a $Run $sf }   # TASKS REFUSED: buildy.js refuses; AREA TASK lines
+  "SUM $(Get-KitFnv ($ln -join "`n"))"   # last: a relay cut short or re-worded is refused
   exit 0
 }
 if ($Check) { Test-KitLaunchTasks -File $ArgsFile }   # the coordinator, before a /buildy launch

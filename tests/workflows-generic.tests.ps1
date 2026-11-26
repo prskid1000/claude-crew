@@ -106,18 +106,18 @@ console.log(`follow-up:${!!fu && /BROWSER \(web\)/.test(fu.prompt) && /ONLY thes
 '@
 Expect-Each (Invoke-Js tc-generic $jsl $wf) 'testy lanes: # (rel-rundir: a relative runDir is from the workspace root; rel-kitdir: refused)' 'unknown-refused', 'default-web', 'desktop', 'follow-up', 'rel-rundir', 'rel-kitdir' -Show 6
 # launch -Self: CONFIG line (models, roles by name + alias, qa.lanes; _readme keys dropped); plan @phase tokens resolve models.<phase>
-& $J @{ models = @{ _readme = 'x'; build = 'opus' }; repos = @(@{ name = 'core'; aliases = @('api'); role = 'Producer' }, @{ name = 'ui' }); qa = @{ lanes = @{ web = @{ kind = 'web' } }; intermittentRx = 'boom' } } (Join-Path $k 'skills/crafty/kit.local.json')
+& $J @{ models = @{ _readme = 'x'; build = 'opus' }; repos = @(@{ name = 'core'; aliases = @('api'); role = 'Producer' }, @{ name = 'ui' }); qa = @{ lanes = @{ web = @{ kind = 'web' } }; intermittentRx = "bo$([char]0xF8)m" } } (Join-Path $k 'skills/crafty/kit.local.json')
 $cf = Join-Path (Kd) 'cfg-args.json'; [IO.File]::WriteAllText($cf, '{"brief":"C:/b/c.md","mode":"resume","agents":[{"id":"C1"}]}')
 $lo = pwsh @np $O launch -Self -Script buildy.js -Run cfgrun -ArgsFile $cf -Plan 'devy/@build=sonnet:1,step/@step=haiku:1' | Out-String
 $cfg = ($lo -split "`n" | Where-Object { $_ -like 'CONFIG *' }) -replace '^CONFIG ' | ConvertFrom-Json
 $pc = & { . $O; $a = Get-KitPlanCap 'devy/@build=sonnet:1,step/@step=haiku:1'; $b = Get-KitPlanCap 'devy/opus:1,step/haiku:1'; "$($a.cap -eq $b.cap)|$(($a.perModel.Keys | Sort-Object) -join ',')" }
-Expect "launch -Self prints CONFIG: models, repo roles by name + alias, qa.lanes; plan @phase tokens = models.<phase> ($pc)" ($cfg.models.build -eq 'opus' -and -not $cfg.models._readme -and $cfg.roles.core -eq 'producer' -and $cfg.roles.api -eq 'producer' -and -not $cfg.roles.ui -and $cfg.qaLanes.web.kind -eq 'web' -and $cfg.intermittentRx -eq 'boom' -and $pc -eq 'True|haiku,opus')
+Expect "launch -Self prints CONFIG: models, repo roles by name + alias, qa.lanes; plan @phase tokens = models.<phase> ($pc)" ($cfg.models.build -eq 'opus' -and -not $cfg.models._readme -and $cfg.roles.core -eq 'producer' -and $cfg.roles.api -eq 'producer' -and -not $cfg.roles.ui -and $cfg.qaLanes.web.kind -eq 'web' -and $cfg.intermittentRx -eq "bo$([char]0xF8)m" -and $lo -notmatch '[^\x00-\x7F]' -and $pc -eq 'True|haiku,opus')
 $bm = pwsh @np $O budget -Run cfgrun -Json | ConvertFrom-Json
 Expect 'launch -Self BUDGET carries budget.runMinutes (0); budget -Run -Json the minutes since its launch' ($lo -match 'BUDGET \{.*"runMinutes":0' -and $bm.minutes -ge 0 -and $bm.minutes -lt 5)
 # 2026-11-26: launch -Self's own lines pass buildy's SUM check (pwsh fnv = js fnv); the same lines with BUDGET re-worded stop the run
 $sumJs = @'
 const _real = __REC__, _try = (out) => run({ brief: 'C:/b/c.md', ..._kl, agents: [{ id: 'C1' }] }, async (p, o) => /^record-args/.test(o.label) ? _ok(out) : _ok('[]'), _n, _n, pipeline).then(() => 'ran', (e) => String(e.message))
-console.log(`sum-real:${/^SUM [0-9a-f]{8}$/m.test(_real) && !/re-worded/.test(await _try(_real)) && /re-worded twice/.test(await _try(_real.replace(/^BUDGET \{.*$/m, 'BUDGET cap and estimate as planned')))}`)
+console.log(`sum-real:${/\nSUM [0-9a-f]{8}\s*$/.test(_real) && /re-worded twice/.test(await _try(_real.slice(0, _real.lastIndexOf('SUM ')) + 'SUM-CUT')) && !/re-worded/.test(await _try(_real)) && /re-worded twice/.test(await _try(_real.replace(/^BUDGET \{.*$/m, 'BUDGET cap and estimate as planned')))}`)
 '@
 Expect-Each (Invoke-Js tc-sum $sumJs.Replace('__REC__', ($lo.Replace("`r", '') | ConvertTo-Json)) $wfd) 'launch -Self SUM: # (its real lines pass buildy, a re-worded BUDGET stops it)' 'sum-real'
 Remove-Item (Join-Path $k 'skills/crafty/kit.local.json')
