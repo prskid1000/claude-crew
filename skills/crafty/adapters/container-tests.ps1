@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Sections: L9 poms · L57 reactor · L76 engine
+# Sections: L9 poms · L57 reactor · L79 engine
 # runtimes: before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
 # -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests, $Show.
@@ -59,11 +59,14 @@ function Add-ToolFlags([string]$cmd, [string]$flags) {
 function Add-KitReactorTestFlags([string]$Cmd) {
   $me = Join-Path $st.dir 'pom.xml'
   if ($Show -or $Cmd -notmatch '\b(mvn|mvnw|mvnd)\b' -or -not (Test-Path -LiteralPath $me)) { return $Cmd }
-  $rp = Get-KitReactorPoms $st.dir; $root = $rp.root; if (-not $root) { return $Cmd }
-  $mine = Get-KitPomInfo $me; if (-not $mine) { return $Cmd }
+  # no stale reactor dep: the step alone; its main compile is skipped when nothing but tests changed (adapters/check-stamps.ps1)
+  $plain = { $ms = if (Get-Command Get-KitMainSkip -ErrorAction SilentlyContinue) { Get-KitMainSkip $st.dir $Cmd -Force:([bool]$Force) }
+    if ($ms) { Write-Host "[check] main sources unchanged since target/classes was compiled: $ms (no recompile; -Force compiles)"; Add-ToolFlags $Cmd $ms } else { $Cmd } }
+  $rp = Get-KitReactorPoms $st.dir; $root = $rp.root; if (-not $root) { return (& $plain) }
+  $mine = Get-KitPomInfo $me; if (-not $mine) { return (& $plain) }
   $need = Get-KitReactorNeeds $mine $rp.all
   $stale = Get-KitReactorStale $need
-  if (-not $stale.Count) { return $Cmd }
+  if (-not $stale.Count) { return (& $plain) }
   $staleRel = @($stale.Values | ForEach-Object { [IO.Path]::GetRelativePath($root, $_.dir).Replace('\', '/') } | Sort-Object) -join ', '
   if ($Cmd -match '(^|\s)(-pl|--projects|-f|--file)(\s|=|$)') { Write-Host "[check] reactor module(s) newer than their local-repo artefact: $staleRel; the test command has its own -pl / -f, so the tests see the stale local-repo jars: add them to its -pl with -am"; return $Cmd }
   $out =New-Item -ItemType Directory -Force (Join-Path $root 'target'); $f = Join-Path $out.FullName "crafty-reactor-$($mine.a).xml"

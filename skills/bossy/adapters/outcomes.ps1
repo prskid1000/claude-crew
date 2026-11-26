@@ -8,11 +8,11 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L112 summary · L272 patterns · L309 rules · L387 retro due · L398 tidy · L500 collisions · L518 decisions
+Sections: L14 outcomes · L113 summary · L279 patterns · L316 rules · L394 retro due · L405 tidy · L507 collisions · L525 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
-$script:KitOutcomeKeys = @('kind', 'parent', 'area', 'agents', 'stage', 'mrs', 'qaRuns', 'qaFirstPass', 'qaFails', 'bugs', 'cameBack', 'backWhy', 'backChecks', 'localRounds', 'reviewFix', 'decisions', 'hPromoted', 'hStart', 'hClosed', 'spend', 'doneAt', 'closedAt', 'backAt')
+$script:KitOutcomeKeys = @('kind', 'parent', 'area', 'agents', 'stage', 'mrs', 'qaRuns', 'qaFirstPass', 'qaFails', 'bugs', 'cameBack', 'backWhy', 'backChecks', 'localRounds', 'reviewFix', 'decisions', 'hPromoted', 'hStart', 'hClosed', 'spend', 'doneAt', 'closedAt', 'backAt', 'startAt')
 function ConvertTo-KitOutcomeIso($At) { if (-not $At) { return $null }; try { ([datetimeoffset]$At).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ') } catch { $null } }   # UTC text: sorts and compares as a string
 function Get-KitOutcomeHours($From, $To) { if (-not $From -or -not $To) { return $null }; try { [math]::Round(([datetime]$To - [datetime]$From).TotalHours, 1) } catch { $null } }
 # a person's answer, not an agent's, a standing rule's or a superseded one
@@ -67,6 +67,7 @@ function Get-KitTaskOutcome($Ix, $Ctx) {
     hClosed = $(if ($stage -eq 'passed') { Get-KitOutcomeHours $tr.created $last.at }); spend = [int][math]::Round([double]$Ctx.spend[$t])
     doneAt = $(if ($tr.done) { ConvertTo-KitOutcomeIso $tr.doneAt }); closedAt = $(if ($stage -eq 'passed') { ConvertTo-KitOutcomeIso $last.at })   # the day chart's points
     backAt = @(@(ConvertTo-KitOutcomeIso $tr.reopenedAt) + @($runs | Where-Object { [int]$_.fail -gt 0 } | ForEach-Object { ConvertTo-KitOutcomeIso $_.at }) | Where-Object { $_ } | Sort-Object)[0]
+    startAt = @(@($Ctx.startAt[$t], (ConvertTo-KitOutcomeIso $tr.created)) | Where-Object { $_ } | Sort-Object)[0]   # the KPI tiles after a stats reset: tasks started since
     seen = $(if ($Ix.updated) { (Get-KitStamp stored ([datetime]$Ix.updated)) }) }   # the task's last change (window); not in the row signature
 }
 function Read-KitOutcomeRows { $f = Get-KitPath outcomes; if (Test-Path -LiteralPath $f) { foreach ($l in [IO.File]::ReadAllLines($f)) { try { $l | ConvertFrom-Json } catch {} } } }
@@ -136,7 +137,8 @@ function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days'), [datet
   # dashboard: one bucket per task, a stacked bar per repo, KPIs with weekly points (the task's promoted day, else its last change)
   $tasks = @(foreach ($r in $rows) { [pscustomobject]@{ id = "$($r.task)"; repos = @("$($r.area)" -split ',' | Where-Object { $_ }); bucket = (Get-KitOutcomeBucket $r); rounds = $(if (@($r.agents | Where-Object { $_ }).Count) { & $rounds $r })
       week = [int][math]::Floor(((Get-Date) - [datetime]@($r.doneAt, $r.seen, $r.at | Where-Object { $_ })[0]).TotalDays / 7); at = (ConvertTo-KitOutcomeIso @($r.doneAt, $r.seen, $r.at | Where-Object { $_ })[0]); closedAt = (ConvertTo-KitOutcomeIso $r.closedAt); backAt = (ConvertTo-KitOutcomeIso $r.backAt)
-      firstPass = [bool]$r.qaFirstPass; qa = [int]$r.qaRuns -gt 0; back = [bool]$r.cameBack; why = "$($r.backWhy)"; backChecks = "$($r.backChecks)"; hPromoted = $r.hPromoted; hStart = $r.hStart; nMr = [int]$r.mrs; stage = "$($r.stage)" } })
+      firstPass = [bool]$r.qaFirstPass; qa = [int]$r.qaRuns -gt 0; back = [bool]$r.cameBack; why = "$($r.backWhy)"; backChecks = "$($r.backChecks)"; hPromoted = $r.hPromoted; hStart = $r.hStart; nMr = [int]$r.mrs; stage = "$($r.stage)"
+      startAt = $(if ($r.startAt) { ConvertTo-KitOutcomeIso $r.startAt } elseif ($r.doneAt -and $null -ne $r.hStart) { ConvertTo-KitOutcomeIso ([datetime]$r.doneAt).AddHours(-[double]$r.hStart) }) } })   # a row from before the field: promoted - hStart
   $repos = @($tasks | ForEach-Object { $t = $_; foreach ($rp in $t.repos) { [pscustomobject]@{ repo = $rp; t = $t } } } | Group-Object repo | ForEach-Object {
       $g = @($_.Group.t); $b = [ordered]@{}; foreach ($k in $script:KitOutcomeBuckets.Keys) { $b[$k] = @($g | Where-Object bucket -eq $k | ForEach-Object id) }
       [pscustomobject]@{ repo = $_.Name; n = $g.Count; tested = @($g | Where-Object { $_.bucket -ne 'wait' }).Count; buckets = $b } } | Sort-Object { -$_.n }, repo)
@@ -145,11 +147,14 @@ function Get-KitOutcomeStats([int]$Days = (Get-KitParam 'outcomes.days'), [datet
     $h1 = @($ts | Where-Object { $null -ne $_.hPromoted -and $_.nMr -le 1 } | ForEach-Object { [double]$_.hPromoted }); $hm = @($ts | Where-Object { $null -ne $_.hPromoted -and $_.nMr -gt 1 } | ForEach-Object { [double]$_.hPromoted })
     [pscustomobject]@{ first = $(if ($q.Count) { [math]::Round(100 * @($q | Where-Object firstPass).Count / $q.Count) }); firstOf = "$(@($q | Where-Object firstPass).Count)/$($q.Count)"
       back = $(if ($bq.Count) { [math]::Round(100 * @($bq | Where-Object back).Count / $bq.Count) }); backOf = "$(@($bq | Where-Object back).Count)/$($bq.Count)"
-      rounds = (& $med $rd); roundsOf = $rd.Count; hours = (& $med $h); hoursOf = $h.Count; start = (& $med $hs); startOf = $hs.Count; one = (& $med $h1); oneOf = $h1.Count; multi = (& $med $hm); multiOf = $hm.Count } }
+      firstN = $q.Count; backN = $bq.Count; rounds = (& $med $rd); roundsOf = $rd.Count; hours = (& $med $h); hoursOf = $h.Count; start = (& $med $hs); startOf = $hs.Count; one = (& $med $h1); oneOf = $h1.Count; multi = (& $med $hm); multiOf = $hm.Count } }
   $weeks = [int][math]::Ceiling($Days / 7)
+  # after a stats reset the KPIs count only tasks started since it (owner 2026-11-26: 17.4 h, 93%, 25% came from a few tasks started
+  # before the reset, an overnight stop included); the lists and the heatmap keep every task changed in the window
+  $kt = if ($StatsFrom -gt [datetime]::MinValue) { @($tasks | Where-Object { $_.startAt -and ([datetimeoffset]$_.startAt).LocalDateTime -ge $StatsFrom }) } else { $tasks }
   [pscustomobject]@{ days = $Days; n = $rows.Count; qaN = $qa.Count; firstPass = @($qa | Where-Object qaFirstPass).Count; cameBack = @($rows | Where-Object cameBack).Count
     p50Promoted = $(if ($hp.Count) { $hp[[int][math]::Floor(($hp.Count - 1) / 2)] }); areas = $areas; agents = $agents; causes = $causes
-    tasks = $tasks; repos = $repos; stageDays = $stageDays; kpi = (& $kpi $tasks); weekly = @(for ($w = $weeks - 1; $w -ge 0; $w--) { & $kpi @($tasks | Where-Object week -eq $w) }) }
+    tasks = $tasks; repos = $repos; stageDays = $stageDays; kpi = (& $kpi $kt); kpiSince = $(if ($StatsFrom -gt [datetime]::MinValue) { $StatsFrom }); weekly = @(for ($w = $weeks - 1; $w -ge 0; $w--) { & $kpi @($kt | Where-Object week -eq $w) }) }
 }
 # a test run's QA outcome from the task index: its env runs named <date>[-<time>]-<name>, else its tasks' env runs inside its window
 function Get-KitRunQa($Run, $Ix) {
@@ -172,15 +177,17 @@ function Format-KitDeliveryHtml($S, $UP, $More = @(), [string]$Blocks = '', $Clo
   $bk = $script:KitOutcomeBuckets; $tone = @{ r0 = 'sage'; r1 = 'slate'; r2 = 'watch'; r3 = 'plum'; rna = 'pale'; back = 'act'; wait = 'none' }
   $pc = { param($v) if ($null -eq $v) { '—' } else { "$v<small>%</small>" } }
   # KPI tiles: the value and its base once (owner 2026-11-19: no sparklines; the weekly trend is read in a retro)
-  $tile = { param($label, $v, [string]$u, $sub) @{ v = $(if ($null -ne $v) { & $n1 $v } else { '—' }); u = $(if ($null -ne $v) { $u }); l = $label; tip = "${label}: $sub" } }
+  # each tile names its sample (n); under 5 it is greyed: too few to read (owner 2026-11-26)
+  $tile = { param($label, $v, [string]$u, $sub, [int]$n) @{ v = $(if ($null -ne $v) { & $n1 $v } else { '—' }); u = $(if ($null -ne $v) { $u }); l = "$label · n $n"; t = $(if ($n -lt 5) { 'few' })
+      tip = "${label}: $sub$(if ($S.kpiSince) { "; tasks started since the stats reset ($(([datetime]$S.kpiSince).ToString('MM-dd HH:mm')))" })$(if ($n -lt 5) { "; n $n is under 5: too few to read" })" } }
   $k = $S.kpi
   # came back, by reason (owner 2026-11-26: the split lives in this tile and the outcomes group line, no new section)
   $wyN = { param([string]$w) @($S.tasks | Where-Object { $_.back -and "$($_.why)" -eq $w }).Count }
   $wySplit = "own QA checks failed $(& $wyN 'qa') · reopened (MRs after promoted) $(& $wyN 'reopened')$(if ($nr = & $wyN '') { " · reason not recorded $nr" })"
-  $kt = @((& $tile 'QA first pass' $k.first '%' "$($k.firstOf) tasks QA'd clean on the first run"), (& $tile 'came back' $k.back '%' "$($k.backOf) tasks: $wySplit (a [Bug] under a task never counts)"),
-    (& $tile 'median fix rounds' $k.rounds '' "over $($k.roundsOf) tasks with a wave report"), (& $tile 'agent start to promoted, p50' $k.start ' h' "over $($k.startOf) promoted tasks (start: the first build run naming the task, else its first MR)"),
-    (& $tile 'first MR to promoted, p50' $k.hours ' h' "over $($k.hoursOf) promoted tasks (first MR: the task's first track add)"), (& $tile 'tasks with 1 MR to promoted, p50' $k.one ' h' "first MR to promoted over $($k.oneOf) tasks with one MR"),
-    (& $tile 'tasks with 2+ MRs to promoted, p50' $k.multi ' h' "first MR to promoted over $($k.multiOf) tasks with 2+ MRs"))
+  $kt = @((& $tile 'QA first pass' $k.first '%' "$($k.firstOf) tasks QA'd clean on the first run" $k.firstN), (& $tile 'came back' $k.back '%' "$($k.backOf) tasks: $wySplit (a [Bug] under a task never counts)" $k.backN),
+    (& $tile 'median fix rounds' $k.rounds '' "over $($k.roundsOf) tasks with a wave report" $k.roundsOf), (& $tile 'agent start to promoted, p50' $k.start ' h' "over $($k.startOf) promoted tasks (start: the first build run naming the task, else its first MR)" $k.startOf),
+    (& $tile 'first MR to promoted, p50' $k.hours ' h' "over $($k.hoursOf) promoted tasks (first MR: the task's first track add)" $k.hoursOf), (& $tile 'tasks with 1 MR to promoted, p50' $k.one ' h' "first MR to promoted over $($k.oneOf) tasks with one MR" $k.oneOf),
+    (& $tile 'tasks with 2+ MRs to promoted, p50' $k.multi ' h' "first MR to promoted over $($k.multiOf) tasks with 2+ MRs" $k.multiOf))
   $tiles = "<div class=tls data-mk=trend-tiles>$((Format-KitTiles $kt) -replace '^<div class=tls>|</div>$')$($UP.tpm)$($UP.tiles)</div>"
   $dy = @($UP.days | Where-Object { $_ }); $dayOf = { param($iso) if ($iso) { try { ([datetimeoffset]$iso).LocalDateTime.ToString('yyyy-MM-dd') } catch { '' } } }
   $closed = @{}; $back = @{}; foreach ($t in @($S.tasks)) { if ($c = & $dayOf $t.closedAt) { $closed[$c] = @(@($closed[$c]) + $t.id | Where-Object { $_ }) }; if ($b = & $dayOf $t.backAt) { $back[$b] = @(@($back[$b]) + $t.id | Where-Object { $_ }) } }

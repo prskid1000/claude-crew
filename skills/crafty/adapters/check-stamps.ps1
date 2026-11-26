@@ -1,8 +1,9 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (crafty.ps1 check exits).
-# Sections: L4 check builds · L13 check stamps · L52 ci runs · L60 run digest
+# Sections: L4 check builds · L14 check stamps · L54 main skip · L75 ci runs · L83 run digest
 # ---- check builds: a clean tree's build, keyed by its tree: envy deploys of the same code stage its artifact (envy Find-CheckBuild)
 function Save-CheckBuild([string]$Dir, [string]$Cmd, [datetime]$Start) {
+  Save-KitMainKey
   $top = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top -or @(git -C $top status --porcelain 2>$null).Count) { return }
   $tree = "$(git -C $top rev-parse 'HEAD^{tree}' 2>$null)".Trim(); if (-not $tree) { return }
   Write-KitAtomic (Join-Path (Get-KitPath check-builds -Create) "$tree.json") ([ordered]@{ tree = $tree; dir = $Dir; rel = [IO.Path]::GetRelativePath($top, $Dir).Replace('\', '/'); cmd = $Cmd; start = (Get-KitStamp stored $Start); at = (Get-KitStamp) } | ConvertTo-Json)
@@ -14,9 +15,9 @@ function Get-CheckLog([string]$Dir, [string]$Step) { Join-Path (Get-KitPath chec
 # (2026-11-18: 51 of 211 checks re-ran the previous command of their dir; a doc-only edit rebuilt the module)
 # the repo's sources as one key: index blobs + the content of every changed or untracked file; ignored files and docs
 # (.md .adoc .rst outside src / resources / assets / test folders) aside; a dirty submodule or a failed git call: no key (runs)
-function Get-CheckSourceKey([string]$Dir) {
+function Get-CheckSourceKey([string]$Dir, [string]$Skip = '') {   # -Skip <regex>: those paths aside too (Get-KitMainSkip: test sources)
   $top = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $top) { return $null }
-  $doc = '^(?!(.*/)?(src|resources|assets|tests?|fixtures)/).*\.(md|adoc|rst)$'
+  $doc = '^(?!(.*/)?(src|resources|assets|tests?|fixtures)/).*\.(md|adoc|rst)$'; if ($Skip) { $doc = "$doc|$Skip" }
   $idx = @(git -C $top ls-files -s 2>$null | Where-Object { ($_ -split "`t", 2)[1] -notmatch $doc }); if ($LASTEXITCODE) { return $null }
   $chg = @(git -C $top -c core.quotePath=false status --porcelain --untracked-files=all 2>$null | ForEach-Object { $_.Substring(3) -replace '^.* -> ', '' -replace '^"|"$', '' -replace '\\(["\\])', '$1' } | Where-Object { $_ -notmatch $doc } | Sort-Object -Unique)
   if ($LASTEXITCODE -or @($chg | Where-Object { Test-Path -LiteralPath (Join-Path $top $_) -PathType Container }).Count) { return $null }
@@ -41,6 +42,7 @@ function Test-CheckStamp([string]$Dir, [string]$Slot, [switch]$Force) {
   [int]$was.rc
 }
 function Save-CheckStamp([string]$Dir, [string]$Slot, [int]$Rc = 0, [string]$Log = '', [string[]]$Sum = @()) {   # the newest 30 slots per dir
+  Save-KitMainKey $Rc $Log
   if ($null -eq $script:CheckSrcKey) { $script:CheckSrcKey = "$(Get-CheckSourceKey $Dir)" }
   if (-not $script:CheckSrcKey) { return }
   # an edit during the run: the result belongs to neither tree (agents edited while their build ran)
@@ -48,6 +50,27 @@ function Save-CheckStamp([string]$Dir, [string]$Slot, [int]$Rc = 0, [string]$Log
   $h = Read-CheckStamps $Dir; $h[$Slot] = if ($Rc) { @{ key = $script:CheckSrcKey; at = (Get-KitStamp); rc = $Rc; log = $Log; sum = @($Sum) } } else { @{ key = $script:CheckSrcKey; at = (Get-KitStamp) } }
   $keep = [ordered]@{}; foreach ($kv in @($h.GetEnumerator() | Sort-Object { "$($_.Value.at)" } -Descending | Select-Object -First 30)) { $keep[$kv.Key] = $kv.Value }
   Write-KitAtomic (Get-CheckStampFile $Dir) ($keep | ConvertTo-Json -Depth 4)
+}
+# ---- main skip: a Maven step whose non-test inputs are the ones its target/classes were compiled from gets -Dmaven.main.skip=true
+# (2026-11-26: a no-change `mvn compile` rewrote 8940 classes + 4289 generated files in 111 s, a generator plugin re-stamps its
+# sources each run; 245 test steps a day, ~2 MB of NTFS metadata per MB written to target/). The key: every tracked, changed and
+# untracked file of the repo outside test folders; kept in <module>/target (a clean drops it). -Force, an own -pl / -f / clean: never
+$script:KitMainTestRx = '(^|/)src/(test|it|integration-test)/|(^|/)(cypress|e2e)/'
+function Get-KitMainSkip([string]$Dir, [string]$Cmd, [switch]$Force) {
+  $script:KitMainSkip = $null
+  if ($Cmd -notmatch '\b(mvn|mvnw|mvnd)(\.cmd)?\b' -or $Cmd -match '(^|\s)(-pl|--projects|-f|--file|clean)(\s|=|$)|maven\.main\.skip' -or -not (Test-Path -LiteralPath (Join-Path $Dir 'pom.xml'))) { return '' }
+  $key = "$(Get-CheckSourceKey $Dir $script:KitMainTestRx)"; if (-not $key) { return '' }
+  $file = Join-Path $Dir 'target/kit-main.key'; $script:KitMainSkip = @{ dir = $Dir; file = $file; key = $key; skipped = $false }
+  $was = if (-not $Force -and (Test-Path -LiteralPath (Join-Path $Dir 'target/classes') -PathType Container)) { "$(Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction SilentlyContinue)".Trim() }
+  if ($was -ne $key) { return '' }
+  $script:KitMainSkip.skipped = $true; '-Dmaven.main.skip=true'
+}
+# after the step: a run that compiled main (exit 0, or its tests ran) records the key; an edit of main sources during it: no record
+function Save-KitMainKey([int]$Rc = 0, [string]$Log = '') {
+  $m = $script:KitMainSkip; $script:KitMainSkip = $null; if (-not $m -or $m.skipped) { return }
+  if ($Rc -and -not ($Log -and (Select-String -LiteralPath $Log -Pattern 'Tests run: \d' -Quiet -ErrorAction SilentlyContinue))) { return }
+  if (-not (Test-Path -LiteralPath (Join-Path $m.dir 'target/classes') -PathType Container) -or "$(Get-CheckSourceKey $m.dir $script:KitMainTestRx)" -ne $m.key) { return }
+  Set-Content -LiteralPath $m.file $m.key -Encoding ascii
 }
 # ---- ci runs: tests.ciRuns = "<repo>/<module>" globs whose MR pipeline runs the full build + suite (check skips them locally)
 function Exit-KitCiRuns {   # in crafty.ps1 check: its $Step, $Tests, $AllTests, $Force, $Show, $st, Get-CheckRepo, ConvertTo-GlobRx

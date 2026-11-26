@@ -31,6 +31,12 @@ Expect "outcome rows: local rounds from the goals doc's Rounds table ($($rw.q1.l
 $oh = & { . $O; Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o') }) } | Out-String
 $sp = 'own QA checks failed 1 &#183; reopened \(MRs after promoted\) 1'
 Expect 'dashboard: the came-back split in the tile, the outcomes group line, the task list (no new section)' ($oh -match "came back: [^']*$sp" -and $oh -match "came back 2 \($sp\)" -and $oh -match 'came back: own checks F2 failed' -and $oh -match 'came back: reopened')
+# KPI tiles (owner 2026-11-26): after a stats reset only tasks started since it count; each tile names its n, under 5 it is greyed
+& $put tasks 's1.json' @{ task = 's1'; spec = @{ kind = 'Feature' }; track = @{ mrs = @('api!9'); created = '2026-11-12T10:00:00+00:00'; done = $true; doneAt = '2026-11-12T13:00:00+00:00' }; envRuns = @(); updated = $now }
+$null = pwsh @np $fx 'Update-KitOutcomes -All'
+$ks = pwsh @np $fx '$a = Get-KitOutcomeStats; $b = Get-KitOutcomeStats -StatsFrom ([datetime]"2026-11-10"); "$($a.kpi.startOf)|$($b.kpi.startOf)|$($b.kpi.start)|$($b.tasks.Count)|$($b.kpi.backN)"'
+$oh2 = & { . $O; Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o') }) } | Out-String
+Expect "KPI tiles: no reset = every promoted task, after one only tasks started since (the lists keep all); n on the tile, under 5 greyed ($ks)" ("$ks" -eq '4|1|3|5|0' -and $oh2 -match "class='tl few'" -and $oh2 -match 'QA first pass &#183; n \d' -and $oh2 -match 'n \d is under 5: too few to read')
 # bossy.ps1 stats reset (owner 2026-11-26: DELETE, no archive): outcomes + clock stream gone, a cutoff for test checks; task files and QA runs kept
 $cd = Join-Path (TkPath $k audit -Create) '2026-11-02'; $null = New-Item -ItemType Directory -Force $cd; '{"at":"2026-11-02T10:00:00Z","phase":"code"}' | Set-Content (Join-Path $cd 'clock.jsonl')
 $qd = Join-Path (TkPath $k qa-runs -Create) 'testy-x/T1'; $null = New-Item -ItemType Directory -Force $qd; '{"checks":[]}' | Set-Content (Join-Path $qd 'results.json')

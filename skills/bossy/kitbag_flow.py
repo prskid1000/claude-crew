@@ -1,17 +1,20 @@
 """kitbag_flow.py (plugin): the interactive kit-flow page and the FLOW-* lint checks (loop bounds, unresolved commands).
 
   python -X utf8 skills/bossy/kitbag.py flow [<kit>] [--out <file.html>] [--readme] [--open] [--public]
+  python -X utf8 skills/bossy/kitbag.py flow [<kit>] --impact <file | function | 'script verb' | config key | hook | event> [--depth 2] [--json]
+      the blast radius from the same model, no page: upstream, downstream, the test areas to run, broken chains, cycles (exit 1: no match)
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
 kitbag.py loads it and shares its own names (read, load, graph, lint, kit_path).
-Sections: L17 rules · L88 parts · L173 control · L346 parse · L648 link · L889 cycles · L965 pack · L1102 page · L1573 command
+Sections: L20 rules · L91 parts · L176 control · L349 parse · L651 link · L892 cycles · L968 pack · L1105 page · L1576 command ·
+  L1577 impact
 Exit codes: 0 ok · 2 usage error.
 """
 import hashlib, json, os, re, subprocess, sys, time
 import os.path as osp
 from collections import defaultdict, deque
 
-ARGS = {'flow': ({'--readme', '--open', '--public'}, {'--out'}, True)}
+ARGS = {'flow': ({'--readme', '--open', '--public', '--json'}, {'--out', '--impact', '--depth'}, True)}
 
 # ==== the flow model
 # ---- rules: patterns for refs, control flow, loops, outcomes
@@ -1571,6 +1574,96 @@ window.KF = {N, G, D, select, runTrace, stepTo, setLevel, openSide, closeSide, s
 
 # ==== the page command and the lint hook
 # ---- command: flow, its output path, the lint hook
+# ---- impact: the blast radius of one part, from the model (kitty step 0, revy kind kit)
+def impact_seeds(data, q):
+    """Node indexes a query names + how it matched: a file (its parts too), an exact id or label, else a substring of either."""
+    nodes, files = data['nodes'], [f['id'] for f in data['files']]
+    ql = q.replace('\\', '/').strip().lower()
+    fhit = [n for n, f in enumerate(files) if f.lower() == ql or osp.basename(f).lower() == ql]
+    if fhit:
+        return [n for n, nd in enumerate(nodes) if nd[2] in fhit], 'file'
+    exact = [n for n, nd in enumerate(nodes) if ql in (str(nd[5]).lower(), str(nd[0]).lower(), str(nd[5]).lower().split(':')[-1])]
+    if exact:
+        return exact, 'name'
+    return [n for n, nd in enumerate(nodes) if ql in str(nd[5]).lower() or ql in str(nd[0]).lower()], 'substring'
+
+def impact(data, q, depth=2, texts=None):
+    """{query, matched, seeds, upstream, downstream, tests, areas, broken, cycles}: rows = {node, depth, via, edge}; containment
+    ('has') is never walked; a seed's own file parts are not its neighbours."""
+    nodes, edges, files = data['nodes'], data['edges'], [f['id'] for f in data['files']]
+    seeds, how = impact_seeds(data, q)
+    ss = set(seeds)
+    out, inn = defaultdict(list), defaultdict(list)
+    for e in edges:
+        if e[2] != 'has':
+            out[e[0]].append((e[1], e)); inn[e[1]].append((e[0], e))
+    def walk(adj):
+        seen, rows, q2 = dict.fromkeys(seeds, 0), [], deque(seeds)
+        while q2:
+            u = q2.popleft()
+            if seen[u] >= depth:
+                continue
+            for v, e in adj[u]:
+                if v not in seen:
+                    seen[v] = seen[u] + 1
+                    rows.append({'node': v, 'depth': seen[v], 'via': u, 'edge': e[2], 'why': e[3]})
+                    q2.append(v)
+        return rows
+    up, down = walk(inn), walk(out)
+    desc = lambda n: {'id': nodes[n][5], 'label': nodes[n][0], 'kind': nodes[n][1], 'file': files[nodes[n][2]], 'line': nodes[n][3]}
+    show = lambda rows: [dict(desc(r['node']), depth=r['depth'], edge=r['edge'], via=nodes[r['via']][0], why=r['why']) for r in rows]
+    touched = ss | {r['node'] for r in up} | {r['node'] for r in down}
+    tfiles = sorted({files[nodes[n][2]] for n in touched if TESTF.search(files[nodes[n][2]])})
+    sfiles = sorted({files[nodes[n][2]] for n in seeds if not files[nodes[n][2]].startswith('(')})
+    for f, t in (texts or {}).items():   # an area that names a seed file tests it (kit-tests.ps1 Get-ChangedArea: the same rule)
+        if TESTF.search(f) and any(re.search(r'(?<![\w.-])' + re.escape(osp.basename(s)) + r'(?![\w-])', t) for s in sfiles if s != f):
+            tfiles = sorted(set(tfiles) | {f})
+    areas = sorted({m.group(1) for m in (re.match(r'tests/(.+)\.tests\.ps1$', f) for f in tfiles) if m})
+    broken = [it for it in data['issues'] + data.get('deliberate', []) if it.get('node') in touched or q.lower() in str(it.get('text', '')).lower()]
+    entry = ('event', 'slash', 'human', 'timer', 'row', 'cmd', 'file', 'config', 'state', 'ext', 'outcome')
+    orphan = [desc(n) for n in seeds if not inn[n] and nodes[n][1] not in entry and how != 'file']
+    deaf = [desc(n) for n in seeds if nodes[n][1] in ('event', 'timer', 'slash') and not out[n]]
+    cyc = [{'label': c['label'], 'kind': c['kind'], 'bound': c.get('bound', ''), 'nodes': len(c['nodes'])} for c in data['cycles'] if ss & set(c['nodes'])]
+    return {'query': q, 'matched': how, 'depth': depth, 'seeds': [desc(n) for n in seeds], 'files': sfiles, 'upstream': show(up), 'downstream': show(down),
+            'tests': tfiles, 'areas': areas, 'broken': [{'code': it['code'], 'text': it['text']} for it in broken],
+            'unreachable': orphan, 'unhandled': deaf, 'cycles': cyc}
+
+def print_impact(r, cap=40):
+    if not r['seeds']:
+        print(f"impact {r['query']}: no node matches (a file path or name, a function, a command such as 'bossy.ps1 supervise', a config key, a hook or an event)")
+        return 1
+    print(f"impact {r['query']}: {len(r['seeds'])} node(s) by {r['matched']} in {', '.join(r['files'][:6]) or '(pseudo)'}{' ...' if len(r['files']) > 6 else ''}; depth {r['depth']}")
+    for title, rows in (('upstream (what triggers, calls or reads it)', r['upstream']), ('downstream (what it calls, writes or affects)', r['downstream'])):
+        print(f'{title}: {len(rows)}')
+        for x in sorted(rows, key=lambda x: (x['depth'], x['file'], x['line']))[:cap]:
+            print(f"  {x['depth']} {x['kind']} {x['label']} ({x['file']}:{x['line']}) {x['edge']} · via {x['via']}")
+        if len(rows) > cap:
+            print(f'  + {len(rows) - cap} more (--json lists all)')
+    print(f"tests: {len(r['tests'])} file(s){': pwsh -NoProfile -File tests/kit-tests.ps1 -Area ' + ','.join(r['areas']) if r['areas'] else ''}")
+    for x in [t for t in r['tests'] if not re.match(r'tests/.+\.tests\.ps1$', t)][:8]:
+        print(f'  {x}')
+    for title, rows, fmt in (('broken chains', r['broken'], lambda x: f"{x['code']} {x['text']}"),
+                             ('unreachable (nothing triggers it)', r['unreachable'], lambda x: f"{x['kind']} {x['label']} ({x['file']}:{x['line']})"),
+                             ('a trigger with no handler', r['unhandled'], lambda x: f"{x['kind']} {x['label']} ({x['file']}:{x['line']})"),
+                             ('cycles through it', r['cycles'], lambda x: f"{x['kind']} {x['label']}{' bound ' + x['bound'] if x['bound'] else ''} ({x['nodes']} nodes)")):
+        print(f'{title}: {len(rows)}')
+        for x in rows[:cap]:
+            print('  ' + fmt(x))
+    return 0
+
+def cmd_impact(kit, flags):
+    try:
+        depth = int(flags.get('--depth') or 2)
+    except ValueError:
+        print('flow --impact: --depth takes a number', file=sys.stderr)
+        return 2
+    k = load(kit)
+    data = page_data(k, [])
+    r = impact(data, flags['--impact'], max(1, depth), {f: k.texts.get(f, '') for f in k.files})
+    if '--json' in flags:
+        print(json.dumps(r, indent=1))
+        return 0 if r['seeds'] else 1
+    return print_impact(r)
 def live_root(kit):
     """The live clone (main worktree): a worktree's lint refreshes the page the owner opens."""
     main = main_clone(kit)
@@ -1627,8 +1720,10 @@ def render(kit, out, quiet=False, data=None, public=False):
     return data
 
 def cmd_flow(a):
-    flags, rest = parse_opts(a, {'--out'})
+    flags, rest = parse_opts(a, {'--out', '--impact', '--depth'})
     kit = osp.abspath(rest[0] if rest else KIT_DIR)
+    if flags.get('--impact'):
+        return cmd_impact(kit, flags)
     out = osp.abspath(flags.get('--out') or default_out(kit))
     if '--readme' in flags:
         write_readme(kit)

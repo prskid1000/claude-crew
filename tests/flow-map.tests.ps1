@@ -50,6 +50,13 @@ for name, S in [('tests', {'tool.ps1': tool, 'tests/t.tests.ps1': runread}), ('d
                 ('rmw', {'rmw.ps1': "$j = Get-Content run.json\n" + '#' * 100 + "\nSet-Content run.json $j\n"})]:   # a script is a loop; a test, a doc, a read-modify-write never
     k = types.SimpleNamespace(files=list(S), texts=S, dir=sys.argv[2], skills=[], agents={}, workflows={})
     print(f'scc-{name}=' + str(sum(1 for c in flow.model(k, [])['cycles'] if c['kind'] == 'scc')))
+# flow --impact on a fixture graph: a file's parts, who runs / reads it, what it writes, its test areas (run + named), broken refs, its loop
+I = {'tool.ps1': tool, 'driver.ps1': runread, 'tests/t.tests.ps1': runread, 'tests/named.tests.ps1': "# covers tool.ps1 by name\n", 'doc.md': '# d\n## Steps\n1. Run `tool.ps1 go`, then `tool.ps1 gone`.\n'}
+di = flow.model(types.SimpleNamespace(files=list(I), texts=I, dir=sys.argv[2], skills=[], agents={}, workflows={}), [])
+ia, ib, ic, iz = flow.impact(di, 'tool.ps1', 2, I), flow.impact(di, 'Invoke-Go', 1, I), flow.impact(di, 'run.json', 1, I), flow.impact(di, 'nope-xyz', 2, I)
+lab = lambda rows: ','.join(sorted({x['label'] for x in rows}))
+print('impact=' + '|'.join([ia['matched'], str(len(ia['seeds'])), str({'driver.ps1', 't.tests.ps1'} <= {x['label'] for x in ia['upstream']}), lab(ia['downstream']), ','.join(ia['areas']), ','.join(b['code'] for b in ia['broken']),
+    ','.join(c['kind'] for c in ia['cycles']), ib['matched'], lab(ib['upstream']), lab(ib['downstream']), lab(ic['upstream']), lab(ic['downstream']), str(len(iz['seeds'])), str(flow.print_impact(iz))]))
 import hashlib, json, os   # a cache from an older parser (same file text, old key) is dropped, never reused
 cp = os.path.join(sys.argv[2], f'kit-flow-cache-{os.getpid()}.json'); S = {'fp.py': T['fp.py']}
 with open(cp, 'w') as fh: json.dump({'v': flow.VER, 'files': {'fp.py': {'h': hashlib.sha1(S['fp.py'].encode()).hexdigest(), 'p': {'parts': [], 'refs': []}}}}, fh)
@@ -140,6 +147,7 @@ $checks += [ordered]@{
   'lint draws the flow page in the live clone only, never from a linked worktree or a kit copy' = $res -match 'live=True'
   'a loop marked `flow: <reason>` is deliberate, not counted' = $res -match 'marked\.ps1=0' -and $res -match 'deliberate=1'
   'run-then-read is a loop from a script, never from a test file, a doc step or one read-modify-write' = $res -match 'scc-tests=0 scc-driver=1 scc-doc=0 scc-rmw=0'
+  'flow --impact (fixture): a file = its parts, upstream runners, downstream writes and readers, test areas run + named, the broken ref, its loop; a name; a state file; no match = exit 1' = $res -match 'impact=file\|4\|True\|driver\.ps1,run\.json,t\.tests\.ps1\|named,t\|UNRESOLVED\|scc\|name\|tool\.ps1,tool\.ps1 go\|run\.json\|Invoke-Go\|driver\.ps1,t\.tests\.ps1\|0\|1'
   'verbs from COMMANDS tables and multi-line switch ($__verb) cases resolve (a nested default does not end the scan); an unknown verb or a non-verb table does not' = $res -match 'verbs=a\.ps1 nope,tool\.py json(\s|$)'
   'a skill step moved from SKILL.md to a reference of the same skill resolves; an unknown one stays UNRESOLVED' = $res -match 'refsteps=sk step L9(\s|$)'
 }

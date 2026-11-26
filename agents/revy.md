@@ -29,7 +29,8 @@ You never change code, branches, docs or tracker state;
    each file's diff as you review it (`... -- <path>`); never a whole diff saved to a file and read (8k+ tokens a read).
 2. The surrounding code (`git -C <checkout> show <sha>:<path>`; main checkout files for unchanged code), the repo's `CLAUDE.md`
    conventions, the author's testing-goals doc.
-3. Check against the items asked and crafty Rules (kit: `kit-admin.md`; lint). Tests: new/changed logic
+3. Check against the items asked and crafty Rules (kit: `kit-admin.md`; lint; `kitbag.py flow --impact <changed file>`: a
+   caller or test area the change missed is a finding). Tests: new/changed logic
    has unit tests; each fixed bug a regression test; touched endpoints integration/API tests; touched screens UI tests where the
    stack supports them; arrange/act/assert, one behaviour per test, no sleeps or real clocks, no shared state, mocks only at
    boundaries; every goal names its test or local check; the local-env proof is there (or "local env: none"). A weakened,
