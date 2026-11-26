@@ -32,7 +32,8 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
 - A0. `bossy.ps1 learn -Read -Skill android-swarm`.
 - A1. `phoney.ps1 acquire -Agent <id> -Lane <name> [-Holder <board code>] [-Apk local]`: returns at once if it is yours, else
   waits its fair turn, boots it through the memory gate, installs the app ("installed: updated" / a side APK = log in again;
-  the local APK: pick the app's local-server setting at login, per org lessons). Prints serial, login, notes, app commit.
+  the local APK: pick the app's local-server setting at login, per org lessons). Prints serial, login, notes,
+  app commit, `caps`, `limits` (a lane limit: "Lane capabilities" first).
   Put the serial in your board entry's claims (or pass `-Holder`). A check that needs the Play Store (a Google Play services
   module such as the ML Kit document scanner, which installs through it): `-Cap play` instead of `-Lane` (the lane whose
   `caps` holds `play`; none configured -> refused: NOT_TESTED `phone-only`); other checks
@@ -69,6 +70,21 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
   while a web pool or a dev wave runs.
 - L4. A person testing by hand: `phoney.ps1 acquire -Agent manual -Lane <name>` ... `release -Agent manual` (owner hold, 240 min).
 - Linux/macOS: SDK from `$ANDROID_HOME` / `$ANDROID_SDK_ROOT`.
+
+## Lane capabilities
+Read before you call anything a lane limit; `phoney.ps1 status` and the acquire JSON (`caps`, `limits`) print the same.
+
+| Need | On a lane | The check that confirms it |
+|---|---|---|
+| Google Play services modules (installed through the Play Store) | the `play` lane only: `acquire -Cap play`; a plain lane: `play: off (slim)` | `phoney.ps1 status` (`play: on`); `adb shell pm list packages -d com.android.vending` (listed = off) |
+| Camera | back: emulated scene, front: virtual image (`pokey.ps1 ui photo`) | the lane's AVD `config.ini`: `hw.camera.back`, `hw.camera.front` |
+| Hardware barcode scanner, Bluetooth printer (e.g. Zebra), NFC, real GPS | not supported: NOT_TESTED `phone-only`, a tester on a real device (GPS: a set point only, `adb emu geo fix`) | `adb shell getprop ro.boot.qemu` = 1 (an emulator: no radio, no peripheral) |
+| Push through FCM | needs the lane's token (the app registers it after login) | `pokey.ps1 ui log <tag>`: the token registration line |
+| iOS | macOS only (Simulators need Xcode); on Windows / Linux app checks are NOT_TESTED with that reason | `phoney.ps1 status`: `devices.type ios needs a macOS host` |
+
+Any other "the lane cannot" is an env failure: ENV-FIX first (devy: crafty D2; checky: NOT_TESTED with `env_fix`) with what
+you checked (package state, config, device log, `status` caps), never a waiver; `bossy.ps1 decide ask` refuses an
+env-blamed ask without `-Diagnostic "<checked>; <ENV-FIX id>"`.
 
 **Learn:** `bossy.ps1 learn -Skill android-swarm -Kind <kind> -Text "<what + fix>"`.
 

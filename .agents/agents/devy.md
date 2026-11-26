@@ -45,7 +45,8 @@ Non-negotiables:
   SKILL.md `repos[].localTest`) before you open the MR; at most 3 rounds, then report FAIL (a stronger round follows).
   Never weaken, skip or delete an existing test or assertion, or special-case a test's input, to pass; a test that looks
   wrong -> `bossy.ps1 decide ask` (unless the brief allows that change by name).
-- The local env is ours: never stop for an env reason (envy "Unblock yourself"); ENV-FIX and decision pauses: crafty D2 / D1;
+- The local env is ours: never stop for an env reason (envy "Unblock yourself"); ENV-FIX and decision pauses: crafty D2 / D1
+  (an env or lane limit: ENV-FIX first, never a waiver ask; phoney "Lane capabilities");
   in a /buildy wave, low confidence between 2 paths no test settles -> report `debate` instead (the workflow debates it).
 - You disagree with a review finding -> contest it in the fix round's `disputes` (evidence: file:line, a test, a
   measurement; your Character argues, the evidence decides); another agent's result -> `board msg` it; still split -> `bossy.ps1

@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L252 budget · L282 launch · L517 recover · L606 pause · L617 resume · L684 program · L712 param ·
   L718 track · L1111 supervise · L1463 report · L1543 audit · L1603 storage · L1606 bugbrief · L1608 cleanup · L1695 learn ·
-  L1733 decide · L1912 debate · L1956 health · L2024 setup
+  L1733 decide · L1907 debate · L1951 health · L2019 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1739,7 +1739,7 @@ function Invoke-Decide {
     [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
     [string]$Gate = '',   # record: one of $kitGates; check -Id: a non-gate word is ignored
     [ValidateSet('', 'askuser', 'chat')][string]$Source = '', [int]$MaxHours = 12, [switch]$Use,
-    [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish, [switch]$Propose, [string]$Approve, [string]$Revoke, [string]$Context)
+    [string[]]$Supersedes = @(), [string]$Link, [switch]$NoPublish, [switch]$Propose, [string]$Approve, [string]$Revoke, [string]$Context, [string]$Diagnostic)
   $dir = Get-KitPath decisions -Create; $kitGates = @('deploy', 'merge', 'premerge', 'close', 'rollback', 'secret', 'data', 'scope', 'proof', 'other')
   # a gate word is a person's: an agent or the coordinator as -By is none
   $crewNames = @('coordinator') + @(Get-ChildItem (Join-Path $KitConf.Kit 'agents') -Filter '*.md' -ErrorAction SilentlyContinue | ForEach-Object BaseName)
@@ -1756,13 +1756,8 @@ function Invoke-Decide {
     'ask' {
       if (-not ($Agent -and $Question)) { 'usage: decide ask -Run <run> -Agent <id> -Item <item> -Context "today: <what happens now>" -Question "<q>" -Options "A: <label> — <its effect>","B: .." -Recommend A [-Fyi] [-Contracts <file>]'; exit 2 }
       $opts = @(Get-KitDecisionChoices @($Options | ForEach-Object { "$_" -split ',(?=\s*[A-Za-z0-9]+\s*:)' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) $Recommend)
-      # owner 2026-11-23: today + why, each option's effect, a pick
-      $miss = @(if ($Kind -eq 'decision') {
-          if (-not $Context -and @("$Question" -split '\s+').Count -lt 15) { '-Context "today: <what happens now, a short example>; why it comes up"' }
-          if ($opts.Count -lt 2) { 'two or more -Options' }
-          if (@($opts | Where-Object { -not $_.description -and @("$($_.label)" -split '\s+').Count -lt 6 }).Count) { 'each option "<key>: <label> — <its effect on users / business / cost / risk, plain words>"' }
-          if (-not $Recommend) { '-Recommend <key> (the default when the owner is not sure)' } })
-      if ($miss.Count) { "decide ask refused: missing $($miss -join '; '). Plain words; a technical term gets a one-line explanation. Nothing was asked."; exit 2 }
+      if ($askGap = Get-KitAskGap $Kind $Context $Question $opts $Recommend "$Options" $Diagnostic $dir) { $askGap; exit 2 }
+      if ($Diagnostic) { $Context = "$Context; checked: $Diagnostic".TrimStart('; ') }
       $shown = "$(if ($Context) { "Today: $(($Context.Trim() -replace '^(?i)today\s*:\s*').TrimEnd('.')). " })$("$Question".Trim())$(if ($Kind -eq 'decision' -and $Recommend -and -not $Fyi) { " Not sure? The default is $Recommend." })"
       $mrsClean = @(Split-KitList $Mrs | ForEach-Object { ConvertTo-MrRef $_ })
       $resolvedTask = if ($Task) { NormTask $Task } elseif ($Item -and (NormTask $Item)) { NormTask $Item } else { '' }

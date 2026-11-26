@@ -11,8 +11,8 @@ android (emulators) | ios (Simulators, macOS).
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
-Sections: L21 config · L113 phone · L314 build · L463 install · L490 launch · L504 avd · L593 up · L685 down · L715 slim ·
-  L742 arrange
+Sections: L21 config · L121 phone · L325 build · L474 install · L501 launch · L515 avd · L604 up · L696 down · L726 slim ·
+  L753 arrange
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -63,6 +63,14 @@ function SnapshotFlag($c, [string]$name, [bool]$cold) {
 }
 function EmuProcs($port) { Get-SysProcs -Name '^(emulator|qemu-system)' | Where-Object { $_.CommandLine -match "-port\s+$port\b" } }
 function LaneSerial($l) { if ($l.udid) { [string]$l.udid } else { "emulator-$($l.port)" } }
+# what a lane offers and what it cannot do (SKILL.md "Lane capabilities"): status and the acquire JSON print it, so no agent guesses a limit
+function Get-LaneLimits($l) {
+  if ((Get-SwarmConfig).kind -eq 'ios') { return [ordered]@{ play = 'none (a Simulator has no Play Store)'; camera = 'none (no Simulator camera)'; push = 'simctl push (no device token)'; unsupported = 'hardware barcode scanner, Bluetooth printer, NFC, real GPS: a tester on a real device' } }
+  [ordered]@{ play = $(if ($l -and @($l.caps) -contains 'play') { 'on' } else { 'off (slim): acquire -Cap play' }); camera = 'emulated scene / virtual image'; push = "needs the lane's FCM token"
+    unsupported = 'hardware barcode scanner, Bluetooth printer, NFC, real GPS: a tester on a real device' }
+}
+# a waiter's lanes: its -Cap lanes (lanes), else its -Lane, else any
+function Test-LaneWaiter($w, $names) { if ($w.lanes) { [bool]@($w.lanes | Where-Object { $names -contains $_ }).Count } else { -not $w.lane -or $names -contains $w.lane } }
 function Test-LaneUp($l) { $c = Get-SwarmConfig; if ($c.kind -eq 'ios') { [bool]("$(xcrun simctl list devices booted 2>$null)" -match [regex]::Escape([string]$l.udid)) } else { [bool]((& $c.adb devices) -match "^emulator-$($l.port)\s+device") } }
 # lane AVD hardware; {{X}} = swarm.config.json avd (abi, api, device, tag); devices.avd.extra {key: value} sets or adds config.ini lines
 # (hw.ramSize, hw.cpu.ncore, hw.lcd.*, disk.dataPartition.size); devices.phoneGB: the memory gate's need per booted phone
@@ -166,10 +174,11 @@ switch ($Action) {
       $ls = Lease $l.name
       $up = Running $l
       $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)" } else { 'free' }
-      '{0,-8} {1,-14} {2}{3}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" }), $(if ($l.caps) { " · caps $(@($l.caps) -join ', ')" })
+      '{0,-8} {1,-14} {2}{3}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" }), " · $(if ($l.caps) { "caps $(@($l.caps) -join ', ') · " })play: $((Get-LaneLimits $l).play -replace ':.*')"
     }
+    $lim = Get-LaneLimits $null; "every lane: camera $($lim.camera) · push $($lim.push) · not supported: $($lim.unsupported) (checks: SKILL.md `"Lane capabilities`")"
     "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (keeps $(GateKeepFreeGB) GB free, ~$($script:PhoneGB) GB a phone)"
-    Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
+    Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lanes) { @($w.lanes) -join ' / ' } elseif ($w.lane) { $w.lane } else { 'any lane' })$(if ($w.cap) { " (cap $(@($w.cap) -join ', '))" }) since $($w.since)" }
   }
 
   'acquire' {
@@ -182,11 +191,13 @@ switch ($Action) {
     $wf = Join-Path $waitDir "$Agent.json"
     $waitLane = if ($Cap -and $lanes.Count -eq 1) { $lanes[0].name } else { $Lane }   # -Cap with one such lane waits for that lane, not for any (plain agents pass, a plain release is not kept up for it)
     $since = (Get-Date).ToString('s')
-    Save-Json @{ agent = $Agent; lane = $waitLane; since = $since } $wf
+    # -Cap: the wait names its capability and every lane that offers it (2+ such lanes: still no any-lane waiter)
+    $waitRec = @{ agent = $Agent; lane = $waitLane; since = $since }; if ($Cap) { $waitRec.cap = @($Cap); $waitRec.lanes = @($lanes.name) }
+    Save-Json $waitRec $wf
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
     while (-not $got) {
       $got = Locked {
-        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $waitLane; since = $since } $wf }   # heartbeat
+        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json $waitRec $wf }   # heartbeat
         $mine = @($(if ($Cap) { $lanes } else { $c.lanes }) | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
         if ($mine) {   # already ours (offline too)
           $script:had = $true
@@ -197,7 +208,7 @@ switch ($Action) {
         foreach ($ln in $lanes) { $o = Lease $ln.name; $lf = Join-Path $dir "$($ln.name).json"; if (-not $o -or $o.agent -in '__stopping__', 'manual') { continue }; $s0 = "$($o.seen)"; if (Update-KitLease $o) { if ("$($o.seen)" -ne $s0) { Save-Json $o $lf }; continue }; Remove-Item $lf -Force; "reclaimed $($ln.name) from $($o.agent): no live holder for $(Get-KitSetting 'idle.graceMinutes' 10) min" | Write-Host }
         $free = @($lanes | Where-Object { -not (Lease $_.name) })
         if (-not $free) { return $null }
-        $ahead = @(Waiters | Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (-not $_.lane -or $free.name -contains $_.lane) })
+        $ahead = @(Waiters | Where-Object { $_.agent -ne $Agent -and ([datetime]$_.since) -lt (Get-Date $since) -and (Test-LaneWaiter $_ @($free.name)) })
         if ($ahead.Count -ge $free.Count) { return $null }
         # a free running lane, else one booting for no one, else boot a new one (the gate admits it)
         $up = @($free | Where-Object { Running $_ }); $booting = @($free | Where-Object { -not (Running $_) -and ((& $adb devices) -match "^$([regex]::Escape((LaneSerial $_)))\s") })
@@ -267,7 +278,7 @@ switch ($Action) {
         } catch { Write-Warning "$serial : $_"; $installed = "install FAILED (the phone runs an older app): $_" }   # no stamp: next acquire retries
       }
     }
-    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; caps = @($got.caps | Where-Object { $_ }); installed = $installed; reverse = @($rev); apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
+    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; caps = @($got.caps | Where-Object { $_ }); limits = (Get-LaneLimits $got); installed = $installed; reverse = @($rev); apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
   }
 
   'ensure' {
@@ -295,7 +306,7 @@ switch ($Action) {
       if (-not (Running $l)) { } elseif ($ios) { xcrun simctl terminate $serial $pkg 2>$null } else { & $adb -s $serial shell am force-stop $pkg 2>$null; & $adb -s $serial reverse --remove-all 2>$null }
       $lf = Join-Path $dir "$($l.name).json"
       $waiting = Locked {
-        $n = @(Waiters | Where-Object { -not $_.lane -or $_.lane -eq $l.name }).Count
+        $n = @(Waiters | Where-Object { Test-LaneWaiter $_ @($l.name) }).Count
         if ($Keep -or $n -or -not (Running $l)) { Remove-Item $lf -Force -ErrorAction SilentlyContinue }
         else { Save-Json ([ordered]@{ agent = '__stopping__'; lane = $l.name; serial = $serial; since = (Get-Date).ToString('s') } + (Get-KitHolder)) $lf }
         $n

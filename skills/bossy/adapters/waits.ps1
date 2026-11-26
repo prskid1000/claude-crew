@@ -15,8 +15,9 @@ function Get-KitWaitsOverCap([datetime]$Now, [double]$CapMin) {
     if ($m -ge $CapMin) { [pscustomobject]@{ agent = $w.holder; why = "test lock $($w.lock)"; min = $m; holder = "$($st.held[$w.lock].holder)"; next = 'crafty.ps1 check takes it when its holder ends' } } }
   foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath phones) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($Now - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'phone.waitFreshMinutes') })) {
     $w = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }; if (-not $w.since) { continue }; $m = [int]($Now - [datetime]$w.since).TotalMinutes
-    $hs = @($phones | Where-Object { -not $w.lane -or $_.lane -eq $w.lane } | ForEach-Object { "$($_.agent) ($($_.lane))" })
-    if ($m -ge $CapMin) { [pscustomobject]@{ agent = $w.agent; why = "phone $(if ($w.lane) { "lane $($w.lane)" } else { 'any lane' })"; min = $m; holder = ($hs -join ', '); next = 'phoney.ps1 acquire hands it the first lane released (phoney.ps1 status)' } } }
+    $wl = @(if ($w.lanes) { $w.lanes } elseif ($w.lane) { $w.lane })   # a -Cap wait names every lane that offers it
+    $hs = @($phones | Where-Object { -not $wl.Count -or $wl -contains $_.lane } | ForEach-Object { "$($_.agent) ($($_.lane))" })
+    if ($m -ge $CapMin) { [pscustomobject]@{ agent = $w.agent; why = "phone $(if ($wl.Count) { "lane $($wl -join ' / ')" } else { 'any lane' })$(if ($w.cap) { " (cap $(@($w.cap) -join ', '))" })"; min = $m; holder = ($hs -join ', '); next = 'phoney.ps1 acquire hands it the first lane released (phoney.ps1 status)' } } }
 }
 # a pokey seat (one per QA package) older than qa.packageMinutes for its lane -> { agent; kind; min; expect; now = its board status }
 function Get-KitQaSlow([datetime]$Now) {

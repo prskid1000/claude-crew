@@ -142,7 +142,7 @@ function Get-TrackerTask { @{ name = 'E500'; description = 'spike' } }; function
 $kl = Join-Path $KitConf.Kit 'skills/crafty/kit.local.json'; $bf = { $null = Invoke-BugBrief -Task g1 -Repos w 3>$null; Get-Content (Join-Path (Get-KitPath briefs) g1.md) -Raw }
 function Use($c) { Set-Content $kl ($c | ConvertTo-Json -Depth 6); $script:__cfg = $c | ConvertTo-Json -Depth 6 | ConvertFrom-Json }
 Use @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm' }) }; $t = & $bf
-"neutral:$($t -match '\| Agent \| Bug task \| Items \|\r?\n' -and $t -notmatch 'Migration range' -and $t -notmatch 'phoney' -and $t -match 'Branches `fix/')"
+"neutral:$($t -match '\| Agent \| Bug task \| Items \|\r?\n' -and $t -notmatch 'Migration range' -and $t -notmatch 'phoney\.ps1' -and $t -match 'Branches `fix/')"
 Use @{ repos = @(@{ name = 'w'; checkout = 'C:/w'; target = 'm'; migrations = @{ check = 'x' } }); qa = @{ lanes = @{ web = @{ kind = 'web' }; app = @{ kind = 'app' } } }; tracker = @{ bugBranchPrefix = 'bugfix/' } }; $t = & $bf
 "declared:$($t -match '\| Items \| Migration range \|' -and $t -match '\| ask the coordinator if you need one \|' -and $t -match 'phoney\.ps1 acquire -Agent B-g1 -Apk local' -and $t -match 'Branches `bugfix/')"
 '@ @($O)

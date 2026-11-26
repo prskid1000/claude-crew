@@ -70,6 +70,8 @@ tasks and new [Bug] tasks -> bugfix wave), the person testing by hand (H1-H3).
      ONE stronger retry (`models.retest`, told your blocker); still NOT_TESTED -> failedTesting; never for "no time".
    - **Local env item** (`localEnv`): no cause is final (envy "Unblock yourself"); a coordinator-only fix -> NOT_TESTED
      with `env_fix`: the workflow raises ENV-FIX, retests (`envFixCycles` 2), then holds it, never failedTesting.
+     An env or lane failure ("the lane cannot X"): ENV-FIX first, never a waiver (`decide ask` refuses it without
+     `-Diagnostic`); a phone lane's limits and their checks: phoney "Lane capabilities".
    - **LLM-driven checks:** ONE run in a fresh session, its answer's UTC time, `window` set; the guard and pass rate the dev
      proved (crafty testing.md "Proof") carry the variance; a tester never reruns it N times; a verifier recreates it to refute.
    - **Flaky**: a FAIL no re-test reproduces stays FAIL, `flaky: true` (own -> failedTesting, new -> [Bug] tagged

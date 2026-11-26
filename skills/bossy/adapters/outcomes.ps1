@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L114 summary · L282 patterns · L319 rules · L397 retro due · L408 tidy · L510 collisions · L528 decisions
+Sections: L14 outcomes · L114 summary · L282 patterns · L319 rules · L417 retro due · L428 tidy · L530 collisions · L548 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -341,6 +341,26 @@ function Set-KitStandingRuleAnswer([string]$AskId, [string]$Answer, [string]$By)
     foreach ($r in $mine) { if ($all -or $r.id -in $named) { $r.status = 'approved'; $r.approvedAt = (Get-KitStamp); $r.approvedBy = $By } else { $r.status = 'rejected' } }
     Save-KitStandingRules $rules
   }
+}
+# an ask that blames a lane or the env for what it cannot do (a waiver in the making; owner 2026-11-26: a lane "could not" install a module
+# its slim had turned off) -> the refusal text; '' = may be asked: -Diagnostic says what was checked and names the ENV-FIX raised first
+function Get-KitEnvBlameGap([string]$Text, [string]$Diagnostic, [string]$Dir) {
+  $envWord = '(?:lanes?|emulators?|simulators?|avds?|local env(?:ironment)?)'; $cantWord = "(?:can(?:no|['’])?t|can not|unable to|does(?: not|n['’]t) support|not supported|unsupported|not possible|impossible|no way to|lacks?|has no)"
+  if ($Text -notmatch "(?i)\b$envWord\b[^.;:]{0,60}\b$cantWord\b|\b$cantWord\b[^.;:]{0,60}\b(?:on|in|by|with) (?:the |a |an |this |our |any )?(?:[\w-]+ )?$envWord\b") { return '' }
+  $blame = $Matches[0]; $fixIds = @([regex]::Matches("$Diagnostic", '(?i)\benvfix-[a-z0-9-]+') | ForEach-Object { $_.Value.ToLower() } | Where-Object { Test-Path (Join-Path $Dir "$_.json") })
+  if (@("$Diagnostic" -split '\s+' | Where-Object { $_ }).Count -ge 6 -and $fixIds.Count) { return '' }
+  "decide ask refused: it blames the env (`"$blame`"). An env failure is an ENV-FIX first, never a waiver: 1. check it (phoney.ps1 status: caps and play on / off, the package state, the config, the device log); 2. bossy.ps1 decide ask -Kind envfix -Question `"<what fails + what you checked>`" (kitty fixes it); 3. still a limit: ask again with -Diagnostic `"<what was checked and found>; <that ENV-FIX id>`". Not about the env: reword the question. Nothing was asked."
+}
+# decide ask's refusal text ('' = it may be asked). Owner 2026-11-23: today + why, each option's effect, a pick; an env-blamed ask: Get-KitEnvBlameGap
+function Get-KitAskGap([string]$Kind, [string]$Context, [string]$Question, $Opts, [string]$Recommend, [string]$OptionText, [string]$Diagnostic, [string]$Dir) {
+  if ($Kind -ne 'decision') { return '' }
+  $miss = @(
+    if (-not $Context -and @("$Question" -split '\s+').Count -lt 15) { '-Context "today: <what happens now, a short example>; why it comes up"' }
+    if (@($Opts).Count -lt 2) { 'two or more -Options' }
+    if (@($Opts | Where-Object { -not $_.description -and @("$($_.label)" -split '\s+').Count -lt 6 }).Count) { 'each option "<key>: <label> — <its effect on users / business / cost / risk, plain words>"' }
+    if (-not $Recommend) { '-Recommend <key> (the default when the owner is not sure)' })
+  if ($miss.Count) { return "decide ask refused: missing $($miss -join '; '). Plain words; a technical term gets a one-line explanation. Nothing was asked." }
+  Get-KitEnvBlameGap "$Context $Question $OptionText" $Diagnostic $Dir
 }
 # a pending ask matching an approved, auto rule -> answered by it (decide ask); $null = ask the owner
 function Get-KitStandingRuleAnswer($Ask) {
