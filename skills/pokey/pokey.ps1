@@ -1284,7 +1284,7 @@ Save-Fin
 # indexes (STATE.md) spare re-reading tracker / run folder
 $envName = [string]$(if ($item.target) { $item.target } else { $run.target }); $runName = Split-Path $RunDir -Leaf
 foreach ($s in @($out.subtasks | Where-Object { $_.id })) {
-  $er = [ordered]@{ env = $envName; run = $runName; code = $Code; pass = [int]$s.pass; fail = [int]$s.fail; notTested = [int]$s.notTested; doc = $docUrl; at = (Get-KitStamp) }
+  $er = [ordered]@{ env = $envName; run = $runName; code = $Code; pass = [int]$s.pass; fail = [int]$s.fail; notTested = [int]$s.notTested; failIds = @($s.failIds); bug = "$($s.bug)"; doc = $docUrl; at = (Get-KitStamp) }   # failIds, bug: outcome rows' came-back reason, [Bug] links
   try { Update-KitTaskIndex ([string]$s.id) { param($x) $x.envRuns = @(@($x.envRuns) | Where-Object { -not ($_.run -eq $runName -and $_.code -eq $Code) }) + $er } } catch { Write-Warning "task index $($s.id): $_" }
 }
 $rix = Join-Path $RunDir 'index.json'
