@@ -157,7 +157,7 @@
     "migration": {
       "config": "migrations.tool",
       "file": "skills/crafty/adapters/liquibase.ps1",
-      "verbs": "check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes appendOnly",
+      "verbs": "check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes appendOnly unmerged",
       "names": "",
       "vendors": "liquibase"
     },

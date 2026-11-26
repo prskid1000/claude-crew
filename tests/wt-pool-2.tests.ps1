@@ -37,6 +37,22 @@ Show-KitVerbInbox @('lease', '-Repo', 'x', '-Agent', 'devy-90'); Show-KitVerbInb
 "@
 $mbOut = $mbTest -join ' // '
 Expect "board msg: a left id's message goes to the live agent of its run + area (a lone one stays); wt / check / checkpoint print the unread ones once, never a left agent's ($mbOut)" ($mbOut -match 'to:devy-lone new:True lone:True' -and @([regex]::Matches($mbOut, '\[inbox\] MESSAGE for devy-90 \(do what it says\): \d\d:\d\d from supervise: TASK CLOCK: open the MR')).Count -eq 1 -and $mbOut -notmatch 'MESSAGE for devy-lone' -and (Get-Content (Join-Path $k 'skills/crafty/crafty.ps1') -Raw) -match "if \(\`$__verb -in 'wt', 'check', 'checkpoint'\) \{ try \{ Show-KitVerbInbox")
+# coordinator 2026-11-26: a successor resumed in its area's slot without leasing it; the old holder's lease ran out and the slot went
+# to a third agent while the successor's board row still listed it: a dead holder's slot lease moves to the live row that lists it
+$mvTest = Invoke-PsTest pool-slot-claim @"
+. '$k/skills/crafty/lib.ps1'; `$bd = Get-KitPath board -Create; `$now = (Get-Date).ToString('o'); `$wtp = Join-Path '$k' 'wt/osprey-app'; `$sf = Get-KitSlotFile 'osprey-app'
+`$mk = { @{ slot = 'app·Osprey'; n = 3; path = `$wtp; branch = 'f/x'; agent = 'devy-gone'; holderPid = 999999; holderStart = '2020-01-01T00:00:00Z'; at = `$now; seen = (Get-Date).AddHours(-2).ToString('o') } | ConvertTo-Json | Set-Content `$sf; Read-KitSlotLease `$sf }
+@{ agent = 'devy-gone'; status = 'left'; beat = `$now } | ConvertTo-Json | Set-Content (Join-Path `$bd 'devy-gone-1.json')
+@{ agent = 'devy-quit'; session = 'devy-quit-1'; status = 'left'; beat = `$now; pid = `$PID; pidStart = (Get-KitPidStart `$PID); worktrees = @(`$wtp) } | ConvertTo-Json | Set-Content (Join-Path `$bd 'devy-quit-1.json')
+`$l0 = & `$mk; "left-claim:`$(Update-KitLease `$l0)/`$(`$l0.agent)"
+@{ agent = 'devy-next'; session = 'devy-next-1'; run = 'r9'; status = 'step 2'; beat = `$now; pid = `$PID; pidStart = (Get-KitPidStart `$PID); worktrees = @('C:/other', `$wtp.Replace('\', '/')) } | ConvertTo-Json | Set-Content (Join-Path `$bd 'devy-next-1.json')
+`$script:KitJsonMemo = `$null; `$l1 = & `$mk; `$r1 = Update-KitLease `$l1; `$s1 = Read-KitSlotLease `$sf
+"live-claim:`$r1/`$(`$l1.agent)/`$(`$s1.agent)/`$(`$s1.session)/`$(`$s1.run)/`$(`$null -eq `$s1.graceMin)/`$(Update-KitLease `$s1)"
+`$lg = @(Get-Content (Get-KitLogFile leases) | ForEach-Object { `$_ | ConvertFrom-Json } | Where-Object name -eq 'app·Osprey' | ForEach-Object { "`$(`$_.event):`$(`$_.agent)" }) -join ','
+"log:`$lg"; `$lp = & `$mk; Set-KitProp `$lp parked `$true; "parked:`$(Move-KitSlotLease `$lp)"
+"@
+$mvOut = $mvTest -join ' '
+Expect "pool: a slot lease with no live holder moves to the live agent whose board row lists the slot (saved, logged reclaim + acquire, live after); a left row's claim or a parked slot: never ($mvOut)" ($mvOut -match 'left-claim:False/devy-gone' -and $mvOut -match 'live-claim:True/devy-next/devy-next/devy-next-1/r9/True/True' -and $mvOut -match 'log:reclaim:devy-gone,acquire:devy-next' -and $mvOut -match 'parked:False')
 # coordinator 2026-11-25: an api suite reads its URLs from cypress/data/config.ts (devys hand-edited it): tests.e2e.run[].portFiles
 # get the lane's ports for the run and are put back after; a file with its own edits is refused; a killed run is restored first
 $pfRepo = Join-Path (Kd) 'pf-repo'; New-Item -ItemType Directory -Force "$pfRepo/cypress/data" | Out-Null; Set-Content "$pfRepo/cypress/data/config.ts" "serverUrl: 'http://localhost:8443'"; Set-Content "$pfRepo/b.ts" "u: 'http://localhost:8443'"; Save-GitRepo $pfRepo base

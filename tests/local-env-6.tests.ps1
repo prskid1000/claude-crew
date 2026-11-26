@@ -53,5 +53,42 @@ $lb = & { . $lkL; $script:busyN = 0; function Test-KitAgentBusy($a) { $script:bu
   $b2 = @(Wait-Leases lw @('api') @() @()) -join ' '
   "$($b1 -match 'B1 on api \(at most \d+ min: a check runs\)')|$($b1 -match 'told B1')|$($b2 -notmatch 'a check runs' -and $b2 -match 'told B1')" }
 Expect "leases: a holder whose check runs is not swapped under at leaseMinutes, waited for up to maxLeaseMinutes, then told ($lb)" ($lb -eq 'True|True|True')
+# owner 2026-11-26 (baseline in place; lane DB donor = a clean baseline mark): the liquibase unmerged verb = applied changeSets the
+# changelog files lack (XML, formatted SQL, YAML), per schema
+Set-JsonFile (Join-Path $laneKit 'skills/crafty/kit.local.json') @{ migrations = @{ tool = 'liquibase' }; localEnv = @{ envs = @{
+  don = @{ db = @{ port = 3391 }; services = @(@{ name = 'db'; port = 3391; start = 'db' }) }
+  fresh = @{ db = @{ port = 3392 }; services = @(@{ name = 'db'; port = 3392; start = 'db'; init = @{ cmd = 'clone'; creates = 'zz-none'; donor = 'don' } }) } } } } 8
+$um = & { . $lkL; $umRoot = New-Item -ItemType Directory -Force (Join-Path (Kd) 'um/resources/db'); function SqlId($sn) { "[$sn]" }
+  Set-Content (Join-Path $umRoot 'a.xml') '<databaseChangeLog><changeSet id="1" author="dev"><sql>x</sql></changeSet><changeSet author="dev" id="2"/></databaseChangeLog>'
+  Set-Content (Join-Path $umRoot 'b.sql') "--liquibase formatted sql`n--changeset ann:3`nSELECT 1;"
+  Set-Content (Join-Path $umRoot 'c.yaml') "databaseChangeLog:`n  - changeSet:`n      id: 4`n      author: bob`n      changes: []"
+  function Resolve-MigSets { @([pscustomobject]@{ name = 'm'; tool = 'liquibase'; searchPath = (Split-Path $umRoot); schemas = @('s1', 's2') }) }
+  function Invoke-DbSql($qe, $qs) { @('dev', '1'), @('ann', '3'), @('bob', '4'), @('dev', '2'); if ($qs -match '\[s2\]') { @('eve', '77'), @('eve', '78') } }
+  $umR = @(& $KitAdapters['migration']['liquibase']['unmerged'] @{ e = 'don' }); "$($umR.Count)|$($umR[0].schema)|$($umR[0].count)|$($umR[0].sample -join ',')" }
+Expect "liquibase unmerged: a schema whose DATABASECHANGELOG holds changeSets the changelog files lack is named with its count; one that matches: none ($um)" ($um -eq '1|s2|2|eve:77,eve:78')
+# the block reasons in order (cheapest first), said once; clean = a new baseline mark; an init with a donor that is no clean baseline is refused
+$bp = & { . $lkL; function MarksOn { $true }; $global:bpPos = 1; function Get-DbPos { "binlog.000001:$((++$global:bpPos))" }; function Test-PortListening([int]$Port) { $Port -eq 3391 }
+  $global:bpSeedBad = $false; function Invoke-Seed { if ($global:bpSeedBad) { $script:SeedBad = $true } }
+  $global:bpRows = '0'; function Invoke-Hook($he, $hn, $hv) { $script:HookOut = @($global:bpRows); $null }
+  $global:bpUm = @(); function Get-MigTool { 'liquibase' }; function Invoke-MigVerb($mt, $mv, $ma) { $global:bpUm }
+  $sf = SeedFile don; $it = @(@{ name = 'i1'; check = @{ sql = 'SELECT 1' } }); Set-JsonFile $sf @{ items = $it }
+  Update-State don { param($x) $x.release = @{ n = 4; repos = @{ r = @{ layers = @(@{ branch = 'f/a'; agent = 'A1' }) } } }; $x.train = @{ id = 't'; at = (Now) }; $x.leases = @{ A1 = @{ services = @('db'); agent = 'A1'; holderPid = $PID } }
+    $x.marks = @(@{ name = 'baseline-0001'; kind = 'baseline'; at = (Get-Date).AddHours(-2).ToString('o'); release = 3; pos = 'binlog.000001:1' }) }
+  $w = @(Get-BaselineBlock don); Update-State don { param($x) $x.train = $null }; $w += Get-BaselineBlock don
+  Update-State don { param($x) $x.release.repos.r.layers = @() }; $w += Get-BaselineBlock don; Update-State don { param($x) $x.leases = @{} }; $w += Get-BaselineBlock don
+  Set-JsonFile $sf @{ items = $it; clean = @(@{ name = 'qa rows'; sql = 'SELECT COUNT(*) FROM t' }) }
+  $global:bpSeedBad = $true; $w += Get-BaselineBlock don; $global:bpSeedBad = $false; $global:bpRows = '7'; $w += Get-BaselineBlock don; $global:bpRows = '0'
+  $global:bpUm = @([pscustomobject]@{ schema = 's1'; count = 2; sample = @('dev:9', 'dev:10') }); $w += Get-BaselineBlock don
+  $h1 = @(Update-Baseline don (Read-State don)) -join ' '; $h2 = @(Update-Baseline don (Read-State don)) -join ' '
+  function SvcDir { $env:TEMP }; function StartCmd { 'x' }; function Wait-Room { }; function Test-Room { $true }; function Save-LocalEnvHistory { }; function Start-AotTrain { }
+  function Start-Pwsh { $PID }; function Healthy { $true }; function Stop-Svc { }; function Owned { $false }; function Get-PortPids { @() }; $global:bpInit = 0; function Invoke-Shell { $global:bpInit++; 0 }
+  $fdb = @(EnvServices fresh | Where-Object name -eq 'db')[0]; $ref = try { $null = Start-SvcOnce fresh $fdb 1 ''; 'ran' } catch { "$_" }; $i0 = $global:bpInit
+  $global:bpUm = @(); $ok = @(Start-SvcOnce fresh $fdb 1 '') -join ' '; $sd = Read-State don; $bs = @($sd.marks | Where-Object kind -eq 'baseline')
+  $again = @(Update-Baseline don (Read-State don)).Count; Remove-Item -LiteralPath $sf -Force
+  $bpCut = '[ :\x28]'; $bpWhy = @($w | ForEach-Object { ("$_" -split $bpCut)[0..1] -join ' ' }) -join ','
+  $bpH1 = $h1 -match '^baseline stays baseline-0001: applied migration.s. its changelog lacks: s1 2 .dev:9, dev:10.'; $bpRef = $ref -match 'init refused: donor don is no clean baseline .applied migration'
+  $bpOk = $ok -match '\[don\] mark baseline-\S+ clean on release 4'
+  "$bpWhy|$bpH1|$($h2 -eq '')|$bpRef|$i0|$bpOk|$($global:bpInit)|$($bs.Count)|$($bs[-1].release)|$($null -eq $sd.baselineHold)|$again" }
+Expect "baseline: blocked by a train, a layer, a lease, no clean items, a red seed, test data, an unmerged migration (said once); clean: promoted in place; a lane init refuses a dirty donor, runs on a clean one ($bp)" ($bp -eq 'a train,unmerged layer,lease s),no test-data,the seed,test data,applied migration|True|True|True|0|True|1|2|4|True|0')
 Remove-TestKit $laneKit
 Complete-Tests

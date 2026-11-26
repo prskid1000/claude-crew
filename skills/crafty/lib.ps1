@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L461 leases · L903 status · L1115 tracker · L1444 prior ·
-  L1463 ask bugs · L1648 deploy words · L1692 git-host · L1880 kitlog · L1991 params · L2296 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L461 leases · L904 status · L1116 tracker · L1445 prior ·
+  L1464 ask bugs · L1649 deploy words · L1693 git-host · L1881 kitlog · L1992 params · L2297 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -520,6 +520,7 @@ function Update-KitLease($l) {
     if ($null -ne $l.graceLeft) { Set-KitProp $l graceLeft $null; Set-KitProp $l graceMin $null; Set-KitProp $l released $null }; return $true
   }
   if ($l.owner -or ($l.until -and -not $l.agent -and -not $l.holderPid)) { return $false }
+  if ($l.slot -and (Get-Command Move-KitSlotLease -ErrorAction SilentlyContinue) -and (Move-KitSlotLease $l)) { return $true }   # a live successor's board row lists the slot
   if (-not $l.seen) { Set-KitProp $l seen (Get-KitStamp stored $now) }   # first seen dead: the grace starts now
   if ($null -eq $l.graceMin) { Set-KitProp $l graceMin ([double](Get-KitParam 'idle.graceMinutes')) }   # read once: a running grace keeps its value
   $left = [double]$l.graceMin - ($now - [datetime]$l.seen).TotalMinutes

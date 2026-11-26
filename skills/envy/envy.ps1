@@ -24,7 +24,7 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L240 state · L287 layer drops · L362 leases · L472 code · L483 migrations ·
   L486 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L635 shared builds · L766 hooks · L840 marks · L1024 seed ·
-  L1091 processes · L1455 daemon · L1936 cleanup · L2008 verbs
+  L1091 processes · L1447 daemon · L1928 cleanup · L2000 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -1357,7 +1357,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     } }
   & $free 'stopped before a new start'
   if ($s.init.cmd -and -not ($s.init.creates -and (Test-Path -LiteralPath (Expand-Placeholders ([string]$s.init.creates) $e $s $dir '')))) {   # before a start while init.creates is missing (a lane's own data)
-    $ic = Expand-Placeholders ([string]$s.init.cmd) $e $s $dir ''; $ilog = LogFile $e "$($s.name)-init"; Add-Content $ilog "== $(Now) init: $ic"
+    Assert-InitDonor $e $s; $ic = Expand-Placeholders ([string]$s.init.cmd) $e $s $dir ''; $ilog = LogFile $e "$($s.name)-init"; Add-Content $ilog "== $(Now) init: $ic"
     "[$e] $($s.name): init (once; log $ilog)"; $t0i = Get-Date
     $code = Invoke-Shell $ic $ilog (EnvVars $e $s) ([int]$(if ($s.init.timeoutSec) { $s.init.timeoutSec } else { 1800 }))
     if ($code) { Event $e 'init-failed' @{ service = $s.name; why = (Get-ShellWhy $code) }; throw "[$e] $($s.name): init failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 5) -join ' | '). Log: $ilog" }
@@ -1421,18 +1421,9 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     }
     Start-AotTrain $e $s $artifact
   } finally { if ($got) { $mx.ReleaseMutex() }; $mx.Dispose(); Update-State $e { param($x) $v = $x.services[$s.name]; if ($v -and $v.status -eq 'waiting' -and $v.waitPid -eq $PID) { $v.status = 'down' } } }   # a claim never outlives its start
-  if ($dbStarted) { Add-SeedBaseline $e $s.name }   # after the start lock: other starts never wait on the check
+  if ($dbStarted -and (MarksOn $e)) { Add-SeedBaseline $e $s.name }   # after the start lock: other starts never wait on the check
 }
-# the env's DB up with no baseline mark: a green seed -Check marks one (SQL checks only: a cmd check may need the app)
-function Add-SeedBaseline([string]$e, [string]$by) {
-  if (-not (MarksOn $e) -or @((Read-State $e).marks | Where-Object { $_ -and $_.kind -eq 'baseline' }).Count) { return }
-  try {
-    $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { return }
-    if (@((Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).items | Where-Object { $_ -and -not $_.check.sql }).Count) { return "[$e] no baseline mark: its seed has non-SQL checks (envy.ps1 seed -Env $e once the env is up)" }
-    $script:SeedBad = $false; $null = Invoke-Seed $e -Check
-    if ($script:SeedBad) { "[$e] no baseline mark: the seed check is not green (envy.ps1 seed -Env $e)" } else { "[$e] mark $(New-Mark $e (New-KitName baseline $e) 'baseline') (seed check green at the $by start)" }
-  } catch { "[$e] no baseline mark: $("$_".Split("`n")[0])" }
-}
+# baseline marks (the first at a DB start, promotion, a lane init's donor): adapters/lane-standard.ps1 "baseline"
 
 # the loop's db chores -> lines to say: temp watchdog and buffer pool once a minute (TODO-PARAM), mark expiry once a day; all rest
 # while the env's own DB service is down (a lane's copy stopped idle or under memory pressure: no client errors, it starts on a lease)
@@ -1445,6 +1436,7 @@ function Invoke-DbChores([string]$e, $st, [hashtable]$at) {
   if (((Get-Date) - $at.pool).TotalSeconds -ge 60 -and (Get-Command Invoke-DbPool -ErrorAction SilentlyContinue)) {   # adapters/db-presets.ps1, db.bufferPool
     $at.pool = Get-Date; try { foreach ($k in @(Invoke-DbPool $e)) { $k; Event $e 'db-pool' @{ what = $k } } } catch { "db pool: $("$_".Split("`n")[0])" }
   }
+  if ((MarksOn $e) -and (-not $at.base -or ((Get-Date) - $at.base).TotalMinutes -ge 10)) { $at.base = Get-Date; try { Update-Baseline $e $st } catch { "baseline: $("$_".Split("`n")[0])" } }   # TODO-PARAM (fixed default)
   if ((MarksOn $e) -and ((Get-Date) - $at.marks).TotalSeconds -ge 60 -and (-not $st.binlog -or ((Get-Date) - [datetime]$st.binlog.checkedAt).TotalHours -ge 24)) { $at.marks = Get-Date; try { Update-Marks $e } catch { "marks: $("$_".Split("`n")[0])" } }
 }
 # the loop's inputs: kit.local.json, envy.ps1, lib.ps1 and the dot-sourced adapters; a changed stamp = a fresh loop between trains

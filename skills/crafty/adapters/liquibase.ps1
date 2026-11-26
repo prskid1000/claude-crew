@@ -6,10 +6,11 @@
 #   discover @{ e; dirs; registry } -> one set (several masters: ambiguous) · pendingSql @{ e; set; out } -> $null | error
 #   tag / rollback @{ e; set; tag } -> $null | error · resetEdited @{ e; envRepos; cur; newLayers } -> notes
 #   missingRoutines @{ e; schema } -> { schema, names, files, changeSets } · rerunRoutines @{ e; schema } -> notes (their history rows deleted)
+#   unmerged @{ e } -> applied changeSets the changelog files lack, per schema ·
 #   historyScopes @{ e } -> the env scopes holding DATABASECHANGELOG · appendOnly @{ file } -> a conflict of includes only (lane train keepboth)
 # A set: { name, tool, repo, base, changelog, dir, searchPath, schemas, registry, ambiguous }; searchPath default: the nearest
 # 'resources' folder above the changelog (classpath-relative includes), else the changelog's folder.
-# Sections: L15 crafty.ps1 check · L49 local env (envy.ps1)
+# Sections: L16 crafty.ps1 check · L50 local env (envy.ps1)
 # loaded by lib.ps1 only when config names the tool (a "tool" or db "rollback" value liquibase, anywhere): no config, no adapter
 if ($__plugin -eq $PSCommandPath -and ($__cfg | ConvertTo-Json -Depth 30 -Compress) -notmatch '"(?:tool|rollback)":"liquibase"') { return }
 # ---- crafty.ps1 check: the repo's changelog masters: XML (lbcheck reads them) or, -Other, the YAML / JSON / SQL ones it cannot (UNRUN)
@@ -204,6 +205,26 @@ function Reset-LiquibaseMissingRoutines([string]$e, [string]$Schema) {
     "routines $(@($g.names | Where-Object { $_ -notin @($g.kept.Keys) }) -join ', ') missing in $($g.schema): $($w.Count) changeSet row(s) deleted from DATABASECHANGELOG; the next migration run creates them"
   }
 }
+# applied changeSets ("<author>:<id>" of DATABASECHANGELOG) the set's changelog files lack, per schema -> @{ schema; set; count; sample }
+# (envy baseline promotion: a dropped layer's migration stays applied). The files = the env worktree as built: call it with no
+# layer live, so they are the target's. YAML: id then author lines; a format it cannot read counts as lacking (never a promotion)
+function Get-LiquibaseUnmerged([string]$e) {
+  foreach ($ms in @(Resolve-MigSets $e | Where-Object { $_.tool -eq 'liquibase' })) {
+    $roots = if (@($ms.masters).Count -gt 1) { @($ms.masters | ForEach-Object { Get-LiquibaseSearchPath $_ } | Select-Object -Unique) } elseif ($ms.searchPath) { @($ms.searchPath) } elseif ($ms.changelog) { @(Get-LiquibaseSearchPath $ms.changelog) } elseif ($ms.dir) { @($ms.dir) } else { @() }
+    $have = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($root in @($roots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
+      foreach ($f in Get-ChildItem -LiteralPath $root -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
+        $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)changeset') { continue }
+        foreach ($k in (Get-ChangeSetBlocks $t).Keys) { $null = $have.Add($k) }
+        foreach ($m in [regex]::Matches($t, '(?m)^\s*-?\s*changeSet:\s*\r?\n\s*id:\s*["'']?(?<id>[^"''\r\n]+?)["'']?\s*\r?\n\s*author:\s*["'']?(?<au>[^"''\r\n]+?)["'']?\s*$')) { $null = $have.Add("$($m.Groups['au'].Value):$($m.Groups['id'].Value)") }
+      }
+    }
+    foreach ($s in @($ms.schemas | Where-Object { $_ })) {
+      $miss = @(Invoke-DbSql $e "SELECT AUTHOR, ID FROM $(SqlId $s).DATABASECHANGELOG" | ForEach-Object { "$($_[0]):$($_[1])" } | Where-Object { -not $have.Contains($_) })
+      if ($miss.Count) { [pscustomobject]@{ schema = $s; set = "$($ms.name)"; count = $miss.Count; sample = @($miss | Select-Object -First 3) } }
+    }
+  }
+}
 # a lane train's append-only conflict (envy lane-standard.ps1 Resolve-LaneKeepBoth): a changelog master whose every conflict
 # line (both sides, the diff3 base) is an include, a comment or blank -> $true
 function Test-LiquibaseAppendOnly([string]$File) {
@@ -222,4 +243,5 @@ Register-KitAdapter migration liquibase @{
   missingRoutines = { param($a) Get-LiquibaseMissingRoutines $a.e $a.schema }
   rerunRoutines   = { param($a) Reset-LiquibaseMissingRoutines $a.e $a.schema }
   historyScopes   = { param($a) LiquibaseSchemas $a.e }
+  unmerged        = { param($a) Get-LiquibaseUnmerged $a.e }
 }

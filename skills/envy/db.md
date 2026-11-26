@@ -9,7 +9,7 @@ sqlite, oracle, search engines) revert the scopes whole.
 ## Migration tool (kind migration)
 - `db.migrations.tool` (else top-level `migrations.tool`; default none: no tool verbs, touched tables from changed files).
   `liquibase` = `crafty/adapters/liquibase.ps1` (verbs check, discover, pendingSql, tag, rollback, resetEdited,
-  missingRoutines, rerunRoutines, historyScopes).
+  missingRoutines, rerunRoutines, historyScopes, unmerged).
 - `db.migrations.sets` [ { name, tool, repo, changelog | dir, searchPath, schemas | schemasQuery, registry } ] (paths relative
   to the repo's service folder): one per changelog master. Unset: the tool discovers one; several masters then refuse tag /
   rollback / touched. Tag runs the registry's set and scope first, rollback last.
@@ -18,7 +18,10 @@ sqlite, oracle, search engines) revert the scopes whole.
 
 ## DB marks, restore, seed
 - Mark = a binlog position (or snapshot) + the code live then: `mark -Name <n>` by hand, `release-<n>` before each release's
-  code first runs, `use-<agent>` at each new lease, `baseline-<nnnn>` after a green `seed`.
+  code first runs, `use-<agent>` at each new lease.
+- Baseline (`baseline-<nnnn>`, 2 kept): an init's copy, a green `seed`, a DB start with none; then in place once the env is
+  clean after a release or lease: no train, layer or lease, seed green, the seed file's `clean` [ { name, sql, expect `^0$` } ]
+  green (none: never), tool verb `unmerged` empty. `init.donor`: that lane must pass the same.
 - Slices: a release with migrations (layers or the target) also keeps the CREATE text of each table its migrations touch
   (`db.migrateSql` = the tool's dry-run SQL; unset: each migration set's pendingSql, e.g. `liquibase update-sql`; else the changed migration files'
   text), the rows its DDL destroys (dropped / retyped column: primary key + column; dropped table: its rows) and every view /
@@ -45,8 +48,7 @@ sqlite, oracle, search engines) revert the scopes whole.
   above the target's newest), reindex, cache clears.
 - That release first runs the tool's `resetEdited` verb (liquibase: nulls `MD5SUM` of applied changeSets a rebuilt layer edited and its
   target lacks; the edited DDL is not re-applied), each named in the notes and `<env>-migrations.log`.
-- Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60). Doctor checks binlog
-  ROW / FULL images / FULL metadata / retention.
+- Marks expire with the binlog (`binlog_expire_logs_seconds`; `marks.keepDays` 30, `marks.max` 60).
 - `seed [-Check]`: the env's baseline data (`envs.<env>.seed`, JSON `items` [ { name, check: { sql, expect } | { cmd },
   create: { cmd, upsert }, how, needs, tables } ], default `<state>/localenv/<env>.seed.json`); a create runs on MISSING, on DRIFT only with `create.upsert: true`, then
   the check again; the last line names each item not created and why.
@@ -60,15 +62,12 @@ sqlite, oracle, search engines) revert the scopes whole.
   mmap files) above `db.tempMaxGB` (5).
 - `dbtemp [-Kill <id>]` lists / kills them with the env file's credential: set `storage.db.use` =
   `pwsh -NoProfile -File <kit>/skills/envy/envy.ps1 dbtemp -Env <env>`, `storage.db.kill` = the same `-Kill {id}`.
-- Doctor WARNs: ibtmp1 without a max, temp caps above `db.tempMaxGB`, `max_execution_time` 0, slow log off, the datadir
-  outside `storage.watch`.
 
 ## DB buffer pool
 - mysql, `db.bufferPool` set (e.g. `{}`): while a lease or train is live on any env of that db server, the controller grows
   `innodb_buffer_pool_size` online to `busyMB` (2048); once none was for `idle.graceMinutes` (or the loop exits) it shrinks
   it to `idleMB` (256).
 - Chunk-aligned, one resize at a time, never mid switch-over, one log line each; `db.expect` skips the pool.
-- Doctor: the pool and the server's RAM (Windows may hold freed memory in mysqld until a restart).
 - `SET GLOBAL` only: keep the configured size (my.cnf / `SET PERSIST`) the idle one.
 
 ## Tenants (owner upkeep)

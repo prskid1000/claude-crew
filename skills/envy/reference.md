@@ -38,9 +38,9 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
   N of M (why)`. Same layers: no target move (`refresh`).
 - API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
 - `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first (`Unknown column` = a guessed name).
-- `services[].init` { cmd, creates, timeoutSec }: runs before a start while `creates` is missing (a lane's own data copy).
-- A lane's own DB service (port = `db.port`) down: marks wait for its start (an init's fresh copy marks `baseline-<nnnn>`; no
-  baseline yet: a green SQL-only seed check at its start marks one); db checks, pool, mark expiry and the temp watchdog rest.
+- `services[].init` { cmd, creates, timeoutSec, donor }: runs before a start while `creates` is missing (a lane's own data
+  copy); `donor` (a lane id): refused unless that lane's DB is a clean baseline (db.md).
+- A lane's own DB service (port = `db.port`) down: marks wait for its start; db checks, pool, mark expiry and the temp watchdog rest.
   A train starts it for its DB steps and keeps it up.
 - A new release staged for a service in start backoff resets it, like `restart`.
 - `services[].shareBuild` true (a build reading no per-lane value): another lane's copy of the same inputs + config, no build.

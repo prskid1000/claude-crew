@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L191 names · L284 slots · L328 lease · L445 release · L491 lanes · L640 sync · L742 pool · L785 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L343 lease · L461 release · L507 lanes · L656 sync · L758 pool · L801 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -323,6 +323,21 @@ function Test-KitPoolWaiterGone([string]$Agent, [string]$Since) {
   $sAt = try { [datetimeoffset]$Since } catch { [datetimeoffset]::MinValue }
   -not @($rows | Where-Object { "$($_.status)" -ne 'left' }).Count -and [bool]@($rows | Where-Object { $b = try { [datetimeoffset]"$($_.beat)" } catch { $null }; $b -and $b -ge $sAt }).Count
 }
+# a slot lease whose holder is gone while a live agent's board row lists the slot (a successor resumed in it without leasing it:
+# 2026-11-26: the slot went to a third agent): the lease moves to that agent, saved and logged -> $true (lib Update-KitLease)
+function Move-KitSlotLease($l) {
+  if (-not ($l.slot -and $l.path) -or $l.parked -or $l.creating) { return $false }
+  $mvPath = [IO.Path]::GetFullPath("$($l.path)").TrimEnd('\', '/'); $mvNow = Get-Date; $mvBeat = [double](Get-KitParam 'idle.beatMinutes')
+  $mvRow = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -and "$($_.status)" -ne 'left' -and "$($_.agent)" -ne "$($l.agent)" -and @($_.worktrees | Where-Object { $_ -and [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') -ieq $mvPath }).Count } |
+    Where-Object { ($_.pid -and (Test-KitPid $_.pid $_.pidStart)) -or (($mvAct = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($mvNow - $mvAct).TotalMinutes -lt $mvBeat) })[0]
+  if (-not $mvRow) { return $false }
+  Write-KitLeaseLog reclaim slot "$($l.slot)" $l "reclaim: moved to $($mvRow.agent), whose board row lists the slot ($($l.agent) has no live holder)"
+  Set-KitProp $l agent "$($mvRow.agent)"; Set-KitProp $l session "$($mvRow.session)"; Set-KitProp $l run "$($mvRow.run)"
+  foreach ($mvKey in 'pid', 'pidStart', 'holderPid', 'holderStart', 'holder') { Set-KitProp $l $mvKey (Get-KitMember $mvRow $mvKey) }
+  Set-KitProp $l at (Get-KitStamp); Set-KitProp $l seen (Get-KitStamp stored $mvNow); foreach ($mvKey in 'graceLeft', 'graceMin', 'released') { Set-KitProp $l $mvKey $null }
+  $mvFile = Get-KitSlotFile (Split-Path $mvPath -Leaf); if (Test-Path -LiteralPath $mvFile) { Write-KitAtomic $mvFile ($l | ConvertTo-Json -Depth 5) }
+  Write-KitLeaseLog acquire slot "$($l.slot)" $l; $true
+}
 function Read-KitSlotLease([string]$File) { if (Test-Path -LiteralPath $File) { try { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json } catch { $null } } }
 function Test-KitSlotDir([string]$Dir) { $gf = Join-Path $Dir '.git'; if (-not (Test-Path -LiteralPath $gf -PathType Leaf)) { return $false }; $gd = ("$(Get-Content -LiteralPath $gf -TotalCount 1)" -replace '^gitdir:\s*').Trim(); [bool]($gd -and (Test-Path -LiteralPath (Join-Path $gd 'claude-slot'))) }
 # ---- lease: wt lease
@@ -372,7 +387,8 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
         $mine = @($slots | Where-Object { $o = $ls[$_.n]; $o -and -not $o.parked -and $o.agent -eq $Agent -and $o.branch -eq $Branch })[0]
         if ($mine) { return $mine }   # already ours
         $pick = @($slots | Where-Object { $_.branch -eq $Branch })[0]   # a resume, handoff or fix round: the slot that has the branch
-        if ($pick -and ($o = $ls[$pick.n]) -and -not $o.parked -and (Update-KitLease $o)) { throw "wt lease: $Branch is checked out in $($pick.name) ($($pick.path)), leased by $($o.agent): two agents never share a slot; board msg $($o.agent) or wait for its release" }
+        if ($pick -and ($o = $ls[$pick.n]) -and -not $o.parked -and (Update-KitLease $o)) { if ("$($o.agent)" -eq $Agent) { return $pick }   # moved to us just now (Move-KitSlotLease)
+          throw "wt lease: $Branch is checked out in $($pick.name) ($($pick.path)), leased by $($o.agent): two agents never share a slot; board msg $($o.agent) or wait for its release" }
         if (-not $pick) {
           foreach ($s in $slots) {   # holder gone past the grace + clean: freed here (dirty: supervise's reaper commits WIP first)
             $o = $ls[$s.n]; if (-not $o -or $o.parked -or $o.creating) { continue }
