@@ -6,7 +6,7 @@ kit-admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L136 health · L145 browser policy · L188 prepush · L252 weekly tests · L288 state lint · L297 precommit
+Sections: L13 learn · L154 health · L163 browser policy · L206 prepush · L270 weekly tests · L306 state lint · L315 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -17,6 +17,24 @@ function Get-KitRoleRules([string]$Skill, [string]$Phase = '', [string]$Project 
   $ro = @(foreach ($rl in (Read-KitLessonLines (Join-Path $KitConf.Kit 'ROLES.local.md'))) { if ($rl -match '^## (.+)$') { $on = @($Matches[1] -split ',' | ForEach-Object { $_.Trim() }) -contains $Skill }; if ($on -and $rl.Trim()) { $rl } })
   $ro = @(Select-KitLessonScope $ro $Skill $Phase $Project)
   if ($ro.Count -gt 1) { "(org rules for ${Skill}: ROLES.local.md)`n$($ro -join "`n")" }
+}
+# learn -Read: each skill's lessons (LESSONS.md, LESSONS.local.md: the most-hit $Max / learn.readCap) + its org rules
+function Show-KitLessons([string]$Skill, [string]$Phase = '', [string]$Project = '', [int]$Max = -1) {
+  # -Skill a,b: one call; an org rule section two of them share prints once (it came 2x: 2.7k tokens a reviewer, 2026-11-26)
+  $orgShown = [Collections.Generic.HashSet[string]]::new()
+  foreach ($sk in @(Split-KitList $Skill)) {
+    foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) {
+      $L = Read-KitLessonLines $f; $r = Find-KitLessonSection $L $sk; if (-not $r) { continue }
+      # read cap (learn.readCap, -Max): most-hit lessons first
+      $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' }); $rcap = if ($Max -ge 0) { $Max } else { [int](Get-KitParam 'learn.readCap') }
+      $lines = @(Select-KitLessonScope $lines $sk $Phase $Project)
+      $lsIdx = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -like '- *' }); $lsOut = @($lsIdx | Sort-Object { if ($lines[$_] -match '\((\d+)[x×]\)\s*$') { -[int]$Matches[1] } else { -1 } }, { -$_ } | Select-Object -Skip $rcap)
+      $lines = @(0..($lines.Count - 1) | Where-Object { $_ -notin $lsOut } | ForEach-Object { $lines[$_] }) + @(if ($lsOut.Count) { "($($lsOut.Count) more, fewest hits: learn -Read -Skill $sk$(if ($Phase) { " -Phase $Phase" }) -Max 99)" })
+      if ($lines.Count -gt 1) { "$(if ($f -like '*.local.md') { '(local) ' })$($lines -join "`n")" }
+    }
+    $orgNew = @("$(Get-KitRoleRules $sk $Phase $Project)" -split "`n" | Where-Object { $_ -and $orgShown.Add($_) })
+    if ($orgNew.Count -gt 1) { $orgNew -join "`n" }
+  }
 }
 # learn -Read scope (owner 2026-11-24: lessons per phase and role): '- [<phase>|<phase>] ...' lines only in those phases (local, which
 # may recode, also reads code); a '### <title> (<a, b>)' block whose names are all skills, agents or phases only for those;

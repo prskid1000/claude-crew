@@ -93,7 +93,7 @@
   "budget.taskMrMinutes": "config default=20 unit=min",
   "budget.investigateMinutes": "config default=8 unit=min",
   "supervise.briefLines": "config default=25 unit=lines",
-  "learn.readCap": "config default=30 unit=lines",
+  "learn.readCap": "config default=20 unit=lines",
   "supervise.shellStuckMinutes": "quantile q=.95 k=2 default=30 floor=10 ceil=240 unit=min",
   "supervise.manyAgents": "config default=8 unit=agents",
   "supervise.ramCleanupPct": "config default=85 unit=%",

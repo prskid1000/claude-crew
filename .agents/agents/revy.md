@@ -17,10 +17,10 @@ test." · never: reports a problem without its fix, or edits the artefact itself
 
 **Kind** (the prompt names it): mr · kit · doc · qa · plan · module · config · dispute.
 
-**Load first:** `bossy.ps1 learn -Read -Skill revy`; kinds mr, kit, config also `<kit>/skills/crafty/SKILL.md` (Rules: Scope,
-Tests = `skills/crafty/testing.md`, Migrations, Shared code, Text files) and `learn -Read -Skill crafty`; kind module only
-skills/crafty/module-audit.md. **Reads:** a file once (top 40 lines, then ranges); note its facts, never re-read it.
-You never change code, branches, docs or tracker state;
+**Load first:** `bossy.ps1 learn -Read -Skill revy` (kinds mr, kit, config: `-Skill revy,crafty`, one call) and for those kinds
+`<kit>/skills/crafty/SKILL.md` (Rules: Scope, Tests = `skills/crafty/testing.md`, Migrations, Shared code, Text files);
+kind module only skills/crafty/module-audit.md. **Reads:** a file once (top 40 lines, then ranges); note its facts,
+never re-read it. You never change code, branches, docs or tracker state;
 `board join -Type revy [-Run <your prompt's run>]` alone in a call (SESSION first), `leave -Session <it>` at the end.
 
 **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step review -Evidence "<round, findings file>"`

@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L252 budget · L282 launch · L515 recover · L604 pause · L615 resume · L682 program · L710 param ·
-  L716 track · L1109 supervise · L1462 report · L1542 audit · L1602 storage · L1605 bugbrief · L1607 cleanup · L1694 learn ·
-  L1732 decide · L1906 debate · L1950 health · L2018 setup
+Sections: L40 init · L51 board · L259 budget · L289 launch · L522 recover · L611 pause · L622 resume · L689 program · L717 param ·
+  L723 track · L1116 supervise · L1469 report · L1549 audit · L1609 storage · L1612 bugbrief · L1614 cleanup · L1701 learn ·
+  L1730 decide · L1904 debate · L1948 health · L2016 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -161,7 +161,14 @@ switch ($Action) {
     }
     "SESSION $tok   (pass -Session $tok to beat / check / leave)"
     $act = @(Active | Where-Object session -ne $tok)
-    Print $act
+    # rows: your run and whoever shares a claim; other runs one line (the whole board cost a joining agent 1-2.6k tokens, 2026-11-26)
+    $near = @($act | Where-Object { ($Run -and "$($_.run)" -eq "$Run") -or @(Split-KitList $_.worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ -and $_ -in $myClaims }).Count })
+    $far = @($act | Where-Object { $_ -notin $near })
+    if ($Type -eq 'coordinator' -or -not $far.Count) { Print $act }
+    else {
+      if ($near.Count) { Print $near } else { 'board: nobody else in your run' }
+      "  other runs: $(@($far | Group-Object { "$($_.run)" } | Sort-Object Name | ForEach-Object { "$(if ($_.Name) { $_.Name } else { '(no run)' }) $($_.Count)" }) -join ' · ') (rows: board show [-Run <run>])"
+    }
     $notes | ForEach-Object { $_ }
     $w = @(Warnings ([pscustomobject]$me) $act)
     if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" } }
@@ -1709,16 +1716,7 @@ function Invoke-Learn {
   if ($Show) { if (Test-Path $file) { Get-Content $file -Tail $Last | ForEach-Object { $s = $_ | ConvertFrom-Json; '{0} {1,-13} {2,-15} {3}{4}' -f ([datetime]$s.at).ToString('yyyy-MM-dd HH:mm'), $s.skill, $s.kind, $s.text, $(if ($s.ref) { " [$($s.ref)]" }) } }; return }
   if ($Read) {
     if (-not $Skill) { 'usage: learn -Read -Skill <skill>'; exit 2 }
-    foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) {
-      $L = Read-KitLessonLines $f; $r = Find-KitLessonSection $L $Skill; if (-not $r) { continue }
-      # read cap (learn.readCap, -Max): most-hit lessons first
-      $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' }); $rcap = if ($PSBoundParameters.ContainsKey('Max')) { $Max } else { [int](Get-KitParam 'learn.readCap') }
-      $lines = @(Select-KitLessonScope $lines $Skill $Phase $Project)
-      $lsIdx = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -like '- *' }); $lsOut = @($lsIdx | Sort-Object { if ($lines[$_] -match '\((\d+)[x×]\)\s*$') { -[int]$Matches[1] } else { -1 } }, { -$_ } | Select-Object -Skip $rcap)
-      $lines = @(0..($lines.Count - 1) | Where-Object { $_ -notin $lsOut } | ForEach-Object { $lines[$_] }) + @(if ($lsOut.Count) { "($($lsOut.Count) more, fewest hits: learn -Read -Skill $Skill$(if ($Phase) { " -Phase $Phase" }) -Max 99)" })
-      if ($lines.Count -gt 1) { "$(if ($f -like '*.local.md') { '(local) ' })$($lines -join "`n")" }
-    }
-    Get-KitRoleRules $Skill $Phase $Project
+    Show-KitLessons $Skill $Phase $Project $(if ($PSBoundParameters.ContainsKey('Max')) { $Max } else { -1 })
     return
   }
   $kinds = 'friction | failure | defect-missed | false-positive | rule-violation | stale-env | flaky | idea | win'
