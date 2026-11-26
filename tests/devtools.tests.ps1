@@ -199,6 +199,23 @@ $aiHits = @(git -C $src grep -n -i -E $aiRx -- '*.md' '*.js' '*.mjs' ':!.codex' 
 $aiHits = @($aiHits | Where-Object { "$_" -notmatch 'never (rerun|N reruns)|never reruns it|passRate|pass rate' })
 $aiSelf = @("LLM-driven checks: 5+ runs in fresh sessions", "never rerun a model N times") | Where-Object { $_ -match "(?i)$aiRx" -and $_ -notmatch 'never (rerun|N reruns)' }
 Expect "no kit text tells an agent to rerun an AI flow N times (grep exit $aiCode, $($aiHits.Count): $($aiHits | Select-Object -First 2))" ($aiCode -le 1 -and $aiHits.Count -eq 0 -and @($aiSelf).Count -eq 1 -and $pfSelf -match 'PASS proof: a goal per channel')
+# ---- preflight (owner 2026-11-26, dec-staging-2 A): proof --preflight lists the read-only checks; the agent's saved results file passes or blocks
+$pvC = if ($pfOld) { $pfOld | ConvertFrom-Json -AsHashtable } else { @{} }
+$pvC.process = @{ gates = @{ finish = 'builtin:testingDocs' } }; $pvC.tracker = @{ branchRx = '(?<id>PF\d+)' }; $pvC.qa = @{ preflight = @{ env = 'stage'; roles = @('guest'); maxScanRows = 1000 } }; Set-JsonFile $pdF $pvC
+$pvNo = & $py -X utf8 $DT proof PF1 2>&1 | Out-String
+Set-JsonFile (Join-Path (Kd) 'pv.json') @{ preflight = @{ queries = @(@{ id = 'Q1'; sql = 'SELECT id FROM orders WHERE note = ?'; table = 'orders' }); fields = @(@{ table = 'orders'; column = 'paid' }); envKeys = @('PAY_URL')
+    calls = @(@{ id = 'C1'; call = 'GET /api/orders'; allow = @('admin') }) } }
+$null = & $py -X utf8 $DT cases add PF1 (Join-Path (Kd) 'pv.json') 2>&1; $pvPlan = & $py -X utf8 $DT proof PF1 --preflight 2>&1 | Out-String; $pvDue = & $py -X utf8 $DT proof PF1 2>&1 | Out-String
+$pvRes = @{ 'Q1.explain' = @(@{ type = 'ALL' }); 'Q1.rows' = @(@{ n = 90000 }); 'orders.paid.scan' = @(@{ total = 90000; nulls = 12 }); 'env.PAY_URL' = @{ present = $true }; 'C1.admin' = @{ status = 200 }; 'C1.guest' = @{ status = 200 } }
+$pvBadF = Join-Path (Kd) 'pv-bad.json'; $pvOkF = Join-Path (Kd) 'pv-ok.json'; Set-JsonFile $pvBadF @{ env = 'stage'; tenant = 't9'; results = $pvRes }
+$pvBad = & $py -X utf8 $DT proof PF1 --preflight $pvBadF 2>&1 | Out-String; $pvBadc = $LASTEXITCODE; $pvHeld = & $py -X utf8 $DT proof PF1 2>&1 | Out-String; $pvHeldc = $LASTEXITCODE
+$pvRes['Q1.explain'] = @(@{ type = 'ref'; key = 'ix_note' }); $pvRes['orders.paid.scan'] = @(@{ total = 90000; nulls = 0 }); $pvRes['C1.guest'] = @{ allowed = $false; source = 'Sec.java:40' }
+Set-JsonFile $pvOkF @{ env = 'stage'; tenant = 't9'; results = $pvRes }; $pvOk = & $py -X utf8 $DT proof PF1 --preflight $pvOkF 2>&1 | Out-String; $pvOkc = $LASTEXITCODE; $null = & $py -X utf8 $DT proof PF1 2>&1; $pvPassc = $LASTEXITCODE
+if ($null -ne $pfOld) { [IO.File]::WriteAllText($pdF, $pfOld) } else { Remove-Item -LiteralPath $pdF }
+Expect "preflight: qa.preflight set: no spec = a gap; the plan lists 6 checks; a results file with a full scan, NULL rows and an allowed guest blocks ($pvBadc, proof $pvHeldc); the fixed file passes ($pvOkc, proof $pvPassc)" (
+  $pvNo -match 'GAP PF1: no preflight' -and $pvPlan -match '(?m)^RUN Q1\.explain: EXPLAIN SELECT id FROM orders' -and $pvPlan -match '(?m)^ASK C1\.guest: ' -and $pvPlan -match 'preflight PF1: 6 check\(s\) on stage' -and
+  $pvDue -match '6 check\(s\) not run' -and $pvBadc -eq 1 -and $pvBad -match 'full scan of orders \(90000 rows on t9' -and $pvBad -match '12 of 90000 rows are NULL' -and $pvBad -match 'role guest is allowed' -and
+  $pvHeldc -eq 1 -and $pvHeld -match 'GAP PF1: preflight query Q1: full scan' -and $pvOkc -eq 0 -and $pvOk -match '0 gap\(s\) - recorded' -and $pvPassc -eq 0)
 # ---- precheck (owner 2026-11-25): the mechanical review rules before review (adapters/precheck.py)
 Copy-Item (Join-Path $src 'skills/crafty/adapters/precheck.py') (Join-Path $k 'skills/crafty/adapters')
 $pcSelf = & $py -X utf8 $DT precheck selftest 2>&1 | Out-String

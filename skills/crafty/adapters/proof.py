@@ -1,11 +1,14 @@
-# Usage: loaded by devtools.py from adapters/ (a plugin); its verb: python -X utf8 devtools.py proof <task> [--impact] | --branch <b> --impact | selftest · matrix-scope [<task>] --dir <wt> [--json]. Exit codes: 0 ok · 1 gaps · 2 usage.
+# Usage: loaded by devtools.py from adapters/ (a plugin); its verb: python -X utf8 devtools.py proof <task> [--impact | --preflight [<results.json>] [--json]] | --branch <b> --impact | selftest · matrix-scope [<task>] --dir <wt> [--json]. Exit codes: 0 ok · 1 gaps · 2 usage.
 """Proof plugin (testing.md "Proof"): each goal (cases spec check) proven on its own channel, and the impact map before code.
 Wraps devtools.py: finish's builtin:testingDocs gate, auto_merge (`merge <wt> <iid> --head <sha>`: the reviewed head), mr_create (a non-Draft MR), render_cases (goals: proof + impact sections),
 cases_cmd (`cases result ... viewport=<WxH> hit=PASS|FAIL`; `cases add` warns), cases_fill_checks (a filled check gets a channel).
 crafty.ps1 wt commit runs `proof --branch <b> --impact` (refuses a non-WIP commit on a task branch without the map).
 Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844);
-qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack).
-Sections: L13 gaps · L176 wraps · L258 matrix scope · L356 verb"""
+qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack);
+qa.preflight {env, tool, tenantSql, roles, maxScanRows} (unset: off): `proof <task> --preflight` lists the read-only checks of the spec's
+`preflight` (EXPLAIN + row count per query, NULL / value scans per field, env keys, each call x role); the agent runs them and saves
+the results; `--preflight <results.json>` checks the file and records the run; a gap refuses finish, a non-Draft mr and merge.
+Sections: L16 gaps · L180 wraps · L267 matrix scope · L365 preflight · L558 verb"""
 import json, os, re, sys
 
 DT = None
@@ -75,6 +78,7 @@ def proof_gaps(c, tid='', me=''):
         return ['no goals doc: devtools.py cases add <task> <spec.json> with its checks (templates.md "Test cases")']
     cases, vp, out = [x for x in c.get('cases') or [] if isinstance(x, dict)], viewports(), impact_gaps(c)
     out += [f'impact.renders {r["item"]!r}: no result (a case id + PASS, or "excluded: <why>")' for r in renders(c) if r.get('item') and not r.get('result')]
+    out += preflight_gaps(c)
     if not any(x.get('type') in ('negative', 'edge') and str(x.get('result') or '').upper().startswith(('PASS', 'FAIL')) for x in cases):
         out.append('happy path only: run negative / edge cases (invalid input, role denial, empty data, the failure path a tester tries)')
     for g in [g for g in c['checks'] if not (me and g.get('by') and g['by'] != me)]:
@@ -204,6 +208,11 @@ def wrap_render(orig):
                '## Impact map (before code)', t(['Part', 'Map'], [['Logic changed (history, tests)', imp.get('logic', '')], ['Callers / consumers', imp.get('callers', '')],
                                                                ['Tester path', imp.get('path', '')]]),
                t(['Screen / record type / state', 'Result'], [[r.get('item'), r.get('result', '')] for r in renders(c)] or [['none listed', '']])]
+        if (cf := pf_cfg()) and not pf_spec_gaps(c) and (plan := pf_plan(c, cf)):   # the staging-shaped run a reviewer opens
+            pr = c.get('preflightRun') or {}
+            done = pr.get('plan') == pf_hash(plan, cf)
+            sec.append(f'Preflight ({len(plan)} read-only checks): ' + (f'{"ok" if pr.get("ok") else str(len(pr.get("gaps") or [])) + " gap(s)"} on'
+                       f' {pr.get("env") or "?"} {pr.get("tenant") or ""} · {pr.get("file")}' if done else 'not run'))
         return out.replace('## Test plan (automated)', '\n\n'.join(sec) + '\n\n## Test plan (automated)', 1)
     return run
 
@@ -224,7 +233,7 @@ def wrap_cases(orig):
             DT.task_index(a[1], put)
         c = (DT.state_read(DT.task_file(a[1])) or {}).get('cases') or {} if rc == 0 and a[:1] == ['add'] and on() else None
         if c is not None and (g := impact_gaps(c) + [f'check {x.get("id")}: channel unset (ui | api | job | ai)' for x in c.get('checks') or []
-                                                     if str(x.get('channel') or '').lower() not in CHANNELS]):
+                                                     if str(x.get('channel') or '').lower() not in CHANNELS] + (pf_spec_gaps(c) if pf_cfg() else [])):
             print(f'WARN cases {a[1]}: {"; ".join(g)} (wt commit, mr and finish refuse until fixed)', file=sys.stderr)
         return rc
     return run
@@ -353,7 +362,200 @@ def wrap_gaps(orig):
     return run
 
 
-# ---- verb: proof <task> | --branch <b> --impact | selftest
+# ---- preflight: the read-only checks a change needs on staging-shaped data (owner 2026-11-26, dec-staging-2 A); the agent runs them, this checks the saved file
+PF_PARTS = ('queries', 'fields', 'envKeys', 'calls')
+PF_SQL = re.compile(r'(?is)^\s*(select|with)\b(?![^;]*\b(insert|update|delete|drop|alter|truncate|create|grant|outfile)\b)[^;]*;?\s*$')
+PF_NAME = re.compile(r'^[A-Za-z_][\w$]*(\.[A-Za-z_][\w$]*)?$')
+PF_SCAN = re.compile(r'(?i)\b(seq scan|full table scan|table scan|scan table)\b')
+PF_HOW = 'devtools.py proof <task> --preflight lists them; run each read-only, save the results, then proof <task> --preflight <results.json>'
+
+
+def pf_cfg():
+    """qa.preflight {env, tool, tenantSql, roles [], maxScanRows (10000)}; unset = no preflight (None)."""
+    v = DT.cfg('qa.preflight', None)
+    return {'env': '', 'tool': '', 'tenantSql': '', 'roles': [], 'maxScanRows': 10000, **v} if isinstance(v, dict) else None
+
+
+def pf_spec_gaps(c):
+    """The cases spec's `preflight`: all four lists (an empty one says the change has none), each entry well-formed and read-only."""
+    p = c.get('preflight')
+    if not isinstance(p, dict) or any(not isinstance(p.get(k), list) for k in PF_PARTS):
+        return ['no preflight: devtools.py cases add <task> <spec.json> with "preflight": {"queries": [{id, sql, table}], "fields": [{table, column}],'
+                ' "envKeys": [], "calls": [{id, call, allow: [roles]}]} (testing.md "Preflight"; [] = the change has none)']
+    out = []
+    for q in p['queries']:
+        q = q if isinstance(q, dict) else {}
+        if not (q.get('id') and PF_NAME.match(str(q.get('table') or ''))):
+            out.append(f'preflight query {q.get("id") or "?"}: needs "id" and "table" (the table its row count is taken from)')
+        elif not PF_SQL.match(str(q.get('sql') or '')):
+            out.append(f'preflight query {q["id"]}: "sql" is not one read-only SELECT (a changed UPDATE / DELETE: the SELECT of its WHERE)')
+    out += [f'preflight field {f!r}: needs "table" and "column" names' for f in p['fields']
+            if not (isinstance(f, dict) and PF_NAME.match(str(f.get('table') or '')) and PF_NAME.match(str(f.get('column') or '')))]
+    out += [f'preflight call {x!r}: needs "id", "call" (<METHOD> <path>) and "allow" (the roles that may make it)' for x in p['calls']
+            if not (isinstance(x, dict) and x.get('id') and x.get('call') and isinstance(x.get('allow'), list))]
+    return out
+
+
+def pf_plan(c, cf):
+    """The checks to run -> [{id, kind, run}] (run: SQL for the read-only tool, or the question to answer)."""
+    p, env, out = c.get('preflight') or {}, cf['env'] or 'the test env', []
+    for q in p.get('queries') or []:
+        out += [{'id': f'{q["id"]}.explain', 'kind': 'explain', 'run': 'EXPLAIN ' + str(q['sql']).strip().rstrip(';')},
+                {'id': f'{q["id"]}.rows', 'kind': 'rows', 'run': f'SELECT COUNT(*) AS n FROM {q["table"]}'}]
+    for f in p.get('fields') or []:
+        t, col = f['table'], f['column']
+        out.append({'id': f'{t}.{col}.scan', 'kind': 'scan', 'run': f'SELECT COUNT(*) AS total, SUM(CASE WHEN {col} IS NULL THEN 1 ELSE 0 END) AS nulls FROM {t}'})
+        if f.get('values'):
+            out.append({'id': f'{t}.{col}.values', 'kind': 'values', 'run': f'SELECT {col} AS v, COUNT(*) AS n FROM {t} GROUP BY {col} ORDER BY n DESC LIMIT 50'})
+    out += [{'id': f'env.{k}', 'kind': 'env', 'run': f'is {k} set on {env}? save {{"present": true | false, "source": "<where seen>"}} (the name only, never its value)'}
+            for k in p.get('envKeys') or []]
+    for x in p.get('calls') or []:
+        for r in dict.fromkeys([*map(str, cf['roles']), *map(str, x['allow'])]):
+            out.append({'id': f'{x["id"]}.{r}', 'kind': 'call', 'run': f'may role {r} make {x["call"]} on {env}? save {{"status": <http status>}} (a read-only call) or'
+                                                                     ' {"allowed": true | false, "source": "<file:line of the rule>"}'})
+    return out
+
+
+def pf_hash(plan, cf):
+    import hashlib
+    return hashlib.sha1(json.dumps([plan, cf['env'], cf['roles'], cf['maxScanRows']], sort_keys=True).encode()).hexdigest()[:12]
+
+
+def _pf_rows(v):
+    """A saved result as rows [{lower key: value}] (a list, {"rows": [...]} or one object)."""
+    v = v.get('rows') if isinstance(v, dict) and isinstance(v.get('rows'), list) else v
+    return [{str(k).lower(): x for k, x in r.items()} for r in (v if isinstance(v, list) else [v]) if isinstance(r, dict)]
+
+
+def _pf_int(rows, key):
+    """rows[0][key] as an int (else its first numeric value); None when there is none."""
+    r = rows[0] if rows else {}
+    for x in [r.get(key), *r.values()]:
+        if isinstance(x, (int, float)) and not isinstance(x, bool) or isinstance(x, str) and re.fullmatch(r'\d+(\.0+)?', x.strip()):
+            return int(float(x))
+    return None
+
+
+def pf_check(c, res, cf):
+    """The saved results against the plan -> gaps: a missing or failed check, a full scan of a large table, NULLs or values the
+    change does not name, an env key not set, a role allowed or denied against the change's allow-list."""
+    if not isinstance(res, dict) or not isinstance(res.get('results'), dict):
+        return ['the results file is no {"env", "tenant", "results": {"<id>": <rows>}} object']
+    got, p, out = res['results'], c.get('preflight') or {}, []
+    if cf['env'] and str(res.get('env') or '') != cf['env']:
+        out.append(f'results are from env {res.get("env") or "unnamed"!r}, not qa.preflight.env {cf["env"]!r}')
+    if cf['tenantSql'] and not res.get('tenant'):
+        out.append('no "tenant": run qa.preflight.tenantSql first, then every query on the tenant it names')
+    where = f' on {res.get("tenant") or res.get("env") or "the env"}'
+    for s in pf_plan(c, cf):
+        v = got.get(s['id'])
+        if v in (None, '', [], {}) or isinstance(v, dict) and v.get('error'):
+            out.append(f'{s["id"]}: {"failed (" + str(v["error"])[:80] + ")" if v else "no result"}; run: {s["run"]}')
+    rows = lambda i: _pf_rows(got.get(i)) if not (isinstance(got.get(i), dict) and got[i].get('error')) else []
+    for q in p.get('queries') or []:
+        ex, n = rows(f'{q["id"]}.explain'), _pf_int(rows(f'{q["id"]}.rows'), 'n')
+        scan = any(str(r.get('type') or '').upper() == 'ALL' or any(PF_SCAN.search(str(x)) for x in r.values()) for r in ex)
+        if ex and n is None:
+            out.append(f'{q["id"]}.rows: no row count read')
+        elif scan and n > int(cf['maxScanRows']) and not q.get('scanOk'):
+            out.append(f'query {q["id"]}: full scan of {q["table"]} ({n} rows{where}, over qa.preflight.maxScanRows {cf["maxScanRows"]}): an index or a bounded'
+                       ' WHERE, or "scanOk": "<why>"')
+    for f in p.get('fields') or []:
+        fid = f'{f["table"]}.{f["column"]}'
+        sc = rows(fid + '.scan')
+        tot, nul = _pf_int(sc, 'total'), (_pf_int([{'nulls': sc[0].get('nulls')}], 'nulls') if sc else None)
+        if nul and not f.get('nullOk'):
+            out.append(f'field {fid}: {nul} of {tot} rows are NULL{where}: handle NULL and prove it, then "nullOk": "<case id>"')
+        seen = [str(r.get('v')) for r in rows(fid + '.values') if r.get('v') is not None]
+        if f.get('values') and (odd := [x for x in seen if x not in map(str, f['values'])]):
+            out.append(f'field {fid}: value(s) {", ".join(odd[:8])} exist{where} that "values" does not name: handle each, then list it')
+    for k in p.get('envKeys') or []:
+        v = got.get(f'env.{k}')
+        if isinstance(v, dict) and not v.get('error') and v.get('present') is not True:
+            out.append(f'env key {k} is not set{where}: it must be there before the deploy (name it in the MR "## Risks")')
+    for x in p.get('calls') or []:
+        for r in dict.fromkeys([*map(str, cf['roles']), *map(str, x['allow'])]):
+            v = got.get(f'{x["id"]}.{r}')
+            if not isinstance(v, dict) or v.get('error'):
+                continue
+            st = v.get('status')
+            ok = v['allowed'] if isinstance(v.get('allowed'), bool) else (200 <= st < 400) if isinstance(st, int) and (st < 400 or st in (401, 403)) else None
+            want = r in map(str, x['allow'])
+            if ok is None:
+                out.append(f'{x["id"]}.{r}: neither "allowed" nor a 2xx / 3xx / 401 / 403 "status" ({st!r})')
+            elif ok != want:
+                out.append(f'call {x["id"]} ({x["call"]}): role {r} is {"allowed" if ok else "denied"}{where}, the change expects {"allowed" if want else "denied"}')
+    return out
+
+
+def preflight_gaps(c):
+    """The proof gate's share: with qa.preflight set, the spec declares its preflight and its last checked run is ok for this plan."""
+    cf = pf_cfg()
+    if not cf:
+        return []
+    if sg := pf_spec_gaps(c):
+        return sg
+    plan, run = pf_plan(c, cf), c.get('preflightRun') or {}
+    if not plan:
+        return []
+    if run.get('plan') != pf_hash(plan, cf):
+        return [f'preflight: {len(plan)} check(s) not run for this plan: {PF_HOW}']
+    return [f'preflight {g}' for g in run.get('gaps') or []]
+
+
+def wrap_loop_gap(orig):
+    def run(m, proj, iid, worktree):   # devtools.py merge: precheck's LOOP rule, then the task's preflight
+        if gap := orig(m, proj, iid, worktree):
+            return gap
+        tid = DT._mr_task(m, proj, iid) if on() and pf_cfg() else ''
+        c = (DT.state_read(DT.task_file(tid)) or {}).get('cases') or {} if tid else {}
+        g = preflight_gaps(c) if c.get('checks') else []   # no goals doc: not this flow's MR
+        if g and DT.OVERRIDE:
+            DT.kitlog('calls', 'preflight-override', {'task': tid, 'mr': f'{proj}!{iid}', 'reason': DT.OVERRIDE})
+        return f'!{iid}: task {tid} {g[0]}; --override "<why>" passes, logged\nNOT_MERGED' if g and not DT.OVERRIDE else ''
+    return run
+
+
+def preflight_cmd(tid, argv):
+    """proof <task> --preflight [--json]: the read-only checks to run · --preflight <results.json>: check the saved results, record
+    the run on the task (cases.preflightRun); exit 1 on a gap."""
+    cf, c = pf_cfg(), (DT.state_read(DT.task_file(tid)) or {}).get('cases') or {}
+    if not cf:
+        print('preflight: qa.preflight is not set (README "Configuration"): nothing to run')
+        return 0
+    if sg := pf_spec_gaps(c):
+        print('\n'.join(f'GAP {tid}: {g}' for g in sg))
+        return 1
+    i = argv.index('--preflight')
+    path, plan = (argv[i + 1] if len(argv) > i + 1 and not argv[i + 1].startswith('-') else ''), pf_plan(c, cf)
+    if not path:
+        if '--json' in argv:
+            print(json.dumps({'env': cf['env'], 'tenantSql': cf['tenantSql'], 'checks': plan, 'save': {'env': cf['env'], 'tenant': '', 'results': {s['id']: [] for s in plan}}}, indent=1))
+            return 0
+        if cf['tenantSql']:
+            print(f'RUN tenant: {cf["tenantSql"]}   (the largest tenant: run every query below on it, save it as "tenant")')
+        for s in plan:
+            print(f'{"RUN" if s["kind"] in ("explain", "rows", "scan", "values") else "ASK"} {s["id"]}: {s["run"]}')
+        tool = cf['tool'] or "the org's read-only SQL tool"
+        print(f'preflight {tid}: {len(plan)} check(s) on {cf["env"] or "the test env"}, read-only ({tool}; never a write, never rows copied out).'
+              f' Save {{"env": "{cf["env"]}", "tenant": "<it>", "results": {{"<id>": <the rows>}}}} (--json: the skeleton), then: devtools.py proof {tid} --preflight <results.json>')
+        return 0
+    try:
+        res = json.load(open(path, encoding='utf-8-sig'))
+    except (OSError, ValueError) as e:
+        print(f'preflight {tid}: {path} is not readable JSON ({str(e)[:120]})', file=sys.stderr)
+        return 2
+    gaps = pf_check(c, res, cf)
+    rec = {'plan': pf_hash(plan, cf), 'ok': not gaps, 'gaps': gaps, 'file': os.path.abspath(path), 'at': DT.kit_stamp(),
+           'env': str(res.get('env') or '') if isinstance(res, dict) else '', 'tenant': str(res.get('tenant') or '') if isinstance(res, dict) else ''}
+    DT.task_index(tid, lambda x: x.setdefault('cases', {}).__setitem__('preflightRun', rec))
+    for g in gaps:
+        print(f'GAP {tid}: preflight {g}')
+    print(f'preflight {tid}: {len(plan)} check(s), {len(gaps)} gap(s)' + ('' if gaps else ' - recorded, the proof gate passes it'))
+    return 1 if gaps else 0
+
+
+# ---- verb: proof <task> [--preflight [<results.json>]] | --branch <b> --impact | selftest
 def proof_cmd(argv):
     if argv[:1] == ['selftest']:
         return selftest()
@@ -364,6 +566,8 @@ def proof_cmd(argv):
         return 2
     if not tid or not on():
         return 0   # no task branch, or no testing-docs flow: nothing to prove
+    if '--preflight' in argv:
+        return preflight_cmd(tid, argv)
     c = (DT.state_read(DT.task_file(tid)) or {}).get('cases') or {}
     gaps = impact_gaps(c) if '--impact' in argv else proof_gaps(c, tid)
     for g in gaps:
@@ -463,6 +667,57 @@ def selftest():
     finally:
         for n, f in keep.items():
             setattr(DT, n, f)
+    keep = {n: getattr(DT, n) for n in ('cfg', 'state_read', '_mr_task', 'OVERRIDE', 'kitlog')}
+    try:   # owner 2026-11-26 (dec-staging-2 A): the script lists read-only checks, the agent runs them, the script judges the saved file
+        conf = {'qa.preflight': {'env': 'stage', 'roles': ['admin', 'guest'], 'maxScanRows': 1000}}
+        DT.cfg = lambda p, d=None: conf.get(p, d)
+        cf = pf_cfg()
+        spec = {'queries': [{'id': 'Q1', 'sql': 'SELECT id FROM orders WHERE note LIKE ?', 'table': 'orders'}], 'fields': [{'table': 'orders', 'column': 'paid', 'values': ['Y', 'N']}],
+                'envKeys': ['PAY_URL'], 'calls': [{'id': 'C1', 'call': 'GET /api/orders', 'allow': ['admin']}]}
+        pc = {**good, 'preflight': spec}
+        ids = [s['id'] for s in pf_plan(pc, cf)]
+        ex('preflight plan: EXPLAIN + row count per query, null scan + values per field, each env key, each call x role (config roles too)',
+           ids == ['Q1.explain', 'Q1.rows', 'orders.paid.scan', 'orders.paid.values', 'env.PAY_URL', 'C1.admin', 'C1.guest'] and pf_plan(pc, cf)[0]['run'].startswith('EXPLAIN SELECT id FROM orders'))
+        okr = {'env': 'stage', 'tenant': 't9', 'results': {'Q1.explain': [{'type': 'ref', 'key': 'ix_note', 'rows': 12}], 'Q1.rows': [{'n': 250000}], 'orders.paid.scan': {'rows': [{'TOTAL': 250000, 'NULLS': '0'}]},
+               'orders.paid.values': [{'v': 'Y', 'n': 9}, {'v': 'N', 'n': 4}], 'env.PAY_URL': {'present': True, 'source': 'env page'}, 'C1.admin': {'status': 200}, 'C1.guest': {'allowed': False, 'source': 'Sec.java:40'}}}
+        bad = lambda **k: pf_check(pc, {**okr, 'results': {**okr['results'], **k}}, cf)
+        ex('preflight check: a full result file passes; another env, a missing id and a failed query are gaps', pf_check(pc, okr, cf) == [] and any('not qa.preflight.env' in g for g in pf_check(pc, {**okr, 'env': 'dev'}, cf))
+           and any(g.startswith('Q1.rows: no result') for g in bad(**{'Q1.rows': None})) and any('failed (timeout)' in g for g in bad(**{'env.PAY_URL': {'error': 'timeout'}})) and pf_check(pc, [], cf))
+        scan = {'Q1.explain': [{'type': 'ALL', 'key': None}]}
+        ex('preflight check: a full scan over maxScanRows blocks (MySQL type ALL, a "Seq Scan" plan line); a small table or scanOk passes',
+           any('query Q1: full scan of orders (250000 rows on t9' in g for g in bad(**scan)) and bad(**{'Q1.explain': [{'QUERY PLAN': 'Seq Scan on orders'}]}) and not bad(**scan, **{'Q1.rows': [{'n': 40}]})
+           and not pf_check({**pc, 'preflight': {**spec, 'queries': [{**spec['queries'][0], 'scanOk': 'nightly job'}]}}, {**okr, 'results': {**okr['results'], **scan}}, cf))
+        ex('preflight check: NULL rows without nullOk, a value "values" does not name, an env key not set, a role allowed against the allow-list, an odd status',
+           any('field orders.paid: 31 of 250000 rows are NULL on t9' in g for g in bad(**{'orders.paid.scan': [{'total': 250000, 'nulls': 31}]}))
+           and any('value(s) X exist' in g for g in bad(**{'orders.paid.values': [{'v': 'Y'}, {'v': 'X'}, {'v': None}]})) and any('env key PAY_URL is not set' in g for g in bad(**{'env.PAY_URL': {'present': False}}))
+           and any('role guest is allowed on t9, the change expects denied' in g for g in bad(**{'C1.guest': {'status': 200}})) and any('role admin is denied' in g for g in bad(**{'C1.admin': {'status': 403}}))
+           and any('C1.admin: neither' in g for g in bad(**{'C1.admin': {'status': 500}})))
+        sg = lambda **k: pf_spec_gaps({'preflight': {**spec, **k}})
+        ex('preflight spec: missing = a gap, four empty lists = nothing to run; a write, two statements or a bad table name are refused',
+           pf_spec_gaps({})[0].startswith('no preflight') and pf_spec_gaps({'preflight': {'queries': []}}) and not preflight_gaps({**good, 'preflight': {k: [] for k in PF_PARTS}})
+           and all(sg(queries=[{'id': 'Q', 'table': 'orders', 'sql': s}]) for s in ('UPDATE orders SET a=1', 'SELECT 1; DROP TABLE x', 'SELECT * FROM a FOR UPDATE'))
+           and sg(queries=[{'id': 'Q', 'table': 'a b', 'sql': 'SELECT 1'}]) and sg(fields=[{'table': 'orders'}]) and sg(calls=[{'id': 'C', 'call': 'GET /x'}]) and not sg())
+        run = {'plan': pf_hash(pf_plan(pc, cf), cf), 'ok': True, 'gaps': []}
+        ex('proof gate: qa.preflight set: no preflight, an unrun plan, a changed plan and a recorded gap block; a recorded ok run passes; unset: no gate',
+           any(g.startswith('no preflight') for g in proof_gaps(good)) and any('7 check(s) not run' in g for g in proof_gaps(pc)) and not proof_gaps({**pc, 'preflightRun': run})
+           and any('not run' in g for g in proof_gaps({**pc, 'preflight': {**spec, 'envKeys': []}, 'preflightRun': run}))
+           and proof_gaps({**pc, 'preflightRun': {**run, 'ok': False, 'gaps': ['env key PAY_URL is not set']}}) == ['preflight env key PAY_URL is not set']
+           and (conf.clear() or proof_gaps(good) == []))
+        conf['qa.preflight'] = {'env': 'stage'}
+        g_on, st = globals()['on'], {'T1': {'cases': pc}, 'T2': {}}
+        DT._mr_task, DT.state_read, DT.task_file, tf0, DT.kitlog = (lambda m, p, i: m['t']), (lambda f: st.get(f)), (lambda t: t), DT.task_file, (lambda *a: None)
+        try:
+            globals()['on'], DT.OVERRIDE = (lambda: True), ''
+            mg = wrap_loop_gap(lambda *a: '')
+            held, free = mg({'t': 'T1'}, 'g/r', '7', ''), mg({'t': 'T2'}, 'g/r', '8', '')
+            DT.OVERRIDE = 'owner said so'
+            ex('merge: an unrun preflight is NOT_MERGED; a task with no goals doc and --override merge; the LOOP refusal comes first',
+               held.endswith('NOT_MERGED') and 'preflight' in held and free == '' and mg({'t': 'T1'}, 'g/r', '7', '') == '' and wrap_loop_gap(lambda *a: 'LOOP\nNOT_MERGED')({'t': 'T2'}, 'g/r', '8', '').startswith('LOOP'))
+        finally:
+            globals()['on'], DT.task_file = g_on, tf0
+    finally:
+        for n, f in keep.items():
+            setattr(DT, n, f)
     g0 = lambda p: (True, '')
     ex('finish: a passing testingDocs gate then refuses on proof gaps', not wrap_finish(g0)({'task': 'T1', 'ts': {'cases': api_only}})[0] and wrap_finish(g0)({'task': 'T1', 'ts': {'cases': good}})[0])
     md = wrap_render(lambda c, k, t='': '# Testing goals\n\n## Test plan (automated)\n')(good, 'goals')
@@ -539,3 +794,4 @@ def register(dt):
         gates['finish'] = wrap_finish(gates['finish'])
     dt.mr_create, dt.render_cases, dt.cases_cmd, dt.cases_fill_checks = wrap_mr(dt.mr_create), wrap_render(dt.render_cases), wrap_cases(dt.cases_cmd), wrap_fill(dt.cases_fill_checks)
     dt.auto_merge = wrap_merge(dt.auto_merge)
+    dt.merge_loop_gap = wrap_loop_gap(getattr(dt, 'merge_loop_gap', lambda *a: ''))   # precheck.py registers first (sorted)
