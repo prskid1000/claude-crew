@@ -36,8 +36,8 @@ const _S = { type: 'string' }, _B = { type: 'boolean' }, _I = { type: 'integer' 
 // a tester step, no result (2026-11-25 login race): one retry, <label>~retry1; close/hold never
 const agent1 = agent, TRY2 = /^([\w-]*test|retest-strong|handoff|verify|audit):/
 // a model's usage limit: once on the next tier, <label>@up (buildy.js the same)
-const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.lastIndexOf(o.model)
- try { return await agent1(p, o) } catch (e) { if (i < 0 || !t[i + 1] || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${t[i + 1]}`); return agent1(p, { ...o, model: t[i + 1], label: `${o.label}@up` }) } }
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
+ try { return await agent1(p, o) } catch (e) { if (!up || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agentUp(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0

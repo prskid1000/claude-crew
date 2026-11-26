@@ -971,7 +971,7 @@ function Get-KitUsageLimits([double]$Hours = 3, [int]$TailBytes = 65536) {
 function Get-KitSuperviseFlagsUsageLimit([switch]$AutoFix, [double]$Hours = 3) {
   foreach ($l in @(Get-KitUsageLimits $Hours)) {
     [pscustomobject]@{ level = 'ACT'; what = "USAGE LIMIT: $($l.text)"; kind = 'USAGE LIMIT'; who = "$(@($l.models) -join ', ') in run(s) $(@($l.runs) -join ', ')"; age = "$([int]((Get-Date) - $l.at).TotalMinutes) min"
-      problem = "$($l.text) (agents on $(@($l.models) -join ', ')); they stop"; action = "buildy / testy steps retry once on the next tier (<label>@up); until the reset: point that tier at an available model (kit.local.json models.tiers), then resume the stopped run (bossy.ps1 resume -All)" } }
+      problem = "$($l.text) (agents on $(@($l.models) -join ', ')); they stop"; action = "buildy / testy steps retry once on the next tier with another model (<label>@up; one model in every tier: none); until the reset: point that tier at an available model (kit.local.json models.tiers), then resume the stopped run (bossy.ps1 resume -All)" } }
 }
 # ---- workflow config: the CONFIG line of launch -Self (from bossy.ps1: its cap)
 # a workflow's config (CONFIG line of launch -Self): models.<phase>, repos[].role by name + alias, qa.lanes

@@ -121,8 +121,8 @@ const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
 // no result (2026-11-25 login race): one retry after a wait, <label>@redo; edit steps check state first; never asks, debates, deploy, learn
 const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
 // a model's usage limit: once on the next tier, <label>@up (testy.js the same)
-const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.lastIndexOf(o.model)
- try { return await agent1(p, o) } catch (e) { if (i < 0 || !t[i + 1] || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${t[i + 1]}`); return agent1(p, { ...o, model: t[i + 1], label: `${o.label}@up` }) } }
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
+ try { return await agent1(p, o) } catch (e) { if (!up || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
  return agent1(p.replace(/^(STEP: )?/, `$1No report came back: ${ed ? 'first find what is done (wt lease + wt status, git log, the board, MR state), never apply a change twice; then ' : ''}do it now (a merged / scheduled MR: report it, never merge twice).\n`), { agentType: 'devy', ...o, label: `${o.label}@redo` }) } } catch { log('WARNING: no step retry') }
