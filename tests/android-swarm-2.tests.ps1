@@ -10,14 +10,19 @@ $capScript = @'
 $ErrorActionPreference = 'Stop'
 $tmp = $args[1]; New-Item -ItemType Directory -Force $tmp | Out-Null; Set-Item Env:CLAUDE_RUNTIME "$tmp/rt"; . $args[0]
 $capAdb = "$tmp/adb.cmd"; Set-Content $capAdb "@echo off`r`nif `"%1`"==`"devices`" (echo List of devices attached& echo emulator-5560	device& echo emulator-5562	device& exit /b 0)`r`necho Success" -Encoding ascii
-$P = Get-KitPath phones -Create
+$capDir = Get-KitPath phones -Create
 # no -Cap takes the plain lane although the play lane is listed first, -Cap play takes the play lane, an unknown one is refused
 $script:SwarmCfg = [pscustomobject]@{ lanes = @([pscustomobject]@{ name = 'L2'; port = 5562; caps = @('play') }, [pscustomobject]@{ name = 'L1'; port = 5560 }); adb = $capAdb; app = [pscustomobject]@{ package = 'x'; localReverse = @(); permissions = @() }; apkDir = $tmp; out = $tmp }
-$capPlain = (Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'C') | Select-Object -Last 1 | ConvertFrom-Json).lane
+# the queue: D waits for the leased play lane as a waiter for that lane, so a later plain agent still gets the free plain lane
+@{ agent = 'manual'; lane = 'L2'; serial = 'emulator-5562'; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content "$capDir/L2.json"
+function Wait-KitPoll { $script:capWait = (Get-Content "$script:capDir/wait/D.json" -Raw | ConvertFrom-Json).lane; $script:capPlain = (Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'C') | Select-Object -Last 1 | ConvertFrom-Json).lane; Remove-Item "$script:capDir/L2.json" -Force -ErrorAction SilentlyContinue }
+if ($args[2] -eq 'ios') { function Start-Sleep { Wait-KitPoll 0 } }   # its wait loop sleeps by the cmdlet
 $capPlay = Invoke-KitVerb Invoke-Phone @('acquire', '-Agent', 'D', '-Cap', 'play') | Select-Object -Last 1 | ConvertFrom-Json
 $capNone = try { $null = Invoke-Phone acquire -Agent E -Cap nfc; 'leased' } catch { "$_" }
+$capMiss = try { $null = Invoke-Phone acquire -Agent E -Lane L1 -Cap play; 'leased' } catch { "$_" }
 $capStatus = @(Invoke-Phone status | Where-Object { $_ -match 'caps play' })
-"acquire:$($capPlain -eq 'L1' -and $capPlay.lane -eq 'L2' -and "$($capPlay.caps)" -eq 'play' -and $capNone -match 'no lane with capability nfc' -and $capStatus.Count -eq 1 -and $capStatus[0] -match '^L2 ')"
+"acquire:$($capWait -eq 'L2' -and $capPlain -eq 'L1' -and $capPlay.lane -eq 'L2' -and "$($capPlay.caps)" -eq 'play' -and $capNone -match 'no lane with capability nfc' -and $capMiss -match 'no lane L1 with capability play' -and $capStatus.Count -eq 1 -and $capStatus[0] -match '^L2 ')"
+if ($args[2] -eq 'ios') { return }
 # slim keeps the Play Store on the play lane only
 $capAdb3 = "$tmp/adb3.cmd"; Set-Content $capAdb3 "@echo off`r`necho %*>> `"$tmp\sh.txt`"`r`necho package:com.android.vending`r`necho package:com.google.android.youtube`r`necho disabled" -Encoding ascii; $script:SwarmCfg.adb = $capAdb3
 $null = Invoke-Slim -Serial emulator-5560; $null = Invoke-Slim -Serial emulator-5562; $slimLog = @(Get-Content "$tmp/sh.txt" | Where-Object { $_ -match 'disable-user' })
@@ -32,8 +37,9 @@ $capKit = New-TestKit swarm-caps; foreach ($f in 'skills/phoney/phoney.ps1', 'sk
 $capFile = "$([IO.Path]::GetTempPath())swarm-caps-$PID"; Set-Content "$capFile.ps1" $capScript
 $capRes = @(Px "$capFile.ps1" (Join-Path $capKit 'skills/phoney/phoney.ps1') $capFile 2>&1)
 Expect-Each $capRes 'phoney lane caps: plain lanes first and -Cap play picks the play lane (an unknown capability refused, status shows it); slim keeps its Play Store; its AVD gets a Play Store image: #' @('acquire', 'slim', 'avd') -Show 8
-Remove-Item "$capFile.ps1", $capFile -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $capKit
-# the iOS variant filters lanes by the same flag
-$capIos = Get-Content (Join-Path $src 'skills/phoney/swarm-ios.ps1') -Raw
-Expect 'swarm-ios acquire: -Cap keeps only the lanes that offer each capability' ($capIos -match '\[string\[\]\]\$Cap' -and $capIos -match 'no lane\$\(if \(\$Lane\)[^\n]*with capability')
+# the iOS variant: the same lane choice and queue
+Copy-Item (Join-Path $src 'skills/phoney/swarm-ios.ps1') (Join-Path $capKit 'skills/phoney')
+$capIos = @(Px "$capFile.ps1" (Join-Path $capKit 'skills/phoney/swarm-ios.ps1') "$capFile-ios" 'ios' 2>&1)
+Expect-Each $capIos 'swarm-ios lane caps: the same -Cap lane choice, queue and refusals: #' @('acquire') -Show 8
+Remove-Item "$capFile.ps1", $capFile, "$capFile-ios" -Recurse -Force -ErrorAction SilentlyContinue; Remove-TestKit $capKit
 Complete-Tests

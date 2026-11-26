@@ -35,7 +35,8 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
   the local APK: pick the app's local-server setting at login, per org lessons). Prints serial, login, notes, app commit.
   Put the serial in your board entry's claims (or pass `-Holder`). A check that needs the Play Store (a Google Play services
   module such as the ML Kit document scanner, which installs through it): `-Cap play` instead of `-Lane` (the lane whose
-  `caps` holds `play`; none configured -> refused: NOT_TESTED `phone-only`); every other check leaves that lane free.
+  `caps` holds `play`; none configured -> refused: NOT_TESTED `phone-only`); other checks
+  get it only when no plain lane is free or it is the one already running.
 - A2. `$env:ANDROID_SERIAL='<serial>'` on every command; touch only your phone; never `adb kill-server`, never
   `up`/`down`/`install` for others. Relaunch / clear: `phoney.ps1 launch -Serial <s> [-Clear]`. Logs: `pokey.ps1 ui log <tag>`.
   Camera: the app's camera icon, then `pokey.ps1 ui photo [shutterId]`. Voice: start the app's listening, then
@@ -60,7 +61,8 @@ Output (APKs, logs, `swarm.json`): `<runtime>/cache/android-swarm/` (`outDir` ov
   with it); a lane made before the virtual mic needs `recreate` for `ui mic`). `slim` turns the Play Store off (it updates
   apps on each boot: + 0.7 GB data, + 80 MB RAM measured), so Play services cannot fetch modules; ONE lane keeps it:
   `"caps": ["play"]` on its `lanes[]` row (a `google_apis_playstore` image whatever `avd.tag` says), then once, while it is
-  free, `avd reset -Lanes <name> -Level cold` (its next shutdown saves the snapshot with the store on). No Google
+  free, `avd reset -Lanes <name> -Level cold` (its next shutdown saves the snapshot with the
+  store on; a lane made from another image: `-Level recreate`). No Google
   account, no root: lanes install APKs by `adb install` and never write the system image.
 - L3. Never boot or shut phones yourself: agents lease them, the workflow releases a lane after its last item, `acquire` and
   `supervise -AutoFix` reclaim leases with no live holder (README "Leases"), supervise stops idle phones. At most 2 app lanes

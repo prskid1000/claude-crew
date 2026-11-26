@@ -11,8 +11,8 @@ android (emulators) | ios (Simulators, macOS).
 In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floor).
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
-Sections: L21 config · L113 phone · L313 build · L462 install · L489 launch · L503 avd · L592 up · L684 down · L714 slim ·
-  L741 arrange
+Sections: L21 config · L113 phone · L314 build · L463 install · L490 launch · L504 avd · L593 up · L685 down · L715 slim ·
+  L742 arrange
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -166,7 +166,7 @@ switch ($Action) {
       $ls = Lease $l.name
       $up = Running $l
       $who = if ($ls) { "leased by $($ls.agent)$(if ($ls.holder) { " (holder $($ls.holder))" }) since $($ls.since)" } else { 'free' }
-      '{0,-8} {1,-14} {2}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" })
+      '{0,-8} {1,-14} {2}{3}' -f $l.name, (LaneSerial $l), $(if ($up) { "up       $who" } elseif ($ls) { "down, $who (its agent runs ensure)" } else { "down     $who" }), $(if ($l.caps) { " · caps $(@($l.caps) -join ', ')" })
     }
     "memory: $((Get-SysMem).AvailGB) GB available; boots queue in the memory gate (keeps $(GateKeepFreeGB) GB free, ~$($script:PhoneGB) GB a phone)"
     Get-ChildItem $waitDir -Filter '*.json' | Sort-Object LastWriteTime | ForEach-Object { $w = Get-Content $_.FullName -Raw | ConvertFrom-Json; "waiting: $($w.agent) for $(if ($w.lane) { $w.lane } else { 'any lane' }) since $($w.since)" }
@@ -180,12 +180,13 @@ switch ($Action) {
     $lanes = @($lanes | Where-Object { $capLane = $_; -not @($Cap | Where-Object { @($capLane.caps) -notcontains $_ }).Count } | Sort-Object -Stable { [bool]$_.caps })
     if (-not $lanes) { throw "no lane$(if ($Lane) { " $Lane" }) with capability $($Cap -join ', ') (swarm.config.json lanes[].caps)" }
     $wf = Join-Path $waitDir "$Agent.json"
+    $waitLane = if ($Cap -and $lanes.Count -eq 1) { $lanes[0].name } else { $Lane }   # -Cap with one such lane waits for that lane, not for any (plain agents pass, a plain release is not kept up for it)
     $since = (Get-Date).ToString('s')
-    Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf
+    Save-Json @{ agent = $Agent; lane = $waitLane; since = $since } $wf
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
     while (-not $got) {
       $got = Locked {
-        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf }   # heartbeat
+        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $waitLane; since = $since } $wf }   # heartbeat
         $mine = @($(if ($Cap) { $lanes } else { $c.lanes }) | Where-Object { (Lease $_.name).agent -eq $Agent } | Select-Object -First 1)
         if ($mine) {   # already ours (offline too)
           $script:had = $true
@@ -266,7 +267,7 @@ switch ($Action) {
         } catch { Write-Warning "$serial : $_"; $installed = "install FAILED (the phone runs an older app): $_" }   # no stamp: next acquire retries
       }
     }
-    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; installed = $installed; reverse = @($rev); apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
+    [ordered]@{ lane = $got.name; serial = $serial; port = $got.port; user = $got.user; notes = $got.notes; caps = @($got.caps | Where-Object { $_ }); installed = $installed; reverse = @($rev); apk = (ApkInfo) } | ConvertTo-Json -Compress -Depth 3
   }
 
   'ensure' {

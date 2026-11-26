@@ -13,8 +13,8 @@ In: swarm.config.json (lanes, app, avd), kit.local.json (devices.type, gate floo
 Out: text / JSON (acquire, ensure), APKs in <runtime>/cache/android-swarm.
 Exit codes: 0 ok · 1 problem (no phone, boot / install / build failed) · 2 usage error.
 Adapters (adapters/): app-kinds.ps1 (flutter, maui, capacitor, Expo prebuild), arrange.ps1 (arrange); swarm-ios.ps1 (devices.type ios).
-Sections: L24 config · L124 phone · L328 build · L474 install · L501 launch · L513 avd · L603 up · L704 down · L734 events ·
-  L791 slim
+Sections: L24 config · L124 phone · L329 build · L475 install · L502 launch · L514 avd · L604 up · L705 down · L735 events ·
+  L792 slim
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -194,12 +194,13 @@ switch ($Action) {
     $lanes = @($lanes | Where-Object { $capLane = $_; -not @($Cap | Where-Object { -not (Test-LaneCap $capLane $_) }).Count } | Sort-Object -Stable { [bool]$_.caps })
     if (-not $lanes) { throw "no lane$(if ($Lane) { " $Lane" }) with capability $($Cap -join ', ') (swarm.config.json lanes[].caps: $(@($c.lanes | Where-Object caps | ForEach-Object { "$($_.name) $(@($_.caps) -join ' ')" }) -join '; '))" }
     $wf = Join-Path $waitDir "$(ConvertTo-KitSlug $Agent).json"   # test:CL1 is no Windows file name
+    $waitLane = if ($Cap -and $lanes.Count -eq 1) { $lanes[0].name } else { $Lane }   # -Cap with one such lane waits for that lane, not for any (plain agents pass, a plain release is not kept up for it)
     $since = (Get-Date).ToString('s')
-    Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf
+    Save-Json @{ agent = $Agent; lane = $waitLane; since = $since } $wf
     $deadline = (Get-Date).AddMinutes($WaitMinutes); $got = $null; $told = $false
     while (-not $got) {
       $got = Locked {
-        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $Lane; since = $since } $wf }   # heartbeat
+        if (Test-Path $wf) { (Get-Item $wf).LastWriteTime = Get-Date } else { Save-Json @{ agent = $Agent; lane = $waitLane; since = $since } $wf }   # heartbeat
         $ls = @{}; foreach ($x in $c.lanes) { $ls[$x.name] = Lease $x.name }   # one locked read per lane a round (3 made each lock churn)
         $mine = @($lanes | Where-Object { $ls[$_.name].agent -eq $Agent } | Select-Object -First 1)   # -Lane / -Cap: those lanes only
         if ($mine) {   # already ours (offline too)
