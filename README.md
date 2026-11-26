@@ -233,7 +233,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   each widget names its metric (`data-mk`, once per page); kit pages open in an in-page drawer, web links in a new tab;
 - flags (owner 2026-11-19): one table, ACT first (level, kind, who, problem, next step, age), a repeat one row with its count,
   auto-fixes and notes one folded row, the 24 h flags heatmap behind a header toggle; promotion holds folded under it;
-- task clock: each task's elapsed vs `budget.taskMinutes`, phase now;
+- task clock (Delivery rows): agent-live min vs `budget.taskMinutes`, phase;
 - split cells (owner 2026-11-20): every token count and $ is a row of small muted tiles, one per type (output, fresh in, cache
   write, cache read; a $ each at the model's per-type price) + the total, every duration model / tools / waiting + elapsed
   (transcript gaps; a tool's kind from its command; the gate's printed queue time = waiting); the cell's width picks the form
@@ -259,7 +259,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   `usage-cache` + `.cold.json`; `budget.prices` per model; delivery: `.state/outcomes.jsonl`): one tile strip (QA first pass %,
   came back %, median fix rounds, p50 hours to promoted (from agent start, first MR; 1 vs 2+ MRs), output tokens per merged MR, review + fix share, a tile per step outcome: a tap
   shows the runs with it); ONE day heatmap, folding row groups: Delivery (MRs per repo, tasks closed, came back, runs
-  started: a cell filters the tasks or runs), Tasks by outcome, Work in flight (today), Test checks, Usage, Kit health, Repos
+  started: a cell filters the tasks or runs), Work in flight (today), Outcomes and test checks, Usage, Kit health, Repos
   (a row per repo: branches / worktrees, kept, dirty amber, diverged red); ONE "Per role" heatmap, column groups: Spend (steps,
   tokens · est. cost, share, avg / p90 active time), Model mix, Context, Waste (fixable / open / fixed);
 - context: a run row's peak cell (bar by source, waste in the tooltip); Trends "Context mix", "Peak context"; Per role

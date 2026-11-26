@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L251 budget · L281 launch · L524 recover · L611 pause · L622 resume · L689 program · L717 param ·
-  L723 track · L1113 supervise · L1465 report · L1545 audit · L1605 storage · L1608 bugbrief · L1610 cleanup · L1697 learn ·
-  L1735 decide · L1917 debate · L1961 health · L2029 setup
+Sections: L40 init · L51 board · L251 budget · L281 launch · L515 recover · L602 pause · L613 resume · L680 program · L708 param ·
+  L714 track · L1106 supervise · L1458 report · L1538 audit · L1598 storage · L1601 bugbrief · L1603 cleanup · L1690 learn ·
+  L1728 decide · L1910 debate · L1954 health · L2022 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -279,15 +279,6 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 }
 
 # ---- launch: records for resume after a restart
-# a workflow's config (CONFIG line of launch -Self): models.<phase>, repos[].role by name + alias, qa.lanes
-function Get-KitWorkflowConfig {
-  $roles = [ordered]@{}; $local = [ordered]@{}
-  foreach ($r in @(Get-KitSetting 'repos' @())) { $nm = @(@($r.name) + @($r.aliases) | Where-Object { $_ } | ForEach-Object { "$_".ToLower() }); if ($r.role) { foreach ($n in $nm) { $roles[$n] = "$($r.role)".ToLower() } }
-    # repos[].localTest optional / none: its localFallback; ci needs MR pipelines, else unit
-    if ("$($r.localTest)" -in 'optional', 'none') { foreach ($n in $nm) { $local[$n] = $(if ("$($r.localFallback)" -eq 'unit' -or ($r.ci -and $r.ci.mrPipelines -eq $false)) { 'unit' } else { 'ci' }) } } }
-  $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }
-  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); tiers = Get-KitTiers; roles = $roles; local = $local; humanDoc = [bool]@(Get-KitProcessDocs | Where-Object key -eq 'testing-doc').Count; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
-}
 function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 function Invoke-Launch {
 param(
@@ -836,6 +827,7 @@ function InFlight($ref) {
       if (@($p.Value.mrs | ForEach-Object { "$($_.url)$_" }) -match $pat) {
         $lbl = @($w.running) | Where-Object { $_ -match "^(build|review|fix|ship|ci):$([regex]::Escape($p.Name))$" } | Select-Object -First 1
         if ($lbl) {
+          if (Test-KitWaveDead $w) { continue }   # its run done or its folder quiet: a dead step holds nothing
           # stale once its workflow ends
           if ($f.LastWriteTime -lt (Get-Date).AddMinutes(-5)) {
             & $KitCmd.orch report -Run $w.run *> $null
@@ -1007,13 +999,13 @@ switch ($Action) {
       $held =@(Get-ChildItem $wavesDir -Filter '*.json' | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-6) } | ForEach-Object {
           $w = Get-Content $_.FullName -Raw | ConvertFrom-Json
           if (@($w.running).Count) { & $KitCmd.orch report -Run $w.run *> $null; $w = Get-Content $_.FullName -Raw | ConvertFrom-Json }
-          if (@($w.running).Count) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and (ConvertTo-MrRef $_.mr) -in @($o.mrs | ForEach-Object { ($_ -split '/')[-1] }) } } })
+          if (@($w.running).Count -and -not (Test-KitWaveDead $w)) { @($w.openFindings) | Where-Object { $_.severity -eq 'blocking' -and (ConvertTo-MrRef $_.mr) -in @($o.mrs | ForEach-Object { ($_ -split '/')[-1] }) } } })
       if ($held) { Hold "HOLD $($o.task): blocking review finding still being fixed ($($held[0].mr))"; continue }
       # a follow-up MR may come
       if ($o.wave) {
         $wf = Join-Path $wavesDir "$($o.wave).json"; & $KitCmd.orch report -Run $o.wave *> $null
         if (-not (Test-Path $wf)) { if (-not $Quiet) { "CONFIG $($o.task): wave $($o.wave) has no journal/report (wrong or expired run id) - not holding for it" } }
-        elseif (@((Get-Content $wf -Raw | ConvertFrom-Json).running).Count) { Hold "HOLD $($o.task): wave $($o.wave) is still fixing it"; continue }
+        elseif (@(($wj = Get-Content $wf -Raw | ConvertFrom-Json).running).Count -and -not (Test-KitWaveDead $wj)) { Hold "HOLD $($o.task): wave $($o.wave) is still fixing it"; continue }
       }
       $busy = @($o.mrs | ForEach-Object { InFlight $_ } | Where-Object { $_ } | Select-Object -Unique)
       if ($busy) { Hold "HOLD $($o.task): MRs merged but $($busy -join ', ') still in review/fix"; continue }
@@ -1109,7 +1101,8 @@ function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [strin
     if ($Watch) { Start-Sleep -Seconds $Seconds }
   } while ($Watch)
 }
-function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.completed -and $_.runId } | ForEach-Object runId) }
+# a self record has no runId: its wfDir names the run
+function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object completed | ForEach-Object { if ($_.runId) { "$($_.runId)" } elseif ($_.wfDir) { Split-Path "$($_.wfDir)".TrimEnd('\', '/') -Leaf } } | Where-Object { $_ }) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
 # coordAt on disk as text: a session that stepped aside mid-sweep stamped it (ConvertFrom-Json makes a DateTime)
 # the last sweep: the lock's start while its pwsh runs, else the last report (a dead sweep's lock never counts)

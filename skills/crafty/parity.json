@@ -266,7 +266,7 @@
         "codex": "port: the shell sweep finds shells under codex by their exec_command in the rollout (supervise-resources.ps1 KitShellCall)",
         "antigravity": "port: the shell sweep finds shells under agy by their run_command in transcript.jsonl (supervise-resources.ps1 KitShellCall)"
       },
-      "task clock (clock log, TASK CLOCK ACT, dashboard Task clock)": {
+      "task clock (clock log, TASK CLOCK ACT, dashboard Delivery task rows)": {
         "codex": "port: the kit verbs write the clock rows themselves (lib.ps1 Invoke-KitVerb, devtools.py main): the same rows from any harness's shell",
         "antigravity": "port: the kit verbs write the clock rows themselves (lib.ps1 Invoke-KitVerb, devtools.py main): the same rows from any harness's shell"
       },

@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1050 release · L1096 lines · L1123 cleanup · L1190 launch ·
-  L1307 pause · L1426 heartbeat · L1442 sessions · L1501 ci tasks ·
-  L1566 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1049 release · L1095 lines · L1122 cleanup · L1189 launch ·
+  L1306 pause · L1425 heartbeat · L1441 sessions · L1500 ci tasks ·
+  L1565 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -925,7 +925,6 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $popJs = Get-KitPopoverJs
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)){ $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$(ConvertTo-KitLabelCase $UP.pages[$pk])</main><script>$popJs</script></body></html>" } }
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra '<button type=button class=ga data-tg=fl-hist aria-expanded=false>24 h history</button>') +
-    $(if (Get-Command Format-KitTaskClockHtml -ErrorAction SilentlyContinue) { try { Format-KitTaskClockHtml $at } catch { } }) +   # adapters/task-clock.ps1
     (& $section 'runs' 'Runs' "$(if ($UP.nRunning) { "$($UP.nRunning) running · " })$(if ($UP.runsN) { $UP.runsN } else { 'none ended in 7 days' })" "<p class=fclr hidden>Runs: <b></b> <button type=button>Clear</button></p>$runsH" -Open) +   # a Trends day click filters the runs
     (& $section 'machine' 'Machine and resources' '' $machineHtml -Open) + (& $section 'shells' 'Shells' $nSh "<div class='sxb fx sh'>$shellHtml</div>" -Open) +
     (& $section 'internals' 'Kit internals' '' ((& $fold 'trends' 'Trends' '' $trends -Open -cls sub) + $setHtml)) +
@@ -1022,7 +1021,7 @@ function Get-KitSupervisePageCss {
   ((0..4 | ForEach-Object { ".lgw.h$_ .s$_" }) -join ',') + '{display:none}.lcp li{cursor:pointer}.lcp li[aria-pressed=true]{background:color-mix(in srgb,var(--sage) 18%,transparent)}.lcp li:focus-visible{outline:2px solid var(--sage);outline-offset:-2px}' +
   '.fo{display:none!important}.ftl:not([data-fsel]){display:none}.fclr{margin:4px 0;font-size:12px;color:var(--mt)}.fclr b{color:var(--fg)}.fclr button{min-height:26px;padding:1px 8px;margin-left:6px}' +
   '.ob-sage{background:color-mix(in srgb,var(--sage) 55%,var(--sf))}.ob-slate{background:color-mix(in srgb,var(--slate) 50%,var(--sf))}.ob-watch{background:color-mix(in srgb,var(--watch) 55%,var(--sf))}.ob-plum{background:color-mix(in srgb,var(--plum) 50%,var(--sf))}.ob-act{background:color-mix(in srgb,var(--act) 55%,var(--sf))}.ob-pale{background:color-mix(in srgb,var(--sage) 22%,var(--sf))}.ob-none{background:var(--sf2);box-shadow:inset 0 0 0 1px var(--ln)}.chip[class*=ob-]{color:var(--fg)}' +
-  '.otl{list-style:none;margin:4px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:3px 12px;font-size:12px}.otl li{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}.ftl{margin-top:8px}' +
+  '.otl{list-style:none;margin:4px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:3px 12px;font-size:12px}.otl li{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center}.tck{display:flex;flex:1 1 100%;flex-wrap:wrap;align-items:center;gap:2px 6px}.tck .bar{margin:0}.ftl{margin-top:8px}' +
   '.xl{color:color-mix(in srgb,var(--slate) 60%,var(--fg));font-size:12px;text-decoration:none;overflow-wrap:anywhere}a.xl:hover{text-decoration:underline}.lks{display:inline-flex;flex-wrap:wrap;gap:2px 8px}.rpl{font-size:12.5px;margin:6px 0}' +
   # Spend: one row per role (grid columns), its step types under it; the model mix a stacked bar per role, its legend the model totals
   '.spt{width:100%;border-collapse:collapse;font-size:12.5px}.spt col.c0{width:22%}.spt col.cm{width:16%}.spt col.cs{width:110px}table.spt th{font-size:11px;font-weight:600;color:var(--mt);text-align:right;padding:3px 8px;border-bottom:1px solid var(--ln)}table.spt td{padding:3px 8px;text-align:right;font-variant-numeric:tabular-nums;border-top:1px solid var(--ln)}.spt tr :is(th,td):is(:first-child,:nth-child(4),:last-child){text-align:left}.spt tr :is(th,td):first-child{overflow-wrap:anywhere}' +

@@ -36,8 +36,8 @@
  python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
 Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck, keepboth: liquibase.py; findings: module_audit.py).
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L996 merge · L1329 docs ·
-  L1566 publish · L2126 render · L2736 spec · L3280 plugins · L3294 selftest · L4043 CLI
+Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L996 merge · L1330 docs ·
+  L1567 publish · L2127 render · L2737 spec · L3281 plugins · L3295 selftest · L4044 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
 Windows: from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs: shutil.which.
@@ -1256,11 +1256,11 @@ def _auto_merge(worktree, iid, max_wait):
     ref = f'{proj.rsplit("/", 1)[-1]}!{iid}'
     if gone := scope_dropped(SCOPE, lambda: scope_of(worktree, '', ref, branch=m.get('source_branch') or '')):   # hand-cut (MR 6826)
         return f'!{iid}: --scope drops {", ".join(gone)} of the STEP\'s area: pass it unchanged or none\nNOT_MERGED'
-    if globs := scope_of(worktree, SCOPE, ref, branch=m.get('source_branch') or ''):   # the host's diff, not the worktree's: what merges is checked
+    if globs := scope_of(worktree, SCOPE, ref, branch=m.get('source_branch') or ''):   # the host's diff: what merges
         ch = H('mr.changes')
         ch = ch if isinstance(ch, dict) else {}
         files = sorted({p for c in ch.get('changes') or [] for p in (c.get('new_path'), c.get('old_path')) if p})
-        if ch.get('overflow') or not files or (len(files) >= 100 and host != 'gitlab'):   # unpaged lists stop at 100: never read a cut list as in-area
+        if ch.get('overflow') or not files or (len(files) >= 100 and host != 'gitlab'):   # unpaged lists stop at 100: a cut list is no in-area proof
             files.append('<the host change list is empty or cut: merge by hand or --scope-ok>')
         scope_note(m.get('web_url') or '', globs, m.get('source_branch') or '')
         if no := scope_refusal(files, globs, m.get('source_branch') or '', ref, 'merge'):
@@ -1276,12 +1276,13 @@ def _auto_merge(worktree, iid, max_wait):
             return f'!{iid}: process.gates.merge ({how}): {why}\nNOT_MERGED'
     if gap := _repro_gap(m, proj, iid):
         return gap
+    if gap := globals().get('merge_loop_gap', lambda *a: '')(m, proj, iid, worktree): return gap
     if m.get('has_conflicts') or m.get('detailed_merge_status') == 'conflict':
         return f'CONFLICT: {RESOLVE}\nCONFLICT'
     st = (m.get('head_pipeline') or {}).get('status')
     if st in ('failed', 'canceled'):
         return _failed(H, m.get('head_pipeline'), iid)
-    # no CI config -> merge now (merge-when-green waits forever); CI, no pipeline 5 min after the MR update -> NOT_MERGED
+    # no CI config: merge now (merge-when-green waits forever); no pipeline 5 min after an MR update: NOT_MERGED
     no_ci = False
     if st is None:
         if no_mr_pipelines(proj):
@@ -3403,7 +3404,7 @@ def selftest():
     expect('merge_word reads the last line', merge_word('x\nWAIT') == 'WAIT' and merge_word('x') == 'NOT_MERGED')
     # merge gate over the adapter verbs (_host faked)
     g = globals()
-    saved = {k: g[k] for k in ('_host', 'remote', 'unmerged_producers', '_progress', 'kit_path')}
+    saved = {k: g[k] for k in ('_host', 'remote', 'unmerged_producers', '_progress', 'kit_path', 'merge_loop_gap')}
     old = '2020-01-01T00:00:00Z'
     calls = []
 
@@ -3424,7 +3425,7 @@ def selftest():
     try:
         g['remote'] = lambda wt: ('gitlab', 'g/r'); g['unmerged_producers'] = lambda *a, **k: []; g['_progress'] = lambda m: None
         g['kit_path'] = lambda n, **k: os.path.join(tempfile.mkdtemp(), 'tracking.json')
-        g['_host'] = fake()
+        g['merge_loop_gap'], g['_host'] = lambda *a: '', fake()
         expect('CI, no head pipeline after 5 min: NOT_MERGED, no merge', merge_word(auto_merge('.', '7', max_wait=0)) == 'NOT_MERGED' and not merged())
         calls.clear(); g['_host'] = fake(runs={'raw': 'error: 500'})
         expect('a failed pipeline query is WAIT, no merge call', merge_word(auto_merge('.', '7', max_wait=0)) == 'WAIT' and not merged())

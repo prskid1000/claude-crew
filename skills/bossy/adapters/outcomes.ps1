@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L105 summary · L254 patterns · L291 rules · L369 retro due · L380 tidy · L482 collisions · L492 decisions
+Sections: L14 outcomes · L105 summary · L262 patterns · L299 rules · L377 retro due · L388 tidy · L490 collisions · L500 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -159,7 +159,8 @@ function Get-KitRunQa($Run, $Ix) {
 # the dashboard's Trends band (owner 2026-11-19: Delivery + Usage + Activity in one): one tile strip (KPIs + $UP tiles), ONE day heatmap
 # in row groups (Delivery: MRs merged per repo, tasks closed, came back, runs started; tasks by outcome; work in flight; then $More rows
 # @{ d = dates; v } and group headers; a day click filters the lists), $Blocks (spend), the task list; helpers by dynamic scope; $UP = Format-KitUsageHtml
-function Format-KitDeliveryHtml($S, $UP, $More = @(), [string]$Blocks = '') {
+# $Clock = Get-KitTaskClock (task-clock.ps1): each task row carries its clock, the Delivery line its live / over / stopped counts
+function Format-KitDeliveryHtml($S, $UP, $More = @(), [string]$Blocks = '', $Clock = $(if (Get-Command Get-KitTaskClock -ErrorAction SilentlyContinue) { try { Get-KitTaskClock $at } catch { } })) {
   if (-not $S) { $S = [pscustomobject]@{ kpi = [pscustomobject]@{}; tasks = @(); repos = @() } }   # no outcome stats yet: the rest still shows
   $bk = $script:KitOutcomeBuckets; $tone = @{ r0 = 'sage'; r1 = 'slate'; r2 = 'watch'; r3 = 'plum'; rna = 'pale'; back = 'act'; wait = 'none' }
   $pc = { param($v) if ($null -eq $v) { '—' } else { "$v<small>%</small>" } }
@@ -223,16 +224,23 @@ function Format-KitDeliveryHtml($S, $UP, $More = @(), [string]$Blocks = '') {
           tips = @(for ($i = 0; $i -lt $nd; $i++) { $l = @($per[$i] | Where-Object { $_ }); if ($null -eq $per[$i]) { 'no status record' } elseif ($i -eq $nd - 1) { "$($l.Count) task(s) now$(if ($l.Count) { ": $(& $idList $l) · click: list them" })" } else { "$($l.Count) task(s) at the day's end$(if ($l.Count) { ": $(& $idList $l)" })" } }) } })
     # a group line: its 2-4 most useful facts over the map's days (owner 2026-11-25)
     $mrTx = @($repoRows | Where-Object { [int]$_.t } | Sort-Object { -[int]$_.t }, n | ForEach-Object { "$($_.n) $($_.t)" })
-    $dlEx = "$($mrs.Count) MRs merged$(if ($mrTx.Count) { " ($($mrTx -join ' · '))" }) · $($sumRows[0].t) tasks closed · $($sumRows[1].t) came back"
+    $ckLine = if (@($Clock | Where-Object { $_ }).Count) { Get-KitTaskClockLine $Clock }
+    $dlEx = "$($mrs.Count) MRs merged$(if ($mrTx.Count) { " ($($mrTx -join ' · '))" }) · $($sumRows[0].t) tasks closed · $($sumRows[1].t) came back$(if ($ckLine) { " · $ckLine" })"
     $obN = { param([string[]]$ks) @($S.tasks | Where-Object { $_.bucket -in $ks }).Count }
     $obEx = "passed $(& $obN 'r0', 'r1', 'r2', 'r3', 'rna') · came back $(& $obN 'back') · not tested yet $(& $obN 'wait')$(if ($null -ne $S.kpi.first) { " · QA first pass $($S.kpi.first)%" })"
+    # test checks join the outcome group (owner 2026-11-26): their header's line after the outcomes', their rows under it
+    $qaH = @($More | Where-Object { $_ -and $_.g -eq 'qa' -and $_.hd })[0]; $More = @($More | Where-Object { $_ -and -not ($_.g -eq 'qa' -and $_.hd) })
     $grp = { param([string]$g, [string]$hd, $cn, [string]$ex = '') @{ hd = $hd; g = $g; cn = $cn; ex = $ex } }
-    $all = @(& $grp 'mr' 'Delivery' '' (& $e $dlEx)) + $repoRows + $sumRows + $fRows + @(& $grp 'out' 'Tasks by outcome' @($S.tasks).Count (& $e $obEx)) + $obRows + @($More | Where-Object { $_ } | ForEach-Object { & $align $_ })
-    & $fold 'dl-days' 'Per day' "$($mrs.Count) MRs$(if ($null -ne $leadAll) { " · lead time p50 $(& $n1 $leadAll) h" })" "$(Format-KitDayHeat $all $dk 'series · day')$(Format-KitLegend "outlined = today · $(Format-KitSplitLegend)" "a cell = that day's value, shaded by the row's peak · the right column: 7 days (sum, or as the row's tooltip says) · a group header folds its rows · a click on a task row's cell or runs started filters the tasks and runs · est. cost and tokens: a tile per type, each shaded by its own 7-day peak; a narrow cell shows the total over a bar · hover a cell for every value and its cost")$(if ($noMr) { "<p class=m>$noMr task(s) without an MR (Tasks by outcome: no MR)</p>" })" -Open -tag h4 -cls 'sub st uc dlr' }
-  # the tasks behind a click (a day: closed, came back or its outcome that day; a status); hidden until a filter is set
+    $all = @(& $grp 'mr' 'Delivery' '' (& $e $dlEx)) + $repoRows + $sumRows + $fRows + @(& $grp 'out' $(if ($qaH) { 'Outcomes and test checks' } else { 'Tasks by outcome' }) @($S.tasks).Count "$(& $e $obEx)$(if ($qaH) { " &#183; $(& $e "$($qaH.cn) checks") $($qaH.ex)" })") + $obRows + @($More | Where-Object { $_ } | ForEach-Object { & $align $_ })
+    & $fold 'dl-days' 'Per day' "$($mrs.Count) MRs$(if ($null -ne $leadAll) { " · lead time p50 $(& $n1 $leadAll) h" })" "$(Format-KitDayHeat $all $dk 'series · day')$(Format-KitLegend "outlined = today · $(Format-KitSplitLegend)" "a cell = that day's value, shaded by the row's peak · the right column: 7 days (sum, or as the row's tooltip says) · a group header folds its rows · a click on a task row's cell or runs started filters the tasks and runs · est. cost and tokens: a tile per type, each shaded by its own 7-day peak; a narrow cell shows the total over a bar · hover a cell for every value and its cost")$(if ($noMr) { "<p class=m>$noMr task(s) without an MR (outcome rows: no MR)</p>" })" -Open -tag h4 -cls 'sub st uc dlr' }
+  # the tasks behind a click (a day: closed, came back or its outcome that day; a status); hidden until a filter is set; a task with a
+  # clock: its clock on the row (task-clock.ps1 Format-KitTaskClockCell), a clocked task with no outcome record lists under in progress
+  $ck = @{}; foreach ($c in @($Clock | Where-Object { $_ })) { $ck["$($c.task)"] = $c }
+  $ckOf = { param($id) if ($ck.ContainsKey("$id")) { $c0 = $ck["$id"]; $ck.Remove("$id"); Format-KitTaskClockCell $c0 } }
   $rows = @($S.tasks | ForEach-Object { $t = $_
       $fk = @(@(if ($c = & $dayOf $t.closedAt) { "dc$c" }) + @(if ($b = & $dayOf $t.backAt) { "db$b" }) + @(if ($od = & $dayOf $(if ($t.bucket -eq 'back' -and $t.backAt) { $t.backAt } else { $t.at })) { "o$($t.bucket)$od" }) + @(if ($s0 = & $stOf $t.stage) { "st:$s0" }) | Select-Object -Unique) -join ' '
-      if ($fk) { "<li data-fk='$(& $e $fk)'>$(& $taskA $t.id)<span class='chip ob-$($tone[$t.bucket])'>$(& $e $bk[$t.bucket])</span><span class=m>$(& $e ($t.repos -join ', '))</span></li>" } })
+      if ($fk) { "<li data-fk='$(& $e $fk)'>$(& $taskA $t.id)<span class='chip ob-$($tone[$t.bucket])'>$(& $e $bk[$t.bucket])</span><span class=m>$(& $e ($t.repos -join ', '))</span>$(& $ckOf $t.id)</li>" } })
+  $rows += @(foreach ($c in @($ck.Values | Where-Object { -not $_.done } | Sort-Object { -$_.min })) { "<li data-fk='st:open'>$(& $taskA $c.task)$(Format-KitTaskClockCell $c)</li>" })
   $list = "<div id=oc-tasks class='ftl uc'><p class=fclr hidden>Tasks: <b></b> <button type=button>Clear</button></p><ul class=otl>$($rows -join '')</ul></div>"
   "$tiles$dayCard$Blocks$list"
 }

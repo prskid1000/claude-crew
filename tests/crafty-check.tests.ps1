@@ -192,14 +192,6 @@ Expect "container-tests: a configured engine that is down is leased and started 
 $dashRun = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Run, [string]`$Message) ""`$Run|`$Message"" }; Invoke-KitVerb Invoke-M @('-Run', '-hm-1121', '-Message', 'm'); Invoke-KitVerb Invoke-M @('-Run', '-Mess', 'x')"
 $dashTypo = pwsh -NoProfile -Command ". '$(Lib)'; function Invoke-M { param([string]`$Run) `$Run }; Invoke-KitVerb Invoke-M @('-Run', '-Agnet', 'x')" 2>&1 | Out-String; $dashRc = $LASTEXITCODE
 Expect "Invoke-KitVerb: a dash-leading value naming no parameter is the value; a parameter name stays one; a typo exits 2 ($($dashRun -join ' / ') | $dashRc)" (($dashRun -join ' / ') -eq '-hm-1121|m / |x' -and $dashRc -eq 2 -and $dashTypo -match 'unknown or ambiguous parameter -Agnet')
-# python -Tests <folder>: its test_*.py scripts run directly, never `unittest <folder>` (0 tests, exit 5: retro 1709)
-$pvd = Join-Path (Kd) 'py-val'; New-Item -ItemType Directory -Force "$pvd/validation" | Out-Null; 'x==1' | Set-Content "$pvd/requirements.txt"
-'print("ok")' | Set-Content "$pvd/validation/test_alpha.py"; 'print("ok")' | Set-Content "$pvd/validation/helper.py"
-New-Item -ItemType Directory -Force "$pvd/cases/sub" | Out-Null; "import unittest`nclass T(unittest.TestCase):`n    def test_a(self): pass" | Set-Content "$pvd/cases/sub/test_c.py"
-$pvc = pwsh @np $D check -Dir $pvd -Step test -Tests cases -Show 2>&1 | Out-String
-Expect "check python -Tests <folder with test cases>: the runner gets the folder ($($pvc.Trim() -replace '\s+', ' '))" ($pvc -match 'test\s*:.*\bcases\b' -and $pvc -notmatch 'test_c\.py')
-$pvo = pwsh @np $D check -Dir $pvd -Step test -Tests validation -Show 2>&1 | Out-String
-Expect "check python -Tests <folder>: each test_*.py run with python, no unittest ($($pvo.Trim() -replace '\s+', ' '))" ($pvo -match 'test\s*:.*"validation/test_alpha\.py"' -and $pvo -notmatch 'unittest|helper\.py')
 # e2e (from guard.tests: its cap): the changed specs, else the diff's specs (map, folder, name, imports, visits), none = NOT_TESTED, the whole suite only with -AllTests (logged)
 $er = Join-Path (Kd) 'e2e-repo'; $ef = @{ 'cypress/e2e/02-orders/01.create.cy.ts' = 'x'; 'cypress/e2e/misc.cy.ts' = "import { a } from '../../src/app/orders/list.component'`nimport d from '../fixtures/d.json'"; 'cypress/fixtures/d.json' = '1'; 'cypress/e2e/pay.cy.ts' = 'x'; 'cypress/e2e/n.cy.ts.snap' = 'x'; 'src/app/pay/components/row/row.ts' = 'a'
   'cypress/e2e/nav.cy.ts' = "cy.visit('/orders?x=1')"; 'cypress/e2e/users.cy.ts' = "cy.visit('/users')"; 'cypress/e2e/invoices/a.cy.ts' = 'x'; 'src/app/orders/list.component.ts' = 'a'; 'src/billing/rate.ts' = 'a' }
@@ -215,6 +207,9 @@ Expect-Cases @(
   , @('check -Step e2e: changed specs only, related ones left out (named)', { & $e2 @('src/billing/rate.ts', 'cypress/e2e/pay.cy.ts') '-Show' }, { param($r) $r.out -match 'the 1 changed spec\(s\) only; 1 related' -and $r.out -match '--spec "cypress/e2e/pay\.cy\.ts"' -and $r.out -notmatch 'invoices/a' })
   , @('check -Step e2e: a changed fixture keeps its related specs next to a changed spec', { & $e2 @('cypress/fixtures/d.json', 'cypress/e2e/pay.cy.ts') '-Show' }, { param($r) $r.out -match 'misc\.cy\.ts <- imports' -and $r.out -notmatch 'changed spec\(s\) only' })
   , @('check -Step e2e: no related spec = NOT_TESTED (exit 5), nothing runs', { & $e2 'README.md' }, { param($r) $r.code -eq 5 -and $r.out -match 'e2e NOT_TESTED: no spec relates to the 1 changed file' -and $r.out -notmatch 'gate' })
+  # bare -Tests names (2026-11-26: queued 26 min, then cypress found no spec): a name or dir/name -> its spec path; unknown: refused before the gate
+  , @('check -Step e2e -Tests bare names: pay, invoices/a -> their paths', { & $e2 'README.md' @('-Tests', 'pay,invoices/a', '-Show') }, { param($r) $r.code -eq 0 -and $r.out -match '--spec "[^"]*cypress/e2e/pay\.cy\.ts' -and $r.out -match 'invoices/a\.cy\.ts <- named \(-Tests invoices/a\)' })
+  , @('check -Step e2e -Tests unknown name: refused (exit 2), nothing queued', { & $e2 'README.md' @('-Tests', 'nosuchspec') }, { param($r) $r.code -eq 2 -and $r.out -match 'e2e refused: -Tests nosuchspec: no such spec' -and $r.out -notmatch 'gate' })
   , @('check -Step e2e -AllTests: the whole suite, logged; gate refuses a bare suite; cypress dep = e2e step', { $a = & $e2 'src/billing/rate.ts' '-AllTests'; $g = Invoke-TestScript $D gate -Dir $er -Cmd 'npx cypress run'; $a.out += "|$($g.code)|$(pwsh -NoProfile -Command ". '$(Lib)'; @(Read-KitLog builds | Where-Object event -eq e2e-all).Count")"; $a },
       { param($r) $r.code -eq 0 -and $r.out -match 'WHOLE suite' -and $r.out -match '\|2\|1' -and $cs -match 'e2e\s+npx cypress run --spec "\{specs\}"' })
 )

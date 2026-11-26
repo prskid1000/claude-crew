@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L293 stack · L392 gate · L708 check · L1035 pipes · L1100 guard · L2037 dir · L2047 checkpoint ·
-  L2087 prior · L2126 tracker · L2148 task spec · L2354 scope · L2402 host
+Sections: L25 init · L34 wt · L293 stack · L392 gate · L708 check · L1037 pipes · L1102 guard · L2039 dir · L2049 checkpoint ·
+  L2089 prior · L2128 tracker · L2150 task spec · L2356 scope · L2404 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -881,22 +881,24 @@ if ($Step -eq 'e2e') {
     }
     foreach ($key in $f, $noExt, ($noExt -replace '/index$', '')) { if ($byImp[$key]) { foreach ($s in $byImp[$key].Keys) { & $add $s "imports $f" } } }
   }
-  # the diff changed specs: those only (retro tidy-20261123-01: a 23 min folder for one spec); the rest by -Tests
+  # changed specs only (a 23 min folder for one spec); the rest by -Tests (bare names resolved)
   $own = @($why.Keys | Where-Object { $why[$_].Contains('changed') })
   $supp = @($chg | Where-Object { -not $isSpec[$_] -and $_ -match '(?i)(^|/)(cypress|e2e|tests?|__tests__|specs?|fixtures?|support)/' })   # a changed support file / fixture keeps every spec it relates to
   if ($own.Count -and $own.Count -lt $why.Count -and -not $supp.Count) { Write-Host "[check] e2e: the $($own.Count) changed spec(s) only; $($why.Count - $own.Count) related spec(s) left out (name them with -Tests, the whole suite: -AllTests)"; foreach ($s in @($why.Keys | Where-Object { $_ -notin $own })) { $why.Remove($s) } }
-  foreach ($t in @($Tests -split '[,\s]+' | Where-Object { $_ })) { & $add $t.Replace('\', '/') 'named (-Tests)' }
+  $miss = @(foreach ($t in @($Tests -split '[,\s]+' | Where-Object { $_ })) { $tn = $t.Replace('\', '/'); if ($tn -match '[*?]' -or $tn -in $all) { & $add $tn 'named (-Tests)'; continue }
+      $hs = @($specs -match "(^|/)$([regex]::Escape($tn))(\.[^/]*)?$"); foreach ($h in $hs) { & $add $h "named (-Tests $tn)" }; if (-not $hs.Count) { $tn } })
+  if ($miss.Count) { Write-Host "[check] e2e refused: -Tests $($miss -join ', '): no such spec"; exit 2 }
   # split = folder: one run per spec folder (one long run crashed Cypress)
   $split = "$($recipe.split)" -eq 'folder'; $groups = [ordered]@{}
   $fold = { param($s) $fd = [IO.Path]::GetDirectoryName($s).Replace('\', '/'); if (-not $groups.Contains($fd)) { $groups[$fd] = [Collections.Generic.List[string]]::new() }; $fd }
   if ($AllTests) {
-    Write-Host "[check] e2e: the WHOLE suite (-AllTests: only on the owner's word), logged to the builds stream"
+    Write-Host "[check] e2e: the WHOLE suite (-AllTests: the owner's word only), logged"
     if ($split) { $globbed = @{}; foreach ($s in $specs) { $fd = & $fold $s; if ($s -notmatch '\.cy\.') { $groups[$fd].Add($s) } elseif (-not $globbed[$fd]) { $globbed[$fd] = 1; $groups[$fd].Add($(if ($fd) { "$fd/*.cy.*" } else { '*.cy.*' })) } } }
     else { $cmd = $cmd -replace '\s*--spec[=\s]+"?\{specs\}"?', '' -replace '\s*\{specs\}', ''; $groups[''] = @() }
     if (-not $Show) { Write-KitLog builds e2e-all ([ordered]@{ dir = $st.dir; branch = "$(git -C $st.dir branch --show-current)"; cmd = $cmd }) }
   } else {
     if (-not $why.Count) {
-      Write-Host "[check] e2e NOT_TESTED: no spec relates to the $($chg.Count) changed file(s)$(if ($chg.Count) { ' (' + (($chg | Select-Object -First 5) -join ', ') + $(if ($chg.Count -gt 5) { ', ...' }) + ')' }) of $($specs.Count) spec(s): add a tests.e2e.map entry or a spec, or name specs with -Tests; never the whole suite"
+      Write-Host "[check] e2e NOT_TESTED: no spec relates to the $($chg.Count) changed file(s)$(if ($chg.Count) { ' (' + (($chg | Select-Object -First 5) -join ', ') + $(if ($chg.Count -gt 5) { ', ...' }) + ')' }) of $($specs.Count) spec(s): add a tests.e2e.map entry, a spec or -Tests"
       exit 5
     }
     Write-Host "[check] e2e: $($why.Count) spec(s) for $($chg.Count) changed file(s) (of $($specs.Count)):"

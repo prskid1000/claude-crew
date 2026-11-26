@@ -9,13 +9,14 @@ changed: a UI line, never "not a UI change") · DOCS (each required process doc 
 Links bullet naming an MR / PR has its URL or ref) · COMMITS (commit prose: commitStyle subject, caps; no wip subject) · EOL (a file
 whose diff is mostly line endings) · SCOPE (files outside the area globs) · LOOP (a local loop PASS whose head is the MR head, or only
 docs changed since) · PROOF (devtools.py proof <task> gaps).
-Sections: L21 rules · L161 context · L251 verb · L282 selftest · L319 areas"""
+Sections: L22 rules · L164 context · L280 verb · L311 selftest · L358 areas"""
 import contextlib, io, json, os, re, subprocess, sys
 
 DT = None
 WIP = re.compile(r'(?i)^(wip|chore\(wip\))[:(]|released with uncommitted work')
 BAD_MARK = re.compile(r'(❌|✗|:x:)\s*\**\s*PASS\b|(✅|✔|:white_check_mark:)\s*\**\s*FAIL\b')
 DOC_ONLY = re.compile(r'(?i)\.(md|txt|rst|adoc)$')
+OWNER_WORD = re.compile(r'(?i)\bowner word\b')
 
 
 # ---- rules: each (ctx) -> [(code, problem, fix)]; ctx holds the texts and git facts, no I/O here
@@ -140,6 +141,8 @@ def r_loop(c):
         return [('LOOP', 'no local loop checkpoint for this task', redo)]
     if not ok:
         return [('LOOP', f'the last local loop is not PASS ({c.get("loopEv", "")[:100]})', 'fix and ' + redo)]
+    if OWNER_WORD.search(c.get('loopEv') or ''):   # checkpoint -Step loop -Evidence "PASS owner word: <their words>": any head
+        return []
     if not head and mr_head and c.get('codeFiles'):
         return [('LOOP', 'the loop PASS checkpoint has no head (written without -Dir): its code state is unknown', redo)]
     if head and mr_head and not mr_head.startswith(head[:7]) and not head.startswith(mr_head[:7]) and since:
@@ -216,6 +219,32 @@ def context(tid, title, body, gdir='', base='', head='', ref='', branch=''):
                 DT.VERBS['proof']([tid])
             c['proofGaps'] = [ln.split(': ', 1)[1] for ln in o.getvalue().splitlines() if ln.startswith('GAP ')]
     return c
+
+
+def loop_gap(tid, gdir, base, head):
+    """The LOOP rule for one MR head; devtools.py merge runs it too (2026-11-26: a merge passed while precheck refused LOOP)."""
+    c = {'task': tid, 'head': head}
+    c['loopOk'], c['loopEv'], c['loopHead'] = loop_facts(tid)
+    if gdir and base and head:
+        c['codeFiles'] = [f for f in git(gdir, 'diff', '--name-only', f'{base}...{head}').splitlines() if f.strip() and not DOC_ONLY.search(f)]
+    if gdir and c['loopHead'] and head and git(gdir, 'cat-file', '-t', c['loopHead']).strip() == 'commit':
+        c['sinceLoop'] = [f for f in git(gdir, 'diff', '--name-only', c['loopHead'], head).splitlines() if f.strip() and not DOC_ONLY.search(f)]
+    elif c['loopHead']:
+        c['loopHead'] = ''
+        c.pop('codeFiles', None)
+    return r_loop(c)
+
+
+def merge_loop_gap(m, proj, iid, worktree):
+    """devtools.py merge: NOT_MERGED text when the LOOP rule refuses the MR head; '' when no task, it passes or --override (logged)."""
+    tid = DT._mr_task(m, proj, iid)
+    gaps = loop_gap(tid, worktree if worktree and os.path.isdir(worktree) else '', f'origin/{m.get("target_branch") or "main"}', m.get('sha') or '') if tid else []
+    if not gaps:
+        return ''
+    if DT.OVERRIDE:
+        DT.kitlog('calls', 'loop-override', {'task': tid, 'mr': f'{proj}!{iid}', 'reason': DT.OVERRIDE})
+        return ''
+    return f'!{iid}: precheck LOOP: {gaps[0][1]} -> {gaps[0][2]}; --override "<why>" passes, logged\nNOT_MERGED'
 
 
 def mr_targets(tid, refs, wt, spec):
@@ -312,7 +341,17 @@ def selftest():
     ex('LOOP: none, not PASS, and code changed after the PASS head', all('LOOP' in codes({**good, **x}) for x in ({'loopOk': None}, {'loopOk': False}, {'head': 'def5678', 'sinceLoop': ['src/a.ts']})))
     ex('LOOP: a PASS with no head while code changed; no task: no LOOP', 'LOOP' in codes({**good, 'loopHead': '', 'codeFiles': ['a.ts']}) and 'LOOP' not in codes({**good, 'task': '', 'loopOk': None}))
     ex('LOOP: only docs changed after the PASS head', 'LOOP' not in codes({**good, 'head': 'def5678', 'sinceLoop': []}))
+    ex('LOOP: an owner word in the PASS evidence passes a changed head', 'LOOP' not in codes({**good, 'head': 'def5678', 'sinceLoop': ['a.ts'], 'loopEv': 'PASS owner word: ship it'}))
     ex('PROOF: proof gaps', 'PROOF' in codes({**good, 'proofGaps': ["check T1 (ui): no PASS case with UI evidence"]}))
+    # devtools.py merge runs the LOOP rule too (2026-11-26: a merge passed while precheck refused LOOP); an owner word passes
+    mt, lf, g = DT._mr_task, loop_facts, globals()
+    try:
+        DT._mr_task, g['loop_facts'] = (lambda *a: 'T1'), (lambda t: (None, '', ''))
+        none = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', '')
+        g['loop_facts'] = lambda t: (True, 'PASS owner word: ship', 'old1234')
+        ex('merge: no loop checkpoint -> NOT_MERGED naming LOOP; an owner word merges', 'precheck LOOP' in none and none.endswith('NOT_MERGED') and merge_loop_gap({'sha': 'abc'}, 'g/r', '7', '') == '')
+    finally:
+        DT._mr_task, g['loop_facts'] = mt, lf
     return 0 if all(res) else 1
 
 
@@ -349,3 +388,4 @@ def register(dt):
     DT = dt
     dt.VERBS['precheck'] = precheck_cmd
     dt.area_gaps = area_gaps
+    dt.merge_loop_gap = merge_loop_gap

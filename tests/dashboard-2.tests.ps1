@@ -131,5 +131,16 @@ $tsLeft = Px $tsO board leave -Agent tsz-01 | Out-String
 Expect "TS-STORED: board beat stored as UTC ...Z, read back local ($($tsRead -join ' ')) and shown as local $tsLocal, not stale" ($tsRaw -match '"beat":\s*"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"' -and
   [int]$tsRead[0] -le 1 -and $tsRead[1] -eq $tsLocal -and $tsShow -match "tsz-01.*\| beat $tsLocal" -and "$(@($tsShow -split "`n") -match 'tsz-01')" -notmatch 'STALE|QUIET')   # its own row: this kit's earlier cases leave other agents
 Remove-TestKit $tsK
+# Runs list (owner 2026-11-26): ONE name (the run's topic in full, id in the tooltip); a run marked done (launch -Done on a self record:
+# its wfDir) never "running"; one stopped by a usage limit says so; the state chips stay on the title line (no wrap)
+$rl = & { . $O; $n = (Get-Date).Date.AddHours(12); $iso = { param($m) $n.AddMinutes($m).ToString('o') }
+  @{ run = 'hm-x'; script = 'buildy.js'; wfDir = 'C:/t/workflows/wf_r1'; completed = (& $iso -5) } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath launches -Create) 'self-buildy-hm-x-1.json')
+  function Get-KitUsageLimits { [pscustomobject]@{ text = 'weekly limit'; models = @('m'); runs = @('wf_r2'); at = $n } }
+  $rr = { param($id, $tp) @{ run = "r-$id"; id = $id; label = "buildy-$id"; topic = $tp; kind = 'build'; status = 'running'; started = (& $iso -60); at = (& $iso -1); tok = 10; wall = 60; steps = @(@{ label = 'build:A1'; role = 'devy'; at = (& $iso -2); min = 30; result = 'running'; tok = 10 }) } }
+  $u = [pscustomobject]@{ days = @(@{ day = $n.ToString('yyyy-MM-dd'); tok = 9 }); runs = @((& $rr 'wf_r1' 'HM parity in RM app: driver app, messaging, app texts and merge stops'), (& $rr 'wf_r2' '')) }
+  $u.runs[1].status = 'ended'
+  Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o'); stats = [pscustomobject]@{ usage = $u }; agents = @() }) }
+$r1 = [regex]::Match($rl, "data-g='rr-wf_r1'.{0,900}?</span>(?=<span class=gs|<span class='gs)").Value; $r2 = [regex]::Match($rl, "data-g='rr-wf_r2'.{0,900}?</span>(?=<span class=gs|<span class='gs)").Value
+Expect "Runs list: the topic in full as the one name, id in the tooltip; marked done = not running; usage limit = stopped (usage limit); chips on the title line ($($r1.Length)/$($r2.Length))" ($r1 -match "title='HM parity in RM app: driver app, messaging, app texts and merge stops &#183; r-wf_r1 &#183; wf_r1'><button type=button class=rtg aria-expanded=false>HM parity in RM app: driver app, messaging, app texts and merge stops</button>" -and $r1 -notmatch 'chip s-act' -and $r2 -match "rtg aria-expanded=false>buildy-wf_r2</button>.*chip s-oth'>stopped \(usage limit\)" -and $rl -match '\.rtl \.rr>\.gn\{display:flex;flex-wrap:nowrap')
 Remove-TestKit $k
 Complete-Tests

@@ -3,7 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L9 usage · L384 context · L732 waste (owner 2026-11-23 · L802 split · L876 budget · L944 handoffs
+Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L945 handoffs · L957 limits ·
+  L976 workflow config · L986 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -229,12 +230,12 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
     $steps.Add($st); $coord.Add((& $withSplit ([pscustomobject]@{ session = $f.BaseName; model = $st.model; tok = $st.tok; cost = $(if ($null -ne $st.cost) { [math]::Round($st.cost, 2) }); min = $st.min; at = $st.at }) @($st))) }
   foreach ($k in @($cache.Keys)) { if (-not $seen[$k]) { $cache.Remove($k) } }   # older than $Days: dropped
   # one run = one row: a resumed run's folders merge (the newest folder's id and status, sums, MRs unique, items the max; resumed = older folders)
-  Register-KitShownNames @($runs | ForEach-Object { , @($_.label) }); foreach ($r in $runs) { $lr = @($r.label); $r.label = Get-KitShownName @lr }   # label rows -> shown names: one normaliser call
+  Register-KitShownNames @($runs | ForEach-Object { , @($_.label) }); foreach ($r in $runs) { $lr = @($r.label); $r.label = Get-KitShownName @lr; $r | Add-Member -Force NoteProperty topic "$(if ($lr[0] -eq 'run') { $lr[2] })" }   # label rows -> shown names: one normaliser call; topic: the Runs list's one name
   $byRun = [ordered]@{}; foreach ($r in @($runs | Sort-Object { "$($_.started)" })) { $rk = "$($r.run)"; if (-not $byRun.Contains($rk)) { $byRun[$rk] = [Collections.Generic.List[object]]::new() }; $byRun[$rk].Add($r) }
   $runs = @(foreach ($grpRun in $byRun.Values) { if ($grpRun.Count -eq 1) { $grpRun[0]; continue }
       $nw = $grpRun[-1]; $ss = @($grpRun | ForEach-Object { $_.steps }); $sumOf = { param([string]$p) [long](@($grpRun | ForEach-Object { [double](Get-KitMember $_ $p) }) | Measure-Object -Sum).Sum }
       $mx = { param([string]$p) @($grpRun | ForEach-Object { "$(Get-KitMember $_ $p)" } | Sort-Object)[-1] }; $cs0 = @($grpRun | Where-Object { $null -ne $_.cost })
-      & $withSplit ([pscustomobject]@{ run = $nw.run; id = $nw.id; ids = @($grpRun.id); resumed = $grpRun.Count - 1; label = $nw.label; mandate = $nw.mandate; qaName = $nw.qaName; tasks = @($grpRun.tasks | Where-Object { $_ } | Select-Object -Unique)
+      & $withSplit ([pscustomobject]@{ run = $nw.run; id = $nw.id; ids = @($grpRun.id); resumed = $grpRun.Count - 1; label = $nw.label; topic = $nw.topic; mandate = $nw.mandate; qaName = $nw.qaName; tasks = @($grpRun.tasks | Where-Object { $_ } | Select-Object -Unique)
           mrAll = @($grpRun.mrAll | Where-Object { $_ } | Select-Object -Unique); kind = $nw.kind; started = $grpRun[0].started; status = $nw.status; state = $nw.state; lastAt = (& $mx lastAt)
           cap = [long](@($grpRun.cap) | Measure-Object -Maximum).Maximum; spent = [long](@($grpRun.spent) | Measure-Object -Maximum).Maximum; tok = (& $sumOf tok); cost = $(if ($cs0.Count) { [math]::Round(($cs0 | Measure-Object cost -Sum).Sum, 2) })
           wall = (& $sumOf wall); roles = (@($ss | Group-Object role | Sort-Object Count -Descending | ForEach-Object { "$(if ($_.Name) { $_.Name } else { 'step' }) $($_.Count)" }) -join ' · ')
@@ -953,3 +954,37 @@ function Get-KitHandoffs([double]$Hours = 48, [string]$Except = '') {
   @($boardRows | Where-Object { $ho = $_; $ho.handoffBrief -and -not $ho.continuedBy -and ((Get-Date) - [datetime]$ho.beat).TotalHours -lt $Hours -and
       -not @($boardRows | Where-Object { (($_.agent -eq $ho.agent -and ("$($_.run)" -eq "$($ho.run)" -or $ho.agent -eq $ho.type)) -or ($_.agent -ne $ho.agent -and (Test-KitRunLineage $ho $_) -and "$($_.run)" -ne "$($ho.run)") -or (Test-KitAreaHeir $ho $_)) -and $_.session -ne $Except -and $_.session -ne $ho.session -and $_.joined -and [datetime]$_.joined -gt [datetime]$ho.beat }).Count })
 }
+# ---- limits: a model's usage limit (owner 2026-11-26): one ACT per limit with its reset time; workflows fall back one tier (@up)
+# the tail of each agent transcript written in $Hours (a limit ends the agent: its last lines); Claude Code's "You've hit your ... limit" text
+function Get-KitUsageLimits([double]$Hours = 3, [int]$TailBytes = 65536) {
+  $cut = (Get-Date).AddHours(-$Hours); $got = [ordered]@{}
+  foreach ($wd in @(Get-KitRecentWorkflowDirs -Hours $Hours)) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $wd.FullName -Filter 'agent-*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $cut)) {
+      $tx = try { $fs = [IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite'); try { $n = [int][math]::Min($TailBytes, $fs.Length); $null = $fs.Seek(-$n, 'End'); $b = [byte[]]::new($n); $null = $fs.Read($b, 0, $n); [Text.Encoding]::UTF8.GetString($b) } finally { $fs.Dispose() } } catch { '' }
+      if ($tx -notmatch 'usage_limit_reached') { continue }
+      $msg = if ($tx -match '"text":"(You[^"]{0,40}hit your [^"]{0,160})"') { $Matches[1] -replace '\\u00b7', '·' } else { 'usage limit reached' }
+      $mdl = @([regex]::Matches($tx, '"model":"(claude-[^"]+)"') | ForEach-Object { $_.Groups[1].Value })[-1]; if (-not $mdl) { $mdl = 'a model' }
+      if (-not $got.Contains($msg)) { $got[$msg] = [pscustomobject]@{ text = $msg; models = [Collections.Generic.List[string]]::new(); runs = [Collections.Generic.List[string]]::new(); at = $f.LastWriteTime } }
+      $l = $got[$msg]; if (-not $l.models.Contains($mdl)) { $l.models.Add($mdl) }; if (-not $l.runs.Contains($wd.Name)) { $l.runs.Add($wd.Name) }; if ($f.LastWriteTime -gt $l.at) { $l.at = $f.LastWriteTime } } }
+  @($got.Values)
+}
+function Get-KitSuperviseFlagsUsageLimit([switch]$AutoFix, [double]$Hours = 3) {
+  foreach ($l in @(Get-KitUsageLimits $Hours)) {
+    [pscustomobject]@{ level = 'ACT'; what = "USAGE LIMIT: $($l.text)"; kind = 'USAGE LIMIT'; who = "$(@($l.models) -join ', ') in run(s) $(@($l.runs) -join ', ')"; age = "$([int]((Get-Date) - $l.at).TotalMinutes) min"
+      problem = "$($l.text) (agents on $(@($l.models) -join ', ')); they stop"; action = "buildy / testy steps retry once on the next tier (<label>@up); until the reset: point that tier at an available model (kit.local.json models.tiers), then resume the stopped run (bossy.ps1 resume -All)" } }
+}
+# ---- workflow config: the CONFIG line of launch -Self (from bossy.ps1: its cap)
+# a workflow's config (CONFIG line of launch -Self): models.<phase>, repos[].role by name + alias, qa.lanes
+function Get-KitWorkflowConfig {
+  $roles = [ordered]@{}; $local = [ordered]@{}
+  foreach ($r in @(Get-KitSetting 'repos' @())) { $nm = @(@($r.name) + @($r.aliases) | Where-Object { $_ } | ForEach-Object { "$_".ToLower() }); if ($r.role) { foreach ($n in $nm) { $roles[$n] = "$($r.role)".ToLower() } }
+    # repos[].localTest optional / none: its localFallback; ci needs MR pipelines, else unit
+    if ("$($r.localTest)" -in 'optional', 'none') { foreach ($n in $nm) { $local[$n] = $(if ("$($r.localFallback)" -eq 'unit' -or ($r.ci -and $r.ci.mrPipelines -eq $false)) { 'unit' } else { 'ci' }) } } }
+  $plain = { param($o) if ($o) { $h = [ordered]@{}; foreach ($p in (Get-KitProps $o)) { if ($p.Name -notlike '_*') { $h[$p.Name] = $p.Value } }; if ($h.Count) { $h } } }
+  [ordered]@{ models = (& $plain (Get-KitSetting 'models' $null)); tiers = Get-KitTiers; roles = $roles; local = $local; humanDoc = [bool]@(Get-KitProcessDocs | Where-Object key -eq 'testing-doc').Count; qaLanes = (& $plain (Get-KitSetting 'qa.lanes' $null)); intermittentRx = "$(Get-KitSetting 'qa.intermittentRx' '')" }
+}
+# ---- dead runs: a wave record (waves/<run>.json) whose open steps and findings hold no promotion (owner 2026-11-26; bossy.ps1
+# track): its run marked done (launch -Done), or its workflow folder quiet 3x supervise.stuckMinutes (a step died: usage limit, crash)
+function Test-KitWaveDead($W) { if ("$($W.run)" -in @(Get-KitFinishedRuns)) { return $true }
+  $wd = @(Get-KitWorkflowDirs | Where-Object Name -eq "$($W.run)")[0]
+  [bool]($wd -and ((Get-Date) - (Get-KitWorkflowLastWrite $wd)).TotalMinutes -ge 3 * [double](Get-KitParam 'supervise.stuckMinutes')) }

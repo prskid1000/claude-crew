@@ -2,7 +2,8 @@
 <#
 task-clock.tests.ps1: the task clock (owner 2026-11-25: every task under budget.taskMinutes): clock rows from the verbs in
 crafty/vocab.json clockPhases (Get-KitClockPhase, kitbag.py audited), the per-task clock (bossy adapters/task-clock.ps1), the supervise
-TASK CLOCK ACT / WATCH, the page's Task clock section; the wave-brief split check; buildy review and CI together.
+TASK CLOCK ACT / WATCH, the clock on Delivery's task rows; the wave-brief split check; buildy review and CI together; a dead
+workflow never holds promotion (track run); the USAGE LIMIT ACT; check python -Tests <folder>.
 Usage: pwsh -NoProfile -File <kit>/tests/task-clock.tests.ps1 (or tests/kit-tests.ps1 -Area task-clock).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -28,21 +29,32 @@ $tcF = & { . $O; $n = Get-Date; $r = { param($m, $t, $p, $e, $ag, $rc = 0) [pscu
     (& $r 22 'T2' investigate start a2), (& $r 21 'T2' investigate end a2), (& $r 9 'T3' investigate start a3), (& $r 2 'T3' investigate end a3),
     (& $r 50 'T4' investigate start a4), (& $r 45 'T4' mr end a4), (& $r 300 'T5' investigate start a5),
     (& $r 60 'T6' build start a6), (& $r 9 'T6' build start a6), (& $r 4 'T6' build end a6), (& $r 3 'T6' mr end a6), (& $r 2 'T6' merge start a6), (& $r 1 'T6' merge end a6),
-    (& $r 45 '123' investigate start a7), (& $r 44 '124' investigate start a8))
+    (& $r 45 '123' investigate start a7), (& $r 44 '124' investigate start a8),
+    (& $r 600 'T9' investigate start a9), (& $r 590 'T9' investigate end a9), (& $r 60 'T9' build start a9b), (& $r 50 'T9' build end a9b),
+    (& $r 260 'T10' investigate start a10), (& $r 200 'T10' local end a10), (& $r 40 'T11' investigate start a11), (& $r 5 'T12' code start a12), (& $r -2 'T12' local start a12))
+  # owner 2026-11-26: live-agent time only (T9: a9 600..560 + a9b 70..now = 110, not 600); T10's agent left: stopped; T11 merged 10
+  # min ago: done, its clock stopped; T12's row 2 min after Now (written while supervise ran): not yet, nowMin never negative
+  $bo = { param($ag, $j, $b, $st = 'working', $it = '') [pscustomobject]@{ agent = $ag; items = $it; status = $st; joined = $n.AddMinutes(-$j).ToString('o'); beat = $n.AddMinutes(-$b).ToString('o') } }
+  $brd = @((& $bo a1 45 1), (& $bo a2 25 1), (& $bo a3 10 1), (& $bo a4 55 30 left), (& $bo a6 61 1), (& $bo a7 46 1), (& $bo a8 45 1), (& $bo a9 600 560 left), (& $bo x 70 1 'waiting CI' 'T9'),
+    (& $bo a10 270 200 left), (& $bo a11 45 1), (& $bo a12 6 1))
   Set-JsonFile (Join-Path (Get-KitPath tasks) 'T4.json') @{ task = 'T4'; schemaVersion = 1; track = @{ done = $true; doneAt = $n.AddMinutes(-30).ToString('o') } }
-  $cl = @(Get-KitTaskClock $n -Rows $rows); $t1 = $cl | Where-Object task -eq 'T1'; $t4 = $cl | Where-Object task -eq 'T4'
+  Set-JsonFile (Join-Path (Get-KitPath tasks) 'T11.json') @{ task = 'T11'; schemaVersion = 1; track = @{ done = $false; mergedSeenAt = $n.AddMinutes(-10).ToString('o') } }
+  $cl = @(Get-KitTaskClock $n -Rows $rows -Board $brd); $t1 = $cl | Where-Object task -eq 'T1'; $t4 = $cl | Where-Object task -eq 'T4'
   $fl = @(Get-KitSuperviseFlagsTaskClock -Pending @([pscustomobject]@{ id = 'd-9'; agent = 'a1' }) -At $n -Clock $cl | ForEach-Object { "$($_.level) $($_.what) => $($_.action)" })
-  $t6 = $cl | Where-Object task -eq 'T6'
-  "$([int]$t1.min) $($t1.now) $([int]$t1.spent.code) $($t4.done) $([int]$t4.min) $([int]$t6.spent.build)", ($fl -join ' || ') }
+  $t6 = $cl | Where-Object task -eq 'T6'; $tx = @{}; foreach ($c in $cl) { $tx[$c.task] = $c }
+  "$([int]$t1.min) $($t1.now) $([int]$t1.spent.code) $($t4.done) $([int]$t4.min) $([int]$t6.spent.build)", ($fl -join ' || '),
+  "$([int]$tx.T9.min) $($tx.T9.stopped) $([int]$tx.T10.min) $($tx.T10.stopped) $($tx.T11.done) $([int]$tx.T11.min) $($tx.T12.now) $($tx.T12.nowMin -ge 0) $($tx.T5.stopped)" }
 Expect "task clock: T1 40 min in build, a no-task row joins a1's T1 (code 1 min), T4 done at 20 min, T6 a killed build's start gives way (5 min) ($($tcF[0]))" ($tcF[0] -eq '40 build 1 True 20 5')
+Expect "task clock (owner 2026-11-26): T9 110 live-agent min (not 600 wall), T10 agent gone = stopped at 60, T11 merged = done at 30, T12 a later row ignored (code, nowMin >= 0), T5 no board entry + 5 h quiet = stopped ($($tcF[2]))" ($tcF[2] -eq '110 False 60 True True 30 code True True')
+Expect "supervise TASK CLOCK: T9 ACT on live time (110), stopped T10 and merged T11 none ($($tcF[1]))" ($tcF[1] -match 'ACT TASK CLOCK T9: not merged at 110 min' -and $tcF[1] -notmatch 'T10|T11')
 Expect "supervise TASK CLOCK: merged a minute ago (T6) none; numeric ids keep apart (task_123, task_124) ($($tcF[1]))" ($tcF[1] -notmatch 'T6' -and $tcF[1] -match 'TASK CLOCK task_123: not merged' -and $tcF[1] -match 'TASK CLOCK task_124:')
 Expect "supervise TASK CLOCK: T1 ACT not merged + its decision, T2 ACT no MR, T3 WATCH investigate, T4 / T5 none ($($tcF[1]))" ($tcF[1] -match 'ACT TASK CLOCK T1: not merged at 40 min \(budget 30\); now build 5 min, waits on decision d-9 \(a1\) => Answer decision d-9 now' -and
   $tcF[1] -match '\|\| ACT TASK CLOCK T2: no MR at 22 min \(budget 20\)' -and $tcF[1] -match '\|\| WATCH TASK CLOCK T3: investigating 9 min \(time-box 8\)' -and $tcF[1] -notmatch 'T4|T5')
-# the page: a Task clock section (elapsed bar vs the budget, now, labelled phase strip) from the clock stream
+# the page (owner 2026-11-26: no own section): the clock on Delivery's task row (elapsed bar vs the budget, now, labelled phase strip), the Delivery line's count
 $tcH = & { . $O; $n = Get-Date
   foreach ($x in @(@(12, 'start', 'investigate'), @(4, 'end', 'investigate'), @(3, 'start', 'build'))) { Write-KitLog clock $x[1] @{ at = (Get-KitStamp stored $n.AddMinutes(-$x[0])); task = 'T8'; phase = $x[2] } @{ agent = 'a8'; run = 'r8' } }
   Format-KitSuperviseHtml ([pscustomobject]@{ at = $n.ToString('o') }) }
-Expect 'page: Task clock section (open count), T8 12 of 30 min, now build, labelled phases' ($tcH -match "id=sec-tasks" -and $tcH -match '\(2 open &#183; 0 done' -and $tcH -match '12 of 30 min' -and $tcH -match 'build 3 min' -and $tcH -match "<td data-k='Agent'>a8</td>" -and $tcH -match 'investigate 8 &#183; build 3')
+Expect 'page: T8 on a task row of Delivery (no board entry: phases only, 11 of 30 min; now build, labelled phases), the Delivery line counts the live clocks, no Task clock section' ($tcH -notmatch 'id=sec-tasks' -and $tcH -match "<li data-fk='st:open'>[^\n]*?T8[^\n]*?<span class=tck" -and $tcH -match '11 of 30 min' -and $tcH -match 'now build 3 min' -and $tcH -match 'investigate 8 &#183; build 3' -and $tcH -match 'task clock: 2 live')
 # wave-brief split check (owner 2026-11-25): shared files or same repo + task in sequence = refused, nothing written; disjoint = rendered
 $sgDir = Join-Path (Kd) 'split'; New-Item -ItemType Directory -Force $sgDir | Out-Null
 $sgCase = { param($nm, $ag, $ov = '') Set-JsonFile "$sgDir/$nm.json" @{ name = $nm; today = 'x'; mandate = @('m'); task = 'T1'; overlaps = $ov; agents = $ag }
@@ -70,5 +82,46 @@ run(args, agent, _n, _n, pipeline).then(() => {
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-review-ci $jsRc (Join-Path $src 'workflows/buildy.js')) 'buildy: #' 'ci-with-review', 'one-fix-round', 'shipped' -Show 6
+$lfd = TkPath $k launches -Create
+# track HOLD on a dead workflow (owner 2026-11-26): merged MRs, a fix step open in the wave journal; its run marked done (launch -Done
+# on a self record: no runId, its wfDir names the run) or its folder quiet 3x supervise.stuckMinutes -> no hold; a live run's step holds
+$env:KIT_TRANSCRIPTS = Join-Path (Kd) 'txh'; $wvd = TkPath $k waves -Create
+foreach ($dw in @('wf_dn1', 31, 5, $true), @('wf_qt1', 32, 90, $false), @('wf_lv1', 33, 1, $false), @('wf_qt2', 35, 90, $false)) {   # qt2: + an open blocking review finding
+  $wd = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS "s1/subagents/workflows/$($dw[0])"); $jf = Join-Path $wd 'journal.jsonl'; $mu = "https://h/g/web/-/merge_requests/$($dw[1])"
+  @('{"type":"started","agentId":"a0","label":"build:W1","phase":"Build"}', "{""type"":""result"",""agentId"":""a0"",""result"":{""mrs"":[{""url"":""$mu""}]}}") + @(if ($dw[1] -eq 35) {
+      '{"type":"started","agentId":"a2","label":"review:W1","phase":"Review"}', "{""type"":""result"",""agentId"":""a2"",""result"":{""findings"":[{""severity"":""blocking"",""mr"":""$mu"",""file"":""a.ts"",""line"":3,""problem"":""p""}]}}" }) +
+    @('{"type":"started","agentId":"a1","label":"fix:W1","phase":"Fix"}') | Set-Content $jf; (Get-Item $jf).LastWriteTime = (Get-Date).AddMinutes(-$dw[2])
+  & $J @{ run = $dw[0]; at = (Get-Date).ToString('o'); running = @('fix:W1'); agents = @{ W1 = @{ mrs = @(@{ url = "https://h/g/web/-/merge_requests/$($dw[1])" }) } } } (Join-Path $wvd "$($dw[0]).json")
+  (Get-Item (Join-Path $wvd "$($dw[0]).json")).LastWriteTime = (Get-Date).AddMinutes(-10)
+  if ($dw[3]) { & $J @{ script = 'buildy.js'; run = 'hm-x'; wfDir = $wd.FullName; completed = (Get-Date).ToString('o'); at = (Get-Date).AddHours(-2).ToString('o') } (Join-Path $lfd "self-buildy-hm-x-$($dw[0]).json") }
+}
+$dh = Invoke-PsTest 'dead-hold' @'
+$env:KIT_TRACKER_TYPE = 'none'; . $args[0]
+function Invoke-HostVerb([string]$Verb, [hashtable]$A = @{}, [switch]$NoMemo) { [pscustomobject]@{ state = 'merged' } }
+function Get-TrackerTask($id) { [pscustomobject]@{ status = 'review'; subtasks = @() } }
+"finished:$((Get-KitFinishedRuns) -join ',')"
+foreach ($t in @('dh31', 31), @('dh32', 32), @('dh33', 33), @('dh35', 35)) { Invoke-Track add -Task $t[0] -Mrs "g/web!$($t[1])" -Detail }
+'@ @($O) | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
+Expect "track run: a dead workflow's open fix step or blocking finding never holds promotion (run done: wf_dn1; quiet 90 min: wf_qt1, wf_qt2); a live one holds (wf_lv1) ($($dh.Trim() -replace '\s+', ' '))" ($dh -match 'finished:[^\r\n]*wf_dn1' -and $dh -notmatch 'HOLD dh3[125]' -and $dh -match 'DONE dh35' -and $dh -match 'HOLD dh33: MRs merged but fix:W1 \(wf_lv1\) still in review/fix')
+# usage limit (owner 2026-11-26): two agents of two runs hit one weekly limit -> ONE ACT naming it, its reset, the models and runs; an older one (4 h) none
+$ulT = Join-Path (Kd) 'txul'
+foreach ($ul in @('wf_ul1', 'claude-m-a', 0), @('wf_ul2', 'claude-m-b', 0), @('wf_ul3', 'claude-m-c', 240)) {
+  $uf = Join-Path (New-Item -ItemType Directory -Force (Join-Path $ulT "s1/subagents/workflows/$($ul[0])")) 'agent-a1.jsonl'
+  @("{""type"":""assistant"",""message"":{""model"":""$($ul[1])"",""content"":[{""type"":""text"",""text"":""work""}]}}",
+    '{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"You''ve hit your weekly limit · resets Dec 2, 8:30am (UTC)"}]},"apiError":"usage_limit_reached"}') | Set-Content $uf
+  (Get-Item $uf).LastWriteTime = (Get-Date).AddMinutes(-$ul[2]) }
+$ulO = Invoke-PsTest usage-limit @'
+$null = . $args[0] 6>$null; $env:KIT_TRANSCRIPTS = $args[1]
+@(Get-KitSuperviseFlagsUsageLimit) | ForEach-Object { "$($_.level)|$($_.what)|$($_.who)" }
+'@ @($O, $ulT)
+Expect "usage limit: one ACT for one limit text (reset time, both models, both runs), a 4 h old one out ($($ulO -join ' ; '))" (@($ulO).Count -eq 1 -and "$ulO" -match "^ACT\|USAGE LIMIT: You've hit your weekly limit · resets Dec 2, 8:30am \(UTC\)\|claude-m-a, claude-m-b in run\(s\) wf_ul1, wf_ul2$")
+# python -Tests <folder>: its test_*.py scripts run directly, never `unittest <folder>` (0 tests, exit 5: retro 1709) (from crafty-check.tests: its cap)
+$pvd = Join-Path (Kd) 'py-val'; New-Item -ItemType Directory -Force "$pvd/validation" | Out-Null; 'x==1' | Set-Content "$pvd/requirements.txt"
+'print("ok")' | Set-Content "$pvd/validation/test_alpha.py"; 'print("ok")' | Set-Content "$pvd/validation/helper.py"
+New-Item -ItemType Directory -Force "$pvd/cases/sub" | Out-Null; "import unittest`nclass T(unittest.TestCase):`n    def test_a(self): pass" | Set-Content "$pvd/cases/sub/test_c.py"
+$pvc = pwsh @np $D check -Dir $pvd -Step test -Tests cases -Show 2>&1 | Out-String
+Expect "check python -Tests <folder with test cases>: the runner gets the folder ($($pvc.Trim() -replace '\s+', ' '))" ($pvc -match 'test\s*:.*\bcases\b' -and $pvc -notmatch 'test_c\.py')
+$pvo = pwsh @np $D check -Dir $pvd -Step test -Tests validation -Show 2>&1 | Out-String
+Expect "check python -Tests <folder>: each test_*.py run with python, no unittest ($($pvo.Trim() -replace '\s+', ' '))" ($pvo -match 'test\s*:.*"validation/test_alpha\.py"' -and $pvo -notmatch 'unittest|helper\.py')
 Remove-TestKit $k
 Complete-Tests
