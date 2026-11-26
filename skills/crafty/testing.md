@@ -33,15 +33,17 @@ Read by devy at steps 2 and 4-5 and revy (kinds mr, kit, config). Any stack; rev
 ## Preflight (staging-shaped data, `qa.preflight` set; owner 2026-11-26; a gap refuses finish, a non-Draft `mr` and `merge`)
 `preflight` in the cases spec, all four lists (`[]` = the change has none):
 `{"queries": [{id, sql, table, scanOk}], "fields": [{table, column, values, nullOk}], "envKeys": [], "calls": [{id, call, allow}]}`:
-each new or changed query as one SELECT (an UPDATE / DELETE: the SELECT of its WHERE), each field the change reads or branches
+each new or changed query as one SELECT with literal values, no `?` (an UPDATE / DELETE: the SELECT of its WHERE), each field the change reads or branches
 on (`values`: the ones it handles), each env key it reads, each web call with the roles that may make it (`<METHOD> <path>`;
-every `qa.preflight.roles` role is checked against `allow`).
+every `qa.preflight.roles` role is checked against `allow`). A later `cases add` joins the lists (`"_del": true` removes an
+entry, `--replace` starts over); a task open when `qa.preflight` is first set declares it too.
 1. `devtools.py proof <task> --preflight`: the checks to run (EXPLAIN + row count per query, a NULL and a value scan per field,
    each env key by name, each call x role; `--json`: the result skeleton).
 2. Run each read-only on `qa.preflight.env` with `.tool`, on the largest tenant (`.tenantSql`); save `{"env", "tenant", "results":
    {"<id>": <rows> | {present, source} | {status} | {allowed, source} | {error}}}` in your evidence folder. Never a write, a
    secret's value or rows copied out.
-3. `devtools.py proof <task> --preflight <results.json>`: checks the file, records the run. Gaps: a missing or failed check, a full
+3. `devtools.py proof <task> --preflight <results.json>`: checks the file, records the run. Gaps: a missing, failed or unreadable
+   check, a status that is no 2xx / 401 / 403, a full
    scan of a table over `.maxScanRows` (`scanOk: <why>`), NULL rows (`nullOk: <case id>`), a value `values` lacks, an env key not
    set, a role allowed or denied against `allow`; a changed `preflight` needs a new run (merge: `--override "<why>"`, logged).
 

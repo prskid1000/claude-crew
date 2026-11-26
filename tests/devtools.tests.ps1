@@ -203,7 +203,7 @@ Expect "no kit text tells an agent to rerun an AI flow N times (grep exit $aiCod
 $pvC = if ($pfOld) { $pfOld | ConvertFrom-Json -AsHashtable } else { @{} }
 $pvC.process = @{ gates = @{ finish = 'builtin:testingDocs' } }; $pvC.tracker = @{ branchRx = '(?<id>PF\d+)' }; $pvC.qa = @{ preflight = @{ env = 'stage'; roles = @('guest'); maxScanRows = 1000 } }; Set-JsonFile $pdF $pvC
 $pvNo = & $py -X utf8 $DT proof PF1 2>&1 | Out-String
-Set-JsonFile (Join-Path (Kd) 'pv.json') @{ preflight = @{ queries = @(@{ id = 'Q1'; sql = 'SELECT id FROM orders WHERE note = ?'; table = 'orders' }); fields = @(@{ table = 'orders'; column = 'paid' }); envKeys = @('PAY_URL')
+Set-JsonFile (Join-Path (Kd) 'pv.json') @{ preflight = @{ queries = @(@{ id = 'Q1'; sql = 'SELECT id FROM orders WHERE note = 1'; table = 'orders' }); fields = @(@{ table = 'orders'; column = 'paid' }); envKeys = @('PAY_URL')
     calls = @(@{ id = 'C1'; call = 'GET /api/orders'; allow = @('admin') }) } }
 $null = & $py -X utf8 $DT cases add PF1 (Join-Path (Kd) 'pv.json') 2>&1; $pvPlan = & $py -X utf8 $DT proof PF1 --preflight 2>&1 | Out-String; $pvDue = & $py -X utf8 $DT proof PF1 2>&1 | Out-String
 $pvRes = @{ 'Q1.explain' = @(@{ type = 'ALL' }); 'Q1.rows' = @(@{ n = 90000 }); 'orders.paid.scan' = @(@{ total = 90000; nulls = 12 }); 'env.PAY_URL' = @{ present = $true }; 'C1.admin' = @{ status = 200 }; 'C1.guest' = @{ status = 200 } }
