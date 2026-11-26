@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L71 record-args · L91 prepare · L121 config · L150 prompts · L239 local · L267 app · L297 test-prompt ·
-//   L355 verify · L417 run-item · L596 pool · L618 budget · L659 run · L713 learn
+// Sections: L16 args · L71 record-args · L92 prepare · L122 config · L151 prompts · L240 local · L268 app · L298 test-prompt ·
+//   L356 verify · L418 run-item · L597 pool · L619 budget · L660 run · L714 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -74,7 +74,8 @@ const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h 
 const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : String(R.name || R.target || 'run').replace(/^(?!testy-)/, 'testy-')) + (R.instance ? `-${R.instance}` : '')
 async function recordArgs(run, runDir, phaseName, plan = '') {
  const json = JSON.stringify(ARGS0), file = `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime.launches}args-testy-${run.replace(/[^\w.-]/g, '_')}.json`
- const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
+ const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:
+1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${json}
 ARGS>>>
@@ -92,7 +93,7 @@ if (!Array.isArray(R.items)) await recordArgs(RUN0, R.runDir || '', R.runDir ? '
 const q0 = (s) => String(s).replace(/'/g, "''")
 const prepStep = async (cmd, label) => {
  for (const [lb, model] of [[label, MODELS.step], [`${label}-retry`, MODELS.stepRetry]]) {
-  const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else (a <yyyy-...> placeholder stays as typed: the script fills it):${/^([A-Za-z]:|[\\/])/.test(K0) ? '' : '\nKit paths below are relative to the workspace root (where this session started); make them absolute.'}\n${cmd}`,
+  const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else (a <yyyy-...> placeholder stays as typed: the script fills it):\n${cmd}`,
    { label: lb, phase: 'Prepare', schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
   try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried on sonnet */ }
  }

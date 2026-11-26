@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L112 summary · L272 patterns · L309 rules · L387 retro due · L398 tidy · L500 collisions · L510 decisions
+Sections: L14 outcomes · L112 summary · L272 patterns · L309 rules · L387 retro due · L398 tidy · L500 collisions · L518 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -507,6 +507,14 @@ function Get-KitAreaKey([string]$Label) { ("$Label" -split ':')[-1] -replace '@.
 # collisions still open: no later run (created after) delivered MRs for that area
 function Select-KitOpenCollisions($Collisions, [hashtable]$DeliveredAt) { @($Collisions | Where-Object { -not ($DeliveredAt[(Get-KitAreaKey $_.label)] -gt $_.created) }) }
 
+# track add with no -Task, MRs titled for 2+ tasks (buildy track step): one add per task, every other flag passed on; an MR naming
+# no task (title or branch) is named in a NOTE, never a silent drop
+function Invoke-KitTrackAddPerTask($Refs, $Bound) {
+  $by = @{}; foreach ($r in $Refs) { $by[$r] = TaskOfMr $r }
+  $un = @($Refs | Where-Object { -not $by[$_] }); if ($un.Count) { "NOTE: $($un -join ', ') name(s) no task in title or branch: not registered (track add -Task <id> -Mrs ...)" }
+  $sp = @{} + $Bound; foreach ($x in 'Mrs', 'Task', 'Action') { $sp.Remove($x) }
+  foreach ($t in @($by.Values | Where-Object { $_ } | Select-Object -Unique)) { Invoke-Track add -Task $t -Mrs @($Refs | Where-Object { $by[$_] -eq $t }) @sp }
+}
 # ---- decisions: the Decisions checklist, scope-word branches (from bossy.ps1: its token cap)
 # the task's Decisions checklist (Format-KitDecisionItems), no comment
 function Publish-KitDecisions([string]$Task, [string]$Link) {

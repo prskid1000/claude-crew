@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L154 record-args · L173 budget · L191 build-prompt · L276 ship-prompt · L293 plan · L311 spike ·
-//   L323 local-loop · L405 stages · L559 ship · L596 debate · L704 deploy · L718 learn
+// Sections: L18 args · L155 record-args · L174 budget · L192 build-prompt · L277 ship-prompt · L294 plan · L312 spike ·
+//   L324 local-loop · L406 stages · L560 ship · L596 debate · L704 deploy · L718 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -72,6 +72,7 @@ const HOLD = A.holdMerge === true ? ['*'] : (Array.isArray(A.holdMerge) ? A.hold
 const HOLD_NOTE = HOLD.length
  ? `\nMERGE HOLD: never merge or schedule a merge for MRs in ${HOLD.includes('*') ? 'ANY repo' : HOLD.join(', ')} (their branch deploys; the owner approves): open and green, merged=false, "held for approval".`
  : ''
+const has = (f, u) => new RegExp(u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)').test(String(f.mr || ''))
 const nu = (u) => String(u || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()
 const uniqMr = (l) => l.filter((m, i) => l.findIndex((n) => nu(n.url) === nu(m.url)) === i).map((m) => ({ ...m, merged: l.every((n) => nu(n.url) !== nu(m.url) || n.merged) }))   // one MR's copies: merged if all say so
 const ENV = (name) => PATHS + AGENT_ENV(name), AGENT_ENV = (name) => `
@@ -299,7 +300,7 @@ const REC = await recordArgs('buildy', RUN, A0, 'Build', PLAN), GAPS = REC.match
 takeBudget(REC, A.agents.length)
 takeConfig(REC)
 const AREA_TASK = Object.fromEntries([...REC.matchAll(/^AREA TASK (\S+) (?!FAILED)(\S+)/gm)].map((m) => [m[1], m[2]]))
-const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, ...extra } })
+const nextCall = (agents, extra = {}) => ({ scriptPath: `${KIT}/workflows/buildy.js`, args: { ...A0, agents: own(agents), batch: undefined, config: undefined, ...extra } })
 if (GAPS) { log(`REFUSED:\n${GAPS.join('\n')}`); return { refused: true, taskGaps: GAPS, next: nextCall([], A0) } }
 if (BUD.cap && BUD.estimate > BUD.stopAt * BUD.cap) {
  const batch = Math.max(1, Math.floor(A.agents.length * BUD.stopAt * BUD.cap / BUD.estimate)), one = A.agents.length === 1   // a batch of 1 changes nothing: no next
@@ -336,7 +337,7 @@ async function waitAnswer(id, label, tries) {
 }
 function mergeReports(x, r2, note) {
  if (!r2) return x
- const mrs = [...r2.mrs, ...x.mrs.filter((m) => !r2.mrs.some((n) => nu(n.url) === nu(m.url)))]
+ const mrs = [...r2.mrs, ...x.mrs.filter((m) => !r2.mrs.some((n) => nu(n.url) === nu(m.url))).map((m) => ({ ...m, head: '' }))]   // unreported: no head
  const both = (f) => [...(x[f] || []), ...(r2[f] || [])]
  const o = { needsDecision: 'decisionId', debate: 'item', needsEnvFix: 'envFixId' }
  for (const f in o) o[f] = byKey(both(f), o[f])
@@ -438,7 +439,7 @@ const results = await pipeline(
   if (!r || r.error || r.budgetStopped || !(cnt(r.needsDecision) || cnt(r.needsEnvFix) || cnt(r.debate))) return r
   return releasing(a, 'Decide', async () => {
   let cur = r, envCycles = 0
-  // local PASS: review now for MRs carrying no waiting item (mrs[].items), reused at the same head (owner 2026-11-26)
+  // local PASS: MRs with no waiting item (mrs[].items) reviewed now, reused at the same head (owner 2026-11-26)
   const wt = [...ls(r.needsDecision), ...ls(r.needsEnvFix), ...ls(r.debate)].map((d) => d.item), fr = r.mrs.filter((m) => m.head && cnt(m.items) && !m.items.some((i) => wt.includes(i)))
   if (fr.length && !a.migrations && ltOf(r).status === 'PASS') EARLY[a.id] = { h: fr.map((m) => nu(m.url) + m.head), p: reviews(a, { ...r, mrs: fr }).then(([v]) => v, () => null) }
   const goOn = async (c, why, l, note) => localLoop(a, mergeReports(c, await agent(continuePrompt(a, c, why), dvo(a, l, 'Decide')), note), LOCAL_RETRIES, 'Decide')
@@ -501,9 +502,9 @@ const results = await pipeline(
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }
   // review and CI together (owner 2026-11-25: a task under budget.taskMinutes): one fix round takes both
   const E = EARLY[a.id], ev = E && (await E.p), same = ev ? r.mrs.filter((m) => E.h.includes(nu(m.url) + m.head)) : [], rest = { ...r, mrs: r.mrs.filter((m) => !same.includes(m)) }
-  if (same.length) say(a, `${urls(same)}: reviewed during the owner wait, same head`)
+  if (same.length) say(a, `${urls(same)}: reviewed in the owner wait`)
   const [[rv0, mv], ciFails] = await Promise.all([rest.mrs.length ? reviews(a, rest) : [{}], ciGate(a, r)])
-  const rv = rv0 && { findings: [...ls(rv0.findings), ...ls(ev && ev.findings).filter((f) => same.some((m) => nu(f.mr).includes(nu(m.url))))] }
+  const rv = rv0 && { findings: [...ls(rv0.findings), ...ls(ev && ev.findings).filter((f) => !rest.mrs.some((m) => has(f, m.url)))] }
   if (!rv || (a.migrations && !mv)) return { id: a.id, report: r, findings: [BLOCK(r.mrs, `The ${rv ? 'migration review (datay)' : 'review agent'} returned nothing: unreviewed, not merged.`, rv ? 'Re-run datay kind migration on these MRs, then merge.' : REREVIEW)], reviewFailed: true }
   const findings = [...rv.findings, ...ls(mv && mv.findings)]
   let x = { id: a.id, report: r, findings }
@@ -514,7 +515,7 @@ const results = await pipeline(
    const r2 = await agent(fixPrompt(a, r, blocking), dvo(a, 'fix', 'Fix'))
    x = { ...x, findings: [...findings.filter((f) => !mustFix(f)), ...blocking], fixed: !!r2 }
    if (!r2) return { ...x, stopped: true }
-   // a fix round's local loop; held: why
+
    const loop2 = async (b, r5, n) => { x = { ...x, report: await releasing(a, 'Fix', () => localLoop(a, mergeReports(b, r5, n), 0, 'Fix')) }; const l = ltOf(x.report); return (await mergeHeld(l, a, x.report)) && `local test ${l.status} after ${n.toLowerCase()}` }
    let lh = await loop2(r, r2, 'Fix round'); if (lh) return { ...x, fixed: false, blocked: lh }
    // re-review: blocking holds (a round, then a decision); rest -> Follow-ups
@@ -549,7 +550,7 @@ const results = await pipeline(
   const deferred = (x.report.deferred || []).filter((d) => !d.ownerDecided && d.kind !== 'people')
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) say(a, `tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
-  // track add groups the MRs by the task in each title (else branch): script logic, no agent judgement
+  // track add groups MRs by task (title, else branch)
   const tr = await runStep(`& ${ORCH} track add -Discover -Mrs '${urls(x.report.mrs, ',')}'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}`, `track:${a.id}`, 'Fix', { ok: 'when it exits 0', whole: true })
   if (!tr || !tr.ok) say(a, `WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
   return why ? { ...x, trackHeld: why } : x
@@ -568,7 +569,6 @@ async function ciGate(a, r) {
 // re-review should-fix / nit findings -> MR "## Follow-ups"
 async function followUps(a, r, soft) {
  const file = `${rp('agents')}/${a.id}/followups.json`, mrs = r.mrs.filter((m) => !m.merged)
- const has = (f, u) => new RegExp(u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)').test(String(f.mr || ''))
  if (!mrs.length) return []
  for (const m of mrs) say(a, `${m.url}: ${soft.filter((f) => has(f, m.url) || !mrs.some((o) => has(f, o.url))).map((f) => `${f.severity} ${fkey(f)}`).join(', ') || 'no'} re-review finding(s) -> Follow-ups`)
  const st = await agent(`STEP: put review follow-ups into the MR descriptions. Do exactly this, nothing else:${PATHS}

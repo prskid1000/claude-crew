@@ -35,13 +35,14 @@ const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
  if (o.label === 'build:E1') return _rep(P, { mrs: [mA, mB], needsDecision: [{ item: 'A2', decisionId: 'd-20260101000000-x', question: 'q' }] })
  if (/^decide:/.test(o.label)) return { ok: true, output: 'ANSWERED d-20260101000000-x: A' }
  if (/^(resume|ship):E1/.test(o.label)) return _rep(P, { mrs: [mA, { ...mB, head: 'h3' }] })
+ if (o.label === 'review:E1' && !calls.some((c, i) => c.label === 'review:E1' && i < calls.length - 1)) return { findings: [{ mr: 'api!1', file: 'a.ts', severity: 'nit', problem: 'p', fix: 'f' }] }
  return /^review/.test(o.label) ? { findings: [] } : /^ci:/.test(o.label) ? { done: true, mrs: [] } : _ok('[]') }
-run({ brief: 'C:/b/e.md', ..._kl, agents: [{ id: 'E1', items: 'A1,A2' }] }, agent, _n, _n, pipeline).then(() => {
- const rv = calls.filter((c) => c.label === 'review:E1')
- console.log(`early-review:${rv.length === 2 && mrOf(rv[0]) + '' === '1' && mrOf(rv[1]) + '' === '2'}`)
+run({ brief: 'C:/b/e.md', ..._kl, agents: [{ id: 'E1', items: 'A1,A2' }] }, agent, _n, _n, pipeline).then((out) => {
+ const rv = calls.filter((c) => c.label === 'review:E1'), fs = (out.agents[0] || {}).findings || []
+ console.log(`early-review:${rv.length === 2 && mrOf(rv[0]) + '' === '1' && mrOf(rv[1]) + '' === '2' && fs.some((f) => f.mr === 'api!1')}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js w2-early $jse $wfd) 'buildy decision wait: # (review:E1 MRs: early !1, after the answer only !2, its head changed)' 'early-review' -Show 8
+Expect-Each (Invoke-Js w2-early $jse $wfd) 'buildy decision wait: # (review:E1 MRs: early !1, after the answer only !2, its head changed; an early finding naming api!1 kept)' 'early-review' -Show 8
 $jst = @'
 const go = async (cfg, ex = {}, pre = null) => { const { calls, agent } = _mock((p, o) => /^test:/.test(o.label) ? _res('W1', [_ck('C2', 'PASS')]) : /^close/.test(o.label) ? _ok('published') : undefined)
  await run({ runDir: 'C:/runs/G', ..._kl, items: [_item('W1', '')], ...ex }, async (p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`) : (pre && pre(o)) || agent(p, o), _n, _n, null)

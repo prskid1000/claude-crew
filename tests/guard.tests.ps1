@@ -149,7 +149,7 @@ $bnv = (pwsh @np $D wt 2>&1 | ForEach-Object { "$_" }) -join ' '; $bnc = $LASTEX
 Expect "a missing verb: exit 2 with the verb list ($bnc); board without one: show" ($bnc -eq 2 -and $bnv -match 'missing -Action\. Verbs: new, sync' -and $bdv -match '^board: ')
 $mm = @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $at = @{ '7' = '2026-01-02T10:00Z'; '12' = '2026-01-02T11:00Z' }
-function Invoke-HostVerb($Verb, $A) { if ($Verb -eq 'mr.url') { "https://h/$($A.repo)/-/merge_requests/$($A.n)" } else { @{ state = ('opened', 'merged')[[bool]$at[$A.n]]; merged_at = $at[$A.n]; title = "T$($A.n) (CU-$(('m1', 'b9')[$A.n -eq '13'])) ($(($A.repo -split '/')[-1]))" } } }
+function Invoke-HostVerb($Verb, $A) { if ($Verb -eq 'mr.url') { "https://h/$($A.repo)/-/merge_requests/$($A.n)" } else { @{ state = ('opened', 'merged')[[bool]$at[$A.n]]; merged_at = $at[$A.n]; title = "T$($A.n) $(if ($A.n -ne '21') { "(CU-$(('m1', 'b9')[$A.n -eq '13']))" }) ($(($A.repo -split '/')[-1]))" } } }
 function Invoke-HostApi { @{ state = 'opened'; title = 'CU-m1 x' } }
 function Start-Process { }
 '@
@@ -162,7 +162,7 @@ $tb = Invoke-Track add -Task b1 -Mrs 'g/web!12'
 "tb:$($tb -match 'names m1; registering under -Task b1' -and (Invoke-Track show -Task b1) -match '^b1 : g/web!12 \| done$')"
 "ref:$((& $args[1] tracker comment m1 "MRs (merge order)`n- x !1") -match 'refused: no MRs comment' -and $LASTEXITCODE -eq 1)"
 $tg = Invoke-Track add -Mrs 'g/web!9,g/web!13' -HoldPromotion 'x' | Out-String
-"tg:$($tg -match 'tracking m1 : g/web!9, g/web!30 [^\n]*HELD: x' -and $tg -match 'tracking b9 : g/web!13 [^\n]*HELD: x')"
+"tg:$($tg -match 'tracking m1 : g/web!9, g/web!30 [^\n]*HELD: x' -and $tg -match 'tracking b9 : g/web!13 [^\n]*HELD: x' -and "$(Invoke-Track add -Mrs 'g/web!9,g/web!13,g/web!21')" -match 'NOTE: g/web!21 name\(s\) no task')"
 '@) @($O, $D)
 Expect "track add: no MRs comment written (MR links live in the Items checklist), a person's comment kept ($mc)" ("$mc" -match 'mrs:True')
 Expect "track add -Task b1 with an MR titled for m1: keyed by -Task; track show -Task; a tracker comment of an MRs comment refused; no -Task, MRs titled for 2 tasks: one add per task (buildy track step) ($mc)" ("$mc" -match 'tb:True.*ref:True.*tg:True')
