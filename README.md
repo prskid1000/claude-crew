@@ -99,7 +99,7 @@ retry = opus; steps (ci, ship, track, close, learn) = haiku. Agents spawned by h
 <!-- kit-graph:end -->
 
 Handoff: the first of 80% x the tool's cap and `budget.agentCap.<role>`; kit sized to
-min(`budget.window`, the cap) (past: WATCH; self-check: C1); instructions over `budget.instructions.cap`: handoff.<!-- kit-graph:start flow-context -->
+min(`budget.window`, the cap) (past: WATCH; self-check: C1).<!-- kit-graph:start flow-context -->
 ```mermaid
 flowchart LR
   F_transcripts["transcripts"] -->|"usage pass"| F_usage_ps1["usage.ps1"]
@@ -110,6 +110,11 @@ flowchart LR
   F_ACT["ACT"] -->|"coordinator"| F_kitty_fix_at_the_source["kitty fix at the source"]
 ```
 <!-- kit-graph:end -->
+
+### Context plan
+Per session (`bossy.ps1 usage -Context`): kit instructions target 30k, max 50k (`budget.instructions`); the
+others: the role's p90 (`usage.context.slice.<key>`); over: WATCH with its rule, then ACT. Rules: LESSONS.md
+"Decisions".
 
 ## Leases
 One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, browser tabs, phones, builds, runtimes, worktree slots;
@@ -264,9 +269,7 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   (a row per repo: branches / worktrees, kept, dirty amber, diverged red); ONE "Per role" heatmap, column groups: Spend (steps,
   tokens · est. cost, share, avg / p90 active time), Model mix, Context, Waste (fixable / open / fixed);
 - context: a run row's peak cell (bar by source, waste in the tooltip); Trends "Context mix", "Peak context"; Per role
-  Context; flags (`usage.context.*`): WATCH per live agent (`peakWatch`,
-  `rereadWatch`, `bigResultTokens`, `logTokens`, `startFactor` x role norm), ACT per source class in `actRuns`+ agents; ended
-  starts learn `startNorm`;
+  Context; flags: "Context plan";
 - kit internals (folded): Tuning: Settings = a tile map of key groups (width = keys, sage = changed this week, a source strip; a
   tap opens the group as a full row: a tile per key, colour = learned / shadow / local / default, the value inside, changed in 7
   days outlined), keys changed in 7 days as a key + scope x day heatmap (latest change first; a cell = old→new, up slate,

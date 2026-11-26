@@ -3,8 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L963 handoffs · L975 limits ·
-  L994 workflow config · L1019 dead runs
+Sections: L10 usage · L385 context · L742 waste (owner 2026-11-23 · L812 split · L886 budget · L972 handoffs · L984 limits ·
+  L1003 workflow config · L1028 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -537,6 +537,8 @@ function Step-KitContextLine($Cx, [string]$L) {
     $cat = if ($tx -match '^\s*Base directory for this skill') { 0 } elseif ($o.isMeta) { 5 } else { 1 }; if ($cat -eq 1 -and -not [int]$Cx.n -and $tx -match 'resume-[\w.-]+\.md') { $Cx.ho = 1 }
     Add-KitContextTok $Cx $cat (Measure-KitContextTok $c) $day; return }
   if ($L.Contains('"type":"attachment"') -and [int]$Cx.n) { $o = & $parse; $a = $o.attachment; if (-not $a) { return }   # before call 1: inside the start load
+    # an instruction file loaded mid-run, by its path: the kit's = kit instructions, a product repo's CLAUDE.md = code reads (13k of a devy's "kit instructions")
+    if ("$($a.type)" -in 'instructions', 'nested_memory') { foreach ($nf in @(if ($a.files) { $a.files } elseif ($a.content -is [Collections.IDictionary]) { $a.content } else { @{ path = "$($a.path)"; content = "$($a.content)" } })) { Add-KitContextTok $Cx (Get-KitContextPathCat "$($nf.path)" 2) (Measure-KitContextTok "$($nf.content)") $day }; return }
     $cat = switch -Regex ("$($a.type)") { '^(instructions|nested_memory|skill_listing|agent_listing_delta|mcp_instructions_delta|deferred_tools_\w+|hook_additional_context|total_tokens_reminder|todo_reminder)$' { 0 } '^queued_command$' { 1 } '^edited_text_file$' { Get-KitContextPathCat "$($a.filename)" 2 } '^structured_output$' { 7 } default { -1 } }
     if ($cat -ge 0) { Add-KitContextTok $Cx $cat (Measure-KitContextTok $(if ($null -ne $a.content) { $a.content } elseif ($null -ne $a.prompt) { $a.prompt } elseif ($null -ne $a.snippet) { $a.snippet } else { 'x' * [math]::Max(0, $L.Length - 300) })) $day } }   # no text field: the line's size
 }
@@ -674,7 +676,10 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
   $isLive = { param($s) $tw = if ("$($s.tf)" -and (Test-Path -LiteralPath "$($s.tf)")) { (Get-Item -LiteralPath "$($s.tf)").LastWriteTime }
     if ($tw -and ($Now - $tw).TotalMinutes -ge 2 * $beat) { return $false }
     if ($s.result) { "$($s.result)" -in 'running', 'stuck' } else { $at = try { [datetime]"$($s.at)" } catch { $null }; $at -and ($Now - $at).TotalMinutes -lt 2 * $beat } }
-  $norm = { param([string]$r) $rv = try { Resolve-KitParam 'usage.context.startNorm' $null $r (Get-KitParamState) } catch { @($null, 'default') }; if ("$($rv[1])" -notlike 'default*') { [double]$rv[0] } }   # only a learned (or pinned) norm: the 30k default would flag every main-session start
+  $norm = { param([string]$r, [string]$p = 'usage.context.startNorm') $rv = try { Resolve-KitParam $p $null $r (Get-KitParamState) } catch { @($null, 'default') }; if ("$($rv[1])" -notlike 'default*') { [double]$rv[0] } }   # only a learned (or pinned) norm: the 30k default would flag every main-session start
+  # context plan (owner 2026-11-26, README "Context plan"): a slice's tokens added over the session vs its role's learned p90 (usage.context.slice.<key>)
+  $sfac = [double](Get-KitParam 'usage.context.sliceFactor'); $slOver = @{}
+  $plan = @{ 1 = 'link the brief, never paste it; a resume brief holds done steps, the next step and open findings'; 2 = 'read ranges, note a file''s facts once'; 3 = 'ask kit verbs for the summary, details from their file'; 4 = 'failures only, one rebuild per batch'; 5 = 'narrow the call (a filter, LIMIT, the lines you need)'; 6 = 'fetch only the needed section'; 7 = 'result first, no recaps; hand off at the phase end' }
   $who = { param($s) "$($s.role) $(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })".Trim() }
   $wl = [Collections.Generic.List[object]]::new(); $cks = Read-KitCtxChecks
   foreach ($s in @($ss | Where-Object { & $isLive $_ })) { $c = $s.cx; $w = @($c.w); $nm = & $who $s
@@ -691,8 +696,11 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
     if ([int]@($c.rr)[0] -ge $rrW) { $wl.Add(@(2, "context: $nm re-reads $([IO.Path]::GetFileName("$(@($c.rr)[1])"))", "$(@($c.rr)[0])x, $(& $f $w[1]) tokens re-read: tell it to note what it needs from that file once, or read a range (offset / limit)")) }
     $t0 = "$(@($c.top)[0])" -split '\|', 3; if ([double]$t0[0] -gt $big) { $wl.Add(@(1, "context: $nm took an oversized result ($($t0[2]))", "$(& $f $t0[0]) tokens in one result: narrow that call (a range, a filter, the failure lines only)")) }
     if ([long]$w[4]) { $wl.Add(@(1, "context: $nm pasted full build / test logs", "$($w[4]) log(s), $(& $f $w[5]) tokens: read only the failing tests and errors (crafty.ps1 check prints them; the full log stays in its file)")) }
-    $nr = & $norm "$($s.role)"; if ($nr -and [double]$c.s0 -gt $fac * $nr) { $wl.Add(@(0, "context: $nm start load over its type's norm", "started at $(& $f $c.s0) vs the $($s.role) norm $(& $f $nr): bossy.ps1 usage -Context -Type $($s.role), see what its start loads")) } }
+    $nr = & $norm "$($s.role)"; if ($nr -and [double]$c.s0 -gt $fac * $nr) { $wl.Add(@(0, "context: $nm start load over its type's norm", "started at $(& $f $c.s0) vs the $($s.role) norm $(& $f $nr): bossy.ps1 usage -Context -Type $($s.role), see what its start loads")) }
+    foreach ($si in 1..7) { $sk = $script:KitCtxCats[$si]; $sn = & $norm "$($s.role)" "usage.context.slice.$($sk[0])"; $sa = [double]@($c.add)[$si]
+      if ($sn -and $sa -gt $sfac * $sn) { $wl.Add(@(1, "context: $nm $($sk[1]) over its plan", "$(& $f $sa) added vs the $($s.role) p90 $(& $f $sn): $($plan[$si])")); $slOver["$($s.role)|$si"] = 1 + [int]$slOver["$($s.role)|$si"] } } }
   foreach ($x in @($wl | Sort-Object { -$_[0] } | Select-Object -First 8)) { $fl.Add([pscustomobject]@{ level = 'WATCH'; what = $x[1]; action = $x[2] }) }
+  foreach ($ok in @($slOver.Keys | Where-Object { $slOver[$_] -ge $nAct } | Sort-Object)) { $op = "$ok" -split '\|'; $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $($slOver[$ok]) live $($op[0]) agents over their $($script:KitCtxCats[[int]$op[1]][1]) plan"; action = "Spawn kitty (kind fix): make it the default for $($op[0]): $($plan[[int]$op[1]]) (bossy.ps1 usage -Context -Type $($op[0]))" }) }
   # ACT: a signal in actRuns+ agents of the window; the fix by source (owner: a param or setting -> -AutoFix; code / skill -> a kitty task line)
   # counts only agents started after the signal's last fix (Get-KitWasteFixes) and the last fix / perf(context) commit: a fixed signal stops (7-day window kept them)
   $wfx = Get-KitWasteFixes; $cAt = try { [datetimeoffset]"$(git -C $KitConf.Kit log -1 -E '--grep=^(fix|perf)\(context\)' --format=%cI 2>$null)".Trim() } catch { $null }
@@ -716,7 +724,8 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
 function Add-KitContextNormObs($Ended) {
   $sf = Join-Path (Get-KitPath cache -Create) 'context-norm-seen.json'; $seen = try { Read-KitText $sf | ConvertFrom-Json -AsHashtable } catch { $null }; if ($seen -isnot [hashtable]) { $seen = @{} }
   $cut = (Get-KitStamp stored (Get-Date).AddDays(-(Get-KitParam 'usage.keepDays'))); $new = 0
-  foreach ($s in @($Ended | Where-Object { $_.role -and [long]$_.cx.s0 })) { $k = "$(if ($s.tf) { $s.tf } else { "$($s.run)|$($s.label)" })"; if ($seen.ContainsKey($k)) { continue }; $seen[$k] = (Get-KitStamp); $new++; Add-KitParamObs 'usage.context.startNorm' ([double]$s.cx.s0) "$($s.role)" }
+  foreach ($s in @($Ended | Where-Object { $_.role -and [long]$_.cx.s0 })) { $k = "$(if ($s.tf) { $s.tf } else { "$($s.run)|$($s.label)" })"; if ($seen.ContainsKey($k)) { continue }; $seen[$k] = (Get-KitStamp); $new++; Add-KitParamObs 'usage.context.startNorm' ([double]$s.cx.s0) "$($s.role)"
+    if ([int]$s.cx.n -ge 3) { foreach ($si in 1..7) { Add-KitParamObs "usage.context.slice.$($script:KitCtxCats[$si][0])" ([double]@($s.cx.add)[$si]) "$($s.role)" } } }   # a 1-2 call step is no session
   if ($new) { foreach ($k in @($seen.Keys | Where-Object { "$($seen[$_])" -lt $cut })) { $seen.Remove($k) }; try { Write-KitAtomic $sf ($seen | ConvertTo-Json -Compress) } catch { } }
 }
 # the role map's Context group (owner 2026-11-22: "cut devy's start context", "trim build output"; 2026-11-24: one role map): avg start (the
@@ -881,7 +890,7 @@ function Get-KitInstrCap([double]$Window) {
   $cap = [double](Get-KitSetting 'budget.instructions.cap' $ei.cap); $pct = [double](Get-KitSetting 'budget.instructions.capPct' $ei.capPct)
   if ($Window -gt 0 -and $pct -gt 0) { $cap = [math]::Min($cap, $pct * $Window) }
   $st = [double](Get-KitSetting 'budget.instructions.start' $ei.start); $cap = [math]::Max($cap, $st + [double](Get-KitSetting 'budget.instructions.skillAlways' $ei.skillAlways))   # a small window still holds the kit start + one skill
-  [pscustomobject]@{ start = [int]$st; cap = [int]$cap; watch = [int]($cap * [double](Get-KitSetting 'budget.instructions.watchAt' $ei.watchAt)) }
+  [pscustomobject]@{ start = [int]$st; cap = [int]$cap; watch = [int][math]::Max($st, $cap * [double](Get-KitSetting 'budget.instructions.watchAt' $ei.watchAt)) }   # never under the kit start (a 32k window)
 }
 # the agent tool this runs under: a model id's prefix, KIT_TOOL, then the tool's own env vars
 function Get-KitTool([string]$Model = '') {

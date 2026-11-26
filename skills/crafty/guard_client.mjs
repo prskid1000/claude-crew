@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import net from 'node:net'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const t0 = Date.now(), here = dirname(fileURLToPath(import.meta.url)), kit = resolve(here, '..', '..')
@@ -129,6 +129,10 @@ function readRule(ti) {
   if (!f || ti.pages || /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i.test(f)) return
   const maxL = param('guard.readMaxLines'), maxKB = param('guard.readMaxKB'); let kb = 0, lines = 0
   const ranged = ti.offset != null || ti.limit != null, from = Math.max(1, Number(ti.offset) || 1), upto = from + (ti.limit != null ? Number(ti.limit) || 0 : 2000)   // no limit: the Read tool's 2000 lines
+  // a kit script is run, not read (owner 2026-11-26): its head says how; the live kit's only (a kit worktree's copy is kitty's and revy's work)
+  if (!ranged && resolve(f).toLowerCase().startsWith(kit.toLowerCase() + sep) && /[\\/](skills|workflows|scripts)[\\/].*\.(ps1|py|m?js)$/i.test(f)) {
+    const cap = param('guard.kitScriptLines'); let n = 0; try { for (const b of readFileSync(f)) if (b === 10) n++ } catch { return }
+    if (cap && n > cap) deny(`kit guard: ${f} is a kit script (${n} lines): run it, never read it whole: its top 40 lines (Read limit 40) hold the usage, the verbs and the Sections: map; then only the section you need (offset / limit)`) }
   try { const st = statSync(f); if (!st.isFile()) return
     if (!ranged) { kb = Math.round(st.size / 1024); if (!(maxKB && kb > maxKB)) for (const b of readFileSync(f)) if (b === 10) lines++ }   // size first: a huge log is never read here
     else if (st.size <= 16 * 1024 * 1024) { let n = 1, by = 0, lb = 0; for (const b of readFileSync(f)) { if (n >= from) { lb++; if (b === 10) { lines++; by += Math.min(lb, 2000); lb = 0 } } if (b === 10 && ++n >= upto) break }

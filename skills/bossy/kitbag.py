@@ -23,9 +23,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L987 lint ·
-  L1409 README graph · L1527 lint command · L1840 audit · L1988 registry · L2048 tools · L2136 parity · L2742 arch lint ·
-  L3061 prose · L3316 sections · L3448 budget · L3466 migrate · L3614 plugins · L3671 state lint · L3859 main
+Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L994 lint ·
+  L1416 README graph · L1534 lint command · L1847 audit · L1995 registry · L2055 tools · L2143 parity · L2749 arch lint ·
+  L3068 prose · L3323 sections · L3455 budget · L3473 migrate · L3621 plugins · L3678 state lint · L3866 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -563,13 +563,20 @@ def phase_sync(k):
     """Phases PHASES names that workflows/buildy.js PH no longer prompts (`PHASE <name>`): START-BUDGET would measure a ghost."""
     wf = k.texts.get('workflows/buildy.js') or ''
     return [f'{r}:{p}' for r, ps in PHASES.items() for p in ps if wf and f'PHASE {p} ' not in wf]
-def instr_cap(kdir, key='cap', dflt=75000):
-    """budget.instructions.<key> of kit.example.json: cap = kit-instruction tokens one agent may hold (75k at the 200k design
-    window), start = a role's kit files at start (START-BUDGET), skillAlways = a SKILL.md (BUDGET skill)."""
+def instr_cap(kdir, key='cap', dflt=50000):
+    """budget.instructions.<key> of kit.example.json: cap = kit-instruction tokens one agent may hold (the hard max: supervise
+    ACT + handoff), start = a role's kit files at start (START-BUDGET), skillAlways = a SKILL.md (BUDGET skill)."""
     try:
         return int(json.loads(read(osp.join(kdir, PATHS_JSON)))['budget']['instructions'][key])
     except Exception:
         return dflt
+
+def instr_target(kdir):
+    """watchAt x cap (30k): what a role's start + every doc its skill can read may total (READ-BUDGET); live: supervise WATCH."""
+    try:
+        return int(instr_cap(kdir) * float(json.loads(read(osp.join(kdir, PATHS_JSON)))['budget']['instructions']['watchAt']))
+    except Exception:
+        return int(instr_cap(kdir) * 0.6)
 
 def read_rows(k, sizes):
     """[(role, start + required reads, largest reads)]: the worst case of one run: its start, every doc of its skill folder
@@ -1180,11 +1187,11 @@ def lint(k, g=None, org_terms=None):
     for ghost in phase_sync(k):
         bad('START-BUDGET', 'workflows/buildy.js', f'{ghost}: kitbag.py PHASES names a phase PH no longer prompts ("PHASE <name> "): update PHASES')
     sizes = {f: size_tokens(k.dir, f) for f in counted}
-    icap = instr_cap(k.dir)
+    icap = instr_target(k.dir)
     for role, total, reads in read_rows(k, sizes):
         if total > icap:
-            bad('READ-BUDGET', f'agents/{role}.md', f'{role} start + every doc its skill can read = {total} tokens (cap {icap}, '
-                f'budget.instructions.cap): split a reference so a step reads only its section ({", ".join(reads[:4])})')
+            bad('READ-BUDGET', f'agents/{role}.md', f'{role} start + every doc its skill can read = {total} tokens (target {icap} = '
+                f'budget.instructions.watchAt x cap): split a reference so a step reads only its section ({", ".join(reads[:4])})')
     caps_t = {**BUDGETS, 'skill': instr_cap(k.dir, 'skillAlways', BUDGETS['skill'])}
     over = [(f, n, caps_t[b]) for f, n in sizes.items() if (b := budget_type(f)) and n > caps_t[b]]
     always = sum(sizes.get(f, 0) for f in ('CLAUDE.md', 'AGENTS.md') + tuple(f for f in counted if re.match(r'rules/[^/]+\.md$', f) and 'paths' not in frontmatter(k.texts.get(f, ''))))
@@ -3458,7 +3465,7 @@ def cmd_budget(a):
     for role, always, own in phase_rows(k):
         print(f'{role:10} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own}: phase lessons, entry docs)')
     for role, always, own in start_rows(k):
-        print(f'{role:8} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own}) · with every read {reads.get(role, 0)} of {instr_cap(KIT_DIR)}')
+        print(f'{role:8} start {always + own:6} of {START_CAP} (always-loaded {always} + own {own}) · with every read {reads.get(role, 0)} of {instr_target(KIT_DIR)} (live max {instr_cap(KIT_DIR)})')
     total, tests = split_total(sizes)
     print(f'INFO repo total {total} tokens · tests {tests} (no cap: agents load per role, then through pointers)')
     return 0

@@ -20,5 +20,23 @@ Expect "learn -Read: learn.readCap 20 lessons by default, the rest counted ($(([
 $null = pwsh @np $O board join -Agent BY -Run rb
 $farOut = pwsh @np $O board join -Agent FAR -Run rfar | Out-String; $nearOut = pwsh @np $O board join -Agent NEAR -Run rb | Out-String; $showOut = pwsh @np $O board show | Out-String
 Expect "board join: other runs as one line, the own run in rows; show = all ($farOut)" ($farOut -match 'nobody else in your run' -and $farOut -match 'other runs: rb 1 \(rows: board show' -and $farOut -notmatch '(?m)^\s+BY' -and $nearOut -match '(?m)^\s+BY' -and $nearOut -match 'other runs: rfar 1' -and $showOut -match '(?m)^\s+BY' -and $showOut -match '(?m)^\s+FAR')
+# context plan: a slice's added tokens over usage.context.sliceFactor (1.5) x the role's p90 = WATCH with the slice's rule, 2+ live agents = ACT
+$sliceOut = (Invoke-PsTest ctx2-slices @'
+$null = . $args[0] 6>$null; $env:KIT_PARAM_USAGE_CONTEXT_SLICE_CD = '10000'; $now = Get-Date
+$mk = { param([string]$lb, [long]$code) [pscustomobject]@{ label = $lb; role = 'devy'; run = 'r1'; model = 'claude-sonnet-5-5'; result = 'running'; at = $now.ToString('o'); cx = [pscustomobject]@{ n = 9; s0 = 20000; pk = 50000; sum = 450000; last = 50000; cmp = 0; ho = 0; agents = 1; pks = 50000; kl = 0; add = @(0, 0, $code, 0, 0, 0, 0, 0); car = @(1) * 8; w = @(0, 0, 0, 0, 0, 0); rr = @(0, ''); top = @() } } }
+@(Get-KitContextFlags @((& $mk 'build:A1' 16000), (& $mk 'build:A2' 20000), (& $mk 'build:A3' 14000)) $now) | ForEach-Object { "$($_.level) $($_.what) => $($_.action)" }
+$ic = Get-KitInstrCap 967000; "cap $($ic.cap) watch $($ic.watch) small $((Get-KitInstrCap 32000).watch)"
+'@ @($O)) -join "`n"
+Expect "context plan: code reads 16k and 20k vs a 10k p90 = WATCH each (14k: none), 2 live devys = ACT with the rule ($sliceOut)" ($sliceOut -match 'WATCH context: devy build:A1 code reads over its plan => 16k added vs the devy p90 10k: read ranges' -and $sliceOut -match 'WATCH context: devy build:A2 code reads over its plan' -and $sliceOut -notmatch 'build:A3' -and $sliceOut -match 'ACT context: 2 live devy agents over their code reads plan => Spawn kitty \(kind fix\)')
+Expect "kit instructions: 30k target (WATCH), 50k max (ACT + handoff); a 32k window never watches under the 12k kit start ($(@($sliceOut -split "`n")[-1]))" ($sliceOut -match 'cap 50000 watch 30000 small 12000')
+# an instruction file loaded mid-run counts by its path: the kit's = kit instructions, a product repo's CLAUDE.md = code reads
+$mixOut = (Invoke-PsTest ctx2-mix @'
+$null = . $args[0] 6>$null; $cx = New-KitContextRec; $big = 'd' * 4000
+Step-KitContextLine $cx '{"type":"assistant","timestamp":"2026-01-01T10:00:00Z","message":{"id":"m1","usage":{"input_tokens":20000,"output_tokens":10},"content":[]}}'
+Step-KitContextLine $cx ('{"type":"attachment","timestamp":"2026-01-01T10:00:01Z","attachment":{"type":"nested_memory","path":"/w/app/CLAUDE.md","content":{"path":"/w/app/CLAUDE.md","type":"Project","content":"' + $big + '"}}}')
+Step-KitContextLine $cx ('{"type":"attachment","timestamp":"2026-01-01T10:00:02Z","attachment":{"type":"instructions","files":[{"path":"/w/x-.claude/AGENTS.md","content":"' + $big + '"},{"path":"/w/app/sub/CLAUDE.md","content":"' + $big + '"}]}}')
+"kit $(@($cx.add)[0] - 20000) code $(@($cx.add)[2])"
+'@ @($O)) -join ' '
+Expect "context: a product CLAUDE.md loaded mid-run is code reads, a kit worktree's AGENTS.md kit instructions ($mixOut)" ($mixOut -match 'kit 1000 code 2000')
 Remove-TestKit $k
 Complete-Tests
