@@ -18,8 +18,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L293 stack · L392 gate · L708 check · L1037 pipes · L1102 guard · L2039 dir · L2049 checkpoint ·
-  L2089 prior · L2128 tracker · L2150 task spec · L2356 scope · L2404 host
+Sections: L25 init · L34 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L2041 dir · L2051 checkpoint ·
+  L2091 prior · L2130 tracker · L2152 task spec · L2358 scope · L2406 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -137,6 +137,7 @@ switch ($Action) {
   }
   'sync' {
     $Dir = Resolve-Wt $Dir
+    Assert-KitSlotOwn $Dir $Agent 'wt sync'
     $t = Meta $Dir 'target'; if (-not $t) { throw "no target for ${Dir}: git -C $Dir rebase origin/<target>" }
     $help = "Append-only files: $(Split-Path (Get-Python) -Leaf) $($KitCmd.devtools) keepboth <file>; real code by hand. Then git add, wt sync -Dir $Dir again (continues it; never wt commit mid-rebase), crafty.ps1 check."
     if (Test-WtRebasing $Dir) {   # a resumed conflict: finish it, never commit on its detached HEAD
@@ -157,6 +158,7 @@ switch ($Action) {
   }
   'commit' {
     $Dir = Resolve-Wt $Dir
+    Assert-KitSlotOwn $Dir $Agent 'commit'
     if (Test-WtRebasing $Dir) { [Console]::Error.WriteLine("commit refused: a rebase is in progress (detached HEAD): git add the files, then wt sync -Dir $Dir"); exit 1 }
     if ($MessageFile) { if (-not (Test-Path -LiteralPath $MessageFile -PathType Leaf)) { throw "no such message file: $MessageFile" }; $Message = Get-Content -LiteralPath $MessageFile -Raw -Encoding utf8 }
     if ($Spec) {   # commitFormat subject + change bullets; python prints UTF-8, stdout only
@@ -2151,7 +2153,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
 # description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
 # (lib.ps1 Format-KitDecisionItems), parent items (adapters/task-items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
-# { text, url }], docs: { <process.docs key>: url } (older: human, ai), decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<n>' (task-items.ps1 order), proseOk }.
+# { text, url }], docs: { <process.docs key>: url }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<n>' (task-items.ps1 order), proseOk }.
 # what a spec lacks (bug: name + problem), a link or MR no full URL
 function Test-KitTaskSpec($Spec) {
   $bug = "$($Spec.kind)" -match '(?i)^bug$' -or (Test-KitBugName "$($Spec.title)")
@@ -2159,12 +2161,12 @@ function Test-KitTaskSpec($Spec) {
     if (-not $bug) { if (-not "$($Spec.goal)".Trim()) { 'goal' }; if (-not (@($Spec.items) + @($Spec.subtasks) | Where-Object { $_.code }).Count) { 'items[{code, desc}] (or subtasks)' }; if (-not @($Spec.acceptance | Where-Object { $_ }).Count) { 'acceptance' } }
     foreach ($ln in @($Spec.links) + @(if ($Spec.docs -is [Collections.IDictionary]) { @($Spec.docs.Values) } else { @(Get-KitProps $Spec.docs | ForEach-Object Value) }) +@($Spec.items | ForEach-Object { @($_.mrs) })) { $u = if ($ln -is [Collections.IDictionary]) { $ln.url } else { "$ln" }; if ($u -and $u -notmatch '^https?://\S+$') { "a full URL instead of '$u'" } })
 }
-# tracker.nameFormat ({prefix} {title} {kind} {code}); prefix = tracker.kindPrefixes[kind]; a typed known kind prefix ([Bug]) is swapped, another "[...]" stays
+# tracker.nameFormat; prefix = tracker.kindPrefixes[kind]; a typed known kind prefix ([Bug]) is swapped, another "[...]" stays
 function Get-KitSpecName($Spec) {
   if ($Spec.key) { $nk = [hashtable]::new($Spec); $nk.Remove('key'); return (Format-KitKeyedName (Get-KitSpecName $nk) "$($Spec.key)") }   # naming: plain title + tags
   $t = (Remove-KitNameKey "$($Spec.title)").Trim(); if (-not $Spec.kind) { return $t }
   $nk = Get-KitNameKind $t
-  if ($nk.rest -ne $t -and $nk.kind -ieq "$($Spec.kind)") { $t = $nk.rest } elseif ($t -match '^\[') { return $t }   # another kind typed: kept as written
+  if ($nk.rest -ne $t -and $nk.kind -ieq "$($Spec.kind)") { $t = $nk.rest } elseif ($t -match '^\[') { return $t }
   $v = @{ prefix = (Get-KitKindPrefix "$($Spec.kind)"); title = $t; kind = "$($Spec.kind)"; code = "$($Spec.code)" }
   ([regex]::Replace([string](Get-KitSetting 'tracker.nameFormat' '{prefix} {title}'), '\{(\w+)\}', { param($m) [string]$v[$m.Groups[1].Value] }) -replace '\s{2,}', ' ').Trim()
 }

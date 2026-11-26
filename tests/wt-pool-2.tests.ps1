@@ -2,7 +2,7 @@
 <#
 wt-pool-2.tests.ps1: agents after board leave / handoff (wt-pool.tests.ps1 is at its cap): lease waits (Remove-KitPoolWaits,
 Test-KitPoolWaiterGone, the wait loop exits), messages to a left id (Resolve-KitMsgTarget) and the inbox on wt / check / checkpoint;
-e2e lane portFiles (Use- / Restore-KitLanePortFiles).
+e2e lane portFiles (Use- / Restore-KitLanePortFiles); a slot leased to another agent (Get-KitSlotForeign).
 Usage: pwsh -NoProfile -File <kit>/tests/wt-pool-2.tests.ps1 (or tests/kit-tests.ps1 -Area wt-pool-2).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -73,5 +73,20 @@ $bgP = & { . (Lib) *>$null; @(Split-KitList $bgS -Sep $bgSep) -join '|' }
 $bgSrc = @('skills/crafty/crafty.ps1', 'skills/crafty/adapters/wt-pool.ps1' | Where-Object { -not (Get-Content (Join-Path $src $_) -Raw).Contains("Split-KitList `$Scope -Sep '$bgSep'") })
 $bgY = & $py -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import devtools as d; g = d.scope_of('', sys.argv[2]); print('|'.join(g) + ' / ' + '|'.join(d.scope_dropped(sys.argv[2], lambda: g + ['x/**'])))" (Join-Path $src 'skills/crafty') $bgS
 Expect "scope globs: a brace glob is one glob in wt new / lease -Scope and devtools.py --scope ($bgP ; $bgY ; $($bgSrc -join ','))" ($bgP -eq 'src/{main,test}/java/**|docs/**|web/{a,b}/*.ts' -and "$bgY" -eq "$bgP / x/**" -and -not $bgSrc.Count)
+# coordinator 2026-11-26: a round's successor deployed from its old slot after the pool re-leased it (another agent's branch went live
+# as its layer): envy deploy, wt commit and wt sync refuse a slot leased to another agent
+$sfRepo = Join-Path (Kd) 'sf-repo'; New-Item -ItemType Directory -Force $sfRepo | Out-Null; Set-Content "$sfRepo/a.txt" 'a'; Save-GitRepo $sfRepo base
+$sfSlot = Join-Path (Kd) 'heron-sf'; git -C $sfRepo worktree add -q --detach $sfSlot 2>$null | Out-Null
+Set-Content (Join-Path "$(git -C $sfSlot rev-parse --absolute-git-dir)" 'claude-slot') '2'
+$sfAssert = Join-Path (Kd) 'sf-assert.ps1'; Set-Content $sfAssert ". '$k/skills/crafty/lib.ps1'; Assert-KitSlotOwn '$sfSlot' 'devy-signup' 'commit'; 'passed'"
+$sfTest = Invoke-PsTest slot-foreign @"
+. '$k/skills/crafty/lib.ps1'; `$sff = Get-KitSlotFile 'heron-sf'
+@{ slot = 'sf-Heron'; n = 2; repo = '$sfRepo'; path = '$sfSlot'; branch = 'f/theirs'; agent = 'devy-kyc'; since = '2026-01-02T03:04:05Z' } | ConvertTo-Json | Set-Content `$sff
+"other:`$(Get-KitSlotForeign '$sfSlot' 'devy-signup')"; "holder:[`$(Get-KitSlotForeign '$sfSlot' 'devy-kyc')]"; "noid:[`$(Get-KitSlotForeign '$sfSlot' '')]"; "repo:[`$(Get-KitSlotForeign '$sfRepo' 'devy-signup')]"
+`$sfa = @(pwsh -NoProfile -File '$sfAssert' 2>&1); "assert:`$LASTEXITCODE|`$(`$sfa -join ' ')"
+Remove-Item -LiteralPath `$sff; "free:[`$(Get-KitSlotForeign '$sfSlot' 'devy-signup')]"
+"@
+$sfOut = $sfTest -join ' // '; $sfCrafty = Get-Content (Join-Path $k 'skills/crafty/crafty.ps1') -Raw; $sfEnvy = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
+Expect "pool: a slot leased to another agent is refused with its holder and the wt lease command; the holder, a free slot, a plain repo or no caller id pass; envy deploy, wt commit and wt sync call it ($sfOut)" ($sfOut -match 'other:\S+ is pool slot sf-Heron, leased to devy-kyc \(no live holder yet\) on f/theirs since .+wt lease -Repo sf-repo -Branch <your branch> -Agent devy-signup' -and $sfOut -match 'holder:\[\]' -and $sfOut -match 'noid:\[\]' -and $sfOut -match 'repo:\[\]' -and $sfOut -match 'free:\[\]' -and $sfOut -match 'assert:1\|commit refused: \S+ is pool slot sf-Heron' -and $sfOut -notmatch 'passed' -and $sfCrafty -match "Assert-KitSlotOwn \`$Dir \`$Agent 'wt sync'" -and $sfCrafty -match "Assert-KitSlotOwn \`$Dir \`$Agent 'commit'" -and $sfEnvy -match 'Assert-KitSlotOwn \$dd \$Agent "envy\.ps1: \[\$e\] deploy"')
 Remove-TestKit $k
 Complete-Tests

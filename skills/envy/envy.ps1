@@ -2240,6 +2240,7 @@ switch ($Action) {
         $hit = $envRepos.Values | Where-Object { (Resolve-Path "$(git -C $_.cfg.checkout rev-parse --path-format=absolute --git-common-dir)".Trim() -ErrorAction SilentlyContinue).Path -eq $common } | Select-Object -First 1
         if (-not $hit) { throw "[$e] $dd is not a worktree of a repo this env runs ($($envRepos.Keys -join ', '))" }
         $Repo += $hit.name
+        Assert-KitSlotOwn $dd $Agent "envy.ps1: [$e] deploy"
         if (@(git -C $dd status --porcelain --untracked-files=no).Count) { Write-Warning "$dd has uncommitted changes: only committed work is deployed (crafty.ps1 wt commit first)" }
       }
       $oneBranch = @($dirBranches.Values | Select-Object -Unique)

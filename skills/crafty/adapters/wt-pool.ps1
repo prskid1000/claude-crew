@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize. State: <run
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L191 names · L284 slots · L343 lease · L461 release · L507 lanes · L656 sync · L758 pool · L801 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L354 lease · L472 release · L518 lanes · L667 sync · L769 pool · L812 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -339,6 +339,17 @@ function Move-KitSlotLease($l) {
   Write-KitLeaseLog acquire slot "$($l.slot)" $l; $true
 }
 function Read-KitSlotLease([string]$File) { if (Test-Path -LiteralPath $File) { try { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json } catch { $null } } }
+# a pool slot leased to another agent is theirs (2026-11-26: a round's successor deployed a re-leased slot's branch as its own layer):
+# envy deploy, wt commit and wt sync refuse -> the reason; '' = the caller's slot (-Agent, else the board id), a free one, no slot or no id
+function Get-KitSlotForeign([string]$Dir, [string]$Agent) {
+  if (-not $Agent) { $Agent = "$($script:KitWho.agent)" }
+  if (-not $Dir -or -not $Agent) { return '' }
+  $sfTop = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $sfTop -or -not (Test-KitSlotDir $sfTop)) { return '' }
+  $sfLease = Read-KitSlotLease (Get-KitSlotFile (Split-Path ([IO.Path]::GetFullPath($sfTop).TrimEnd('\', '/')) -Leaf))
+  if (-not $sfLease -or -not "$($sfLease.agent)" -or "$($sfLease.agent)" -eq $Agent) { return '' }
+  "$sfTop is pool slot $($sfLease.slot), leased to $($sfLease.agent) ($(if (Test-KitLive $sfLease) { 'live' } else { 'no live holder yet' })) on $($sfLease.branch) since $($sfLease.since); your lease of it ended (wt release, a round's end). Lease your own: crafty.ps1 wt lease -Repo $(Split-Path "$($sfLease.repo)" -Leaf) -Branch <your branch> -Agent $Agent, then work in the worktree it prints"
+}
+function Assert-KitSlotOwn([string]$Dir, [string]$Agent, [string]$Verb) { if ($sfWhy = Get-KitSlotForeign $Dir $Agent) { [Console]::Error.WriteLine("$Verb refused: $sfWhy"); exit 1 } }
 function Test-KitSlotDir([string]$Dir) { $gf = Join-Path $Dir '.git'; if (-not (Test-Path -LiteralPath $gf -PathType Leaf)) { return $false }; $gd = ("$(Get-Content -LiteralPath $gf -TotalCount 1)" -replace '^gitdir:\s*').Trim(); [bool]($gd -and (Test-Path -LiteralPath (Join-Path $gd 'claude-slot'))) }
 # ---- lease: wt lease
 function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair queue when all are leased); created lazily up to the pool size
