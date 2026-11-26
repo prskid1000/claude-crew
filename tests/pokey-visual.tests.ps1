@@ -118,14 +118,14 @@ Expect "browser laneTarget: lane URLs, base login; lane 1 = base; unknown base =
 # browser.mjs pick / matrix (moved from pokey.tests.ps1: its token cap)
 if ($bk) {
   # datay-15: a logins-only lane entry in the targets file hid the base target's web / webLogin (session on about:blank)
-  $rtF = Join-Path (Kd) 'rt-targets.json'; Set-Content $rtF '{"targets":{"loc":{"web":"http://localhost:4200","api":"http://localhost:8443/api","webLogin":{"type":"form"},"defaultUser":"admin","users":{"admin":["a","x"],"qa":["base","x"]}},"loc-kestrel":{"defaultUser":"qa","users":{"qa":["lane","y"]},"created":{"qa":{"tenant":"c"}}},"own-kestrel":{"web":"http://own:1"},"solo":{"users":{}}}}'
+  $rtF = Join-Path (Kd) 'rt-targets.json'; Set-Content $rtF '{"targets":{"loc":{"web":"http://localhost:4200","api":"http://localhost:8443/api","webLogin":{"type":"form"},"defaultUser":"admin","users":{"admin":["a","x"],"qa":["base","x"]}},"loc-kestrel":{"defaultUser":"qa","users":{"qa":["lane","y"]},"created":{"qa":{"tenant":"c"}}},"loc-falcon":{"users":{"qa":["l1","z"]}},"own-kestrel":{"web":"http://own:1"},"solo":{"users":{}}}}'
   $res = NodeT rt @'
 const tg = JSON.parse((await import('node:fs')).readFileSync(process.argv[2], 'utf8')).targets, wl = await import(BM.replace('browser.mjs', 'adapters/web-login.mjs'))
 const ln = [{ env: 'ab-falcon', group: 'ab', lane: 1, ports: { web: 4200, api: 8443 } }, { env: 'ab-kestrel', group: 'ab', lane: 2, ports: { web: 4300, api: 8543 } }]
-const r = wl.resolveTarget('loc-kestrel', tg, ln)
-console.log([r.web, r.api, Object.keys(r.users).join(), r.users.qa[0], r.created.qa.tenant, r.defaultUser, r.webLogin.type, wl.resolveTarget('own-kestrel', tg, ln) === tg['own-kestrel'], wl.resolveTarget('solo', tg, ln) === tg.solo, tg.loc.users.qa[0] + tg.loc.defaultUser, wl.resolveTarget('nope', tg, ln)].join('|'))
+const r = wl.resolveTarget('loc-kestrel', tg, ln), f = wl.resolveTarget('loc-falcon', tg, ln)
+console.log([r.web, r.api, Object.keys(r.users).join(), r.users.qa[0], r.created.qa.tenant, r.defaultUser, r.webLogin.type, wl.resolveTarget('own-kestrel', tg, ln) === tg['own-kestrel'], wl.resolveTarget('solo', tg, ln) === tg.solo, f !== tg.loc && f.users.qa[0] + f.web, tg.loc.users.qa[0] + tg.loc.defaultUser, wl.resolveTarget('nope', tg, ln)].join('|'))
 '@ $rtF
-  Expect "browser.mjs session resolveTarget (web-login.mjs): a logins-only lane entry = the base on the lane's ports, its logins and defaults over the base's; own URLs as is; base unchanged ($res)" ("$res" -eq 'http://localhost:4300|http://localhost:8543/api|admin,qa|lane|c|qa|form|true|true|baseadmin|')
+  Expect "browser.mjs session resolveTarget (web-login.mjs): a logins-only lane entry = the base on the lane's ports, its logins and defaults over the base's; own URLs as is; base unchanged, lane 1 too; session() calls it ($res)" ($bmSrc.Contains(".resolveTarget(tn, CFG.targets) || targetOf(tn)") -and "$res" -eq 'http://localhost:4300|http://localhost:8543/api|admin,qa|lane|c|qa|form|true|true|l1http://localhost:4200|baseadmin|')
   $res = NodeT pick ("const pg = (els) => ({ waitForSelector: async () => {}, `$`$: async () => els }), e = (p) => m.pick(p, '.x', 0, 'x').catch((x) => x.message)`n" +
     "console.log(/has 0 match\(es\), no index 0/.test(await e(pg([]))), /has no box/.test(await e(pg([{ scrollIntoView: async () => {}, boundingBox: async () => null }]))))")
   Expect 'browser.mjs pick: bad nth / hidden element errors' ("$res" -eq 'true true')
