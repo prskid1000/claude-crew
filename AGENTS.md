@@ -76,8 +76,8 @@ the **Target**. A mixed request is split and each part routed on its own.
 ## Multi-agent work, builds and testing (every repo of the workspace)
 `<kit>` = the workspace's `.claude` folder; on every route:
 
-- File inspection: the Read tool (`offset` / `limit`), never a bare file path as a command (opens a desktop app); the top 40
-  lines (section map), then only the range you need; a file needed again: note its facts once.
+- File inspection: the Read tool (`offset` / `limit`), never a bare file path as a command (opens an app); the top 40
+  lines (its map), then the range you need; note a file's facts once; a kit script is run, never read whole.
 - Builds and tests go through `<kit>/skills/crafty/crafty.ps1 check` (a machine-wide memory gate queues
   them); parallel work in worktrees (`crafty.ps1 wt`), commits with `crafty.ps1 wt commit`; never install packages into linked
   `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before
@@ -88,7 +88,7 @@ the **Target**. A mixed request is split and each part routed on its own.
 - **No large writes** (owner): never bulk synthetic data, shared-DB scratch schemas, full dumps or copied dependency / data
   trees; performance: EXPLAIN, indexes, the read-only replica; added data under `data.maxRows` / `data.maxMB`, then dropped.
   A test suite's tenant reset (app restore, ~1 GB) runs once per lease; re-runs name their specs.
-- Browsers headless (`skills/pokey/browser.mjs`); visible only when the owner asks to watch.
+- Browsers headless (`skills/pokey/browser.mjs`); visible only when the owner asks.
 - Python with `-X utf8`. On Windows: python and node from the PowerShell tool
   (pwsh 7; no such tool: Bash `pwsh -NoProfile -File <x.ps1>`), not Git Bash; anything handed to a Windows program uses `D:/...`
   paths (or the `crafty.ps1 dir` output), never Git Bash `/d/...` (guard-denied). JSON read by code: check the

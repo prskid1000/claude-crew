@@ -38,5 +38,8 @@ Step-KitContextLine $cx ('{"type":"attachment","timestamp":"2026-01-01T10:00:02Z
 "kit $(@($cx.add)[0] - 20000) code $(@($cx.add)[2])"
 '@ @($O)) -join ' '
 Expect "context: a product CLAUDE.md loaded mid-run is code reads, a kit worktree's AGENTS.md kit instructions ($mixOut)" ($mixOut -match 'kit 1000 code 2000')
+# a kit worktree (<name>-.claude) under the workspace: its CLAUDE.md + @AGENTS.md never load again on a file read (3.5k tokens a kitty / revy; probed 2026-11-26)
+$stg = Get-Content (Join-Path $src 'settings.json') -Raw | ConvertFrom-Json
+Expect "settings.json: claudeMdExcludes skips a kit worktree's CLAUDE.md ($($stg.claudeMdExcludes -join ' '))" (@($stg.claudeMdExcludes) -contains '**/*-.claude/CLAUDE.md')
 Remove-TestKit $k
 Complete-Tests
