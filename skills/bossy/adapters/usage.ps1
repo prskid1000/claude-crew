@@ -886,7 +886,7 @@ function Get-KitInstrCap([double]$Window) {
 # the agent tool this runs under: a model id's prefix, KIT_TOOL, then the tool's own env vars
 function Get-KitTool([string]$Model = '') {
   $envs = @(Get-ChildItem env: | ForEach-Object Name)
-  if ($Model -match '^local/') { 'local' } elseif ($Model -match '^(claude|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
+  if ($Model -match '^local/') { 'local' } elseif ($Model -match '^(claude|fable|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
   elseif ($Model -match '^gemini') { 'antigravity' } elseif ($v = $env:KIT_TOOL) { $v } elseif ($env:CLAUDECODE) { 'claude' }
   elseif ($envs -like 'CODEX_*') { 'codex' } elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' } else { 'unknown' }
 }

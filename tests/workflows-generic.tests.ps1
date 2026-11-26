@@ -79,9 +79,9 @@ const n = await go('CONFIG {"models":null,"roles":{},"qaLanes":null}'), r = awai
 const t = await go('CONFIG {"models":{"build":"strong","review":"m-own"},"tiers":{"fast":"t-f","balanced":"t-b","strong":"t-s","inherit":""},"roles":{},"qaLanes":null}')
 console.log(`tiers:${t.find((c) => c.label === 'build:G1').model === 't-s' && /^review/.test((t.find((c) => c.model === 'm-own') || {}).label) && t.some((c) => c.model === 't-f')}`)
 const sh = (c) => c.find((x) => x.label === 'ship:G1').prompt
-console.log(`no-roles:${!n.some((c) => c.label === 'order:G1') && /storefront\/pull\/4 \(, independent\)/.test(sh(n)) && n.find((c) => c.label === 'build:G1').model === 'sonnet'}`)
+console.log(`no-roles:${!n.some((c) => c.label === 'order:G1') && /storefront\/pull\/4 \(, independent\)/.test(sh(n)) && n.find((c) => c.label === 'build:G1').model === 'fable'}`)
 console.log(`roles:${/storefront\/pull\/4>https:\/\/github\.com\/o\/core\/pull\/4/.test(r.find((c) => c.label === 'order:G1').prompt) && /1\. \S+core\/pull\/4 \(, producer\)[\s\S]*2\. \S+storefront/.test(sh(r))}`)
-console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' && r.find((c) => c.label === 'order:G1').model === 'm-small' && /-Plan 'devy\/@build=sonnet:2,devy\/@docs=sonnet:1,revy\/@review=sonnet:1,step\/@ship=haiku:3,item:1,step\/@step=haiku:2,kitty\/@learn=haiku:1'/.test(r.find((c) => c.label === 'record-args').prompt)}`)
+console.log(`models:${r.find((c) => c.label === 'build:G1').model === 'm-big' && r.find((c) => c.label === 'order:G1').model === 'm-small' && /-Plan 'devy\/@build=fable:2,devy\/@docs=fable:1,revy\/@review=fable:1,step\/@ship=fable:3,item:1,step\/@step=fable:2,kitty\/@learn=fable:1'/.test(r.find((c) => c.label === 'record-args').prompt)}`)
 '@
 Expect-Each (Invoke-Js dw-generic $jsg $wfd) 'buildy generic: #' 'no-roles', 'roles', 'models', 'tiers' -Show 6
 # testy generic: qa.lanes unset = one web lane (an api item refused); a desktop lane with followUp web; models.test
@@ -265,7 +265,7 @@ $t = Get-KitTiers claude; "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)"
 $__cfg = [pscustomobject]@{ models = [pscustomobject]@{ tiers = [pscustomobject]@{ codex = [pscustomobject]@{ strong = 'big-x'; fast = '' } } }; budget = [pscustomobject]@{ models = @([pscustomobject]@{ match = 'sonnet'; row = 'claude-1m' }) } }
 $t = Get-KitTiers codex; "$($t.fast)/$($t.balanced)/$($t.strong)"; $t = Get-KitTiers local; "[$($t.fast)/$($t.strong)]"; (Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row
 '@ @($O)
-Expect "tiers: budget.models rows (opus 4.7 / haiku 5.5 / [1m] = 1M, sonnet 4.6 = 200k; a local list wins); claude tiers; codex fast unset -> balanced; local -> inherit ($($mt -join ' / '))" ("$($mt -join '|')" -eq 'claude-1m claude-200k claude-1m claude-1m|haiku/sonnet/opus/|big-x/big-x/big-x|[/]|claude-1m')
+Expect "tiers: budget.models rows (opus 4.7 / haiku 5.5 / [1m] = 1M, sonnet 4.6 = 200k; a local list wins); claude tiers; codex fast unset -> balanced; local -> inherit ($($mt -join ' / '))" ("$($mt -join '|')" -eq 'claude-1m claude-200k claude-1m claude-1m|fable/fable/fable/|big-x/big-x/big-x|[/]|claude-1m')
 # tidy: the prep step returns the run id (kitbag.py naming next id tidy); worktree, branch and retro file carry it
 $jsT = @'
 const P0 = { ok: true, record: 'RECORDED', prep: JSON.stringify({ work: 1, groups: 0, sec: 1, steps: [], digest: 'd.md', at: 'x', parity: ['ci/x/failure: fallback -> native'] }), run: 'tidy-2' }, J0 = { applied: [], proposedForApproval: ['p1'], rejected: [], report: 'r.md' }

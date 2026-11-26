@@ -121,7 +121,7 @@ const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
 // no result (2026-11-25 login race): one retry after a wait, <label>@redo; edit steps check state first; never asks, debates, deploy, learn
 const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
 // a model's usage limit: once on the next tier, <label>@up (testy.js the same)
-const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.indexOf(o.model)
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.lastIndexOf(o.model)
  try { return await agent1(p, o) } catch (e) { if (i < 0 || !t[i + 1] || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${t[i + 1]}`); return agent1(p, { ...o, model: t[i + 1], label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
@@ -134,7 +134,7 @@ const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whol
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request.
 `
 // tier -> model; CONFIG tiers, models win
-const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
+const TIERS = { fast: 'fable', balanced: 'fable', strong: 'fable', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
 const MT = { spike: TS, debate: TB, build: TB, review: TB, ci: TF, ship: TF, docs: TB, learn: TF, complex: 'inherit', retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }

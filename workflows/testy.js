@@ -36,7 +36,7 @@ const _S = { type: 'string' }, _B = { type: 'boolean' }, _I = { type: 'integer' 
 // a tester step, no result (2026-11-25 login race): one retry, <label>~retry1; close/hold never
 const agent1 = agent, TRY2 = /^([\w-]*test|retest-strong|handoff|verify|audit):/
 // a model's usage limit: once on the next tier, <label>@up (buildy.js the same)
-const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.indexOf(o.model)
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], i = t.lastIndexOf(o.model)
  try { return await agent1(p, o) } catch (e) { if (i < 0 || !t[i + 1] || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${t[i + 1]}`); return agent1(p, { ...o, model: t[i + 1], label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agentUp(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
@@ -52,7 +52,7 @@ const ABS0 = /^([A-Za-z]:|[\\/])/
 if (!ABS0.test(K0)) throw new Error(`testy.js args.kitDir '${K0}': the absolute <workspace>/.claude path (bossy SKILL "Launch")`)
 if (R.runDir && !ABS0.test(R.runDir) && ABS0.test(K0)) R = { ...R, runDir: `${K0.replace(/[\\/][^\\/]+$/, '')}/${String(R.runDir).replace(/^\.[\\/]/, '')}` }
 // tier (fast | balanced | strong | inherit) -> model, never the session model; CONFIG tiers + models.<phase> win
-const TIERS = { fast: 'haiku', balanced: 'sonnet', strong: 'opus', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
+const TIERS = { fast: 'fable', balanced: 'fable', strong: 'fable', inherit: '' }, [TF, TB, TS] = ['fast', 'balanced', 'strong']
 const MT = { test: TB, verify: TB, audit: TB, close: TF, hold: TF, learn: TF, retest: TS, retestEffort: 'high', step: TF, stepRetry: TB }
 const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(src || {})) if (typeof v === 'string') o[k] = v }
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
@@ -95,7 +95,7 @@ const prepStep = async (cmd, label) => {
  for (const [lb, model] of [[label, MODELS.step], [`${label}-retry`, MODELS.stepRetry]]) {
   const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else (a <yyyy-...> placeholder stays as typed: the script fills it):\n${cmd}`,
    { label: lb, phase: 'Prepare', schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
-  try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried on sonnet */ }
+  try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried once */ }
  }
  return null
 }

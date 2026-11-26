@@ -220,7 +220,7 @@ $kv = pwsh -NoProfile -Command ". '$(Lib)'; function T1 { param([string]`$Mode, 
 Expect 'Invoke-KitVerb: splatted Mode=None binds like -Mode None' ("$kv".Trim() -eq 'None|L1|True')
 # (cap moves from supervise.tests) bugbrief args and failed checks, cleanup log rotation
 $bw = pwsh -NoProfile -Command ". '$O'; foreach (`$c in `$false, `$true) { Get-BugWfArgs b r B1 'T1 C1, C2, C3' 's1; s2; s3' @() `$c 'C:\k' 3>`$null | ConvertTo-Json -Compress -Depth 4 }"
-Expect 'bugbrief args: sonnet for 3 checks unless -Complex, kitDir, a placeholder mandate (never a stored one)' ($bw[0] -notmatch 'complex' -and $bw[1] -match '"complex":true' -and $bw[0] -match '"kitDir":"C:/k"' -and $bw[0] -match "owner's words of this request" -and $bw[0] -notmatch 'review|roles')
+Expect 'bugbrief args: the build tier for 3 checks unless -Complex, kitDir, a placeholder mandate (never a stored one)' ($bw[0] -notmatch 'complex' -and $bw[1] -match '"complex":true' -and $bw[0] -match '"kitDir":"C:/k"' -and $bw[0] -match "owner's words of this request" -and $bw[0] -notmatch 'review|roles')
 # bugbrief checks: every package (first text wins an id), no env-data untested check, no gallery row
 $fc = pwsh -NoProfile -Command ". '$k/skills/crafty/lib.ps1'; (Get-KitFailedChecks ""## Failed checks``n### T5 — a``n**Saw:** x (cause: env-data)"", ""## Untested checks``n### R1 — d``n**Saw:** none (cause: env-data)``n## Failed checks``n### R2 — o``n**Saw:** wrong | Independent re-test: same"", ""### R2 — o``n**Saw:** old``n## Screens``n### G1 — h (PASS)"").ForEach({ `"`$(`$_.id)=`$(`$_.saw)`" }) -join ','"
 Expect "bugbrief: failed checks across packages ($fc)" ($fc -eq 'T5=x (cause: env-data),R2=wrong')

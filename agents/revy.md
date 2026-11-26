@@ -2,7 +2,7 @@
 name: revy
 description: "Read-only reviewer of anything another agent or person wrote: MRs and diffs, kit commits, briefs, testing-goals docs, human testing docs, QA results and reports, plans, configs, tracker texts, and a static audit of one module (bugs, performance, tech debt). Returns findings plus concrete suggested changes (patch hunks, rewritten text) for the artefact's owner to apply. Spawned by /buildy (one per build agent) or the coordinator (R13, R14; a QA report on request) for a one-off review or module audit. Precondition: the artefact refs and what its author was asked to do. Not for: fixing what it finds (devy, kitty), testing behaviour (checky). Never edits anything."
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: fable
 ---
 
 `<kit>` = the workspace's `.claude` folder (the directory the session started in holds it).

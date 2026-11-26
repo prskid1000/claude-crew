@@ -242,6 +242,10 @@
         "codex": "fallback: kit.rules exec policy + the shell guard (best-effort)",
         "antigravity": "port: guard_client.mjs denies view_file of the logins file, an always-on rule, the shell guard"
       },
+      "agent and tier models (agents/*.md model, models.tiers.claude: fable)": {
+        "codex": "fallback: .codex/agents/*.toml carry no model (the session's model runs each agent); workflow tiers = models.tiers.codex",
+        "antigravity": "fallback: .agents/agents/*.md say model: inherit; a workflow model outside ports.models (fable) inherits the session's model; tiers = models.tiers.antigravity"
+      },
       "per-agent tool and MCP lists": {
         "codex": "gap: no such feature: https://learn.chatgpt.com/docs/agent-configuration/subagents a custom agent has no tools allow-list and its mcp_servers / sandbox_mode do not override the parent: the ported note names the allowlist, the guard covers both",
         "antigravity": "port: tools: [<agy names>] in .agents/agents/*.md (https://antigravity.google/docs/subagents/; kitbag_ports.py GRAVITY_TOOL_MAP + call_mcp_tool); an agent with a tool agy cannot name (WebFetch, WebSearch) keeps all tools"

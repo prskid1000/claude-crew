@@ -44,7 +44,7 @@ DEFAULTS = {
     'chunk': {'minSec': 20, 'maxSec': 60, 'sectionSec': 300, 'twoLevelOverSec': 3600},
     'stt': {'baseUrl': '', 'model': 'whisper-1', 'path': '/v1/audio/transcriptions', 'pieceSec': 30, 'timeoutSec': 300},
     'corpus': {'keep': 10, 'pin': []},   # media kept for the newest <keep> corpus clips; pin: keys or links never evicted
-    'vidy': {'model': 'sonnet', 'batch': 8, 'segmentSec': 300, 'labelTokens': 80000},   # one vidy per segment; labelTokens: the verify phase's cap per video
+    'vidy': {'model': 'fable', 'batch': 8, 'segmentSec': 300, 'labelTokens': 80000},   # one vidy per segment; labelTokens: the verify phase's cap per video
 }
 
 def merge(a, b):

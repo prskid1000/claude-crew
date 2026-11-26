@@ -72,7 +72,7 @@ Selected by: `media` set in kit.local.json.
   full frames only, deltaMarginPx 16, montageSec 30), `corpus` (keep 10,
   pin []), `chunk` (minSec 20,
   maxSec 60, sectionSec 300, twoLevelOverSec 3600), `stt` (baseUrl, model whisper-1, path /v1/audio/transcriptions, pieceSec
-  30, ramGB, maxConcurrent 1), `vidy` (model sonnet: the agent's model; batch 8 frames per turn; segmentSec 300; labelTokens
+  30, ramGB, maxConcurrent 1), `vidy` (model fable: the agent's model; batch 8 frames per turn; segmentSec 300; labelTokens
   80000: the verify phase's cap per video). Env `KIT_MEDIA_CONFIG`: a JSON file with a media object on top (tests).
 - Needs: yt-dlp, ffmpeg + ffprobe, Python OpenCV + numpy, node (`npm install` in skills/pokey) and Chrome / Edge for headless grabs;
   optional `gws`.

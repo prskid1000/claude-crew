@@ -112,7 +112,7 @@ $out = Join-Path $dir "$Task.md"
 Set-Content $out $md -Encoding utf8
 $null = Test-KitProse -Kind bug-brief -Path $out
 $wfArgs = Get-BugWfArgs $out $runName $Agent "$Task $ids" (($checks | ForEach-Object screen) -join '; ') $Mandate $Complex $claude
-"brief: $out ($($checks.Count) checks: $ids; model: $(if ($Complex) { 'session (-Complex)' } else { 'sonnet' }))"
+"brief: $out ($($checks.Count) checks: $ids; model: $(if ($Complex) { 'session (-Complex)' } else { 'models.build tier' }))"
 "Workflow args (scriptPath $claude/workflows/buildy.js):"
 $wfArgs | ConvertTo-Json -Depth 5 -Compress
 $tracked = (Read-KitTracking).tasks.ContainsKey($Task)

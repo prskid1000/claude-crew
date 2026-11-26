@@ -440,7 +440,7 @@ GATES = {
       "the result rule (closed / failedTesting / one [Bug] per ask) is finalize's, never by hand."),
   ],
   'tidy': [
-    ('Prep', r"launch -Self -Script tidy\.js", "**Launch record**: " + _REC.format(wf='tidy', plan='step/haiku:1,kitty/:1') + "; then `bossy.ps1 tidy prep -Json` (no work: stop)."),
+    ('Prep', r"launch -Self -Script tidy\.js", "**Launch record**: " + _REC.format(wf='tidy', plan='step/fable:1,kitty/:1') + "; then `bossy.ps1 tidy prep -Json` (no work: stop)."),
     ('Judge', r"tidy done -At", "One kitty (kind retro) judges the digest; the run ends with `bossy.ps1 tidy done -At '<prep at>'`."),
   ],
 }

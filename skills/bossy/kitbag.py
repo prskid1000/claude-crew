@@ -25,7 +25,7 @@ a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L987 lint ·
   L1409 README graph · L1527 lint command · L1840 audit · L1988 registry · L2048 tools · L2136 parity · L2742 arch lint ·
-  L3061 prose · L3244 sections · L3376 budget · L3394 migrate · L3542 plugins · L3599 state lint · L3787 main
+  L3061 prose · L3244 sections · L3376 budget · L3394 migrate · L3545 plugins · L3602 state lint · L3790 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -1995,7 +1995,7 @@ SCHEMAS = {
  'agent': {'type': 'object', 'required': ['name', 'description'], 'additionalProperties': False,
    'properties': {'name': {'type': 'string', 'pattern': r'^[a-z][a-z0-9-]*$'},
        'description': {'type': 'string', 'pattern': r'Spawned by .+Not for'},
-       'tools': {'type': 'string', 'minLength': 3}, 'disallowedTools': {'type': 'string', 'minLength': 3}, 'model': {'type': 'string', 'enum': ['sonnet', 'opus', 'haiku', 'inherit']}}},
+       'tools': {'type': 'string', 'minLength': 3}, 'disallowedTools': {'type': 'string', 'minLength': 3}, 'model': {'type': 'string', 'enum': ['fable', 'sonnet', 'opus', 'haiku', 'inherit']}}},
  'character': {'type': 'object', 'required': ['traits', 'bias', 'catchphrase', 'never'], 'additionalProperties': False,
     'properties': {x: {'type': 'string', 'minLength': 3} for x in ('traits', 'bias', 'catchphrase', 'never')}},
  'manifest-agent': {'type': 'object', 'required': ['job', 'kinds', 'roles', 'skill', 'tools', 'usedIn', 'cant', 'character'], 'additionalProperties': False,
@@ -3465,7 +3465,7 @@ def cmd_migrate(a):
 # Changed defaults: a kit.local.json older than a version gets, once, the value that reproduced the old default for each key it
 # does not set; a new one (setup -WriteLocal: kit.example.json) starts at CONFIG_VERSION. Only kit-shaped rows ship here; an org's
 # own old values (hosts, branch names, stack, tracker patterns) go in the git-ignored LEGACY_LOCAL next to kit.local.json.
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 # legacy-defaults:start
 LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README "Configuration" has today's)
     2: {
@@ -3481,6 +3481,9 @@ LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README
     3: {
         'tests.fallbackRunner': 'spec',
         'build.mavenOffline': True,
+    },
+    4: {
+        'models.tiers.claude': {'fast': 'haiku', 'balanced': 'sonnet', 'strong': 'opus'},
     },
 }
 # legacy-defaults:end

@@ -32,13 +32,13 @@ const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`
 const STEP = { type: 'object', properties: { ok: { type: 'boolean' }, record: { type: 'string' }, prep: { type: 'string' }, run: { type: 'string' } }, required: ['ok', 'record', 'prep', 'run'] }
 phase('Prep')
 let P = null, RUN = 'tidy'   // N3 run id from the prep step (legacy: 'tidy')
-for (const [label, model] of [['prep', 'haiku'], ['prep-retry', 'sonnet']]) {
+for (const [label, model] of [['prep', 'fable'], ['prep-retry', 'fable']]) {
  const r = await agent(`STEP: record this workflow's launch args, then run the tidy script step. Do exactly this, nothing else:${PATHS}
 1. Write the line between the markers to ${AF} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${AJ}
 ARGS>>>
-2. run = the line python -X utf8 ${C}/skills/bossy/kitbag.py naming next name tidy prints (tidy; a tie tidy-2). Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/haiku:1,kitty/:1'
+2. run = the line python -X utf8 ${C}/skills/bossy/kitbag.py naming next name tidy prints (tidy; a tie tidy-2). Run in PowerShell: & ${C}/skills/bossy/bossy.ps1 launch -Self -Script tidy.js -Run '<run>' -ArgsFile '${AF}' -Fnv ${fnv(AJ)} -Plan 'step/fable:1,kitty/:1'
  (MISMATCH = the file differs: write it again once, re-run.) record = its full output.
 3. Run in PowerShell (takes up to 2 min): & ${C}/skills/bossy/bossy.ps1 tidy prep -Json
  prep = its last output line (one line of JSON), verbatim.
@@ -82,10 +82,10 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
 5. python -X utf8 W/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report. Ship W: & ${C}/skills/crafty/crafty.ps1 wt commit -Dir W, git -C W rebase origin/main, git -C W push origin HEAD:main (fast-forward only), & ${C}/skills/crafty/crafty.ps1 wt remove -Dir W; a refused push goes in the report, never into ${C}.
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
 Return the lists and the report path.`
-let res = await agent(JP, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
+let res = await agent(JP, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'fable' })
 // no result (2026-11-25 login race): one retry after a wait that checks what is done first: never a second worktree, edit or push
 if (!res) { log('apply: redo'); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
- res = await agent(`No report came back: first find what is done: ${rp('retros')}/${RUN}.md exists -> return its lists, edit nothing, run step 6 if its signals are not marked reviewed; a kit/${RUN} worktree (git -C ${C} worktree list) -> continue in it, never a second; a pushed commit is never redone.\n${JP}`, { label: 'apply@redo', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'sonnet' }) }
+ res = await agent(`No report came back: first find what is done: ${rp('retros')}/${RUN}.md exists -> return its lists, edit nothing, run step 6 if its signals are not marked reviewed; a kit/${RUN} worktree (git -C ${C} worktree list) -> continue in it, never a second; a pushed commit is never redone.\n${JP}`, { label: 'apply@redo', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: 'fable' }) }
 
 if (res) res.proposedForApproval = [].concat(res.proposedForApproval || [], PN)
 log(`applied ${res ? res.applied.length : 0}, awaiting approval ${res ? res.proposedForApproval.length : 0}`)

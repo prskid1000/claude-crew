@@ -15,8 +15,12 @@ const mr = (r) => ({ url: `https://github.com/o/${r}/pull/4`, repo: '', merged: 
 const go = async (cfg, ex = {}, pre = null) => { const m = _mock((p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`) : /^(build|ship):G1/.test(o.label) ? _rep(lt, { mrs: [mr('storefront'), mr('core')] }) : /^review/.test(o.label) ? { findings: [] } : undefined, '[]')
  const a = async (p, o) => /^record-args/.test(o.label) ? (m.calls.push({ label: o.label, model: o.model, prompt: p }), _ok(`RECORDED\n${cfg}`)) : (pre && pre(o)) || m.agent(p, o)
  await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }], ...ex }, a, _n, _n, pipeline); return m.calls }
-const up = await go('CONFIG {"roles":{},"qaLanes":null}', {}, (o) => { if (o.label === 'build:G1') throw new Error("You've hit your weekly limit · resets Dec 2, 8:30am") })
-console.log(`limit-up:${(up.find((c) => c.label === 'build:G1@up') || {}).model === 'opus'}`)
+const lim = (o) => { if (o.label === 'build:G1') throw new Error("You've hit your weekly limit · resets Dec 2, 8:30am") }
+const up = await go('CONFIG {"tiers":{"balanced":"t-b","strong":"t-s"},"roles":{},"qaLanes":null}', {}, lim)
+console.log(`limit-up:${(up.find((c) => c.label === 'build:G1@up') || {}).model === 't-s'}`)
+// default tiers are one model (fable): no next tier, the limit error surfaces, no @up retry on the same model
+const same = await go('CONFIG {"roles":{},"qaLanes":null}', {}, lim).catch((e) => e.message)
+console.log(`limit-same-tier:${/weekly limit/.test(String(same))}`)
 const no = await go('CONFIG {"roles":{},"qaLanes":null}', {}, (o) => { if (o.label === 'build:G1') throw new Error('socket hang up') }).catch((e) => e.message)
 console.log(`other-error:${no === 'socket hang up'}`)
 // a resume replays the cached CONFIG step (balanced = sonnet then): args.config (today's kit.local.json) wins
@@ -25,7 +29,7 @@ console.log(`resume-tiers:${rz.find((c) => c.label === 'build:G1').model === 'op
 const tr = (rz.find((c) => c.label === 'track:G1') || {}).prompt || ''
 console.log(`track-script:${/track add -Discover -Mrs 'https:\/\/github\.com\/o\/storefront\/pull\/4,https:\/\/github\.com\/o\/core\/pull\/4'/.test(tr) && !/group the MRs/.test(tr)}`)
 '@
-Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'other-error', 'resume-tiers', 'track-script' -Show 6
+Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script' -Show 6
 # owner 2026-11-26: a pending decision on A2 never holds the review of A1's MR (mrs[].items); a changed head is reviewed again
 $jse = @'
 const mA = { url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false, items: ['A1'], head: 'h1' }, mB = { ...mA, url: 'https://h/g/api/-/merge_requests/2', items: ['A2'], head: 'h2' }
@@ -49,10 +53,13 @@ const go = async (cfg, ex = {}, pre = null) => { const { calls, agent } = _mock(
  return calls }
 const rz = await go('CONFIG {"models":{"test":"strong"},"tiers":{"strong":"t-old"},"roles":{},"qaLanes":null}', { config: { tiers: { strong: 't-new' } } })
 console.log(`resume-tiers:${(rz.find((x) => x.label === 'test:W1') || {}).model === 't-new'}`)
-const lu = await go('CONFIG {"models":{"test":"balanced"},"roles":{},"qaLanes":null}', {}, (o) => { if (o.label === 'test:W1') throw new Error('usage_limit_reached: weekly limit') })
-console.log(`limit-up:${(lu.find((x) => x.label === 'test:W1@up') || {}).model === 'opus'}`)
+const lim = (o) => { if (o.label === 'test:W1') throw new Error('usage_limit_reached: weekly limit') }
+const lu = await go('CONFIG {"models":{"test":"balanced"},"tiers":{"balanced":"t-b","strong":"t-s"},"roles":{},"qaLanes":null}', {}, lim)
+console.log(`limit-up:${(lu.find((x) => x.label === 'test:W1@up') || {}).model === 't-s'}`)
+const ls = await go('CONFIG {"models":{"test":"balanced"},"roles":{},"qaLanes":null}', {}, lim).then((x) => x, (e) => [])
+console.log(`limit-same-tier:${!ls.some((x) => x.label === 'test:W1@up')}`)
 '@
-Expect-Each (Invoke-Js w2-testy $jst $wf) 'testy: #' 'resume-tiers', 'limit-up' -Show 6
+Expect-Each (Invoke-Js w2-testy $jst $wf) 'testy: #' 'resume-tiers', 'limit-up', 'limit-same-tier' -Show 6
 # step retry (2026-11-25 login race): a tester step with no result runs once more as <label>~retry1; close (publishes) never
 $jsSr = @'
 const labels = []
@@ -65,5 +72,12 @@ run({ runDir: 'C:/runs/R8', ..._kl, verify: false, items: [_item('S1'), _item('S
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js tc-stepretry $jsSr $wf) 'workflow step retry: #' 'sr-once' -Show 8
+# owner 2026-11-26 "all agents to fable": every agent file, the example's claude tiers, the workflow tier defaults and tidy's steps
+$notFable = @(Get-ChildItem (Join-Path $src 'agents') -Filter *.md | Where-Object { (Get-Content $_.FullName -Raw) -notmatch '(?m)^model: fable\r?$' } | ForEach-Object Name)
+$exTiers = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models.tiers.claude
+$wfOld = @('buildy.js', 'testy.js', 'tidy.js' | Where-Object { (Get-Content (Join-Path $src "workflows/$_") -Raw) -match "'(sonnet|opus|haiku)'|/(sonnet|opus|haiku):" })
+Expect "models: every agent file, models.tiers.claude and the workflow defaults = fable; the schema takes it ($($notFable -join ',') $($wfOld -join ','))" (-not $notFable -and -not $wfOld -and
+  "$($exTiers.fast)/$($exTiers.balanced)/$($exTiers.strong)" -eq 'fable/fable/fable' -and (Get-Content (Join-Path $src 'workflows/tidy.js') -Raw) -match "label: 'apply'[^\n]*agentType: 'kitty', model: 'fable'" -and
+  (Get-Content (Join-Path $src 'skills/bossy/kitbag.py') -Raw) -match "'enum': \['fable'," -and (Get-Content (Join-Path $src 'skills/bossy/SKILL.md') -Raw) -notmatch 'sonnet|haiku')
 Remove-TestKit $k
 Complete-Tests

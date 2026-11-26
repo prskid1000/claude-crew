@@ -205,7 +205,7 @@ const p = mk(), q = mk(), h = mk('handoff'), n = mk('nullloop'), c = mk('codehan
 run(args, p.agent, _n, _n, pipeline).then((op) => run({ ...args, phases: false }, q.agent, _n, _n, pipeline).then(() => run(args, h.agent, _n, _n, pipeline)).then(() => run(args, n.agent, _n, _n, pipeline)).then(() => run(args, c.agent, _n, _n, pipeline)).then(() => run(args, lh.agent, _n, _n, pipeline)).then(() => run(args, g.agent, _n, _n, pipeline)).then(() => {
  const L = p.calls.map((c) => c.label), d = p.calls.find((c) => c.label === 'docs:X1')
  console.log(`order:${L.indexOf('build:X1') < L.indexOf('loop:X1') && L.indexOf('loop:X1') < L.indexOf('docs:X1') && L.indexOf('docs:X1') < L.indexOf('review:X1')}`)
- console.log(`prompts:${/PHASE local/.test(p.calls.find((c) => c.label === 'loop:X1').prompt) && /PHASE ship/.test(d.prompt) && /ship\.md/.test(d.prompt) && d.model === 'sonnet'}`)
+ console.log(`prompts:${/PHASE local/.test(p.calls.find((c) => c.label === 'loop:X1').prompt) && /PHASE ship/.test(d.prompt) && /ship\.md/.test(d.prompt) && d.model === 'fable'}`)
  console.log(`kept:${p.calls.some((c) => c.label === 'ship:X1') && !op.blocked.length}`)
  const hc = h.calls.find((c) => c.label === 'handoff:X1'), nd = n.calls.find((c) => c.label === 'docs:X1')
  console.log(`handoff:${!!hc && /resume brief C:\/b\/h\.md/.test(hc.prompt) && /PHASE ship/.test(hc.prompt) && !/LOOP FIRST/.test(hc.prompt)}`)

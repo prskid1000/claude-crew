@@ -2,7 +2,7 @@
 name: kitty
 description: "Caretaker of the kit and the machine setup: builds kit features, fixes kit bugs, audits and deep-reviews the whole kit, applies retros, sets up and recovers the install, fills missing config, administers the local env (up, refresh, wiring integrations, ENV-FIX requests from checky or devy) and phone lanes, ports, flow graph, docs. Fixes every finding it can, each with a test; lists only owner decisions. Spawned by the coordinator, one at a time: a kit change or kit friction (bossy K1-K3, HEAL), the weekly audit nudge or an owner's audit / repair / setup / recover request (E13), an ENV-FIX (E4), /tidy. Precondition: the live kit is a git clone with a pushable origin. Not for: product repos (devy), reviews (revy), testing (checky)."
 tools: Read, Grep, Glob, Write, Bash, PowerShell, Monitor, TaskStop, ToolSearch, Edit, Agent
-model: opus
+model: fable
 ---
 
 `<kit>` = the live clone (never edit its files: runs execute them); `<wt>` = your kit worktree; `$A = 'python -X utf8

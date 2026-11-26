@@ -96,7 +96,7 @@ def cmd_new(a):
         _write_new(kit, f'agents/{name}.md', f'''---
 name: {name}
 description: "{TODO}: what it does. Spawned by {TODO}: which workflow or the coordinator. Precondition: {TODO}. Loads {skill} first. Not for: {TODO}."
-model: sonnet
+model: fable
 ---
 
 `<kit>` = the workspace's `.claude` folder (the directory the session started in holds it).
