@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Sections: L9 poms · L57 reactor · L79 engine
+# Sections: L9 poms · L57 reactor · L80 engine
 # runtimes: before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
 # -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests, $Show.
@@ -67,6 +67,7 @@ function Add-KitReactorTestFlags([string]$Cmd) {
   $need = Get-KitReactorNeeds $mine $rp.all
   $stale = Get-KitReactorStale $need
   if (-not $stale.Count) { return (& $plain) }
+  Remove-Item -LiteralPath (Join-Path $st.dir 'target/kit-main.key') -Force -ErrorAction SilentlyContinue   # this run compiles main: check-stamps.ps1 main skip
   $staleRel = @($stale.Values | ForEach-Object { [IO.Path]::GetRelativePath($root, $_.dir).Replace('\', '/') } | Sort-Object) -join ', '
   if ($Cmd -match '(^|\s)(-pl|--projects|-f|--file)(\s|=|$)') { Write-Host "[check] reactor module(s) newer than their local-repo artefact: $staleRel; the test command has its own -pl / -f, so the tests see the stale local-repo jars: add them to its -pl with -am"; return $Cmd }
   $out =New-Item -ItemType Directory -Force (Join-Path $root 'target'); $f = Join-Path $out.FullName "crafty-reactor-$($mine.a).xml"

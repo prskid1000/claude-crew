@@ -1,7 +1,7 @@
 """kitbag_flow.py (plugin): the interactive kit-flow page and the FLOW-* lint checks (loop bounds, unresolved commands).
 
   python -X utf8 skills/bossy/kitbag.py flow [<kit>] [--out <file.html>] [--readme] [--open] [--public]
-  python -X utf8 skills/bossy/kitbag.py flow [<kit>] --impact <file | function | 'script verb' | config key | hook | event> [--depth 2] [--json]
+  python -X utf8 skills/bossy/kitbag.py flow [<kit>] --impact <file | function | 'script verb' | config key | hook | event> [--depth N: 2, a file 1] [--json]
       the blast radius from the same model, no page: upstream, downstream, the test areas to run, broken chains, cycles (exit 1: no match)
   python -X utf8 skills/bossy/kitbag.py lint ...   # adds FLOW-* problems; refreshes the page unless --no-flow
 
@@ -1659,6 +1659,8 @@ def cmd_impact(kit, flags):
         return 2
     k = load(kit)
     data = page_data(k, [])
+    if not flags.get('--depth') and impact_seeds(data, flags['--impact'])[1] == 'file':
+        depth = 1   # a whole file at depth 2 reaches most of the suite (buildy.js: 60 of 71 areas)
     r = impact(data, flags['--impact'], max(1, depth), {f: k.texts.get(f, '') for f in k.files})
     if '--json' in flags:
         print(json.dumps(r, indent=1))

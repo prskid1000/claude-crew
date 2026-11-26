@@ -586,7 +586,7 @@ foreach ($s in $runs) {
     "  resume brief: $rf"
   }
   # + config: today's tiers / models (a resume replays the cached CONFIG step); the recorded args stay a byte-exact prefix
-  $ajT = "$aj".TrimEnd() -replace ',"config":\{.*\}\}$', '}'; if ($s.leaf -in 'buildy.js', 'testy.js' -and $ajT -match '^\{[\s\S]*\S[\s\S]*\}$') { $wc = Get-KitWorkflowConfig; $aj = "$($ajT.Substring(0, $ajT.Length - 1)),""config"":$(ConvertTo-Json ([ordered]@{ tiers = $wc.tiers; models = $wc.models }) -Depth 5 -Compress)}" }
+  $aj = Add-KitResumeConfig $aj $s.leaf   # adapters/usage.ps1
   if ($s.runId) { "  RESUME$(if ((Test-KitHolder $(if ($s.record) { $s.record } else { $lr })) -eq $false) { ' (refused: its session ended, use RELAUNCH)' }): Workflow({ scriptPath: '$($s.script -replace '\\', '/')', resumeFromRunId: '$($s.runId)', args: $aj })" }
   if ($s.leaf -eq 'buildy.js' -and $agents.Count) { $na = $aj | ConvertFrom-Json -AsHashtable; $na.brief = $rf -replace '\\', '/'; $na.mode = 'resume'; $na.resume = $resume; if (-not $na.agents) { $na.agents = @($agents | ForEach-Object { [ordered]@{ id = $_.id; items = $_.items } }) }
     foreach ($ra in $resume.Keys) { foreach ($u in $resume[$ra].uncommitted) { "  UNCOMMITTED: $ra $u`: the relaunched agent keeps them (never reset)" } }
@@ -1894,7 +1894,7 @@ function Invoke-Decide {
           if ($won) { $why += "$($d.id) already used by $($won.usedBy) at $($won.usedAt)"; continue }
           Write-KitLog decisions-log used ([ordered]@{ id = $d.id; gate = $d.gate; usedBy = $usedBy })
         }
-        "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt)$(Format-KitWordPin $d) | question: $($d.question)"; exit 0
+        "WORD $($d.id) ($(if ($d.gate) { $d.gate } else { 'ask' }) $($d.item)$(if (@($d.mrs).Count) { ' ' + (@($d.mrs) -join ',') })): `"$($d.answer)`" by $($d.by)$(if ($d.source) { " via $($d.source)" }) at $($d.answeredAt)$(if ($d.gate -ne 'scope') { Format-KitWordPin $d }) | question: $($d.question)"; exit 0
       }
       # deploy.triggers {<env | repo>: auto}: the owner's standing word (every env named and MR repo is auto)
       $tgs = if (-not $Id -and $gates -contains 'deploy') { Get-KitSetting 'deploy.triggers' $null }

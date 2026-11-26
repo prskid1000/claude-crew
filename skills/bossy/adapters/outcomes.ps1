@@ -8,7 +8,7 @@ Usage: & <kit>/skills/bossy/bossy.ps1 tidy prep · decide rules [-Propose] [-App
 Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .state/decisions.jsonl. Outputs: outcomes.jsonl,
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
-Sections: L14 outcomes · L113 summary · L279 patterns · L316 rules · L394 retro due · L405 tidy · L507 collisions · L525 decisions
+Sections: L14 outcomes · L114 summary · L282 patterns · L319 rules · L397 retro due · L408 tidy · L510 collisions · L528 decisions
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -67,7 +67,7 @@ function Get-KitTaskOutcome($Ix, $Ctx) {
     hClosed = $(if ($stage -eq 'passed') { Get-KitOutcomeHours $tr.created $last.at }); spend = [int][math]::Round([double]$Ctx.spend[$t])
     doneAt = $(if ($tr.done) { ConvertTo-KitOutcomeIso $tr.doneAt }); closedAt = $(if ($stage -eq 'passed') { ConvertTo-KitOutcomeIso $last.at })   # the day chart's points
     backAt = @(@(ConvertTo-KitOutcomeIso $tr.reopenedAt) + @($runs | Where-Object { [int]$_.fail -gt 0 } | ForEach-Object { ConvertTo-KitOutcomeIso $_.at }) | Where-Object { $_ } | Sort-Object)[0]
-    startAt = @(@($Ctx.startAt[$t], (ConvertTo-KitOutcomeIso $tr.created)) | Where-Object { $_ } | Sort-Object)[0]   # the KPI tiles after a stats reset: tasks started since
+    startAt = @(@($Ctx.startAt[$t], (ConvertTo-KitOutcomeIso $tr.created)) + @($runs | ForEach-Object { ConvertTo-KitOutcomeIso $_.at }) | Where-Object { $_ } | Sort-Object)[0]   # the KPI tiles after a stats reset: tasks started since (test-only: its first QA run)
     seen = $(if ($Ix.updated) { (Get-KitStamp stored ([datetime]$Ix.updated)) }) }   # the task's last change (window); not in the row signature
 }
 function Read-KitOutcomeRows { $f = Get-KitPath outcomes; if (Test-Path -LiteralPath $f) { foreach ($l in [IO.File]::ReadAllLines($f)) { try { $l | ConvertFrom-Json } catch {} } } }
@@ -83,7 +83,8 @@ function Update-KitOutcomes([switch]$All) {
   $n = 0; $sig = { param($o) ($script:KitOutcomeKeys | ForEach-Object { "$(@(Get-KitMember $o $_ | ForEach-Object { if ($_ -is [datetime]) { ConvertTo-KitOutcomeIso $_ } else { $_ } }) -join ',')" }) -join '|' }   # a read-back row holds times as DateTime
   foreach ($ix in $ctx.ix.Values) {
     $row = Get-KitTaskOutcome $ix $ctx; $p = $prev[$row.task]
-    if ($p) { foreach ($k in 'localRounds', 'reviewFix', 'decisions', 'spend') { $row[$k] = [math]::Max([int]$row[$k], [int](Get-KitMember $p $k)) }; $row.agents = @(@($p.agents) + @($row.agents) | Where-Object { $_ } | Select-Object -Unique) }
+    if ($p) { foreach ($k in 'localRounds', 'reviewFix', 'decisions', 'spend') { $row[$k] = [math]::Max([int]$row[$k], [int](Get-KitMember $p $k)) }; $row.agents = @(@($p.agents) + @($row.agents) | Where-Object { $_ } | Select-Object -Unique)
+      if ($p.startAt -and (-not $row.startAt -or (ConvertTo-KitOutcomeIso $p.startAt) -lt $row.startAt)) { $row.startAt = ConvertTo-KitOutcomeIso $p.startAt } }   # a start never moves later (its launch file ages out)
     if ($p -and (& $sig $p) -eq (& $sig $row)) { continue }
     Write-KitLog outcomes 'state' $row; $n++
   }
@@ -182,9 +183,11 @@ function Format-KitDeliveryHtml($S, $UP, $More = @(), [string]$Blocks = '', $Clo
       tip = "${label}: $sub$(if ($S.kpiSince) { "; tasks started since the stats reset ($(([datetime]$S.kpiSince).ToString('MM-dd HH:mm')))" })$(if ($n -lt 5) { "; n $n is under 5: too few to read" })" } }
   $k = $S.kpi
   # came back, by reason (owner 2026-11-26: the split lives in this tile and the outcomes group line, no new section)
-  $wyN = { param([string]$w) @($S.tasks | Where-Object { $_.back -and "$($_.why)" -eq $w }).Count }
-  $wySplit = "own QA checks failed $(& $wyN 'qa') · reopened (MRs after promoted) $(& $wyN 'reopened')$(if ($nr = & $wyN '') { " · reason not recorded $nr" })"
-  $kt = @((& $tile 'QA first pass' $k.first '%' "$($k.firstOf) tasks QA'd clean on the first run" $k.firstN), (& $tile 'came back' $k.back '%' "$($k.backOf) tasks: $wySplit (a [Bug] under a task never counts)" $k.backN),
+  $wyN = { param([string]$w, $ts = $S.tasks) @($ts | Where-Object { $_.back -and "$($_.why)" -eq $w }).Count }
+  $wyOf = { param($ts) "own QA checks failed $(& $wyN 'qa' $ts) · reopened (MRs after promoted) $(& $wyN 'reopened' $ts)$(if ($nr = & $wyN '' $ts) { " · reason not recorded $nr" })" }
+  $wySplit = & $wyOf $S.tasks   # the outcomes group line: every task in the window; the tile: its own sample
+  $wyTile = if ($S.kpiSince) { & $wyOf @($S.tasks | Where-Object { $_.startAt -and ([datetimeoffset]$_.startAt).LocalDateTime -ge $S.kpiSince }) } else { $wySplit }
+  $kt = @((& $tile 'QA first pass' $k.first '%' "$($k.firstOf) tasks QA'd clean on the first run" $k.firstN), (& $tile 'came back' $k.back '%' "$($k.backOf) tasks: $wyTile (a [Bug] under a task never counts)" $k.backN),
     (& $tile 'median fix rounds' $k.rounds '' "over $($k.roundsOf) tasks with a wave report" $k.roundsOf), (& $tile 'agent start to promoted, p50' $k.start ' h' "over $($k.startOf) promoted tasks (start: the first build run naming the task, else its first MR)" $k.startOf),
     (& $tile 'first MR to promoted, p50' $k.hours ' h' "over $($k.hoursOf) promoted tasks (first MR: the task's first track add)" $k.hoursOf), (& $tile 'tasks with 1 MR to promoted, p50' $k.one ' h' "first MR to promoted over $($k.oneOf) tasks with one MR" $k.oneOf),
     (& $tile 'tasks with 2+ MRs to promoted, p50' $k.multi ' h' "first MR to promoted over $($k.multiOf) tasks with 2+ MRs" $k.multiOf))
@@ -534,19 +537,23 @@ function Publish-KitDecisions([string]$Task, [string]$Link) {
   Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-KitStamp) } }
   "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
 }
-# a scope word names an item, the gates ask by branch or MR (wt commit, devtools.py mr / precheck / merge; 2026-11-26: 3 refusals with
-# a word on record): the record also takes the branches of the item's area (board entries of its run listing the item -> that area's
-# leased slots and its worktrees) and the MRs of the task holding the item; bossy.ps1 decide saves every record through it
+# a person's scope word names an item, the gates ask by branch or MR (wt commit, devtools.py mr / precheck / merge; 2026-11-26: 3
+# refusals with a word on record): the record also takes the branches of the item's area and the MRs opened from those branches.
+# Area = the board entries listing the item (the record's run; no run: live entries only); branches = that area's leased slots +
+# the worktrees of its live entries that no other holder leases; MRs = the scope log's area rows of those branches (never the
+# task's other areas). An ask (pending, or answered by a deny pick) is no word: only source askuser / chat. bossy.ps1 decide saves
+# every record through it; branches known: kept
 function Add-ScopeKeys($Rec) {
-  if ("$($Rec.gate)" -ne 'scope' -or -not $Rec.item -or (@($Rec.branches | Where-Object { $_ }).Count -and @($Rec.mrs | Where-Object { $_ }).Count)) { return }   # both known: kept
+  if ("$($Rec.gate)" -ne 'scope' -or "$($Rec.source)" -notin 'askuser', 'chat' -or -not $Rec.item -or @($Rec.branches | Where-Object { $_ }).Count) { return }
   $it = "$($Rec.item)"
-  $on = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_ -and (-not $Rec.run -or "$($_.run)" -eq "$($Rec.run)") -and $it -in @("$($_.items)" -split '[\s,]+') })
-  $areas = @($on | ForEach-Object { "$($_.area)"; "$($_.agent)" } | Where-Object { $_ } | Select-Object -Unique)
-  $br = @(@($Rec.branches) + @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_ -and $_.agent -in $areas -and -not $_.parked } | ForEach-Object branch) +
-    @($on | ForEach-Object { @($_.worktrees) } | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { "$(git -C $_ branch --show-current 2>$null)".Trim() }) | Where-Object { $_ } | Select-Object -Unique)
-  $tk = @(Read-KitJsonFiles (Get-KitPath tasks) | Where-Object { $_ -and ("$($_.task)" -eq $it -or $it -in @($_.itemIds)) } | ForEach-Object { "$($_.task)" })
-  $all = (Read-KitTracking).tasks
-  $mrs = @(@($Rec.mrs) + @($tk | ForEach-Object { @($all[$_].mrs) }) | Where-Object { $_ } | Select-Object -Unique)
+  $on = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_ -and $(if ($Rec.run) { "$($_.run)" -eq "$($Rec.run)" } else { "$($_.status)" -ne 'left' }) -and $it -in @("$($_.items)" -split '[\s,]+') })
+  $areas = @($on | ForEach-Object { "$($_.area)"; "$($_.agent)" } | Where-Object { $_ } | Select-Object -Unique); if (-not $areas.Count) { return }
+  $slots = @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_ -and -not $_.parked })
+  $foreign = @($slots | Where-Object { $_.agent -notin $areas } | ForEach-Object { "$($_.path)" -replace '\\', '/' })
+  $br = @(@($slots | Where-Object { $_.agent -in $areas } | ForEach-Object branch) +
+    @($on | Where-Object { "$($_.status)" -ne 'left' } | ForEach-Object { @($_.worktrees) } | Where-Object { $_ -and ("$_" -replace '\\', '/') -notin $foreign -and (Test-Path -LiteralPath $_) } | ForEach-Object { "$(git -C $_ branch --show-current 2>$null)".Trim() }) | Where-Object { $_ } | Select-Object -Unique)
+  if (-not $br.Count) { return }
+  $mrs = @(@($Rec.mrs) + @(Read-KitLog scope-log (Get-Date).AddDays(-30) | Where-Object { $_.event -eq 'area' -and $_.branch -in $br } | ForEach-Object mr) | Where-Object { $_ } | Select-Object -Unique)
   $Rec | Add-Member -Force branches $br; $Rec | Add-Member -Force mrs $mrs
 }
 # an agent's branches (its leased pool slots, its checkpoint worktrees): an answered scope ask records them (wt commit checks by branch)

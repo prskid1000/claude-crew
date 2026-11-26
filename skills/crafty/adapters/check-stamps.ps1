@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (crafty.ps1 check exits).
-# Sections: L4 check builds · L14 check stamps · L54 main skip · L75 ci runs · L83 run digest
+# Sections: L4 check builds · L14 check stamps · L55 main skip · L96 ci runs · L104 run digest
 # ---- check builds: a clean tree's build, keyed by its tree: envy deploys of the same code stage its artifact (envy Find-CheckBuild)
 function Save-CheckBuild([string]$Dir, [string]$Cmd, [datetime]$Start) {
   Save-KitMainKey
@@ -32,6 +32,7 @@ function Read-CheckStamps([string]$Dir) { $h = try { Read-KitText (Get-CheckStam
 # -1 none (run it) · 0 passed (say so, skip) · rc it failed with: refused, its failures reprinted (2026-11-25: 217 of 841 gated builds
 # failed, agents reran unchanged trees to grep the output again); -Force reruns either
 function Test-CheckStamp([string]$Dir, [string]$Slot, [switch]$Force) {
+  $Slot = Get-KitMainSlot $Slot
   if ($null -eq $script:CheckSrcKey) { $script:CheckSrcKey = "$(Get-CheckSourceKey $Dir)" }
   $was = if ($script:CheckSrcKey -and -not $Force) { (Read-CheckStamps $Dir)[$Slot] }
   if (-not $was -or "$($was.key)" -ne $script:CheckSrcKey) { return -1 }
@@ -42,7 +43,7 @@ function Test-CheckStamp([string]$Dir, [string]$Slot, [switch]$Force) {
   [int]$was.rc
 }
 function Save-CheckStamp([string]$Dir, [string]$Slot, [int]$Rc = 0, [string]$Log = '', [string[]]$Sum = @()) {   # the newest 30 slots per dir
-  Save-KitMainKey $Rc $Log
+  $Slot = Get-KitMainSlot $Slot; Save-KitMainKey $Rc $Log
   if ($null -eq $script:CheckSrcKey) { $script:CheckSrcKey = "$(Get-CheckSourceKey $Dir)" }
   if (-not $script:CheckSrcKey) { return }
   # an edit during the run: the result belongs to neither tree (agents edited while their build ran)
@@ -53,24 +54,44 @@ function Save-CheckStamp([string]$Dir, [string]$Slot, [int]$Rc = 0, [string]$Log
 }
 # ---- main skip: a Maven step whose non-test inputs are the ones its target/classes were compiled from gets -Dmaven.main.skip=true
 # (2026-11-26: a no-change `mvn compile` rewrote 8940 classes + 4289 generated files in 111 s, a generator plugin re-stamps its
-# sources each run; 245 test steps a day, ~2 MB of NTFS metadata per MB written to target/). The key: every tracked, changed and
-# untracked file of the repo outside test folders; kept in <module>/target (a clean drops it). -Force, an own -pl / -f / clean: never
-$script:KitMainTestRx = '(^|/)src/(test|it|integration-test)/|(^|/)(cypress|e2e)/'
+# sources each run; 245 test steps a day, ~2 MB of NTFS metadata per MB written to target/). <module>/target/kit-main.key (a clean
+# drops it) holds 2 lines: the key (every tracked, changed and untracked file of the repo outside test folders + the command's
+# profiles / compiler flags + JAVA_HOME) and the compile mark (the compiler plugin's own lists: any compile, here or by hand,
+# rewrites them). Both must match; a run that will compile drops the file first, so only a finished compile records it again.
+# Never: -Force, an own -pl / -f / clean, a command with no compiling phase. A dependency jar replaced under an unchanged repo: -Force.
+$script:KitMainTestRx = '(^|/)src/(test|it|integration-test)/|^(?!(.*/)?src/main/)(.*/)?(cypress|e2e)/'
+function Get-KitMainMark([string]$Dir) {
+  $d = Join-Path $Dir 'target/maven-status/maven-compiler-plugin/compile/default-compile'
+  @('inputFiles.lst', 'createdFiles.lst' | ForEach-Object { $f = Get-Item -LiteralPath (Join-Path $d $_) -ErrorAction SilentlyContinue; if ($f) { $f.LastWriteTimeUtc.Ticks } }) -join ','
+}
 function Get-KitMainSkip([string]$Dir, [string]$Cmd, [switch]$Force) {
   $script:KitMainSkip = $null
-  if ($Cmd -notmatch '\b(mvn|mvnw|mvnd)(\.cmd)?\b' -or $Cmd -match '(^|\s)(-pl|--projects|-f|--file|clean)(\s|=|$)|maven\.main\.skip' -or -not (Test-Path -LiteralPath (Join-Path $Dir 'pom.xml'))) { return '' }
-  $key = "$(Get-CheckSourceKey $Dir $script:KitMainTestRx)"; if (-not $key) { return '' }
-  $file = Join-Path $Dir 'target/kit-main.key'; $script:KitMainSkip = @{ dir = $Dir; file = $file; key = $key; skipped = $false }
-  $was = if (-not $Force -and (Test-Path -LiteralPath (Join-Path $Dir 'target/classes') -PathType Container)) { "$(Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction SilentlyContinue)".Trim() }
-  if ($was -ne $key) { return '' }
+  if ($Cmd -notmatch '\b(mvn|mvnw|mvnd)(\.cmd)?\b' -or -not (Test-Path -LiteralPath (Join-Path $Dir 'pom.xml'))) { return '' }
+  if ($Cmd -notmatch '(^|\s)(compile|test-compile|test|package|integration-test|verify|install|deploy|clean)(\s|$)') { return '' }   # validate, a plugin goal: compiles nothing, records nothing
+  $file = Join-Path $Dir 'target/kit-main.key'; $drop = { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue; '' }   # this run may rewrite target/classes
+  if ($Cmd -match '(^|\s)(-pl|--projects|-f|--file|clean)(\s|=|$)|maven\.main\.skip') { return (& $drop) }
+  $key = "$(Get-CheckSourceKey $Dir $script:KitMainTestRx)"; if (-not $key) { return (& $drop) }
+  $key = "$key $(@([regex]::Matches($Cmd, '(?<=\s)-(P|Dmaven\.compiler|Djava\.version)\S*').Value | Sort-Object) -join ',') $env:JAVA_HOME".Trim()
+  $script:KitMainSkip = @{ dir = $Dir; file = $file; key = $key; skipped = $false }
+  $was = @(if (-not $Force -and (Test-Path -LiteralPath (Join-Path $Dir 'target/classes') -PathType Container)) { Get-Content -LiteralPath $file -TotalCount 2 -ErrorAction SilentlyContinue })
+  if ("$($was[0])".Trim() -ne $key -or "$($was[1])".Trim() -ne (Get-KitMainMark $Dir)) { return (& $drop) }
   $script:KitMainSkip.skipped = $true; '-Dmaven.main.skip=true'
 }
-# after the step: a run that compiled main (exit 0, or its tests ran) records the key; an edit of main sources during it: no record
+# after the step: a run that compiled main (exit 0, or its tests ran) records key + mark; main sources edited during it: no record;
+# edited while a skipped step ran (the gate queue): its result is of the old classes, said so, the key dropped
 function Save-KitMainKey([int]$Rc = 0, [string]$Log = '') {
-  $m = $script:KitMainSkip; $script:KitMainSkip = $null; if (-not $m -or $m.skipped) { return }
+  $m = $script:KitMainSkip; $script:KitMainSkip = $null; if (-not $m) { return }
+  $now = "$(Get-CheckSourceKey $m.dir $script:KitMainTestRx)"; $same = $now -and $m.key.StartsWith($now)
+  if ($m.skipped) { if (-not $same) { Remove-Item -LiteralPath $m.file -Force -ErrorAction SilentlyContinue; Write-Host '[check] main sources changed while this step ran without a main compile: its result is of the old classes; rerun' }; return }
   if ($Rc -and -not ($Log -and (Select-String -LiteralPath $Log -Pattern 'Tests run: \d' -Quiet -ErrorAction SilentlyContinue))) { return }
-  if (-not (Test-Path -LiteralPath (Join-Path $m.dir 'target/classes') -PathType Container) -or "$(Get-CheckSourceKey $m.dir $script:KitMainTestRx)" -ne $m.key) { return }
-  Set-Content -LiteralPath $m.file $m.key -Encoding ascii
+  if (-not $same -or -not (Test-Path -LiteralPath (Join-Path $m.dir 'target/classes') -PathType Container)) { return }
+  Set-Content -LiteralPath $m.file @($m.key, (Get-KitMainMark $m.dir)) -Encoding ascii
+}
+# a skipped step keeps the stamp slot of its command without the flag (crafty.ps1 hashes the command it runs: Invoke-Check's $cmd),
+# so an unchanged rerun is still refused / skipped by its last result
+function Get-KitMainSlot([string]$Slot) {
+  $c = "$(Get-Variable cmd -ValueOnly -ErrorAction SilentlyContinue)"; $fl = ' -Dmaven.main.skip=true'
+  if ($Slot -and $c.Contains($fl) -and (Get-Command Hash12 -ErrorAction SilentlyContinue)) { "$(($Slot -split '\|')[0])|$(Hash12 $c.Replace($fl, ''))" } else { $Slot }
 }
 # ---- ci runs: tests.ciRuns = "<repo>/<module>" globs whose MR pipeline runs the full build + suite (check skips them locally)
 function Exit-KitCiRuns {   # in crafty.ps1 check: its $Step, $Tests, $AllTests, $Force, $Show, $st, Get-CheckRepo, ConvertTo-GlobRx

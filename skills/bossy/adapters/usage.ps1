@@ -4,7 +4,7 @@ budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (s
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L10 usage · L385 context · L733 waste (owner 2026-11-23 · L803 split · L877 budget · L963 handoffs · L975 limits ·
-  L994 workflow config · L1008 dead runs
+  L994 workflow config · L1019 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -915,7 +915,7 @@ function Resolve-KitPlanModel([string]$Model, [string]$Tool) { if ($Model -and $
 # supervise: one line while the override is live (the coordinator passes the model on every hand spawn: agent files are not dated)
 function Get-KitSuperviseFlagsModelOverride([switch]$AutoFix) {
   if ($ov = Get-KitModelOverride) { [pscustomobject]@{ level = 'INFO'; what = "model override $($ov.model) until $($ov.until.ToString('yyyy-MM-dd HH:mm zzz'))"; kind = 'MODEL OVERRIDE'
-      action = "Pass model: '$($ov.model)' on every Agent spawn and in tidy args.model; buildy / testy args: config: { tiers: { fast: '$($ov.model)', balanced: '$($ov.model)', strong: '$($ov.model)' } } (their first step runs before the CONFIG line; the rest and resumes take it from that line); models.tiers stays as it is: after until it applies again (kit.local.json models.override)" } }
+      action = "Pass model: '$($ov.model)' on every Agent spawn and in tidy args.model; buildy / testy args, as the LAST key: config: { tiers: { fast: '$($ov.model)', balanced: '$($ov.model)', strong: '$($ov.model)' } } (their first step runs before the CONFIG line; the rest and resumes take it from that line); models.tiers stays as it is: after until it applies again (kit.local.json models.override)" } }
 }
 function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Role = '') {
   $ex = (Get-Content (Join-Path $KitConf.Kit 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).budget
@@ -992,6 +992,17 @@ function Get-KitSuperviseFlagsUsageLimit([switch]$AutoFix, [double]$Hours = 3) {
       problem = "$($l.text) (agents on $(@($l.models) -join ', ')); they stop"; action = "buildy / testy steps retry once on the next tier with another model (<label>@up; one model in every tier: none); until the reset: point that tier at an available model (kit.local.json models.tiers), then resume the stopped run (bossy.ps1 resume -All)" } }
 }
 # ---- workflow config: the CONFIG line of launch -Self (from bossy.ps1: its cap)
+# a recovered run's args + config (today's tiers / models: a resume replays the cached CONFIG step); the recorded args stay a
+# byte-exact prefix. Only a LAST config key is replaced (a former recover's, or one the coordinator passed last): the text after the
+# last ,"config": must be one JSON object + the closing brace; a config in the middle stays, the appended one wins (2026-11-26: a
+# greedy match cut every key after it)
+function Add-KitResumeConfig([string]$Aj, [string]$Leaf) {
+  $t = "$Aj".TrimEnd(); if ($Leaf -notin 'buildy.js', 'testy.js' -or $t -notmatch '^\{[\s\S]*\S[\s\S]*\}$') { return $Aj }
+  $i = $t.LastIndexOf(',"config":{')
+  if ($i -gt 0) { try { $null = $t.Substring($i + 10, $t.Length - $i - 11) | ConvertFrom-Json -ErrorAction Stop; $t = $t.Substring(0, $i) + '}' } catch { } }
+  $wc = Get-KitWorkflowConfig
+  "$($t.Substring(0, $t.Length - 1)),""config"":$(ConvertTo-Json ([ordered]@{ tiers = $wc.tiers; models = $wc.models }) -Depth 5 -Compress)}"
+}
 # a workflow's config (CONFIG line of launch -Self): models.<phase>, repos[].role by name + alias, qa.lanes
 function Get-KitWorkflowConfig {
   $roles = [ordered]@{}; $local = [ordered]@{}; $serial = @()
