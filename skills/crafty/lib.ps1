@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L465 leases · L908 status · L1120 tracker · L1449 prior ·
-  L1468 ask bugs · L1653 deploy words · L1697 git-host · L1885 kitlog · L1996 params · L2301 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L471 leases · L914 status · L1126 tracker · L1455 prior ·
+  L1474 ask bugs · L1659 deploy words · L1703 git-host · L1891 kitlog · L2002 params · L2307 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -312,8 +312,14 @@ function Get-GateTicket([string]$Kind, [string]$Cmd, [double]$MedianSec) {
   @{ prio = $p; sec = $(if ($MedianSec -ge 0) { [int]$MedianSec } else { 600 }); since = (Get-KitStamp stored $(if ($sv -and $sv -lt $now -and ($now - $sv).TotalHours -lt 24) { $sv } else { $now })) }
 }
 function Get-GateAhead($Queue, [int]$Pos) { [math]::Ceiling(($Queue | Select-Object -First $Pos | Measure-Object sec -Sum).Sum / 60) }
-# lane priority (envy.ps1 priority): params.json priority { <agent>: { run, until } }
-function Get-KitHighAgents { $p = (Read-KitParams).priority; @(if ($p -is [Collections.IDictionary]) { $p.Keys | Where-Object { [datetime]$p[$_].until -gt (Get-Date) } }) }
+# lane priority (envy.ps1 priority): params.json priority { <agent>: { run, until } } + the live board agents of priorityRuns
+# { <run>: until } (a successor or fix-round agent that joined later); the state is read at most once a minute
+function Get-KitHighAgents {
+  $s = Get-KitParamState; $p = $s.priority; $r = $s.priorityRuns; $now = Get-Date
+  $runs = @(if ($r -is [Collections.IDictionary]) { $r.Keys | Where-Object { [datetime]$r[$_] -gt $now } })
+  @(if ($p -is [Collections.IDictionary]) { $p.Keys | Where-Object { [datetime]$p[$_].until -gt $now } }
+    if ($runs.Count) { Read-KitJsonFiles (Get-KitPath board) | Where-Object { "$($_.run)" -in $runs -and "$($_.status)" -ne 'left' } | ForEach-Object { "$($_.agent)" } }) | Select-Object -Unique
+}
 function Test-KitHigh([string]$Agent) { [bool]($Agent -and $Agent -in @(Get-KitHighAgents)) }
 # class (a high owner one class up); then a 20+ min wait, fewer recent starts, shorter, oldest
 function Get-GateOrder($Tickets, [hashtable]$Recent, [datetime]$Now) {

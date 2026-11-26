@@ -52,12 +52,12 @@ $lb = & { . $lkL; $script:busyN = 0; function Test-KitAgentBusy($a) { $script:bu
   $b1 = @(Wait-Leases lw @('api') @() @()) -join ' '; $script:Preempted = @(); $script:LeaseWait0 = $null; $script:busyN = 0; $script:MaxLeaseMin = 0
   $b2 = @(Wait-Leases lw @('api') @() @()) -join ' '
   # coordinator 2026-11-26 (a deploy swapped a lane under a matrix UI run): no busy file, but the lease is in use (lastUse) = waited for too
-  $script:Preempted = @(); $script:LeaseWait0 = $null; $script:MaxLeaseMin = 120; function Test-KitAgentBusy($a) { $false }; Update-State lw { param($x) $x.leases.B1.lastUse = (Now) }
+  $script:Preempted = @(); $script:LeaseWait0 = $null; $script:MaxLeaseMin = 120; function Test-KitAgentBusy($a) { $false }; Update-State lw { param($x) $x.leases.B1.lastUse = (Now) }; $lu0 = Test-LeaseBusy lw B1; Update-State lw { param($x) $x.leases.B1.lastTraffic = (Now) }   # a verb's lastUse alone is no use; client traffic is
   $gkp = ${function:Get-KitParam}; $script:lbN = 0; function Get-KitParam { if ($args[0] -eq 'localEnv.leaseBusyMinutes') { if ($script:lbN++ -lt 2) { 3 } else { 0 } } else { & $gkp @args } }   # in use for the first wait round only
   $lu = "$(Test-LeaseBusy lw B1)/$(Test-LeaseBusy lw NOPE)"
   $b3 = @(Wait-Leases lw @('api') @() @()) -join ' '
-  "$($b1 -match 'B1 on api \(at most \d+ min: a check runs\)')|$($b1 -match 'told B1')|$($b2 -notmatch 'a check runs' -and $b2 -match 'told B1')|$lu|$($b3 -match 'a check runs' -and $b3 -match 'told B1')|$(Test-LeaseBusy lw B1)" }
-Expect "leases: a holder whose check runs, or whose lease was used in the last leaseBusyMinutes (a matrix or phone run: no busy file), is not swapped under at leaseMinutes, waited for up to maxLeaseMinutes, then told ($lb)" ($lb -eq 'True|True|True|True/False|True|False')
+  "$($b1 -match 'B1 on api \(at most \d+ min: a check runs\)')|$($b1 -match 'told B1')|$($b2 -notmatch 'a check runs' -and $b2 -match 'told B1')|$lu0|$lu|$($b3 -match 'a check runs' -and $b3 -match 'told B1')|$(Test-LeaseBusy lw B1)" }
+Expect "leases: a holder whose check runs, or whose lease was used in the last leaseBusyMinutes (a matrix or phone run: no busy file), is not swapped under at leaseMinutes, waited for up to maxLeaseMinutes, then told ($lb)" ($lb -eq 'True|True|True|False|True/False|True|False')
 # owner 2026-11-26 (baseline in place; lane DB donor = a clean baseline mark): the liquibase unmerged verb = applied changeSets the
 # changelog files lack (XML, formatted SQL, YAML), per schema
 Set-JsonFile (Join-Path $laneKit 'skills/crafty/kit.local.json') @{ migrations = @{ tool = 'liquibase' }; localEnv = @{ envs = @{
@@ -67,8 +67,9 @@ $um = & { . $lkL; $umRoot = New-Item -ItemType Directory -Force (Join-Path (Kd) 
   Set-Content (Join-Path $umRoot 'a.xml') '<databaseChangeLog><changeSet id="1" author="dev"><sql>x</sql></changeSet><changeSet author="dev" id="2"/></databaseChangeLog>'
   Set-Content (Join-Path $umRoot 'b.sql') "--liquibase formatted sql`n--changeset ann:3`nSELECT 1;"
   Set-Content (Join-Path $umRoot 'c.yaml') "databaseChangeLog:`n  - changeSet:`n      id: 4`n      author: bob`n      changes: []"
+  Set-Content (Join-Path $umRoot 'd.xml') '<databaseChangeLog logicalFilePath="db/legacy name.xml"><changeSet id="9" author="dev"/></databaseChangeLog>'
   function Resolve-MigSets { @([pscustomobject]@{ name = 'm'; tool = 'liquibase'; searchPath = (Split-Path $umRoot); schemas = @('s1', 's2') }) }
-  function Invoke-DbSql($qe, $qs) { @('dev', '1', 'db/a.xml'), @('ann', '3', 'classpath:db/b.sql'), @('bob', '4', 'c.yaml'), @('dev', '2', 'db\A.xml'); if ($qs -match '\[s2\]') { @('eve', '77', 'x.xml'), @('dev', '1', 'db/other.xml') } }
+  function Invoke-DbSql($qe, $qs) { @('dev', '1', 'db/a.xml'), @('ann', '3', 'classpath:db/b.sql'), @('bob', '4', 'c.yaml'), @('dev', '2', 'db\A.xml'), @('dev', '9', 'db/legacy name.xml'); if ($qs -match '\[s2\]') { @('eve', '77', 'x.xml'), @('dev', '1', 'db/other.xml') } }
   $umR = @(& $KitAdapters['migration']['liquibase']['unmerged'] @{ e = 'don' }); "$($umR.Count)|$($umR[0].schema)|$($umR[0].count)|$($umR[0].sample -join ',')" }
 Expect "liquibase unmerged: a schema whose DATABASECHANGELOG holds changeSets the changelog files lack is named with its count (an author:id of another file counts); one that matches: none ($um)" ($um -eq '1|s2|2|eve:77@x.xml,dev:1@other.xml')
 # the block reasons in order (cheapest first), said once; clean = a new baseline mark; an init with a donor that is no clean baseline is refused
@@ -105,10 +106,13 @@ Expect "baseline: blocked by a train, a layer, a lease, a hold (a donor's hold: 
 # running check: leaseMinutes), a cold lane opens for them without the queue wait, others keep off their lane
 $tl1 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl1.Start(); $pzPort = $tl1.LocalEndpoint.Port; $tl1.Stop()
 Set-JsonFile (Join-Path $laneKit 'skills/crafty/kit.local.json') @{ localEnv = @{ leaseMinutes = 5; lanes = @{ openAfterMinutes = 15 }; envs = @{ pz = @{ lanes = @{ max = 2 }; services = @(@{ name = 'api'; start = 'echo api'; port = $pzPort }) } } } } 8
-$pz = & { . $lkL; $pzNow = (Get-Date).ToString('o'); $pzBd = Get-KitPath board -Create
+$pz = & { . $lkL; $pzNow = (Get-Date).ToString('o'); $pzBd = Get-KitPath board -Create; $pzCa = $env:CLAUDE_AGENT; $env:CLAUDE_AGENT = 'devy-x'
+  $vA = try { Invoke-LocalEnv priority high -Agent devy-x } catch { "$_" }; $env:CLAUDE_AGENT = ''
   Set-JsonFile (Join-Path (Get-KitPath launches -Create) 'self-buildy-run-x.json') @{ run = 'run-x'; args = @{ agents = @(@{ id = 'H1' }, @{ id = 'H2' }) } }
   Set-JsonFile (Join-Path $pzBd 'devy-7-1.json') @{ agent = 'devy-7'; run = 'run-x'; status = 'step 2'; beat = $pzNow }; Set-JsonFile (Join-Path $pzBd 'devy-6-1.json') @{ agent = 'devy-6'; run = 'run-x'; status = 'left'; beat = $pzNow }
   $v1 = @(Invoke-LocalEnv priority high -Run run-x) -join ' '; $v2 = @(Invoke-LocalEnv priority) -join ' | '; $hi = "$(Test-KitHigh H1)/$(Test-KitHigh devy-7)/$(Test-KitHigh devy-6)/$(Test-KitHigh N1)"
+  Set-JsonFile (Join-Path $pzBd 'devy-8-1.json') @{ agent = 'devy-8'; run = 'run-x'; status = 'step 1'; beat = $pzNow }   # joined the high run later
+  $hi += "/$(Test-KitHigh devy-8)/$([math]::Abs((([datetime](Read-KitParams).priority.H1.until) - (Get-Date).AddHours(72)).TotalMinutes) -lt 2)"; Remove-Item (Join-Path $pzBd 'devy-8-1.json')
   $go = @(Get-GateOrder @(@{ pid = 1; prio = 0; owner = 'N1'; sec = 10; since = $pzNow }, @{ pid = 2; prio = 0; owner = 'H1'; sec = 900; since = $pzNow }, @{ pid = 3; prio = 1; owner = 'H2'; sec = 5; since = $pzNow }) @{} (Get-Date) | ForEach-Object { $_.pid }) -join ','
   $env:KIT_PRIORITY = 'high'; $gt = (Get-GateTicket 'build' 'mvn' 60).prio; Remove-Item Env:KIT_PRIORITY
   function Send-LeaseNotice { }; function Test-KitAgentBusy($ba) { $false }
@@ -125,10 +129,12 @@ $pz = & { . $lkL; $pzNow = (Get-Date).ToString('o'); $pzBd = Get-KitPath board -
   Update-State pz { param($x) $x.leases = @{}; $x.train = $null; $x.requests = @() }
   Update-State pz2 { param($x) $x.services = @{ api = @{ status = 'up' } }; $x.release.repos.r = @{ layers = @(@{ branch = 'b'; agent = 'F1' }) }; $x.requests = @(@{ id = 'w1'; kind = 'deploy'; status = 'queued'; agent = 'F1'; at = (Get-Date).AddMinutes(-1).ToString('o') }) }
   $sl = "$(Select-Lane pz S1 0 'deploy' 6>$null)/$(Select-Lane pz H2 0 'deploy' 6>$null)"
+  Update-State pz { param($x) $x.services = @{ api = @{ status = 'up' } }; $x.release.repos.r = @{ layers = @(@{ branch = 'g1'; agent = 'G1' }, @{ branch = 'g2'; agent = 'G2' }) } }   # both warm: 2 normal agents here, 1 there
+  $sl += "/$(Select-Lane pz S9 0 'logs' 6>$null)"; $k0 = Select-Lane pz S9 0 'deploy' 6>$null; Set-LanePriority high @('F1') ''; $sl = "$sl/$k0/$(Select-Lane pz S8 0 'deploy' 6>$null)"; Set-LanePriority normal @('F1') ''
   $v3 = @(Invoke-LocalEnv priority normal -Run run-x) -join ' '; $v4 = @(Invoke-LocalEnv priority) -join ' '; $v5 = try { Invoke-LocalEnv priority high -Run nope } catch { "$_" }
-  $pzV = "$($v1 -match '^priority high: H1, H2, devy-7 for 72 h')/$($v2 -match 'high H1 \(run run-x\) until \d\d-\d\d \d\d:\d\d')/$($v3 -eq 'priority normal: H1, H2, devy-7')/$($v4 -match 'no high agent')/$($v5 -match 'nope has no launch record')"
+  $pzV = "$($v1 -match '^priority high: H1, H2, devy-7 for 72 h')/$($v2 -match 'high H1 \(run run-x\) until \d\d-\d\d \d\d:\d\d')/$($v3 -eq 'priority normal: H1, H2, devy-7')/$($v4 -match 'no high agent')/$($v5 -match 'nope has no launch record')/$($vA -match 'never an agent .devy-x.')"; $env:CLAUDE_AGENT = $pzCa
   "$pzV|$hi|$go|$gt|$w1|$w2|$($told -match 'told N1 after 0 min')|$le|$jn|$qh|$sl" }
-Expect "lane priority: priority high -Run marks the run's areas + live board agents (list, normal, an unknown run); gate: a high owner one class up; a high train: holders told at once, its builds first; late requests join a train waiting for leases (a restore never); start queue: a high lane first; a cold lane opens for a high agent at once ($pz)" ($pz -eq 'True/True/True/True/True|True/True/False/False|2,3,1|-1|5/120/|0/5/, high priority|True|high|True/r1,r2/in-train/queued/False/True|big|pz2/pz')
+Expect "lane priority: priority high -Run marks the run's areas + live board agents (list, normal, an unknown run); gate: a high owner one class up; a high train: holders told at once, its builds first; late requests join a train waiting for leases (a restore never); start queue: a high lane first; a cold lane opens for a high agent at once ($pz)" ($pz -eq 'True/True/True/True/True/True|True/True/False/False/True/True|2,3,1|-1|5/120/|0/5/, high priority|True|high|True/r1,r2/in-train/queued/False/True|big|pz2/pz/pz/pz2/pz')
 # agent cap (2026-11-26): localEnv.pressureStopsPerHour (4) lane stops under memory pressure in 60 min = one WATCH naming the live
 # devy / checky agents and the cap; fewer, older ones or other stops: none
 Copy-Item (Join-Path $src 'skills/bossy/adapters/localenv-supervise.ps1') (New-Item -ItemType Directory -Force (Join-Path $laneKit 'skills/bossy/adapters')); $supBossy = Join-Path $laneKit 'skills/bossy/bossy.ps1'

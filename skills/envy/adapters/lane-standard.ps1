@@ -283,18 +283,22 @@ function Update-Baseline([string]$e, $st, [switch]$Checked) {   # -Checked: Get-
     if ("$($h.why)" -ne $why) { "baseline stays $($b.name): $why" }; return
   }
   $s2 = Read-State $e
-  if ((Get-BaselineBusy $e -Donor:$Checked) -or [int]$s2.release.n -ne [int]$st.release.n -or @($s2.marks).Count -ne @($st.marks).Count) { return }
+  if ((Get-BaselineBusy $e) -or [int]$s2.release.n -ne [int]$st.release.n -or @($s2.marks).Count -ne @($st.marks).Count) { return }
   $n = New-Mark $e (New-KitName baseline $e) 'baseline'
   Update-State $e { param($x) $x.Remove('baselineHold') }; Event $e 'baseline' @{ name = $n; from = $b.name; release = [int]$st.release.n }
   "mark ${n}: clean on release $($st.release.n) (no layer, lease or hold, seed and clean checks green, no unmerged migration): the new baseline (was $($b.name))"
 }
 # services[].init.donor (an env or lane id): the init copies that env's DB, so it must be a clean baseline (owner 2026-11-26:
-# never a lane's live DB): checked before the copy (the donor's baseline is promoted first) and again after it (-Copied <the
-# init.creates path>): a lease or train that came during the copy fails the init, its marker removed
-function Assert-InitDonor([string]$e, $s, [string]$Copied) {
+# never a lane's live DB): checked before the copy (the donor's baseline is promoted first, unless a hold keeps it up) and again
+# after it (-Copied <the init.creates path>): a lease or train that came during the copy fails the init; its marker goes (a
+# file) or is renamed <marker>.tainted (a folder: nothing is deleted), so the next start runs the init again
+function Assert-InitDonor([string]$e, $s, [switch]$Copied, [string]$Marker) {
   $d = "$($s.init.donor)"; if (-not $d) { return }
   $why = Get-BaselineBlock $d -Donor
-  if ($why -and $Copied) { if (Test-Path -LiteralPath $Copied -PathType Leaf) { Remove-Item -LiteralPath $Copied -Force }; throw "[$e] $($s.name): init failed: donor $d was used during the copy ($why): remove the copied data, then start again once $d is clean" }
+  if ($why -and $Copied) {
+    if ($Marker -and (Test-Path -LiteralPath $Marker -PathType Leaf)) { Remove-Item -LiteralPath $Marker -Force } elseif ($Marker -and (Test-Path -LiteralPath $Marker)) { Move-Item -LiteralPath $Marker "$($Marker.TrimEnd('\', '/')).tainted" -Force }
+    throw "[$e] $($s.name): init failed: donor $d was used during the copy ($why): remove the copied data, then start again once $d is clean"
+  }
   if ($why) { throw "[$e] $($s.name): init refused: donor $d is no clean baseline ($why): retry once it is (envy.ps1 up -Env $d -Services <its db> keeps it up without a lease), or name another init.donor" }
   if (-not $Copied) { foreach ($k in @(Update-Baseline $d (Read-State $d) -Checked)) { "[$d] $k" } }
 }

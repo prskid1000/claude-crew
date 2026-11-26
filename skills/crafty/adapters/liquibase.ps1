@@ -215,8 +215,10 @@ function Get-LiquibaseUnmerged([string]$e) {
     foreach ($root in @($roots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })) {
       foreach ($f in Get-ChildItem -LiteralPath $root -Recurse -File -Include *.xml, *.sql, *.yaml, *.yml) {
         $t = [IO.File]::ReadAllText($f.FullName); if ($t -notmatch '(?i)changeset') { continue }
-        foreach ($k in (Get-ChangeSetBlocks $t).Keys) { $null = $have.Add("$k@$($f.Name)") }   # + the file's leaf: one author:id in two files is two changeSets
-        foreach ($m in [regex]::Matches($t, '(?m)^\s*-?\s*changeSet:\s*\r?\n\s*id:\s*["'']?(?<id>[^"''\r\n]+?)["'']?\s*\r?\n\s*author:\s*["'']?(?<au>[^"''\r\n]+?)["'']?\s*$')) { $null = $have.Add("$($m.Groups['au'].Value):$($m.Groups['id'].Value)@$($f.Name)") }
+        # + the file's leaf (one author:id in two files is two changeSets) and each logicalFilePath leaf (what FILENAME then holds)
+        $names = @($f.Name) + @([regex]::Matches($t, 'logicalFilePath\s*[=:]\s*["'']?([^"''\r\n>]+)') | ForEach-Object { ($_.Groups[1].Value.Trim() -split '[\\/]')[-1] })
+        foreach ($k in (Get-ChangeSetBlocks $t).Keys) { foreach ($n1 in $names) { $null = $have.Add("$k@$n1") } }
+        foreach ($m in [regex]::Matches($t, '(?m)^\s*-?\s*changeSet:\s*\r?\n\s*id:\s*["'']?(?<id>[^"''\r\n]+?)["'']?\s*\r?\n\s*author:\s*["'']?(?<au>[^"''\r\n]+?)["'']?\s*$')) { foreach ($n1 in $names) { $null = $have.Add("$($m.Groups['au'].Value):$($m.Groups['id'].Value)@$n1") } }
       }
     }
     $scs = @($ms.schemas | Where-Object { $_ }); if (-not $scs.Count) { $scs = @(LiquibaseSchemas $e) }   # a set naming no scope: every scope with a history table

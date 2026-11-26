@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db-presets.ps1; tenants.model = adapters/tenant-models.ps1 + tenant-schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L240 state · L287 layer drops · L362 leases · L472 code · L483 migrations ·
-  L486 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L635 shared builds · L766 hooks · L840 marks · L1024 seed ·
-  L1091 processes · L1447 daemon · L1928 cleanup · L2000 verbs
+Sections: L36 config · L240 state · L287 layer drops · L362 leases · L473 code · L484 migrations ·
+  L487 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L636 shared builds · L767 hooks · L841 marks · L1025 seed ·
+  L1092 processes · L1448 daemon · L1929 cleanup · L2001 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -430,6 +430,7 @@ function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[
     $held = @(@($held) + @($o.who) | Select-Object -Unique); if (-not $w0) { $w0 = Get-Date }; $waited = ((Get-Date) - $script:LeaseWait0).TotalMinutes; $on = @(@($services) + @($repos) | Where-Object { $_ }) -join ', '
     $busy = $waited -ge $lw -and $waited -lt $lx -and @($o.who | Where-Object { Test-LeaseBusy $e $_ }).Count   # a check runs or the lease is in use: no swap under it
     if ($waited -ge $lw -and -not $busy) {
+      if (Test-LateRequests $e) { & $logWait; return }   # they join first (Run-Train): holders are told once, for the full set
       Send-LeaseNotice $e $o.who "deploy of $on starting (a train waited $([int]$waited) min, leaseMinutes $lw$ln): pause your checks there; resume after 'deploy done'"
       $script:Preempted = @(@($script:Preempted) + @($o.who) | Select-Object -Unique)
       "[$e] told $($o.who -join ', ') after $([int]$waited) min: deploying while their leases stay"
@@ -1361,7 +1362,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     "[$e] $($s.name): init (once; log $ilog)"; $t0i = Get-Date
     $code = Invoke-Shell $ic $ilog (EnvVars $e $s) ([int]$(if ($s.init.timeoutSec) { $s.init.timeoutSec } else { 1800 }))
     if ($code) { Event $e 'init-failed' @{ service = $s.name; why = (Get-ShellWhy $code) }; throw "[$e] $($s.name): init failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 5) -join ' | '). Log: $ilog" }
-    Assert-InitDonor $e $s (Expand-Placeholders "$($s.init.creates)" $e $s $dir ''); Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
+    Assert-InitDonor $e $s -Copied (Expand-Placeholders "$($s.init.creates)" $e $s $dir ''); Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
     if ((DbSvc $e).name -eq $s.name) { $null = New-Mark $e (New-KitName baseline $e) 'baseline' }
   }
   # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
@@ -1846,7 +1847,7 @@ try {
           }
         }
         $usedNames = @($used.Keys)
-        if ($usedNames.Count) { Update-State $e { param($z) foreach ($l in $z.leases.Values) { if (-not $l.owner -and @(Closure $e @($l.services) | Where-Object { $_ -in $usedNames }).Count -and -not ($l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalSeconds -lt 60)) { $l.lastUse = (Now) } } } }
+        if ($usedNames.Count) { Update-State $e { param($z) foreach ($l in $z.leases.Values) { if (-not $l.owner -and @(Closure $e @($l.services) | Where-Object { $_ -in $usedNames }).Count -and -not ($l.lastTraffic -and ((Get-Date) - [datetime]$l.lastTraffic).TotalSeconds -lt 60)) { $l.lastUse = (Now); $l.lastTraffic = $l.lastUse } } } }
         $st = Read-State $e
       }
       $need = @{}

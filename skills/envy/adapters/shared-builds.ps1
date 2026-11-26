@@ -289,8 +289,13 @@ function Set-LanePriority([string]$Level, [string[]]$Agents, [string]$Run) {
   $f = Get-KitPath param-state -Create
   Invoke-KitLocked $f { $s = Read-KitParams -Strict; if ($s.priority -isnot [Collections.IDictionary]) { $s.priority = @{} }
     foreach ($pk in @($s.priority.Keys)) { if ([datetime]$s.priority[$pk].until -le (Get-Date)) { $s.priority.Remove($pk) } }   # ended ones go
-    foreach ($pa in $Agents) { if ($Level -eq 'high') { $s.priority[$pa] = @{ run = $Run; until = (Get-KitStamp stored (Get-Date).AddHours(72)) } } else { $s.priority.Remove($pa) } }   # TODO-PARAM (fixed default)
+    $until = Get-KitStamp stored (Get-Date).AddHours(72)   # TODO-PARAM (fixed default)
+    foreach ($pa in $Agents) { if ($Level -eq 'high') { $s.priority[$pa] = @{ run = $Run; until = $until } } else { $s.priority.Remove($pa) } }
+    if ($s.priorityRuns -isnot [Collections.IDictionary]) { $s.priorityRuns = @{} }   # the run itself: agents that join it later are high too
+    foreach ($pk in @($s.priorityRuns.Keys)) { if ([datetime]$s.priorityRuns[$pk] -le (Get-Date)) { $s.priorityRuns.Remove($pk) } }
+    if ($Run) { if ($Level -eq 'high') { $s.priorityRuns[$Run] = $until } else { $s.priorityRuns.Remove($Run) } }
     Write-KitAtomic $f ($s | ConvertTo-Json -Depth 8 -Compress) }
+  $script:KitParamMemo.Remove('state')   # this process reads it fresh; others within a minute
 }
 # a lane is high while a high agent has an open request there or (not -Train) a lease
 function Test-LaneHigh([string]$e, [switch]$Train) {
@@ -302,15 +307,18 @@ function Test-LaneHigh([string]$e, [switch]$Train) {
 # maxLeaseMinutes; a high train: holders are told at once, a running check is waited for leaseMinutes (its next release point)
 function Get-LeaseWaitMin([string]$e) { if (Test-LaneHigh $e -Train) { 0, $script:LeaseMin, ', high priority' } else { $script:LeaseMin, $script:MaxLeaseMin, '' } }
 # a holder a train never swaps under before maxLeaseMinutes: its check runs (gate, browser.mjs with CLAUDE_AGENT: lib
-# Test-KitAgentBusy) or its lease was used in the last localEnv.leaseBusyMinutes (client traffic on its services, a verb of its
-# agent): a matrix or phone UI run writes no busy file (coordinator 2026-11-26: a deploy swapped a lane mid-test)
+# Test-KitAgentBusy) or its lease is new or saw client traffic on its services (lastTraffic, the loop's tick) in the last
+# localEnv.leaseBusyMinutes: a matrix or phone UI run writes no busy file (coordinator 2026-11-26: a deploy swapped a lane
+# mid-test); a status or logs call alone is no use
 function Test-LeaseBusy([string]$e, [string]$key) {
   if (Test-KitAgentBusy ($key -split '/')[0]) { return $true }
-  $l = (Read-State $e).leases[$key]; [bool]($l -and $l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalMinutes -lt [double](Get-KitParam 'localEnv.leaseBusyMinutes'))
+  $l = (Read-State $e).leases[$key]; $used = @(@($l.lastTraffic, $l.at) | Where-Object { $_ } | ForEach-Object { [datetime]$_ } | Sort-Object)[-1]
+  [bool]($used -and ((Get-Date) - $used).TotalMinutes -lt [double](Get-KitParam 'localEnv.leaseBusyMinutes'))
 }
 # train gather (10.5% of requests came during their lane's lease wait and took a train of their own, 2026-11-23..26): deploys,
 # drops and refreshes queued while the train waited for leases join it (nothing merged or built yet) -> $true: Run-Train starts
 # over with them (one lease clock per train: no second wait)
+function Test-LateRequests([string]$e) { [bool]@((Read-State $e).requests | Where-Object { $_.status -eq 'queued' -and $_.kind -in 'deploy', 'drop', 'refresh' }).Count }
 function Join-LateRequests([string]$e, [string]$tid) {
   $o = @{ ids = @() }
   Update-State $e { param($x) if (-not $x.train -or $x.train.id -ne $tid) { return }
@@ -321,10 +329,11 @@ function Join-LateRequests([string]$e, [string]$tid) {
 }
 Register-KitAdapter envy-verb priority @{ ops = @('high', 'normal', 'list'); run = {
   if ($Op -in 'high', 'normal') {
+    if ($env:CLAUDE_AGENT) { throw "priority ${Op}: the coordinator sets it on the owner's word, never an agent ($env:CLAUDE_AGENT)" }
     $pa = @(if ($Name) { Get-PriorityAgents $Name } else { Split-KitList $Agent | Where-Object { $_ -ne 'main' } })
     if (-not $pa.Count) { throw "priority $Op needs -Run <run>$(if ($Name) { " ($Name has no launch record with areas and no live board row)" }) or -Agent <id,..>" }
     Set-LanePriority $Op $pa "$Name"; "priority ${Op}: $($pa -join ', ')$(if ($Op -eq 'high') { ' for 72 h: first in the build gate and the start queue; their train tells holders at once (a running check: leaseMinutes); a cold lane opens without the queue wait' })"; return
   }
-  $pr = (Read-KitParams).priority; $rows = @(if ($pr) { $pr.Keys | Where-Object { Test-KitHigh $_ } | Sort-Object })
-  if (-not $rows.Count) { 'priority: no high agent (envy.ps1 priority high -Run <run>)' } else { foreach ($pa in $rows) { "high $pa$(if ($pr[$pa].run) { " (run $($pr[$pa].run))" }) until $(([datetime]$pr[$pa].until).ToString('MM-dd HH:mm'))" } }
+  $pr = (Read-KitParams).priority; if ($pr -isnot [Collections.IDictionary]) { $pr = @{} }; $rows = @(Get-KitHighAgents | Sort-Object)
+  if (-not $rows.Count) { 'priority: no high agent (envy.ps1 priority high -Run <run>)' } else { foreach ($pa in $rows) { "high $pa$(if ($pr[$pa].run) { " (run $($pr[$pa].run)) until $(([datetime]$pr[$pa].until).ToString('MM-dd HH:mm'))" } else { ' (joined a high run)' })" } }
 } }
