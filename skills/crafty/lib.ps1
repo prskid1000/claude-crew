@@ -2038,7 +2038,7 @@ function Get-KitLoadTags { Get-KitMemo $script:KitParamMemo load 60 { $l = try {
     @{ availGB = $l.availGB; cpu = $l.cpu; agents = $l.agents; lb = $(if ([double]$l.cpu -ge 80 -or [double]$l.agents -ge [double](Get-KitParam 'supervise.manyAgents')) { 'busy' } else { 'calm' }) } } }
 # $Default = the call site's fixed default (clamps); Result ok | fail | timeout (censored) | oom | short
 function Add-KitParamObs([string]$Key, [double]$Value, [string]$Context = '', [string]$Result = 'ok', [double]$Default = 0) {
-  $sp = Get-KitParamSpec $Key; if (-not $sp -or $sp.how -eq 'config' -or "$(Get-KitSetting 'params.learning' 'on')" -eq 'off') { return }
+  $sp = Get-KitParamSpec $Key; if (-not $sp -or $sp.how -eq 'config' -or "$(Get-KitSetting 'params.learning' 'on')" -eq 'off') { return }; if ($Default -le 0 -and $sp.default) { $Default = [double]$sp.default }
   $w = if ($Result -eq 'ok' -and $sp.sample -gt 1) { if ([long]((Get-KitNow).Ticks / 10000) % [int]$sp.sample) { return }; [int]$sp.sample } else { 1 }   # 1 in N ok lines, weight N; failures always
   if (-not $script:KitBoot) { $script:KitBoot = (Get-KitBootTime).ToString('yyyy-MM-ddTHH:mmzzz') }   # a reboot changes it
   $now = Get-KitNow; $ld = Get-KitLoadTags; $o = [ordered]@{ at = (Get-KitStamp stored $now); key = $Key; ctx = $Context; v = [math]::Round($Value, 3); r = $Result; d = $Default; w = $w; boot = $script:KitBoot; host = [Environment]::MachineName; lb = $ld.lb }

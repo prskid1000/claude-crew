@@ -130,7 +130,7 @@ function readRule(ti) {
   const maxL = param('guard.readMaxLines'), maxKB = param('guard.readMaxKB'); let kb = 0, lines = 0
   const ranged = ti.offset != null || ti.limit != null, from = Math.max(1, Number(ti.offset) || 1), upto = from + (ti.limit != null ? Number(ti.limit) || 0 : 2000)   // no limit: the Read tool's 2000 lines
   // a kit script is run, not read (owner 2026-11-26): its head says how; the live kit's only (a kit worktree's copy is kitty's and revy's work)
-  if (!ranged && resolve(f).toLowerCase().startsWith(kit.toLowerCase() + sep) && /[\\/](skills|workflows|scripts)[\\/].*\.(ps1|py|m?js)$/i.test(f)) {
+  if (!ranged && resolve(f).toLowerCase().startsWith(kit.toLowerCase() + sep) && /^(skills|workflows|scripts)[\\/](?!.*node_modules[\\/]).*\.(ps1|py|m?js)$/i.test(resolve(f).slice(kit.length + 1))) {
     const cap = param('guard.kitScriptLines'); let n = 0; try { for (const b of readFileSync(f)) if (b === 10) n++ } catch { return }
     if (cap && n > cap) deny(`kit guard: ${f} is a kit script (${n} lines): run it, never read it whole: its top 40 lines (Read limit 40) hold the usage, the verbs and the Sections: map; then only the section you need (offset / limit)`) }
   try { const st = statSync(f); if (!st.isFile()) return

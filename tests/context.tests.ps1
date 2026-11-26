@@ -54,7 +54,7 @@ $o; $s = Read-KitSpendLines @([IO.File]::ReadAllLines($args[3])); "spend $($s.sp
 $c1 = "$($r[0])" -split '\|'; $c2 = "$($r[1])" -split '\|'; $c3 = "$($r[2])" -split '\|'
 # Claude: start 20000 - prompt 1000 = 19000 kit; skill 2000 + memory 500 kit; code 3 x 1000; the gated build's 16 KB = build output, a pasted log
 Expect "context claude: 4 calls, start 20k, peak 29k, a compaction (marker; the drop after it is not counted twice), resumed from a handoff ($($r[0]))" ($c1[2] -eq '4' -and $c1[3] -eq '20000' -and $c1[4] -eq '29000' -and $c1[5] -eq '1' -and $c1[6] -eq '1')
-Expect "context claude: added per category: kit 19000 + skill 2000, task 1000, code 3000 + memory 500, build 4000, model 200 + summary 1000 ($($c1[7]))" ($c1[7] -match '^2[01]\d\d\d,10\d\d,3[45]\d\d,0,39\d\d,0,0,1200$')
+Expect "context claude: added per category: kit 19000 + skill 2000, task 1000, code 3000 + memory 500, build 4000, model 200 + summary 1000 ($($c1[7]))" ($c1[7] -match '^2(09|10)\d\d,10\d\d,3[45]\d\d,0,39\d\d,0,0,1200$')
 Expect "context claude: waste = the file re-read 2x (2 rereads), no result over 8k, one build log over 3k pasted; most re-read Main.java 3x ($($c1[9]) $($c1[10]))" ($c1[9] -match '^2,\d+,0,0,1,\d+$' -and $c1[10] -eq '3:/w/app/src/main.java')
 Expect "context claude: carried = mix x call size (20k + 24k + 29k + 21k = 94k) ($($c1[8]))" (([int[]]($c1[8] -split ',') | Measure-Object -Sum).Sum -in 93..95)
 # Codex: 4 counted calls (a repeated count skipped), developer text = kit, task, cat = code, pytest = build; compaction marker; tokens and model wired
@@ -82,7 +82,7 @@ $__cfg = $null; $env:OLLAMA_CONTEXT_LENGTH = ''; $env:LLAMA_ARG_CTX_SIZE = '1638
 Expect "board beat: a 15k start at a 32k window is no handoff (harness not counted); a 5k kit doc read on top -> HANDOFF over the 15k cap; at 200k (cap 50k) nothing; parse cached ($($bu[7..9] -join ' / '))" ($bu[7] -eq 'ki ' -and $bu[8] -match '^ki1 HANDOFF: kit instructions in context 1[67]\d{3} > cap 15000' -and $bu[9] -eq 'ki2 |True')
 Expect "budget: a role's 0 turns off a 300k default (800k), another role gets the default (kit budget default); llama.cpp n_ctx read ($($bu[10..12] -join ' / '))" ($bu[10] -like '800000|*' -and $bu[11] -eq '300000|200000|50000|kit budget default' -and $bu[12] -like '13107|16384|15000|local 0.8 x (llama n_ctx*')
 Expect "budget: 1M -> handoff 800k (no kit cap), 200k -> 160k, 32k local -> 25.6k, design 32k, instruction cap floor 15k ($($bu[0..2] -join ' / '))" ($bu[0] -eq '800000|200000|50000|local 0.8 x (window given)' -and $bu[1] -like '160000|200000|50000|*' -and $bu[2] -like '25600|32000|15000|*')
-Expect "budget: kit role cap 400k wins over 800k (shown: kit budget devy), another role keeps 800k; Ollama's context length read ($($bu[3..5] -join ' / '))" ($bu[3] -eq '400000|200000|50000|kit budget devy' -and $bu[4] -like '800000|*' -and $bu[5] -like '52429|65536|16384|local 0.8 x (ollama OLLAMA_CONTEXT_LENGTH)')
+Expect "budget: kit role cap 400k wins over 800k (shown: kit budget devy), another role keeps 800k; Ollama's context length read ($($bu[3..5] -join ' / '))" ($bu[3] -eq '400000|200000|50000|kit budget devy' -and $bu[4] -like '800000|*' -and $bu[5] -like '52429|65536|24576|local 0.8 x (ollama OLLAMA_CONTEXT_LENGTH)')
 Expect "spend: a transcript without usage fields (a local model) is estimated from its text, bytes / 4 ($($bu[6]))" ($bu[6] -match '^est 100\d\d True$')
 
 # Get-KitUsage walks all 3 CLIs (tests: KIT_TRANSCRIPTS_<TOOL>), steps carry the summary; the day rows the mix; usage -Context text + JSON

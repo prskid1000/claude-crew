@@ -6,7 +6,7 @@ kit-admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L154 health · L163 browser policy · L206 prepush · L270 weekly tests · L306 state lint · L315 precommit
+Sections: L13 learn · L157 health · L166 browser policy · L209 prepush · L273 weekly tests · L309 state lint · L318 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -20,7 +20,8 @@ function Get-KitRoleRules([string]$Skill, [string]$Phase = '', [string]$Project 
 }
 # learn -Read: each skill's lessons (LESSONS.md, LESSONS.local.md: the most-hit $Max / learn.readCap) + its org rules
 function Show-KitLessons([string]$Skill, [string]$Phase = '', [string]$Project = '', [int]$Max = -1) {
-  # -Skill a,b: one call; an org rule section two of them share prints once (it came 2x: 2.7k tokens a reviewer, 2026-11-26)
+  # -Skill a,b: one call; an org rule section an earlier skill of the list printed is not printed again (2.7k tokens twice per reviewer,
+  # 2026-11-26); keyed by section + line: a skill's own repeated lines (a second table's rule row) stay
   $orgShown = [Collections.Generic.HashSet[string]]::new()
   foreach ($sk in @(Split-KitList $Skill)) {
     foreach ($f in (Join-Path $KitConf.Kit 'LESSONS.md'), (Join-Path $KitConf.Kit 'LESSONS.local.md')) {
@@ -28,11 +29,13 @@ function Show-KitLessons([string]$Skill, [string]$Phase = '', [string]$Project =
       # read cap (learn.readCap, -Max): most-hit lessons first
       $lines = @($L[$r[0]..($r[1] - 1)] | Where-Object { $_ -match '^(##|###|- )' }); $rcap = if ($Max -ge 0) { $Max } else { [int](Get-KitParam 'learn.readCap') }
       $lines = @(Select-KitLessonScope $lines $sk $Phase $Project)
-      $lsIdx = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -like '- *' }); $lsOut = @($lsIdx | Sort-Object { if ($lines[$_] -match '\((\d+)[x×]\)\s*$') { -[int]$Matches[1] } else { -1 } }, { -$_ } | Select-Object -Skip $rcap)
+      $lsIdx = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -like '- *' }); $lsOut = @($lsIdx | Sort-Object { if ($lines[$_] -match '\((\d+)[x×]\)\s*$') { -[int]$Matches[1] } else { -1 } }, { $_ } | Select-Object -Skip $rcap)   # equal hits: the newest (the section's top) stays
       $lines = @(0..($lines.Count - 1) | Where-Object { $_ -notin $lsOut } | ForEach-Object { $lines[$_] }) + @(if ($lsOut.Count) { "($($lsOut.Count) more, fewest hits: learn -Read -Skill $sk$(if ($Phase) { " -Phase $Phase" }) -Max 99)" })
       if ($lines.Count -gt 1) { "$(if ($f -like '*.local.md') { '(local) ' })$($lines -join "`n")" }
     }
-    $orgNew = @("$(Get-KitRoleRules $sk $Phase $Project)" -split "`n" | Where-Object { $_ -and $orgShown.Add($_) })
+    $orgHead = ''; $orgKeys = @(); $orgNew = @(foreach ($orgLine in @("$(Get-KitRoleRules $sk $Phase $Project)" -split "`n" | Where-Object { $_ })) {
+      if ($orgLine -match '^## ') { $orgHead = $orgLine }; $orgKey = "$orgHead`n$orgLine"; $orgKeys += $orgKey; if (-not $orgShown.Contains($orgKey)) { $orgLine } })
+    foreach ($orgKey in $orgKeys) { $null = $orgShown.Add($orgKey) }
     if ($orgNew.Count -gt 1) { $orgNew -join "`n" }
   }
 }

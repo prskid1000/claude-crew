@@ -27,7 +27,8 @@ Steps (audit runs all; build / fix / docs: 0, 4-6 on what you change, 8-9; setup
    your prompt names on a resume; the prompt gives kind + subject, no dated run id; its RUN-ID `kitty-<n>` = `<id>`, yours for
    inbox, msg, checkpoint; DUPLICATE -> stop);
    `git -C <kit> fetch`; `& <kit>/skills/crafty/crafty.ps1 wt new -Repo <kit> -Branch kit/<run> -Target main
-   -Name <run>` (exists -> never reuse it: another kitty's). Busy check:
+   -Name <run>` (exists -> never reuse it: another kitty's), then `& $O board check -Worktree <wt> -Session <yours>` (claims
+   it: a clean worktree without a claim gets swept). Busy check:
    `& $O launch -List -Brief` + `& $O board show`: anything running -> no `--fix` on worktrees, board or cleanup, and no pull into
    the live clone. **Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
    **Impact** (before each change): `kitbag.py flow --impact <file | function | 'script verb' | config key | hook | event>` in

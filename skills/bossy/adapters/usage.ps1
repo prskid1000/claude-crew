@@ -3,8 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L385 context · L742 waste (owner 2026-11-23 · L812 split · L886 budget · L972 handoffs · L984 limits ·
-  L1003 workflow config · L1028 dead runs
+Sections: L10 usage · L385 context · L747 waste (owner 2026-11-23 · L817 split · L891 budget · L977 handoffs · L989 limits ·
+  L1008 workflow config · L1033 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -395,7 +395,7 @@ function Get-KitTranscriptModel([string]$L) {
 }
 # the parser's params, read once per process (a line read them 5 times: half the pass)
 function Get-KitContextParam([string]$Key) { if ($null -eq $script:KitCtxP) { $script:KitCtxP = @{} }; if (-not $script:KitCtxP.ContainsKey($Key)) { $script:KitCtxP[$Key] = [double](Get-KitParam "usage.context.$Key") }; $script:KitCtxP[$Key] }
-function New-KitContextRec { [ordered]@{ off = 0L; n = 0; s0 = 0L; pk = 0L; sum = 0L; last = 0L; cmp = 0; ho = 0; cut = 0; kpk = 0L; lastId = ''; lastOut = 0L; add = @(0L) * 8; car = @(0L) * 8; live = @(0.0) * 8; pend = @{}; q = @(); rd = @{}; rmax = @(0, ''); w = @(0L) * 6; top = @(); days = @{} } }
+function New-KitContextRec { [ordered]@{ v = 2; off = 0L; n = 0; s0 = 0L; pk = 0L; sum = 0L; last = 0L; cmp = 0; ho = 0; cut = 0; kpk = 0L; lastId = ''; lastOut = 0L; add = @(0L) * 8; car = @(0L) * 8; live = @(0.0) * 8; pend = @{}; q = @(); rd = @{}; rmax = @(0, ''); w = @(0L) * 6; top = @(); days = @{} } }
 # a tool's category: 0 kit instructions · 1 task input · 2 code reads · 3 kit data · 4 build + test output · 5 other tool output · 6 web + docs
 # (7 = model output: output tokens); tool names of the 3 CLIs; $Key = its path or command
 function Get-KitContextCat([string]$Name, [string]$Key) {
@@ -545,7 +545,9 @@ function Step-KitContextLine($Cx, [string]$L) {
 # the context pass of one usage record: its own offset, up to the token pass's (whole lines); an older record is read from 0 once
 function Update-KitContextFile([string]$Path, $Rec, [ref]$Left) {
   if (-not $Rec -or $null -eq $Rec.off) { return $Rec }
-  if ($null -eq $Rec.cx -or [long]$Rec.cx.off -gt [long]$Rec.off) { $Rec['cx'] = New-KitContextRec }; $cx = $Rec.cx
+  # v 2: a product CLAUDE.md is code, not kit: an older record is read again from 0, once the pass has bytes left for it
+  if ($Rec.cx -and [int]$Rec.cx.v -ne 2 -and [long]$Left.Value -le 0) { return $Rec }
+  if ($null -eq $Rec.cx -or [int]$Rec.cx.v -ne 2 -or [long]$Rec.cx.off -gt [long]$Rec.off) { $Rec['cx'] = New-KitContextRec }; $cx = $Rec.cx
   $n = [int][math]::Min([math]::Min([long]$Rec.off - [long]$cx.off, [math]::Max([long]0, [long]$Left.Value)), [long]256MB); if ($n -le 0) { return $Rec }
   $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite, Delete')
   try { $null = $fs.Seek([long]$cx.off, 'Begin'); $b = [byte[]]::new($n); $got = $fs.Read($b, 0, $n) } finally { $fs.Dispose() }
@@ -560,7 +562,8 @@ function Update-KitContextFile([string]$Path, $Rec, [ref]$Left) {
 function Get-KitInstrLive([string]$File, [string]$Cache) {
   if (-not $File -or -not (Test-Path -LiteralPath $File)) { return 0 }
   $rec = $null; if ($Cache -and (Test-Path -LiteralPath $Cache)) { $rec = try { Get-Content -LiteralPath $Cache -Raw | ConvertFrom-Json -AsHashtable -Depth 10 } catch { $null } }
-  if (-not $rec -or "$($rec.file)" -ne $File) { $rec = @{ file = $File; cx = (New-KitContextRec) } }
+  # v 2: a product CLAUDE.md is code, not kit (a cache parsed before would hand a running devy off at the 50k cap)
+  if (-not $rec -or "$($rec.file)" -ne $File -or [int]$rec.cx.v -ne 2) { $rec = @{ file = $File; cx = (New-KitContextRec) } }
   $rec.off = (Get-Item -LiteralPath $File).Length; $left = [long]$rec.off
   $rec.cx.live = @($rec.cx.live | ForEach-Object { [double]$_ }); $null = Update-KitContextFile $File $rec ([ref]$left)
   if ($Cache) { try { $rec | ConvertTo-Json -Depth 10 -Compress | Set-Content -LiteralPath $Cache -Encoding utf8 } catch {} }
@@ -678,7 +681,7 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
     if ($s.result) { "$($s.result)" -in 'running', 'stuck' } else { $at = try { [datetime]"$($s.at)" } catch { $null }; $at -and ($Now - $at).TotalMinutes -lt 2 * $beat } }
   $norm = { param([string]$r, [string]$p = 'usage.context.startNorm') $rv = try { Resolve-KitParam $p $null $r (Get-KitParamState) } catch { @($null, 'default') }; if ("$($rv[1])" -notlike 'default*') { [double]$rv[0] } }   # only a learned (or pinned) norm: the 30k default would flag every main-session start
   # context plan (owner 2026-11-26, README "Context plan"): a slice's tokens added over the session vs its role's learned p90 (usage.context.slice.<key>)
-  $sfac = [double](Get-KitParam 'usage.context.sliceFactor'); $slOver = @{}
+  $sfac = [double](Get-KitParam 'usage.context.sliceFactor'); $slMin = [double](Get-KitParam 'usage.context.wasteMinTokens'); $slOver = [Collections.Generic.List[object]]::new()
   $plan = @{ 1 = 'link the brief, never paste it; a resume brief holds done steps, the next step and open findings'; 2 = 'read ranges, note a file''s facts once'; 3 = 'ask kit verbs for the summary, details from their file'; 4 = 'failures only, one rebuild per batch'; 5 = 'narrow the call (a filter, LIMIT, the lines you need)'; 6 = 'fetch only the needed section'; 7 = 'result first, no recaps; hand off at the phase end' }
   $who = { param($s) "$($s.role) $(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })".Trim() }
   $wl = [Collections.Generic.List[object]]::new(); $cks = Read-KitCtxChecks
@@ -697,14 +700,16 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
     $t0 = "$(@($c.top)[0])" -split '\|', 3; if ([double]$t0[0] -gt $big) { $wl.Add(@(1, "context: $nm took an oversized result ($($t0[2]))", "$(& $f $t0[0]) tokens in one result: narrow that call (a range, a filter, the failure lines only)")) }
     if ([long]$w[4]) { $wl.Add(@(1, "context: $nm pasted full build / test logs", "$($w[4]) log(s), $(& $f $w[5]) tokens: read only the failing tests and errors (crafty.ps1 check prints them; the full log stays in its file)")) }
     $nr = & $norm "$($s.role)"; if ($nr -and [double]$c.s0 -gt $fac * $nr) { $wl.Add(@(0, "context: $nm start load over its type's norm", "started at $(& $f $c.s0) vs the $($s.role) norm $(& $f $nr): bossy.ps1 usage -Context -Type $($s.role), see what its start loads")) }
-    foreach ($si in 1..7) { $sk = $script:KitCtxCats[$si]; $sn = & $norm "$($s.role)" "usage.context.slice.$($sk[0])"; $sa = [double]@($c.add)[$si]
-      if ($sn -and $sa -gt $sfac * $sn) { $wl.Add(@(1, "context: $nm $($sk[1]) over its plan", "$(& $f $sa) added vs the $($s.role) p90 $(& $f $sn): $($plan[$si])")); $slOver["$($s.role)|$si"] = 1 + [int]$slOver["$($s.role)|$si"] } } }
+    # one WATCH per agent: its worst slice, under the single-result signals; within usage.context.wasteMinTokens of its p90: no signal
+    $slW = @(@(foreach ($si in 1..7) { $sn = & $norm "$($s.role)" "usage.context.slice.$($script:KitCtxCats[$si][0])"; $sa = [double]@($c.add)[$si]; if ($sn -and $sa -gt $sfac * $sn -and $sa - $sn -gt $slMin) { , @(($sa / $sn), $si, $sa, $sn) } }) | Sort-Object { -$_[0] })
+    foreach ($sw in $slW) { $slOver.Add(@($s, $sw[1])) }
+    if ($slW.Count) { $sw = $slW[0]; $wl.Add(@(0.5, "context: $nm $($script:KitCtxCats[$sw[1]][1]) over its plan", "$(& $f $sw[2]) added vs the $($s.role) p90 $(& $f $sw[3]): $($plan[$sw[1]])")) } }
   foreach ($x in @($wl | Sort-Object { -$_[0] } | Select-Object -First 8)) { $fl.Add([pscustomobject]@{ level = 'WATCH'; what = $x[1]; action = $x[2] }) }
-  foreach ($ok in @($slOver.Keys | Where-Object { $slOver[$_] -ge $nAct } | Sort-Object)) { $op = "$ok" -split '\|'; $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $($slOver[$ok]) live $($op[0]) agents over their $($script:KitCtxCats[[int]$op[1]][1]) plan"; action = "Spawn kitty (kind fix): make it the default for $($op[0]): $($plan[[int]$op[1]]) (bossy.ps1 usage -Context -Type $($op[0]))" }) }
   # ACT: a signal in actRuns+ agents of the window; the fix by source (owner: a param or setting -> -AutoFix; code / skill -> a kitty task line)
   # counts only agents started after the signal's last fix (Get-KitWasteFixes) and the last fix / perf(context) commit: a fixed signal stops (7-day window kept them)
   $wfx = Get-KitWasteFixes; $cAt = try { [datetimeoffset]"$(git -C $KitConf.Kit log -1 -E '--grep=^(fix|perf)\(context\)' --format=%cI 2>$null)".Trim() } catch { $null }
   $post = { param($s, [string]$k) $fa = @(@($cAt, $wfx["waste:$($s.role):$k"].at) | Where-Object { $_ } | Sort-Object)[-1]; -not $fa -or (($sa = try { [datetimeoffset]"$(if ($s.t0) { $s.t0 } else { $s.at })" } catch { $null }) -and $sa -gt $fa) }   # t0: its first call (at: its last)
+  foreach ($og in @($slOver | Where-Object { & $post $_[0] "slice$($_[1])" } | Group-Object { "$($_[0].role)|$($_[1])" } | Where-Object Count -ge $nAct | Sort-Object Name)) { $op = "$($og.Name)" -split '\|'; $fl.Add([pscustomobject]@{ level = 'ACT'; what = "context: $($og.Count) live $($op[0]) agents over their $($script:KitCtxCats[[int]$op[1]][1]) plan"; action = "Spawn kitty (kind fix): make it the default for $($op[0]): $($plan[[int]$op[1]]) (bossy.ps1 usage -Context -Type $($op[0]))" }) }
   $fix = @{ 4 = 'trim build / test output to the failure lines at the source (crafty.ps1 check prints the full log path)'; 2 = 'read big code files in ranges, keep their facts in notes'; 3 = 'kit data commands print a summary, not the whole file'; 5 = 'make that command print only what the agent asks (a field filter, a line cap)'; 6 = 'fetch only the needed section of web pages and docs'; 0 = 'move detail behind a pointer'; 1 = 'shorter briefs and prompts'; 7 = 'shorter agent reports' }
   $grpBy = @{}; foreach ($s in @($ss | Where-Object { & $post $_ bigresult })) { foreach ($tp in @($s.cx.top | Where-Object { $_ })) { $p = "$tp" -split '\|', 3; if ([double]$p[0] -le $big) { continue }; $hd = (("$($p[2])" -replace '^(\S+)\s+(?:cd\s+\S+\s*(?:&&|;)\s*)?(?:\w+=\S*\s+)*', '$1 ') -split '\s+' | Select-Object -First 2) -join ' '; $gk = "$($p[1])|$hd"; if (-not $grpBy[$gk]) { $grpBy[$gk] = @{} }; $grpBy[$gk][(& $who $s)] = "$($s.role)" } }
   # one ACT per source class (owner 2026-11-22: 15 per-file lines a beat), its top sources by agents in the action
