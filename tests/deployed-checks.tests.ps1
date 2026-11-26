@@ -214,5 +214,13 @@ $mgD = Invoke-PsTest 'mig-squash' ($mgHead + "`n" + @'
 "squash:$($a.kind -eq 'additive' -and 'db/changelog/005.xml' -in $a.files -and 'db/migrations/0004_x.py' -notin $a.files -and $u.gates[0].kind -eq 'left')"
 '@) @($migBossy, $mg)
 Expect-Each @(@($mgA) + @($mgB) + @($mgC) + @($mgD)) 'deploy schedule edge from migrations: #' @('add', 'brk', 'code', 'squash')
+# owner 2026-11-26: testy prepare leaves out a task whose waits-on tasks are not live on the target (untested, never failedTesting)
+$wo = Invoke-PsTest waits-on @'
+. $args[0]; function Get-KitTaskWaitsOn { [pscustomobject]@{ waitsOn = @('w1', 'w2', 'w3'); wave = '' } }
+function Read-KitState($f) { @{ track = @{ mrs = @(switch -Regex ($f) { 'w1' { 'api!1' } 'w2' { 'web!2' } }) } } }
+$dep = { param($Mrs, $Target, [switch]$Json) if ("$Mrs" -eq 'api!1') { '[{"mr":"api!1","state":"DEPLOYED"}]' } else { '[{"mr":"web!2","state":"NOT-DEPLOYED"}]' } }
+"off:$(@(Get-QaWaitsOnNotLive 't9' @{} 'stg' $dep) -join ',')"
+'@ @($Q)
+Expect "prepare waits-on: only a waits-on task with MRs not live here holds the task (w1 live, w3 no MR) ($wo)" ("$wo" -match 'off:w2$')
 Remove-TestKit $k
 Complete-Tests

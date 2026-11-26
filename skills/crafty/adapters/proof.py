@@ -5,7 +5,7 @@ cases_cmd (`cases result ... viewport=<WxH> hit=PASS|FAIL`; `cases add` warns), 
 crafty.ps1 wt commit runs `proof --branch <b> --impact` (refuses a non-WIP commit on a task branch without the map).
 Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844);
 qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack).
-Sections: L13 gaps · L151 wraps · L218 matrix scope · L316 verb"""
+Sections: L13 gaps · L176 wraps · L243 matrix scope · L341 verb"""
 import json, os, re, sys
 
 DT = None
@@ -14,7 +14,7 @@ CHANNELS = ('ui', 'api', 'job', 'ai')
 UI_EV = re.compile(r'(\.(png|jpe?g|gif|webp|mp4|webm|mov)|trace[\w.-]*\.zip)(\?\S*)?$', re.I)   # screenshot, video, browser trace (a HAR is API proof)
 IMPACT = ('logic', 'callers', 'renders', 'path')
 DRAFT = re.compile(r'(?i)^\s*(\[draft\]|draft:|wip:)')
-VIEW = re.compile(r'^(viewport|hit)=(\S+)$')
+VIEW = re.compile(r'^(viewport|hit|runs|repos)=(\S+)$')
 
 
 def on():
@@ -94,13 +94,38 @@ def proof_gaps(c, tid='', me=''):
                 out.append(f'check {gid} (ui): not run at the testers\' screen {want} (browser.mjs testerScreen(); cases result ... viewport={want})')
             elif not any(str(x.get('hit') or '').upper() == 'PASS' for x in at):
                 out.append(f'check {gid} (ui): no hit test of the controls touched (browser.mjs hitTest(); cases result ... hit=PASS)')
-        elif ch == 'ai':
+            elif len(rs := task_repos(tid)) > 1 and not any(rs <= set(str(x.get('repos') or '').split(',')) for x in at):   # owner 2026-11-26
+                out.append(f'check {gid} (ui): the task spans {", ".join(sorted(rs))}: run every branch together on one lane through this'
+                           f' path (cases result ... repos={",".join(sorted(rs))})')
+        elif ch == 'ai':   # owner 2026-11-26 (dec-came-back C): proof = the declared pass rate over real model runs on a lane
             out += [f'check {gid} (ai): no deterministic guard: "guard": "<unit test: code validates the AI output / plan>"'] if not g.get('guard') else []
-            if not ok and not ai_waived(g, c):
+            rate = _rate(g.get('passRate'))
+            if not rate:
+                out.append(f'check {gid} (ai): no passRate: "passRate": "<k>/<n>" (k of n real model runs must pass, e.g. 4/5)')
+            elif not any(_rate_ok(x.get('runs'), rate) for x in ok) and not ai_waived(g, c):
                 lane, wv = ai_lane(c), str(DT.cfg('qa.aiWaiver', '') or '')
-                out.append(f'check {gid} (ai): no local run PASS (one run; never N reruns)' + (
+                out.append(f'check {gid} (ai): pass rate {rate[0]}/{rate[1]} not shown: run the real model {rate[1]} times on a lane, then cases result'
+                           f' <task> <case> PASS runs=<passed>/<runs>' + (
                     f'; {lane} runs the AI stack, so waiver {wv} no longer applies (envy.ps1 use -Env {lane} -Services <its aiStack service>)' if wv and lane else ''))
     return out
+
+
+def task_repos(tid):
+    """The repos of the task's tracked MRs (<repo>!<iid>): 2+ = one lane runs every branch."""
+    mrs = ((DT.state_read(DT.task_file(tid)) or {}).get('track') or {}).get('mrs') or [] if tid else []
+    return {str(m).split('!')[0].rsplit('/', 1)[-1] for m in mrs if '!' in str(m)}
+
+
+def _rate(v):
+    """'4/5' -> (4, 5): k of n runs; else None."""
+    m = re.fullmatch(r'\s*(\d+)\s*/\s*(\d+)\s*', str(v or ''))
+    return (int(m[1]), int(m[2])) if m and 0 < int(m[1]) <= int(m[2]) else None
+
+
+def _rate_ok(runs, rate):
+    """A case's runs '<passed>/<runs>' meets the rate: at least n runs, passed / runs >= k / n."""
+    r = re.fullmatch(r'\s*(\d+)\s*/\s*(\d+)\s*', str(runs or ''))
+    return bool(r) and int(r[2]) >= rate[1] and int(r[1]) <= int(r[2]) and int(r[1]) * rate[1] >= rate[0] * int(r[2])
 
 
 def _by_name(items):
@@ -143,9 +168,9 @@ def proof_of(g, c):
     if g.get('preverify') or g.get('waiver'):
         return f'preverify {g["preverify"]}' if g.get('preverify') else f'waiver {g["waiver"]}'
     ok = [x for x in c.get('cases') or [] if isinstance(x, dict) and x.get('check') == g.get('id') and _passed(x)]
-    run = ' · '.join(f'{x.get("id")} PASS' + ''.join(f' {k} {x[k]}' for k in ('viewport', 'hit') if x.get(k)) for x in ok) or (
+    run = ' · '.join(f'{x.get("id")} PASS' + ''.join(f' {k} {x[k]}' for k in ('viewport', 'hit', 'runs') if x.get(k)) for x in ok) or (
         f'waiver {DT.cfg("qa.aiWaiver")} (no local AI lane)' if str(g.get('channel') or '').lower() == 'ai' and ai_waived(g, c) else 'none')
-    return (f'guard {g["guard"]} · ' if g.get('guard') else '') + run
+    return (f'guard {g["guard"]} · ' if g.get('guard') else '') + (f'pass rate {g["passRate"]} · ' if g.get('passRate') else '') + run
 
 
 # ---- wraps: devtools.py functions this plugin gates (register)
@@ -194,7 +219,7 @@ def wrap_cases(orig):
             def put(x):
                 for k in (x.get('cases') or {}).get('cases') or []:
                     if str(k.get('id')) == a[2]:
-                        k.pop('viewport', None), k.pop('hit', None)
+                        k.pop('viewport', None), k.pop('hit', None), k.pop('runs', None), k.pop('repos', None)
                         k.update(kv)   # a new result never keeps an old run's screen
             DT.task_index(a[1], put)
         c = (DT.state_read(DT.task_file(a[1])) or {}).get('cases') or {} if rc == 0 and a[:1] == ['add'] and on() else None
@@ -336,10 +361,20 @@ def selftest():
     res = []
     ex = lambda what, cond: res.append(print(f'{"PASS" if cond else "FAIL"} proof: {what}') or bool(cond))
     imp = {'logic': 'x is so since abc1 (test X disabled: expects login)', 'callers': ['web list', 'app sync'], 'renders': [{'item': 'list', 'result': 'A1 PASS'}], 'path': 'UI -> API -> DB -> UI'}
-    good = {'impact': imp, 'checks': [{'id': 'T1', 'channel': 'ui'}, {'id': 'T2', 'channel': 'ai', 'guard': 'PlanGuardTest'}, {'id': 'T3', 'channel': 'api'}],
+    good = {'impact': imp, 'checks': [{'id': 'T1', 'channel': 'ui'}, {'id': 'T2', 'channel': 'ai', 'guard': 'PlanGuardTest', 'passRate': '4/5'}, {'id': 'T3', 'channel': 'api'}],
             'cases': [{'id': 'A1', 'check': 'T1', 'type': 'positive', 'result': 'PASS', 'evidence': ['s.png=https://h/v'], 'viewport': '1366x768', 'hit': 'PASS'},
-                      {'id': 'A2', 'check': 'T2', 'type': 'negative', 'result': 'PASS', 'evidence': ['r.json']}]}
-    ex('a goal per channel, proven (ai: its guard + ONE local run, no reruns): no gaps', proof_gaps(good) == [])
+                      {'id': 'A2', 'check': 'T2', 'type': 'negative', 'result': 'PASS', 'evidence': ['r.json'], 'runs': '4/5'}]}
+    ex('a goal per channel, proven (ai: its guard + its pass rate over real runs): no gaps', proof_gaps(good) == [])
+    tr0, DT.task_file, DT.state_read = (DT.task_file, DT.state_read), (lambda t: t), (lambda f: {'track': {'mrs': ['g/api!1', 'g/web!2']}} if f == 'X2' else {})
+    try:
+        two = proof_gaps(good, 'X2')
+        ex('a task with MRs in 2 repos: a ui goal needs a case run with every branch on one lane (repos=api,web); one repo: no gap',
+           any('spans api, web' in g for g in two) and not proof_gaps({**good, 'cases': [{**good['cases'][0], 'repos': 'api,web'}, good['cases'][1]]}, 'X2') and not proof_gaps(good, 'X1'))
+    finally:
+        DT.task_file, DT.state_read = tr0
+    gr = lambda r, n='4/5': proof_gaps({**good, 'checks': good['checks'][:1] + [{**good['checks'][1], 'passRate': r}] + good['checks'][2:], 'cases': good['cases'][:1] + [{**good['cases'][1], 'runs': n}]})
+    ex('ai pass rate (owner 2026-11-26): none declared, 3/5 under 4/5, 8/10 over 4/5 ok, 4/4 too few runs',
+       any('no passRate' in g for g in gr('')) and any('pass rate 4/5 not shown' in g for g in gr('4/5', '3/5')) and not gr('4/5', '8/10') and gr('4/5', '4/4'))
     ex('no cases spec = no goals doc', proof_gaps({})[0].startswith('no goals doc'))
     api_only = {**good, 'cases': [{**good['cases'][0], 'evidence': ['put.json=https://h/x']}, good['cases'][1]]}
     ex('a ui goal proven by API JSON is a gap', any('T1 (ui): no PASS case with UI evidence' in g for g in proof_gaps(api_only)))
@@ -364,14 +399,14 @@ def selftest():
            not gp('shop-kestrel r4') and 'waiver dec-9 (no local AI lane)' in proof_of(good['checks'][1], {**norun, 'env': 'shop r4'}))
         ex('qa.aiWaiver stops once the env runs an aiStack service (lane id too); no guard, no waiver, unknown env: any env',
            any('crm-osprey runs the AI stack, so waiver dec-9 no longer applies' in g for g in gp('crm-osprey r2'))
-           and any('no local run PASS' in g for g in gp('shop r1', checks=good['checks'][:1] + [{'id': 'T2', 'channel': 'ai'}]))
-           and any('no local run PASS' in g for g in gp('')) and any('no local run PASS' in g for g in gp('nope r1')))
+           and any('pass rate 4/5 not shown' in g for g in gp('shop r1', checks=good['checks'][:1] + [{'id': 'T2', 'channel': 'ai', 'passRate': '4/5'}]))
+           and any('pass rate 4/5 not shown' in g for g in gp('')) and any('pass rate 4/5 not shown' in g for g in gp('nope r1')))
         ex('ai lane: a lane override key keeps its env\'s aiStack, <env><k> is a lane, an extends child turning it off and a non-laned'
            ' sibling env have none, defaults.services count', [ai_lane({'env': e}) for e in ('crm-kestrel r1', 'crm2 r1', 'b r1', 'tool-eu r1', 'shop r1')]
            == ['crm-kestrel', 'crm2', '', '', ''] and (conf.update({'localEnv.defaults.services': [{'name': 'm', 'aiStack': True}]}) or ai_lane({'env': 'shop r1'})) == 'shop')
         conf.pop('localEnv.defaults.services')
         conf.pop('qa.aiWaiver')
-        ex('no qa.aiWaiver: the local run is due everywhere', any('no local run PASS' in g and 'waiver' not in g for g in gp('shop r1')))
+        ex('no qa.aiWaiver: the local run is due everywhere', any('pass rate 4/5 not shown' in g and 'waiver' not in g for g in gp('shop r1')))
     finally:
         DT.cfg = cfg0
     ex('happy path only and an unset channel are gaps', [g[:15] for g in proof_gaps({**good, 'checks': good['checks'] + [{'id': 'T4'}], 'cases': [{**x, 'type': 'positive'} for x in good['cases']]})] ==

@@ -633,16 +633,21 @@ function Set-KitTaskOrder([string]$Task, [string[]]$WaitsOn, [string]$Wave) {
   Update-KitTaskIndex $Task { param($x) $x.order = [ordered]@{ waitsOn = $WaitsOn; wave = $Wave } }
   "order of ${Task}: waits on $(if ($WaitsOn.Count) { $WaitsOn -join ', ' } else { 'nothing' })$(if ($Wave) { " · $Wave" }) ($((@(if ($nat.Count) { "native $($nat -join ', ')" }) + @(if ($ln.Count) { 'description' })) -join ' + '))"
 }
+# a task's waits-on ids (tracker dependencies, task index order, the description's order block) and wave label
+function Get-KitTaskWaitsOn([string]$Id, $Tk = (Get-TrackerTask $Id)) {
+  $ix = (Read-KitState (Get-KitTaskFile $Id)).order
+  $sec = [regex]::Match(("$($Tk.description)" -replace "`r`n", "`n"), '(?s)<!-- kit:order -->\n(.*?)\n<!-- /kit:order -->').Groups[1].Value
+  $w = @(if (__TrCan dependencies) { @(__TrA 'dependencies' @{ id = $Id; on = @() }) }) + @($ix.waitsOn) + @(if ($sec -match '(?m)^\*\*Waits on:\*\* (.+)$') { $Matches[1] -split ',\s*' })
+  [pscustomobject]@{ waitsOn = @($w | ForEach-Object { "$_".Trim() } | Where-Object { $_ } | Select-Object -Unique)
+    wave = $(if ($ix.wave) { "$($ix.wave)" } elseif ($sec -match '(?m)^\*\*Wave:\*\* (.+)$') { $Matches[1].Trim() } else { '' }) }
+}
 # a parent's subtasks as waves (Kahn): wave n = tasks whose waits-on siblings are all in earlier waves; same wave, no link = parallel
 function Get-KitTaskOrder([string]$Parent) {
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { throw "tracker read of $Parent failed" }
   $info = [ordered]@{}
   foreach ($k in @(@($pt.subtasks | ForEach-Object { "$($_.id)" }) | Where-Object { $_ } | Select-Object -Unique)) {
-    $tk = Get-TrackerTask $k; $ix = (Read-KitState (Get-KitTaskFile $k)).order
-    $sec = [regex]::Match(("$($tk.description)" -replace "`r`n", "`n"), '(?s)<!-- kit:order -->\n(.*?)\n<!-- /kit:order -->').Groups[1].Value
-    $w = @(if (__TrCan dependencies) { @(__TrA 'dependencies' @{ id = $k; on = @() }) }) + @($ix.waitsOn) + @(if ($sec -match '(?m)^\*\*Waits on:\*\* (.+)$') { $Matches[1] -split ',\s*' })
-    $wl = if ($ix.wave) { "$($ix.wave)" } elseif ($sec -match '(?m)^\*\*Wave:\*\* (.+)$') { $Matches[1].Trim() } else { '' }
-    $info[$k] = [pscustomobject]@{ id = $k; name = "$($tk.name)"; waitsOn = @($w | ForEach-Object { "$_".Trim() } | Where-Object { $_ } | Select-Object -Unique); label = $wl; wave = 0 }
+    $tk = Get-TrackerTask $k; $o = Get-KitTaskWaitsOn $k $tk
+    $info[$k] = [pscustomobject]@{ id = $k; name = "$($tk.name)"; waitsOn = $o.waitsOn; label = $o.wave; wave = 0 }
   }
   $left = [Collections.Generic.List[string]]::new([string[]]@($info.Keys)); $n = 0
   while ($left.Count) { $ready = @($left | Where-Object { $ti = $_; -not @($info[$ti].waitsOn | Where-Object { $left.Contains($_) }).Count }); if (-not $ready.Count) { break }

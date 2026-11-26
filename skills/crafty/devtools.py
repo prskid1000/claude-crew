@@ -1282,7 +1282,7 @@ def _auto_merge(worktree, iid, max_wait):
     st = (m.get('head_pipeline') or {}).get('status')
     if st in ('failed', 'canceled'):
         return _failed(H, m.get('head_pipeline'), iid)
-    # no CI config: merge now (merge-when-green waits forever); no pipeline 5 min after an MR update: NOT_MERGED
+    # no CI config: merge now (merge-when-green never fires); no pipeline 5 min after an update: NOT_MERGED
     no_ci = False
     if st is None:
         if no_mr_pipelines(proj):
@@ -3404,7 +3404,7 @@ def selftest():
     expect('merge_word reads the last line', merge_word('x\nWAIT') == 'WAIT' and merge_word('x') == 'NOT_MERGED')
     # merge gate over the adapter verbs (_host faked)
     g = globals()
-    saved = {k: g[k] for k in ('_host', 'remote', 'unmerged_producers', '_progress', 'kit_path', 'merge_loop_gap')}
+    saved = {k: g[k] for k in ('_host', 'remote', 'unmerged_producers', '_progress', 'kit_path', 'merge_loop_gap') if k in g}
     old = '2020-01-01T00:00:00Z'
     calls = []
 

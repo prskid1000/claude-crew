@@ -1413,6 +1413,11 @@ function Split-QaLiveParts($Dep) {
   if ($noTgt.Count -and $noTgt.Count -eq $notLive.Count -and @($Dep | Where-Object { $_.state -match '^DEPLOYED' }).Count) { return @{ notLive = @(); local = @($noTgt | ForEach-Object { "$($_.mr)" }) } }
   @{ notLive = $notLive; local = @() }
 }
+# owner 2026-11-26: the tasks this one waits on (tracker waits-on) whose MRs are not live on the target: it stays untested, never failedTesting
+function Get-QaWaitsOnNotLive([string]$Tid, $Tk, [string]$Target, $DepFn) {
+  foreach ($w in @((Get-KitTaskWaitsOn $Tid $Tk).waitsOn)) { $wm = @(@((Read-KitState (Get-KitTaskFile $w)).track.mrs) | Where-Object { $_ })
+    if ($wm.Count -and @((Split-QaLiveParts @(& $DepFn -Mrs $wm -Target $Target -Json | ConvertFrom-Json)).notLive).Count) { $w } }
+}
 # every row N/A, at least one proven for this target (deployed-checks "n/a for <t>": another branch or no path under it): another product's change
 function Test-QaOtherTarget($Dep) { $rows = @($Dep | Where-Object { $_ }); $rows.Count -and -not @($rows | Where-Object { "$($_.state)" -ne 'N/A' }).Count -and @($rows | Where-Object { "$($_.detail)" -like 'n/a for *' }).Count }
 function Invoke-Prepare {
@@ -1488,6 +1493,8 @@ foreach ($tid in @($cand.Keys)) {
     if (Test-QaOtherTarget $dep) { & $out "other product / target: $($mrs -join ', ') N/A on $($it.target) (no change for it)"; continue }
     $lp = Split-QaLiveParts $dep; $notLive = $lp.notLive; if ($lp.local.Count) { $it.localParts = $lp.local }
     if ($notLive.Count) { & $out "not live on $($it.target): $(@($notLive | ForEach-Object { "$($_.mr) $($_.state)" }) -join ', ')"; continue }
+    $woOff = @(Get-QaWaitsOnNotLive $tid $tk $it.target $depFn)
+    if ($woOff.Count) { & $out "waits on $($woOff -join ', '): not deployed on $($it.target) yet (untested, not failedTesting)"; continue }
   }
   if ($byDoc[$doc]) { $byDoc[$doc].subtasks += $it.subtasks[0]; continue }   # tasks sharing a doc = one item
   $it.code = "T$($items.Count + 1)"; $gf = "$dir/guides/$($it.code).md"; $kept = Join-Path (Get-KitPath docs) "$($tid)_testing-doc.md"

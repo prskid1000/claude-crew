@@ -184,12 +184,12 @@ $msR = & $py -X utf8 $DT matrix-scope PF1 --dir $pfRepo 2>$null | Out-String; 'x
 $msRec = & { . (Join-Path $k 'skills/crafty/lib.ps1'); (Get-Content (Join-Path (Get-KitPath tasks) 'PF1.json') -Raw | ConvertFrom-Json).cases.matrixScope }
 Expect "matrix-scope: .ts edits = reduced (1366x768 + 390x844), recorded on the task; an untracked .scss (a space in its name) = full, named ($($msR.Trim() -split "`n" | Select-Object -First 1))" (
   $msR -match '^matrix-scope PF1: reduced \(2 file\(s\), no layout / style or new screen\): 2 variant\(s\)' -and $msRec.scope -eq 'reduced' -and @($msRec.matrix.viewports) -join ',' -eq '1366x768,390x844' -and ($msF | ConvertFrom-Json).reason -eq 'my menu.scss is layout / style')
-# owner 2026-11-25 ("it will take soooo much time, never do this"): an ai goal = a code guard + ONE local run; no kit text asks for N reruns
+# owner 2026-11-25 ("never do this"), 2026-11-26 (dec-came-back C): N model runs only for an ai goal's declared passRate (devy, pre-merge)
 $aiRx = @'
 (\bai\b|\bmodel|\bllm|\bprompt|llm-driven).{0,80}([0-9]+\+?|\bN) (times|runs|reruns|attempts)
 '@.Trim()
 $aiHits = @(git -C $src grep -n -i -E $aiRx -- '*.md' '*.js' '*.mjs' ':!.codex' ':!.agents' 2>&1); $aiCode = $LASTEXITCODE
-$aiHits = @($aiHits | Where-Object { "$_" -notmatch 'never (rerun|N reruns)' })
+$aiHits = @($aiHits | Where-Object { "$_" -notmatch 'never (rerun|N reruns)|never reruns it|passRate|pass rate' })
 $aiSelf = @("LLM-driven checks: 5+ runs in fresh sessions", "never rerun a model N times") | Where-Object { $_ -match "(?i)$aiRx" -and $_ -notmatch 'never (rerun|N reruns)' }
 Expect "no kit text tells an agent to rerun an AI flow N times (grep exit $aiCode, $($aiHits.Count): $($aiHits | Select-Object -First 2))" ($aiCode -le 1 -and $aiHits.Count -eq 0 -and @($aiSelf).Count -eq 1 -and $pfSelf -match 'PASS proof: a goal per channel')
 # ---- precheck (owner 2026-11-25): the mechanical review rules before review (adapters/precheck.py)

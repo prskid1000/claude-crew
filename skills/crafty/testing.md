@@ -35,11 +35,14 @@ Each check carries `channel`: `ui` (a person sees it on a screen) · `api` · `j
 - **ui:** a PASS case with a screenshot, video or trace of the human doc's exact steps at the testers' screen (`browser.mjs
   testerScreen()`, `qa.testerViewport`; `mobile: true`: the mobile one, a phone lane `viewport=device:<lane>`), the app's global
   widgets on (chat, banners, help) and `hitTest()` on each control touched: `cases result <task> <id> PASS <shot>=<link>
-  viewport=1366x768 hit=PASS`. API JSON, a stub or NOT_TESTED_LOCAL proves no ui goal; not runnable locally: `preverify` = the
+  viewport=1366x768 hit=PASS`; a task with MRs in 2+ repos: one lane runs every branch through it, `repos=<a>,<b>` (owner
+  2026-11-26). API JSON, a stub or NOT_TESTED_LOCAL proves no ui goal; not runnable locally: `preverify` = the
   staging run's evidence link, or `waiver` = the owner's decision id.
 - **ai:** a deterministic guard in code (validates the output or plan: create-only plans, a cancel needs a reason, ids owned),
-  its unit test in `guard`, plus ONE local run PASS; never rerun a model N times to judge it. `qa.aiWaiver` (the owner's
-  decision id) waives that run while the doc's `env` runs no `services[].aiStack` service; once it does, the run is due.
+  its unit test in `guard`, plus the goal's declared `passRate` (`"4/5"`: k of n real model runs pass; owner 2026-11-26,
+  dec-came-back C): the pass rate = n real model runs on a lane before merge, `cases result <task> <id> PASS
+  runs=<passed>/<runs>` (runs >= n, the share >= k/n). `qa.aiWaiver` (the owner's decision id) waives the runs while the doc's `env` runs no
+  `services[].aiStack` service; once it does, they are due.
 - **Failure paths:** at least one negative or edge case (what a tester tries: invalid input, a denial, empty data).
 
 ## Test cases (the gates judge the rendered text)
