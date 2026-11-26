@@ -35,7 +35,7 @@ $tcF = & { . $O; $n = Get-Date; $r = { param($m, $t, $p, $e, $ag, $rc = 0) [pscu
   # owner 2026-11-26: live-agent time only (T9: a9 600..560 + a9b 70..now = 110, not 600); T10's agent left: stopped; T11 merged 10
   # min ago: done, its clock stopped; T12's row 2 min after Now (written while supervise ran): not yet, nowMin never negative
   $bo = { param($ag, $j, $b, $st = 'working', $it = '') [pscustomobject]@{ agent = $ag; items = $it; status = $st; joined = $n.AddMinutes(-$j).ToString('o'); beat = $n.AddMinutes(-$b).ToString('o') } }
-  $brd = @((& $bo a1 45 1), (& $bo a2 25 1), (& $bo a3 10 1), (& $bo a4 55 30 left), (& $bo a6 61 1), (& $bo a7 46 1), (& $bo a8 45 1), (& $bo a9 600 560 left), (& $bo x 70 1 'waiting CI' 'T9'),
+  $brd = @((& $bo a1 45 1), (& $bo a2 25 1), (& $bo a3 10 1), (& $bo a4 55 30 left), (& $bo a6 61 1), (& $bo a7 46 1), (& $bo a8 45 1), (& $bo a9 600 560 left), (& $bo x 70 1 'waiting CI' 'T9 (fix round 2)'),
     (& $bo a10 270 200 left), (& $bo a11 45 1), (& $bo a12 6 1))
   Set-JsonFile (Join-Path (Get-KitPath tasks) 'T4.json') @{ task = 'T4'; schemaVersion = 1; track = @{ done = $true; doneAt = $n.AddMinutes(-30).ToString('o') } }
   Set-JsonFile (Join-Path (Get-KitPath tasks) 'T11.json') @{ task = 'T11'; schemaVersion = 1; track = @{ done = $false; mergedSeenAt = $n.AddMinutes(-10).ToString('o') } }
@@ -94,6 +94,7 @@ foreach ($dw in @('wf_dn1', 31, 5, $true), @('wf_qt1', 32, 90, $false), @('wf_lv
   & $J @{ run = $dw[0]; at = (Get-Date).ToString('o'); running = @('fix:W1'); agents = @{ W1 = @{ mrs = @(@{ url = "https://h/g/web/-/merge_requests/$($dw[1])" }) } } } (Join-Path $wvd "$($dw[0]).json")
   (Get-Item (Join-Path $wvd "$($dw[0]).json")).LastWriteTime = (Get-Date).AddMinutes(-10)
   if ($dw[3]) { & $J @{ script = 'buildy.js'; run = 'hm-x'; wfDir = $wd.FullName; completed = (Get-Date).ToString('o'); at = (Get-Date).AddHours(-2).ToString('o') } (Join-Path $lfd "self-buildy-hm-x-$($dw[0]).json") }
+  if ($dw[0] -eq 'wf_lv1') { foreach ($sh in 'done', 'open') { & $J (@{ script = 'buildy.js'; run = "sh-$sh"; wfDir = $wd.FullName; at = (Get-Date).ToString('o') } + $(if ($sh -eq 'done') { @{ completed = (Get-Date).ToString('o') } } else { @{} })) (Join-Path $lfd "self-buildy-sh-$sh.json") } }   # one folder, a done and a live run: not finished
 }
 $dh = Invoke-PsTest 'dead-hold' @'
 $env:KIT_TRACKER_TYPE = 'none'; . $args[0]
@@ -102,7 +103,7 @@ function Get-TrackerTask($id) { [pscustomobject]@{ status = 'review'; subtasks =
 "finished:$((Get-KitFinishedRuns) -join ',')"
 foreach ($t in @('dh31', 31), @('dh32', 32), @('dh33', 33), @('dh35', 35)) { Invoke-Track add -Task $t[0] -Mrs "g/web!$($t[1])" -Detail }
 '@ @($O) | Out-String; Remove-Item Env:KIT_TRANSCRIPTS
-Expect "track run: a dead workflow's open fix step or blocking finding never holds promotion (run done: wf_dn1; quiet 90 min: wf_qt1, wf_qt2); a live one holds (wf_lv1) ($($dh.Trim() -replace '\s+', ' '))" ($dh -match 'finished:[^\r\n]*wf_dn1' -and $dh -notmatch 'HOLD dh3[125]' -and $dh -match 'DONE dh35' -and $dh -match 'HOLD dh33: MRs merged but fix:W1 \(wf_lv1\) still in review/fix')
+Expect "track run: a dead workflow's open fix step or blocking finding never holds promotion (run done: wf_dn1; quiet 90 min: wf_qt1, wf_qt2); a live one holds (wf_lv1) ($($dh.Trim() -replace '\s+', ' '))" ($dh -match 'finished:[^\r\n]*wf_dn1' -and $dh -notmatch 'finished:[^\r\n]*wf_lv1' -and $dh -notmatch 'HOLD dh3[125]' -and $dh -match 'DONE dh35' -and $dh -match 'HOLD dh33: MRs merged but fix:W1 \(wf_lv1\) still in review/fix')
 # usage limit (owner 2026-11-26): two agents of two runs hit one weekly limit -> ONE ACT naming it, its reset, the models and runs; an older one (4 h) none
 $ulT = Join-Path (Kd) 'txul'
 foreach ($ul in @('wf_ul1', 'claude-m-a', 0), @('wf_ul2', 'claude-m-b', 0), @('wf_ul3', 'claude-m-c', 240)) {

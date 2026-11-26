@@ -49,8 +49,8 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
 #      `devtools.py proof <task>` = 0 gaps); a failed goal or bug (yours, checky's)
 #      -> back to 3 until 0 open bugs (max 3 rounds; then FAIL + failing goals: a stronger round, then the
 #      coordinator); never BLOCKED for an env reason (envy "Unblock yourself", D2); NOTICE "deploy of <svc> starting,
-#      pause" -> stop checks there until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
-& $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"
+#      pause" -> stop checks until "deploy done", then re-run; 0 bugs, every goal met -> release -> 6
+& $D checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Dir <wt> -Evidence "round <n> PASS"
 #   6-9. ship (MR, docs, merge, deploy batch, leave): ship.md
 ```
 - D1. **Decision pause**: about to change user-visible behaviour the task did not ask for (internal logic with the same

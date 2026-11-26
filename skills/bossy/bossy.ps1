@@ -33,8 +33,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L251 budget · L281 launch · L515 recover · L602 pause · L613 resume · L680 program · L708 param ·
-  L714 track · L1106 supervise · L1458 report · L1538 audit · L1598 storage · L1601 bugbrief · L1603 cleanup · L1690 learn ·
-  L1728 decide · L1910 debate · L1954 health · L2022 setup
+  L714 track · L1107 supervise · L1459 report · L1539 audit · L1599 storage · L1602 bugbrief · L1604 cleanup · L1691 learn ·
+  L1729 decide · L1911 debate · L1955 health · L2023 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1101,8 +1101,9 @@ function Invoke-Status([switch]$Watch, [int]$Seconds = 30, [switch]$Json, [strin
     if ($Watch) { Start-Sleep -Seconds $Seconds }
   } while ($Watch)
 }
-# a self record has no runId: its wfDir names the run
-function Get-KitFinishedRuns { @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object completed | ForEach-Object { if ($_.runId) { "$($_.runId)" } elseif ($_.wfDir) { Split-Path "$($_.wfDir)".TrimEnd('\', '/') -Leaf } } | Where-Object { $_ }) }
+# a self record has no runId: its wfDir names the run, unless an open record shares that folder
+function Get-KitFinishedRuns { $lr = @(Read-KitJsonFiles (Get-KitPath launches)); $wl = { param($x) if ($x.wfDir) { Split-Path "$($x.wfDir)".TrimEnd('\', '/') -Leaf } }
+  $open = @($lr | Where-Object { -not $_.completed } | ForEach-Object { & $wl $_ }); @($lr | Where-Object completed | ForEach-Object { if ($_.runId) { "$($_.runId)" } elseif (($l = & $wl $_) -and $l -notin $open) { $l } } | Where-Object { $_ }) }
 # ---- supervise: coordinator heartbeat (FLAGS ACT / WATCH / INFO)
 # coordAt on disk as text: a session that stepped aside mid-sweep stamped it (ConvertFrom-Json makes a DateTime)
 # the last sweep: the lock's start while its pwsh runs, else the last report (a dead sweep's lock never counts)

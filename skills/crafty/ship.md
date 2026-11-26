@@ -31,7 +31,7 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
   `devtools.py mr` edits the open MR.
 
 ## In a /buildy wave (devy, from every goal PASS on)
-- Every goal PASS: `crafty.ps1 checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Evidence "round <n> PASS"` (the owner waives a rerun: `"PASS owner word: <words>"`;
+- Every goal PASS: `crafty.ps1 checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Dir <wt> -Evidence "round <n> PASS"` (the owner waives a rerun: `"PASS owner word: <words>"`;
   precheck and merge refuse a head changed since the PASS), push,
   MRs (templates.md "MR spec"), then `devtools.py finish <task> cases solution.json review --ai cases` (docs from the cases
   spec), then `devtools.py mr` again with the doc links (edits it). A fix round (review, CI, failedTesting): a new AI doc round,

@@ -9,7 +9,7 @@ changed: a UI line, never "not a UI change") · DOCS (each required process doc 
 Links bullet naming an MR / PR has its URL or ref) · COMMITS (commit prose: commitStyle subject, caps; no wip subject) · EOL (a file
 whose diff is mostly line endings) · SCOPE (files outside the area globs) · LOOP (a local loop PASS whose head is the MR head, or only
 docs changed since) · PROOF (devtools.py proof <task> gaps).
-Sections: L22 rules · L164 context · L280 verb · L311 selftest · L358 areas"""
+Sections: L22 rules · L164 context · L283 verb · L314 selftest · L365 areas"""
 import contextlib, io, json, os, re, subprocess, sys
 
 DT = None
@@ -239,6 +239,9 @@ def merge_loop_gap(m, proj, iid, worktree):
     """devtools.py merge: NOT_MERGED text when the LOOP rule refuses the MR head; '' when no task, it passes or --override (logged)."""
     tid = DT._mr_task(m, proj, iid)
     gaps = loop_gap(tid, worktree if worktree and os.path.isdir(worktree) else '', f'origin/{m.get("target_branch") or "main"}', m.get('sha') or '') if tid else []
+    for g in [g for g in gaps if 'has no head' in g[1]]:   # SKILL.md's checkpoint lines wrote no head (150 of 343): a warning, never a refusal
+        print(f'WARNING !{iid}: precheck LOOP: {g[1]}')
+        gaps.remove(g)
     if not gaps:
         return ''
     if DT.OVERRIDE:
@@ -344,14 +347,18 @@ def selftest():
     ex('LOOP: an owner word in the PASS evidence passes a changed head', 'LOOP' not in codes({**good, 'head': 'def5678', 'sinceLoop': ['a.ts'], 'loopEv': 'PASS owner word: ship it'}))
     ex('PROOF: proof gaps', 'PROOF' in codes({**good, 'proofGaps': ["check T1 (ui): no PASS case with UI evidence"]}))
     # devtools.py merge runs the LOOP rule too (2026-11-26: a merge passed while precheck refused LOOP); an owner word passes
-    mt, lf, g = DT._mr_task, loop_facts, globals()
+    mt, lf, gt, g = DT._mr_task, loop_facts, git, globals()
     try:
         DT._mr_task, g['loop_facts'] = (lambda *a: 'T1'), (lambda t: (None, '', ''))
         none = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', '')
         g['loop_facts'] = lambda t: (True, 'PASS owner word: ship', 'old1234')
-        ex('merge: no loop checkpoint -> NOT_MERGED naming LOOP; an owner word merges', 'precheck LOOP' in none and none.endswith('NOT_MERGED') and merge_loop_gap({'sha': 'abc'}, 'g/r', '7', '') == '')
+        own = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', '')
+        g['loop_facts'], g['git'] = (lambda t: (True, 'round 1 PASS', '')), (lambda d, *a: 'a.ts\n')
+        with contextlib.redirect_stdout(io.StringIO()) as o:
+            headless = merge_loop_gap({'sha': 'abc'}, 'g/r', '7', os.getcwd())
+        ex('merge: no loop checkpoint -> NOT_MERGED naming LOOP; an owner word merges; a headless PASS warns, merges', 'precheck LOOP' in none and none.endswith('NOT_MERGED') and own == '' and headless == '' and 'has no head' in o.getvalue())
     finally:
-        DT._mr_task, g['loop_facts'] = mt, lf
+        DT._mr_task, g['loop_facts'], g['git'] = mt, lf, gt
     return 0 if all(res) else 1
 
 

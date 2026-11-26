@@ -8,7 +8,7 @@ the phase it is in, minutes per phase, MR opened, done (task state track.done / 
 investigating past budget.investigateMinutes. Elapsed = time with a live agent; no live agent = stopped. The page: each task row of
 Delivery (outcomes.ps1). Usage: dot-sourced by bossy.ps1; supervise runs Get-KitSuperviseFlagsTaskClock (Invoke-KitHooks
 Get-KitSuperviseFlags); Format-KitDeliveryHtml calls Format-KitTaskClockCell / Get-KitTaskClockLine. Exit codes: none (functions only).
-Sections: L13 clock · L63 flags · L91 page
+Sections: L13 clock · L72 flags · L100 page
 #>
 # ---- clock: clock rows -> one object per task { task; agent; run; start; min; done; mrAt; mrMin; now; nowMin; open; spent; stopped }
 # a phase between calls (the agent edits or thinks): the one its last call leads to
@@ -23,9 +23,17 @@ function Measure-KitClockSpan($Spans, [datetime]$From, [datetime]$To) {
 # elapsed (owner 2026-11-26) = time with a live agent: phases + waits while a board entry of the task (its items or a clock agent) lived;
 # stops at done (track.doneAt) or merged (track.mergedSeenAt); no live entry now = stopped (no agent), never counted on
 function Get-KitTaskClock([datetime]$Now = (Get-Date), [double]$Hours = 24, $Rows = $null, $Board = $null) {
+  # one computation per sweep minute (supervise flags + the page's Delivery rows)
+  $mk = if ($null -eq $Rows -and $null -eq $Board) { "$($Now.ToString('yyyyMMddHHmm'))|$Hours" }
+  if ($mk -and $script:KitClockMemo -and $script:KitClockMemo.k -eq $mk) { return $script:KitClockMemo.v }
+  if ($mk) { $v = @(Get-KitTaskClock $Now $Hours @(Read-KitLog clock $Now.AddHours(-$Hours)) @(Read-KitJsonFiles (Get-KitPath board))); $script:KitClockMemo = @{ k = $mk; v = $v }; return $v }
   # rows after Now (written while supervise ran, a page drawn from an older report): not yet, else nowMin goes negative
   $clockRows = @(@(if ($null -ne $Rows) { $Rows } else { Read-KitLog clock $Now.AddHours(-$Hours) }) | Where-Object { $_.at -and $_.phase -and [datetime]$_.at -le $Now } | Sort-Object { [datetime]$_.at })
-  $bd = @(@(if ($null -ne $Board) { $Board } else { Read-KitJsonFiles (Get-KitPath board) }) | Where-Object { $_ -and $_.joined -and $_.beat })
+  # board entries of the window, indexed once: by item (raw, NormTask'd: CU-<id>, '<id> (fix round 2)') and, with no items, by agent
+  $byItem = @{}; $byAgent = @{}; $cut = $Now.AddHours(-$Hours)
+  foreach ($b in @(@(if ($null -ne $Board) { $Board } else { Read-KitJsonFiles (Get-KitPath board) }) | Where-Object { $_ -and $_.joined -and $_.beat -and [datetime]$_.beat -ge $cut })) {
+    $bi = @(@("$($b.items)" -split '[\s,;()]+') + @(Get-KitItemTasks "$($b.items)") | Where-Object { $_ } | Select-Object -Unique)
+    if ($bi.Count) { foreach ($i in $bi) { $byItem[$i] = @(@($byItem[$i]) + $b | Where-Object { $_ }) } } else { $byAgent["$($b.agent)"] = @(@($byAgent["$($b.agent)"]) + $b | Where-Object { $_ }) } }
   # a row with no task (decide ask names an item): its agent's last task
   $last = @{}; $by = [ordered]@{}
   foreach ($r in $clockRows) { $t = "$($r.task)"; if (-not $t -and $r.agent) { $t = "$($last["$($r.agent)"])" }; if (-not $t) { continue }; if ($r.agent) { $last["$($r.agent)"] = $t }
@@ -44,9 +52,10 @@ function Get-KitTaskClock([datetime]$Now = (Get-Date), [double]$Hours = 24, $Row
     foreach ($p in @($open.Keys)) { if (($end - $open[$p]).TotalMinutes -gt 120) { $open.Remove($p); continue }; $spent[$p] = [double]$spent[$p] + [math]::Max(0.0, ($end - $open[$p]).TotalMinutes); $spans.Add(@($open[$p], $end)) }
     # live spans: board entries whose items name the task (or its itemIds), or with no items a clock agent of it; left / dead holder: until its last beat
     $ags = @($rs | Where-Object agent | ForEach-Object { "$($_.agent)" } | Select-Object -Unique)
-    $mine = @($bd | Where-Object { $bi = @("$($_.items)" -split '[,\s]+' | Where-Object { $_ }); if ($bi.Count) { @($bi | Where-Object { $_ -in $ids }).Count } else { "$($_.agent)" -in $ags } })
+    $seenB = [Collections.Generic.HashSet[object]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)   # by reference: Select-Object -Unique folds every pscustomobject into one
+    $mine = @(@($ids | ForEach-Object { $byItem[$_] }) + @($ags | ForEach-Object { $byAgent[$_] }) | Where-Object { $_ -and $seenB.Add($_) })
     $alive = @($mine | Where-Object { $_.status -ne 'left' -and (Test-KitHolder $_) -ne $false -and ($Now - [datetime]$_.beat).TotalHours -lt 3 })
-    foreach ($b in $mine) { $spans.Add(@([datetime]$b.joined, $(if ($b -in $alive) { $Now } else { [datetime]$b.beat }))) }
+    foreach ($b in $mine) { $spans.Add(@([datetime]$b.joined, $(if (@($alive | Where-Object { [object]::ReferenceEquals($_, $b) }).Count) { $Now } else { [datetime]$b.beat }))) }
     $lastAt = [datetime]$rs[-1].at; $lp = "$($rs[-1].phase)"
     $nowP = if ($open.Count) { @($open.Keys | Sort-Object { $open[$_] } -Descending)[0] } else { "$($script:KitClockNext[$lp])" }; if (-not $nowP) { $nowP = $lp }
     $ls = @($rs | Where-Object { $_.event -eq 'start' -and "$($_.phase)" -eq $nowP })   # still in the last call's phase: since that call began
