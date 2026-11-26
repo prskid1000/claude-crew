@@ -424,7 +424,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
     }
     Meta $p 'target' $Target
     $scf = Join-Path (GitDir $p) 'claude-scope'
-    if ($Scope) { Meta $p 'scope' (@(Split-KitList $Scope -Sep '\s*,\s*') -join "`n") } elseif (Test-Path -LiteralPath $scf) { Remove-Item -LiteralPath $scf -Force }   # brief agents[].paths
+    if ($Scope) { Meta $p 'scope' (@(Split-KitList $Scope -Sep ',(?![^{}]*\})') -join "`n") } elseif (Test-Path -LiteralPath $scf) { Remove-Item -LiteralPath $scf -Force }   # brief agents[].paths
     $depOut = @(Set-WtDeps $p $Repo $Target $LinkFrom)
     $o = Read-KitSlotLease $got.file; if ($o) { $o = $o | Select-Object -Property * -ExcludeProperty creating; Set-KitProp $o branch $Branch; Write-KitAtomic $got.file ($o | ConvertTo-Json -Depth 5) }
     foreach ($wp in @(Get-ChildItem -LiteralPath (Get-KitPath wip-patches -Create) -Filter "$($Branch -replace '[^\w.-]', '_')~*.patch" -File)) { "WIP patch of ${Branch}: git -C $p apply --3way $($wp.FullName), then delete it (saved when hooks refused the WIP commit)" }

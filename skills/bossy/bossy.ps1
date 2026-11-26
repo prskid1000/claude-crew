@@ -34,7 +34,7 @@ Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHook
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L252 budget · L282 launch · L516 recover · L605 pause · L616 resume · L683 program · L711 param ·
   L717 track · L1110 supervise · L1462 report · L1542 audit · L1602 storage · L1605 bugbrief · L1607 cleanup · L1694 learn ·
-  L1732 decide · L1914 debate · L1958 health · L2026 setup
+  L1732 decide · L1911 debate · L1955 health · L2023 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1745,11 +1745,8 @@ function Invoke-Decide {
   $crewRx = "(?i)^($(@($crewNames | ForEach-Object { [regex]::Escape($_) }) -join '|'))([-_ :]|$)"
 
   $get = { param($i) $f = Join-Path $dir "$i.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } }
-  $save = {
-    param($o)
-    $f = Join-Path $dir "$($o.id).json"
-    Invoke-KitLocked $f { Write-KitState $f $o 2 }
-    Write-KitLog decisions-log $o.status ($o | Select-Object * -ExcludeProperty at, schemaVersion, updated, holder)   # at = this line's time
+  $save = { param($o); Add-ScopeKeys $o; $f = Join-Path $dir "$($o.id).json"; Invoke-KitLocked $f { Write-KitState $f $o 2 }
+    Write-KitLog decisions-log $o.status ($o | Select-Object * -ExcludeProperty at, schemaVersion, updated, holder)   # at = the line's
   }
   $note = { param($file, $text) if ($file -and (Test-Path (Split-Path $file))) { Add-Content -LiteralPath $file "`n$text" -Encoding utf8 } }
   $pub = { param($t, [bool]$Named) if ($t -and -not $NoPublish -and ($Named -or (Test-Path (Get-KitTaskFile $t)))) { try { Publish-KitDecisions $t $Link } catch { Write-Warning "Decisions checklist of $t not updated (decide publish -Task $t retries): $_" } } }

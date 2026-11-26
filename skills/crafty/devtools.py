@@ -705,7 +705,7 @@ def _json_or_none(line):
 
 def scope_dropped(given, recorded):
     """The recorded area's globs (the STEP's) a given --scope leaves out."""
-    want = [g.strip() for g in given.split(',') if g.strip()]
+    want = scope_of('', given) if given else []
     return [g for g in recorded() if g not in want] if want else []
 
 
@@ -715,7 +715,7 @@ def scope_of(worktree, given='', mr='', log=None, branch=''):
     track run); [] = no area."""
     on = not branch or _run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD']).strip() == branch
     if given or (on and (rec := wt_record(worktree, 'scope'))):
-        return [g.strip() for g in given.split(',') if g.strip()] if given else rec
+        return [g.strip() for g in re.split(r',(?![^{}]*\})', given) if g.strip()] if given else rec
     try:
         lines = open(log or kit_path('scope-log'), encoding='utf-8').read().splitlines() if mr else []
     except OSError:

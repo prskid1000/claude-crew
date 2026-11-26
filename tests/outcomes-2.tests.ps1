@@ -44,5 +44,14 @@ $dry = pwsh @np $O stats reset -DryRun | Out-String; $sr = pwsh @np $O stats res
 Expect "stats reset: -DryRun deletes nothing; then outcomes and clock rows deleted and printed, a cutoff set, no row written back; tasks and QA runs kept ($n3)" (
   $dry -match 'would delete .*outcomes\.jsonl' -and $sr -match 'deleted .*outcomes\.jsonl' -and $sr -match 'deleted .*clock\.jsonl' -and $sr -match 'cutoff .*stats-reset' -and -not (Test-Path (TkPath $k outcomes)) -and
   -not (Test-Path (Join-Path $cd 'clock.jsonl')) -and "$n3" -eq '0' -and (Test-Path (Join-Path (TkPath $k tasks) 'q1.json')) -and (Test-Path (Join-Path $qd 'results.json')))
+# 2026-11-26 (3 refusals with a word on record): a scope word names an item; wt commit / devtools.py ask by branch or MR, so the
+# record takes the branches of the item's area (board entry -> its area's slot) and the MRs of the task holding the item
+& $put board 'devy-9-a1.json' @{ agent = 'devy-9'; run = 'rs'; area = 'pay-area'; items = 'K1-fields K1-gate'; status = 'working' }
+& $put wt-slots 'falcon-api.json' @{ slot = 'api-Falcon'; agent = 'pay-area'; branch = 'feat/PAY-9-fields-set' }
+& $put tasks 'k1.json' @{ task = 'k1'; itemIds = @('K1-fields', 'K1-gate'); spec = @{ kind = 'Feature' }; track = @{ mrs = @('api!41'); created = '2026-11-20T10:00:00+00:00' }; envRuns = @(); updated = $now }
+$skR = pwsh @np $O decide record -Run rs -Gate scope -Item K1-fields -Question 'src outside the area?' -Answer yes -Source chat | Out-String
+$skB, $skN = foreach ($b in 'feat/PAY-9-fields-set', 'feat/OTHER-1-x') { pwsh @np $O decide check -Gate scope -Item $b | Out-String }
+$skM = pwsh @np $O decide check -Gate scope -Mrs 'api!41' | Out-String
+Expect "scope word of an item: found by its area's branch and by its task's MR, not by another branch ($("$skB".Trim()) | $("$skM".Trim()) | $("$skN".Trim()))" ($skR -match 'RECORDED' -and $skB -match '^WORD ' -and $skM -match '^WORD ' -and $skN -notmatch '^WORD ')
 Remove-TestKit $k
 Complete-Tests

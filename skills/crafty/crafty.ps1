@@ -129,7 +129,7 @@ switch ($Action) {
     elseif ($remoteBranch) { G -C $Repo fetch -q origin $Branch | Out-Null; G -C $Repo worktree add -b $Branch $path "origin/$Branch" | Out-Null; "branch $Branch on origin: checked out" }
     else { G -C $Repo worktree add -b $Branch $path "origin/$Target" | Out-Null }
     Meta $path 'target' $Target
-    if ($Scope) { Meta $path 'scope' (@(Split-KitList $Scope -Sep '\s*,\s*') -join "`n"); "area:     $Scope (wt commit, devtools.py mr / merge refuse files outside)" }   # brief agents[].paths
+    if ($Scope) { Meta $path 'scope' (@(Split-KitList $Scope -Sep ',(?![^{}]*\})') -join "`n"); "area:     $Scope (wt commit, devtools.py mr / merge refuse files outside)" }   # brief agents[].paths
     $depOut = @(Set-WtDeps $path $Repo $Target $depFrom)
     "worktree: $path"
     "branch:   $Branch (from origin/$Target)"

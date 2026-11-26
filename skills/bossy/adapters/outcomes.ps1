@@ -534,6 +534,21 @@ function Publish-KitDecisions([string]$Task, [string]$Link) {
   Update-KitTaskIndex $Task { param($x) $x.decisions = [ordered]@{ rows = $rows; link = $Link; publishedAt = (Get-KitStamp) } }
   "PUBLISHED decisions of $Task ($(@($items | Where-Object { $_.done -and $_.text -notmatch ' → superseded by |^plan · ' }).Count) in force, $(@($items | Where-Object { -not $_.done }).Count) open): $(if ("$r") { "$r" } else { 'checklist updated' })"
 }
+# a scope word names an item, the gates ask by branch or MR (wt commit, devtools.py mr / precheck / merge; 2026-11-26: 3 refusals with
+# a word on record): the record also takes the branches of the item's area (board entries of its run listing the item -> that area's
+# leased slots and its worktrees) and the MRs of the task holding the item; bossy.ps1 decide saves every record through it
+function Add-ScopeKeys($Rec) {
+  if ("$($Rec.gate)" -ne 'scope' -or -not $Rec.item -or (@($Rec.branches | Where-Object { $_ }).Count -and @($Rec.mrs | Where-Object { $_ }).Count)) { return }   # both known: kept
+  $it = "$($Rec.item)"
+  $on = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_ -and (-not $Rec.run -or "$($_.run)" -eq "$($Rec.run)") -and $it -in @("$($_.items)" -split '[\s,]+') })
+  $areas = @($on | ForEach-Object { "$($_.area)"; "$($_.agent)" } | Where-Object { $_ } | Select-Object -Unique)
+  $br = @(@($Rec.branches) + @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_ -and $_.agent -in $areas -and -not $_.parked } | ForEach-Object branch) +
+    @($on | ForEach-Object { @($_.worktrees) } | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { "$(git -C $_ branch --show-current 2>$null)".Trim() }) | Where-Object { $_ } | Select-Object -Unique)
+  $tk = @(Read-KitJsonFiles (Get-KitPath tasks) | Where-Object { $_ -and ("$($_.task)" -eq $it -or $it -in @($_.itemIds)) } | ForEach-Object { "$($_.task)" })
+  $all = (Read-KitTracking).tasks
+  $mrs = @(@($Rec.mrs) + @($tk | ForEach-Object { @($all[$_].mrs) }) | Where-Object { $_ } | Select-Object -Unique)
+  $Rec | Add-Member -Force branches $br; $Rec | Add-Member -Force mrs $mrs
+}
 # an agent's branches (its leased pool slots, its checkpoint worktrees): an answered scope ask records them (wt commit checks by branch)
 function Get-KitAgentBranches([string]$Agent, [string]$Run = '') {
   if (-not $Agent) { return @() }

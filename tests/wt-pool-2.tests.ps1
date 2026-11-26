@@ -49,5 +49,11 @@ Set-Content `$cf "serverUrl: 'http://localhost:8443' // mine"; try { Use-KitLane
 "@
 $pfOut = $pfTest -join ' // '
 Expect "e2e portFiles: lane ports written for the run (a missing file skipped), a second run restores the first, put back after (clean tree); a file with its own edits refused; crafty runs it in try / finally ($pfOut)" ($pfOut -match "run:serverUrl: 'http://localhost:8543'\|mark:True" -and $pfOut -match "again:serverUrl: 'http://localhost:8543'" -and $pfOut -match "after:serverUrl: 'http://localhost:8443'\|mark:False\|clean:True" -and $pfOut -match "own:refused\|b:u: 'http://localhost:8443'" -and (Get-Content (Join-Path $k 'skills/crafty/crafty.ps1') -Raw) -match 'Invoke-KitE2eRuns \$st\.dir \$runs @\(if \(\$ln\) \{ \$recipe\.portFiles \}\)' -and (Get-Content (Join-Path $k 'skills/crafty/adapters/wt-pool.ps1') -Raw) -match '\} finally \{ Restore-KitLanePortFiles \$Dir \}')
+# wt new / lease -Scope and devtools.py --scope: a brace glob keeps its commas (reported twice: 'src/{main' and 'test}/**' as two globs)
+$bgS = 'src/{main,test}/java/**, docs/**,web/{a,b}/*.ts'; $bgSep = ',(?![^{}]*\})'
+$bgP = & { . (Lib) *>$null; @(Split-KitList $bgS -Sep $bgSep) -join '|' }
+$bgSrc = @('skills/crafty/crafty.ps1', 'skills/crafty/adapters/wt-pool.ps1' | Where-Object { -not (Get-Content (Join-Path $src $_) -Raw).Contains("Split-KitList `$Scope -Sep '$bgSep'") })
+$bgY = & $py -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import devtools as d; g = d.scope_of('', sys.argv[2]); print('|'.join(g) + ' / ' + '|'.join(d.scope_dropped(sys.argv[2], lambda: g + ['x/**'])))" (Join-Path $src 'skills/crafty') $bgS
+Expect "scope globs: a brace glob is one glob in wt new / lease -Scope and devtools.py --scope ($bgP ; $bgY ; $($bgSrc -join ','))" ($bgP -eq 'src/{main,test}/java/**|docs/**|web/{a,b}/*.ts' -and "$bgY" -eq "$bgP / x/**" -and -not $bgSrc.Count)
 Remove-TestKit $k
 Complete-Tests
