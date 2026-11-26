@@ -26,6 +26,22 @@ const tr = (rz.find((c) => c.label === 'track:G1') || {}).prompt || ''
 console.log(`track-script:${/track add -Discover -Mrs 'https:\/\/github\.com\/o\/storefront\/pull\/4,https:\/\/github\.com\/o\/core\/pull\/4'/.test(tr) && !/group the MRs/.test(tr)}`)
 '@
 Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'other-error', 'resume-tiers', 'track-script' -Show 6
+# owner 2026-11-26: a pending decision on A2 never holds the review of A1's MR (mrs[].items); a changed head is reviewed again
+$jse = @'
+const mA = { url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false, items: ['A1'], head: 'h1' }, mB = { ...mA, url: 'https://h/g/api/-/merge_requests/2', items: ['A2'], head: 'h2' }
+const calls = [], P = { status: 'PASS', failing: [] }, mrOf = (l) => [1, 2].filter((n) => new RegExp(`merge_requests/${n}\\b`).test(l.prompt))
+const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
+ if (/^record-args/.test(o.label)) return _rec()
+ if (o.label === 'build:E1') return _rep(P, { mrs: [mA, mB], needsDecision: [{ item: 'A2', decisionId: 'd-20260101000000-x', question: 'q' }] })
+ if (/^decide:/.test(o.label)) return { ok: true, output: 'ANSWERED d-20260101000000-x: A' }
+ if (/^(resume|ship):E1/.test(o.label)) return _rep(P, { mrs: [mA, { ...mB, head: 'h3' }] })
+ return /^review/.test(o.label) ? { findings: [] } : /^ci:/.test(o.label) ? { done: true, mrs: [] } : _ok('[]') }
+run({ brief: 'C:/b/e.md', ..._kl, agents: [{ id: 'E1', items: 'A1,A2' }] }, agent, _n, _n, pipeline).then(() => {
+ const rv = calls.filter((c) => c.label === 'review:E1')
+ console.log(`early-review:${rv.length === 2 && mrOf(rv[0]) + '' === '1' && mrOf(rv[1]) + '' === '2'}`)
+}).catch(_err)
+'@
+Expect-Each (Invoke-Js w2-early $jse $wfd) 'buildy decision wait: # (review:E1 MRs: early !1, after the answer only !2, its head changed)' 'early-review' -Show 8
 $jst = @'
 const go = async (cfg, ex = {}, pre = null) => { const { calls, agent } = _mock((p, o) => /^test:/.test(o.label) ? _res('W1', [_ck('C2', 'PASS')]) : /^close/.test(o.label) ? _ok('published') : undefined)
  await run({ runDir: 'C:/runs/G', ..._kl, items: [_item('W1', '')], ...ex }, async (p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`) : (pre && pre(o)) || agent(p, o), _n, _n, null)
