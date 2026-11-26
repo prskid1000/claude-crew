@@ -257,7 +257,7 @@ export const tenantOf = (t, as, tenant) => tenant ?? t.created?.[as]?.tenant ?? 
 export async function session({ target, tenant, as, path } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
   if (pin.length && !pin.includes(tn)) throw new Error(`target '${tn}' is not this QA run's target (${pin.join(', ')})`)
-  const t0 = CFG.targets[tn] || (await adapter('web-login.mjs')).laneTarget(tn, CFG.targets) || targetOf(tn)
+  const t0 = (await adapter('web-login.mjs')).resolveTarget(tn, CFG.targets) || targetOf(tn)
   as = as || defaultUser(t0, tn)
   tenant = tenantOf(t0, as, tenant)
   const t = { ...t0, web: fill(t0.web || '', '', '', tenant) }, bo = browserOpts(t0), eng = process.env.KIT_BROWSER_ENGINE || bo.engine

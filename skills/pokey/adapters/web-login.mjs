@@ -1,7 +1,7 @@
 // web-login.mjs: a module skills/pokey/browser.mjs imports. Usage: through browser.mjs. Exit codes: none (a module).
 // web-login-types: webLogin.type sso-steps (steps: goto, fill {sel: val}, click, wait sel|ms, waitUrl) | script (.mjs:
 // default async ({ page, user, pass, tenant, target, totp })) | storageState (file: cookies, origins); {totp} from users[as][2].
-// Imported by browser.mjs login() from adapters/; h = its helpers { nav, step, applyState, onLogin, fill, here }; session(): laneTarget.
+// Imported by browser.mjs login() from adapters/; h = its helpers { nav, step, applyState, onLogin, fill, here }; session(): resolveTarget.
 import { spawnSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -64,6 +64,15 @@ export function laneTarget(name, targets, lanes) {
     return t
   }
   return null
+}
+// a target by name, as pokey.ps1 Resolve-PokeyTarget: an entry with its own URLs as is; a logins-only lane entry = the base
+// target on that lane's ports, the entry's users / created / defaults over the base's (alone it opened about:blank)
+export function resolveTarget(name, targets, lanes) {
+  const own = targets[name]; if (own && (own.web || own.api)) return own
+  const lt = laneTarget(name, targets, lanes); if (!lt) return own
+  const t = { ...lt }; for (const k of ['defaultUser', 'defaultTenant']) if (own?.[k] != null) t[k] = own[k]
+  for (const k of ['users', 'created']) t[k] = { ...lt[k], ...own?.[k] }
+  return t
 }
 // registry (parity.json login): the web surface (browser.mjs login()) reads users, profiles and secret:<name> refs (resolveSecret)
 export const ADAPTERS = { login: {} }
