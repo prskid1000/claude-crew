@@ -35,9 +35,9 @@ const say = (it, s) => log(`${it.code}: ${s}`)
 const _S = { type: 'string' }, _B = { type: 'boolean' }, _I = { type: 'integer' }, _SA = { type: 'array', items: _S }, dsc = (d, t = _S) => ({ ...t, description: d }), FINAL_SCHEMA = { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }
 // a tester step, no result (2026-11-25 login race): one retry, <label>~retry1; close/hold never
 const agent1 = agent, TRY2 = /^([\w-]*test|retest-strong|handoff|verify|audit):/
-// a model's usage limit: once on the next tier, <label>@up (buildy.js the same)
+// usage limit: next tier once (<label>@up); steppy unknown (older session): kitty once (buildy.js the same)
 const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
- try { return await agent1(p, o) } catch (e) { if (!up || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
+ try { return await agent1(p, o) } catch (e) { const em = String(e.message || e); if (o.agentType === 'steppy' && /steppy/.test(em)) return agent1(p, { ...o, agentType: 'kitty' }); if (!up || !LIMIT.test(em)) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agentUp(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
 let R = ARGS0
@@ -75,15 +75,15 @@ const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h 
 const RUN0 = (R.runDir ? String(R.runDir).split(/[\\/]/).filter(Boolean).pop() : String(R.name || R.target || 'run').replace(/^(?!testy-)/, 'testy-')) + (R.instance ? `-${R.instance}` : '')
 async function recordArgs(run, runDir, phaseName, plan = '') {
  const json = JSON.stringify(ARGS0), file = `${(R.runtimeDir || `${K0}/.runtime`).replace(/[\\/]+$/, '')}/${KP.runtime.launches}args-testy-${run.replace(/[^\w.-]/g, '_')}.json`
- const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:
+ const prompt = `STEP: record this workflow's launch args (crash recovery):
 1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${json}
 ARGS>>>
 2. Run in PowerShell (pwsh 7): & ${K0}/skills/bossy/bossy.ps1 launch -Self -Script testy.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)}${runDir ? ` -RunDir '${runDir}'` : ''}${plan ? ` -Plan '${plan}'` : ''}
-Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (its SUM is checked: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
+Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
-  const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
+  const r = await agent(prompt, { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'steppy', model, effort: 'low' })
   if (r && r.ok && recOk(r.output, plan)) return r.output
  }
  throw new Error('launch -Self output re-worded twice: not started')
@@ -94,7 +94,7 @@ const q0 = (s) => String(s).replace(/'/g, "''")
 const prepStep = async (cmd, label) => {
  for (const [lb, model] of [[label, MODELS.step], [`${label}-retry`, MODELS.stepRetry]]) {
   const got = await agent(`STEP: run exactly this in PowerShell (pwsh 7; tool timeout 600000) and return ok=true when it exits 0 (else ok=false) with its LAST output line (it starts with "RUN "), unchanged, as output; nothing else (a <yyyy-...> placeholder stays as typed: the script fills it):\n${cmd}`,
-   { label: lb, phase: 'Prepare', schema: FINAL_SCHEMA, agentType: 'kitty', model, effort: 'low' })
+   { label: lb, phase: 'Prepare', schema: FINAL_SCHEMA, agentType: 'steppy', model, effort: 'low' })
   try { const f = JSON.parse(String((got && got.output) || '').trim().replace(/^RUN /, '')); if (f && Array.isArray(f.items)) return f } catch (e) { /* retried once */ }
  }
  return null
@@ -235,7 +235,7 @@ const LEARN_SCHEMA = { type: 'object', properties: { signals: { type: 'number' }
 // output = its last output line unless whole (a multi-line JSON)
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
  agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`,
-  { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'kitty', model: MODELS.step, effort: 'low' })
+  { label, phase: phaseName, schema: FINAL_SCHEMA, agentType: 'steppy', model: MODELS.step, effort: 'low' })
 
 // ---- local: env and web / API blocks
 // an item may name its own env (it.target)
@@ -698,7 +698,7 @@ if (followUps.length) {
 $f = '${R.runDir}/run.json'; $j = Get-Content $f -Raw | ConvertFrom-Json; $new = '${JSON.stringify(followUps).replace(/'/g, "''")}' | ConvertFrom-Json
 foreach ($n in $new) { if (-not ($j.items | Where-Object code -eq $n.code)) { $j.items += $n } }
 [IO.File]::WriteAllText($f, ($j | ConvertTo-Json -Depth 20))
-Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, agentType: 'kitty', model: MODELS.step, effort: 'low' })
+Then return ok=true and the list of item codes now in the file.`, { label: 'add-followups', phase: 'Test', schema: FINAL_SCHEMA, agentType: 'steppy', model: MODELS.step, effort: 'low' })
  log(`follow-ups for PENDING checks: ${followUps.map((f) => `${f.code} (${f.only.join(', ')})`).join('; ')}`)
  for (const [j, t] of [...new Set(followUps.map((f) => f.lane))].entries()) {
   const fl = followUps.filter((f) => f.lane === t)

@@ -6,7 +6,7 @@ kit-admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L157 health · L166 browser policy · L209 prepush · L273 weekly tests · L309 state lint · L318 precommit
+Sections: L13 learn · L159 health · L168 browser policy · L211 prepush · L275 weekly tests · L311 state lint · L320 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -49,7 +49,9 @@ function Select-KitLessonScope([string[]]$Lines, [string]$Skill, [string]$Phase,
     if ($ln -match '^## ') { $keep = $true; $ln; continue }
     if ($ln -match '^### Project:\s*(.+?)\s*$') { $keep = -not $projects.Count -or $Matches[1] -in $projects }
     elseif ($ln -match '^### .*\(([^)]+)\)\s*$' -and ($tags = @($Matches[1] -split ',' | ForEach-Object { $_.Trim() })) -and -not @($tags | Where-Object { $_ -notin $known }).Count) {
-      $keep = $Skill -in $tags -or ($Phase -and @($tags | Where-Object { $_ -in $see }).Count) -or (-not $Phase -and @($tags | Where-Object { $_ -in $phases }).Count) }
+      # skill tags pick the roles, phase tags the phases: a block needs both (no tag of a kind = any); no -Phase = every phase
+      $tagSkills = @($tags | Where-Object { $_ -notin $phases }); $tagPhases = @($tags | Where-Object { $_ -in $phases })
+      $keep = (-not $tagSkills.Count -or $Skill -in $tagSkills) -and (-not $tagPhases.Count -or -not $Phase -or @($tagPhases | Where-Object { $_ -in $see }).Count) }
     elseif ($ln -match '^### ') { $keep = $true }
     if (-not $keep) { continue }
     if ($Phase -and $ln -match '^- \[([a-z|]+)\] ' -and -not @($Matches[1] -split '\|' | Where-Object { $_ -in $see -or $_ -notin $phases }).Count) { continue }

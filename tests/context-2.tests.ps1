@@ -16,6 +16,14 @@ Expect 'learn -Read -Skill a: unchanged (its lessons, its org sections)' ($oneOu
 $capLines = @(1..25 | ForEach-Object { "- cap $_ -> a (b)$(if ($_ -eq 25) { ' (9×)' })" }) -join "`n"; [IO.File]::WriteAllText((Join-Path $k 'LESSONS.md'), "# Kit lessons`n`n## zc`n$capLines`n")
 $capOut = pwsh @np $O learn -Read -Skill zc | Out-String
 Expect "learn -Read: learn.readCap 20 lessons by default: the most-hit, then the newest (the top); the rest counted ($(([regex]::Matches($capOut, '(?m)^- cap')).Count))" (([regex]::Matches($capOut, '(?m)^- cap')).Count -eq 20 -and $capOut -match '\(5 more, fewest hits' -and $capOut -match '- cap 25 ' -and $capOut -match '- cap 19 ' -and $capOut -notmatch '- cap 2[0-4] ')
+# org blocks by skill and phase: "### t (crafty, ship)" = crafty in phase ship only (a phase tag alone showed it to every role)
+[IO.File]::WriteAllText((Join-Path $k 'ROLES.local.md'), "## opsy, crafty, pokey`n- role all`n### mx (crafty, ship)`n- role mx`n### rv (pokey, crafty)`n- role rv`n")
+$tagOut = @((pwsh @np $O learn -Read -Skill opsy), (pwsh @np $O learn -Read -Skill pokey), (pwsh @np $O learn -Read -Skill crafty -Phase code), (pwsh @np $O learn -Read -Skill crafty -Phase ship), (pwsh @np $O learn -Read -Skill crafty) | ForEach-Object { "$_" })
+$tagGot = @($tagOut | ForEach-Object { "$(if ($_ -match 'role mx') { 'mx' })$(if ($_ -match 'role rv') { 'rv' })$(if ($_ -match 'role all') { '+' })" }) -join ','
+Expect "learn -Read: ### (skills, phases) blocks need both to match; untagged rules stay ($tagGot)" ($tagGot -eq '+,rv+,rv+,mxrv+,mxrv+')
+# ROUTER.md: the main session's SessionStart context only, never the owner's systemMessage (spawned agents never load it)
+[IO.File]::WriteAllText((Join-Path $k 'ROUTER.md'), "## Router ROUTER-MARK-T`n"); $hrJson = @(pwsh @np $O health 2>$null | Where-Object { "$_" -match '^\{' })[-1] | ConvertFrom-Json
+Expect "health: ROUTER.md in additionalContext, not in systemMessage ($("$($hrJson.systemMessage)".Length) chars shown)" ($hrJson.hookSpecificOutput.additionalContext -match 'ROUTER-MARK-T' -and "$($hrJson.systemMessage)" -notmatch 'ROUTER-MARK-T')
 # board join prints its own run's rows; another run is one count line (the whole board: 1-2.6k tokens per join), board show keeps every row
 $null = pwsh @np $O board join -Agent BY -Run rb
 $farOut = pwsh @np $O board join -Agent FAR -Run rfar | Out-String; $nearOut = pwsh @np $O board join -Agent NEAR -Run rb | Out-String; $showOut = pwsh @np $O board show | Out-String
@@ -50,5 +58,8 @@ Expect "beat cache: a record of the old classification is re-read (12k kit start
 # a kit worktree (<name>-.claude) under the workspace: its CLAUDE.md + @AGENTS.md never load again on a file read (3.5k tokens a kitty / revy; probed 2026-11-26)
 $stg = Get-Content (Join-Path $src 'settings.json') -Raw | ConvertFrom-Json
 Expect "settings.json: claudeMdExcludes skips a kit worktree's CLAUDE.md ($($stg.claudeMdExcludes -join ' '))" (@($stg.claudeMdExcludes) -contains '**/*-.claude/CLAUDE.md')
+# board join names the contracts file, never dumps it (its readers Read it; 2.5k tokens per join)
+$ctrFile = Join-Path $k 'c.contracts.md'; [IO.File]::WriteAllText($ctrFile, "# Contracts`nCONTRACT-BODY-T`n"); $ctrOut = pwsh @np $O board join -Agent CTR -Run rctr -Contracts $ctrFile | Out-String
+Expect "board join: contracts as a one-line pointer, no body ($(($ctrOut -split "`n" | Where-Object { $_ -match 'CONTRACTS' }) -join ''))" ($ctrOut -match 'CONTRACTS: .*c\.contracts\.md \(2 lines\)' -and $ctrOut -notmatch 'CONTRACT-BODY-T')
 Remove-TestKit $k
 Complete-Tests

@@ -1,13 +1,13 @@
 export const meta = {
  name: 'buildy',
- description: 'The dev flow for a multi-item build (any stack): devy code, goals, local loop, decisions; review, CI, merge, testing docs + tracker; deploys on a person\'s word',
+ description: 'Multi-item dev flow (any stack): code, local loop, review, CI, merge, docs, tracker; deploy on a person\'s word',
  whenToUse: 'Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)',
  phases: [
   { title: 'Spike', detail: 'rechy answers args.openQuestions in the brief first' },
   { title: 'Build', detail: 'a devy per area: worktree, code, testing goals, local loop, MRs, testing docs' },
   { title: 'Decide', detail: 'items waiting on an owner decision or ENV-FIX resume after it' },
   { title: 'Review', detail: 'a revy per devy (+ datay on migrations) while CI runs' },
-  { title: 'Fix', detail: 'fix round (blocking, CI) + local tests; re-review, then a decide ask; should-fix -> Follow-ups; merge in order, tracker' },
+  { title: 'Fix', detail: 'fix round (blocking, CI) + local tests; re-review, else a decide ask; should-fix -> Follow-ups; ordered merge, tracker' },
   { title: 'Deploy', detail: 'merged work joins the deploy batch; a person says deploy <env>, never asked' },
   { title: 'Learn', detail: 'signals from this wave, cleanup (/tidy makes lessons)' },
  ],
@@ -119,16 +119,16 @@ const CI_SCHEMA = obj({ done: B, mrs: arr(obj({ mr: S, status: S, job: S, error:
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
 // no result: one retry after a wait, <label>@redo; edit steps check state first
 const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|merge-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
-// a model's usage limit: once on the next tier, <label>@up
+// usage limit: next tier (<label>@up); steppy unknown (older session): kitty
 const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
- try { return await agent1(p, o) } catch (e) { if (!up || !LIMIT.test(String(e.message || e))) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
+ try { return await agent1(p, o) } catch (e) { const em = String(e.message || e); if (o.agentType === 'steppy' && /steppy/.test(em)) return agent1(p, { ...o, agentType: 'kitty' }); if (!up || !LIMIT.test(em)) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
  return agent1(p.replace(/^(STEP: )?/, `$1No report came back: ${ed ? 'first find what is done (wt lease + wt status, git log, the board, MR state), never apply a change twice; then ' : ''}do it now (a merged / scheduled MR: report it, never merge twice).\n`), { agentType: 'devy', ...o, label: `${o.label}@redo` }) } } catch { log('WARNING: no step retry') }
-// STEP agent: kit commands kitty, product MRs devy
+// STEP agent: kit commands steppy, MRs devy
 const SO = (label, phase, model = MODELS.step) => ({ label, phase, schema: OK_SCHEMA, model, effort: 'low' })
 const runStep = (cmd, label, phaseName, { ok = 'when it ran', slow = false, whole = false } = {}) =>
- agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`, { ...SO(label, phaseName), agentType: 'kitty' })
+ agent(`STEP: run exactly this in PowerShell${slow ? ' (tool timeout 600000)' : ''} and return ok=true ${ok} (else ok=false) with ${whole ? 'its full output' : 'its last output line'}, nothing else:${PATHS}\n${cmd}`, { ...SO(label, phaseName), agentType: 'steppy' })
 
 const WHY = `WHY: ${A.mandate && A.mandate.length ? `the owner asked for this, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}\n` : ''}Your items below ARE that request.
 `
@@ -156,15 +156,15 @@ function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= 
 async function recordArgs(wf, run, a, phaseName, plan) {
  const json = JSON.stringify(a)
  const file = `${rp('launches')}/args-${wf}-${run.replace(/[^\w.-]/g, '_')}.json`
- const prompt = `STEP: record this workflow's launch args (crash recovery). Do exactly this, nothing else:${PATHS}
+ const prompt = `STEP: record this workflow's launch args (crash recovery):${PATHS}
 1. Write the line between the markers to ${file} with the Write tool, byte for byte (one line of JSON; no markers, nothing added):
 <<<ARGS
 ${json}
 ARGS>>>
 2. Run in PowerShell: & ${ORCH} launch -Self -Script ${wf}.js -Run '${run}' -ArgsFile '${file}' -Fnv ${fnv(json)} -Plan '${plan}'
-Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (its SUM is checked: never re-word) (MISMATCH = the file differs: write it again once, re-run).`
+Return ok=true when it prints RECORDED, else ok=false; output = its output verbatim (MISMATCH = the file differs: write it again once, re-run).`
  for (const [label, model] of [['record-args', MODELS.step], ['record-args-retry', MODELS.stepRetry]]) {
-  const r = await agent(prompt, { ...SO(label, phaseName, model), agentType: 'kitty' })
+  const r = await agent(prompt, { ...SO(label, phaseName, model), agentType: 'steppy' })
   if (r && r.ok && recOk(r.output)) return r.output
  }
  throw new Error('launch -Self output re-worded twice: not started')
@@ -559,7 +559,7 @@ const results = await pipeline(
 // ---- ship: CI gate, merge, outcome
 async function ciGate(a, r) {
  if (!r.mrs.some((m) => !m.merged)) return []
- const ci = await agent(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'kitty', model: MODELS.ci || MODELS.step, effort: 'low' })
+ const ci = await agent(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'steppy', model: MODELS.ci || MODELS.step, effort: 'low' })
  if (!ci) { say(a, `WARNING CI gate: no answer; merge-when-green still waits for the pipelines`); return [] }
  return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,

@@ -24,7 +24,7 @@ adapter sits in its skill's `adapters/` and runs only when config selects it.
   skill). Over: `kitbag.py forget` first, then trim (dense prose, dedupe, no golf) or move detail behind a pointer.
 - **Progressive loading** [ORPHAN-DOC, SCRIPT-READ]: a doc outside the start set is named in the Files index of the skill whose
   step reads it; scripts are run (their header prints usage), never named as text to read.
-- **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> AGENTS.md Router -> skill / workflow / agent -> its Files
+- **Reached from the root** [REACH-NONE, REACH-MENTION]: CLAUDE.md -> ROUTER.md -> skill / workflow / agent -> its Files
   row; mentions do not count; every edge has its reason.
 - **Generic** [ORG-TERM, RETIRED-WORD]: no org, product, tenant, host, id, person, local path or assumed stack; org values -> `kit.local.json`,
   org rules -> `rules/*.local.md`, org lessons -> `LESSONS.local.md` [LESSONS-ORG].

@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L259 budget · L289 launch · L522 recover · L611 pause · L622 resume · L689 program · L717 param ·
-  L723 track · L1116 supervise · L1469 report · L1549 audit · L1609 storage · L1612 bugbrief · L1614 cleanup · L1701 learn ·
-  L1730 decide · L1904 debate · L1948 health · L2016 setup
+Sections: L40 init · L51 board · L260 budget · L290 launch · L523 recover · L612 pause · L623 resume · L690 program · L718 param ·
+  L724 track · L1117 supervise · L1470 report · L1550 audit · L1610 storage · L1613 bugbrief · L1615 cleanup · L1702 learn ·
+  L1731 decide · L1905 debate · L1949 health · L2019 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -173,7 +173,8 @@ switch ($Action) {
     $w = @(Warnings ([pscustomobject]$me) $act)
     if ($w) { 'WARNINGS:'; $w | ForEach-Object { "  $_" } }
     $c = if ($Contracts) { $Contracts } else { (Active | Where-Object { $_.run -eq $Run -and $_.contracts } | Select-Object -First 1).contracts }
-    if ($c -and (Test-Path $c)) { "CONTRACTS ($c) - re-read before every push:"; Get-Content $c | Select-Object -First 60 | ForEach-Object { "  $_" } }
+    # a pointer, not a dump: the brief's readers Read it once (devy.md), the rest never needed it (2.5k tokens per join)
+    if ($c -and (Test-Path $c)) { "CONTRACTS: $c ($(@(Get-Content $c).Count) lines): Read it if your task uses it, and again before every push" }
     "budget: $($bg.tool) $(if ($bg.model) { $bg.model } else { '(default model)' }) $($bg.budget) tokens, handoff at $($bg.handoff) ($($bg.capBy)), never earlier; instructions cap $($bg.instrCap); design window $($bg.design) (no stop)"
   }
   'beat' {
@@ -2008,7 +2009,9 @@ $msgs += @(Invoke-KitHooks Get-KitOsBeatHealth)   # adapters/os-timer.ps1
 if ($rs = Get-KitRepoSweep) { $msgs += "repos ($(([datetime]$rs.at).ToString('MM-dd HH:mm')) sweep): $(@($rs.repos | ForEach-Object { "$($_.repo) $($_.branches) branches · $($_.worktrees) worktrees$(if ($_.removable) { " · $($_.removable) to clean" })$(if ($_.kept) { " · $($_.kept) kept" })" }) -join '; ') (kept = unpushed, open or dirty: bossy.ps1 cleanup -DryRun -Detail)" }
 if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
 $msgs += @(Invoke-KitHooks Get-KitHealthLines)   # adapters/kit-admin.ps1: weekly audit nudge
-Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook
+# the router reaches the main session only (SessionStart; spawned agents never load it: AGENTS.md "Crew and routing")
+$routerFile = Join-Path $kit 'ROUTER.md'; $routerText = if (Test-Path -LiteralPath $routerFile) { [IO.File]::ReadAllText($routerFile).Trim() }
+Format-KitSessionStart $(if ($msgs) { ($msgs -join ' | ') + ' (bossy Events)' }) $hook $routerText
 exit 0
 }
 

@@ -1,5 +1,5 @@
 # Kit lessons
-Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = times seen, `- [local|ship]` = those phases only (`-Phase`; local also reads code). Read your skill's section: `bossy.ps1 learn -Read -Skill <skill>`
+Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = times seen, `- [local|ship]` = those phases only (`-Phase`; local also reads code), `### <title> (<skills, phases>)` = a block for those only (both match). Read your skill's section: `bossy.ps1 learn -Read -Skill <skill>`
 (adds the git-ignored LESSONS.local.md). Retired lines: `bossy.ps1 learn -History` (git + `.state`). Managed by `bossy.ps1 learn` (`-When -Do -Why`).
 
 ## bossy
@@ -158,6 +158,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - Reviewing an MR in a main checkout -> read diffs with `git show <sha>:path` or `git diff <base>...<sha>`, never git checkout there (a main checkout may sit on a detached head others use). (2x)
 
 ## Decisions
+- 2026-11-26 Context cuts: context agents loaded the router, STEPs the kitty file, roles every org block · decision (owner) ROUTER.md main session only, lean `steppy` for kit STEPs, org blocks by skill and phase · consequences caps.content 33; health adds ROUTER.md.
 - 2026-11-26 Context plan: context a devy build held 41k kit instructions (p90 54k; 13k of it product CLAUDE.md files) · decision (owner) kit instructions per session: target 30k, max 50k · consequences `budget.instructions` cap 50000, watchAt 0.6; lint READ-BUDGET; WATCH, then ACT + HANDOFF.
 - 2026-11-26 Context slices: context kit text was 23% of what agents carried · decision (owner) task input, code reads, build + test output, kit data, other tool output and model output stay within the role's learned p90; 20% headroom before the 80% handoff · consequences `usage.context.slice.*`.
 - 2026-11-26 Context rules: context whole files and logs filled sessions · decision (owner) load per role and phase; docs by section; kit scripts run, not read; ranges, not files; failures only; a verb prints its summary; a resume brief = done, next, open · consequences `guard.kitScriptLines`.

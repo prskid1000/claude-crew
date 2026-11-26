@@ -278,6 +278,10 @@
         "codex": "port: faults reads exec_command / function_call_output in the rollouts; the guard runs on Bash; fallback: its Bash-only checks (bash -n, MSYS paths, bash-quoted pwsh payloads) skip Codex (its shell on Windows is PowerShell), and apply_patch edits get the case and Java checks when the script runs or compiles",
         "antigravity": "port: faults reads run_command and its 'exited with code' step in transcript.jsonl; the guard runs on run_command; fallback: the Bash-only checks skip it (no Git Bash shell), edits are checked when the script runs"
       },
+      "main-session router (ROUTER.md: SessionStart bossy.ps1 health adds it as model-only context; spawned agents never load it)": {
+        "codex": "port: the SessionStart hook runs the same health (hookSpecificOutput.additionalContext); fallback: AGENTS.md 'Crew and routing' has the main session Read ROUTER.md when it is not in context; a sub-agent firing SessionStart is unverified (if it does, it holds the router too: same outcome, no saving)",
+        "antigravity": "port: SessionStart health injects it as a system message (injectSteps: agy has no model-only channel, the owner sees it); fallback: AGENTS.md 'Crew and routing' Read rule; sub-agent firing unverified"
+      },
       "context plan (kit instructions 30k / 50k, slices, kit scripts run not read, a kit worktree's CLAUDE.md never loaded twice)": {
         "codex": "port: usage.ps1 reads its rollouts into the same slices and flags; the kit-script Read rule runs in guard_client.mjs; AGENTS.md loads once at session start, so no claudeMdExcludes is needed",
         "antigravity": "port: usage.ps1 reads transcript.jsonl into the same slices and flags; the kit-script Read rule runs on view_file; AGENTS.md loads once at session start, so no claudeMdExcludes is needed"

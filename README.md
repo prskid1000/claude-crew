@@ -54,6 +54,7 @@ flowchart LR
 | `opsy` | deploy pilot: deploys on a person's word, verifies, rolls back | deploy · rollback · status · secret | R7, E5 | deploy without a person's word, edit code | cautious pilot: "Checklist first." |
 | `watchy` | on-call watcher: errors of deployed envs, one [Bug] per issue | window · sweep · triage | R16, E15 | change systems, deploy, move tasks | calm on-call engineer: "What changed, and since when?" |
 | `vidy` | video reader: exact screen text, timed answers | question · index · segment | R19 | edit code, tracker, kit | frame-by-frame witness: "Which frame shows it?" |
+| `steppy` | runs one workflow STEP, output verbatim |  | /buildy, /testy, /tidy | judge, edit, spawn | literal clerk: "Exactly as written." |
 <!-- kit-graph:end -->
 Board and disagreements: AGENTS.md "Crew".
 
@@ -326,13 +327,13 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `gitHostApi` | {"commands": {}} | commands: host verb -&gt; command; hostCli: more MR CLIs [{exe, noun, type, allow (setup -Allow entries), source, target, title, valued}] |
 | `ci` | {"type": "host"} |  |
 | `naming` | {"products": {}} | products / areas {CODE: name}, digits (3): &lt;PRODUCT&gt;-&lt;AREA&gt;-&lt;nnn&gt; keys in the description's kit table, plain titles (dec-60); tags.&lt;group&gt;: [values] / false (kitbag.py naming tags); tags.areaMap: {AREA code: broad tag} (wide modules, default the area name); titleStrip: [regex] old codes tracker retag cuts (old title kept in the description) |
-| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command / a vendor adapter. Status roles (fixed: open inProgress review failedReview promoted inTest failedTesting closed; transitions: README "Flows"): statuses = default names per role (first set, all match; null skips the step); caps.&lt;cap&gt; false switches a capability off (checklist, commentEdit, commentDelete, statuses, move, attach; README Adapters); statusMap.&lt;scope&gt;.&lt;role&gt; = overrides for one scope (ClickUp list id, Jira project, Linear team, repo; .other = names that are no role) over its live names (crafty.ps1 tracker roles &lt;scope&gt;); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json).… |
+| `tracker` | {"type": "none", "repo": "&lt;owner/name, for github issues&gt;", "list":… | type: none (default) / command / a vendor adapter. Status roles (fixed, transitions README "Flows": open inProgress review failedReview promoted inTest failedTesting closed): statuses = default names per role (first set, all match; null skips the step); caps.&lt;cap&gt; false = off (checklist, commentEdit, commentDelete, statuses, move, attach; README Adapters); statusMap.&lt;scope&gt;.&lt;role&gt; = one scope's names (a list id, Jira project, Linear team, repo; .other = names that are no role) over its live names (crafty.ps1 tracker roles &lt;scope&gt;); statusLabelPrefix: github status labels (status:); priorities: names of 1-4; branchTag: branch / MR task tag; bugPrefix: defect names; bugBranchPrefix: bug-fix brief branches (fix/); ciTaskPattern: CI-raised test task names, closed when their job passes (unset: off). branchRx, bugBranchRx, kindPrefixes, nameFormat, taskTemplate, commentTemplates, urlFragment, bugCollectorTitle: vocabulary (default: vocab.json). blockLinkType: the Jira link type of waits on… |
 | `reports` | {"type": "markdown"} | type: markdown, html (a kept file) / command ('&lt;cli&gt; {title} {path} {parent} {url} {tags}' prints the URL); gdocs (Google Doc + Drive evidence via gws), pdf, confluence, notion: adapters. share (gdocs): anyone (default) / domain:&lt;domain&gt; / none. parent (notion): a page or a database (rows; tags = its Tags multi-select). evidence: report (default: the type's host; kept docs: &lt;docs&gt;/&lt;name&gt;/) / local / command (evidenceCommand {name} {parent} {files} prints '&lt;file&gt; &lt;URL&gt;' lines) |
-| `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "matrix":… | lanes {&lt;lane&gt;: {kind, parallel, followUp, devices}} (unset: one web lane); newDefectIdRx, holdCauses (none), guideDoc (first process doc). shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE). targets: /testy env rules (target: '&lt;group&gt;'; first match of lists / repos / nameRegex / pathRegex; localEnv: live = in its running release). seatGB: RAM per seat. testerViewport {web, mobile}: the testers' screen per ui goal (testing.md "Proof"). aiWaiver: owner decision id waiving an ai goal's local run while its env runs no services[].aiStack. preflight {env, tool, tenantSql, roles, maxScanRows}: testing.md "Preflight" (unset: off). matrix: UI cases at viewports (WxH) x fontScales x themes x locales. matrixRun {parallel (4), variantSec (300: then FAIL), full / newScreen: path regexes a diff needs every variant for, reduced {viewports, locales} else; tests: paths never counted (specs, cypress, test_*)}: devtools.py matrix-scope. notLocal: [{… |
-| `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: a person says deploy &lt;env&gt;) / ask (one batched ask per env, at most one per minIntervalHours: a number or per target + default); minIntervalScope: repo (default: a repo's own last deploy to the env starts its window) / env; planTimeoutSec bounds supervise's plan per env (late = UNKNOWN); hold: [&lt;env&gt;] never asked; triggers {&lt;env / repo&gt;: auto}: standing word; answerWords {yes, no, noAll, wait}: more answer words; productionPattern, branchPrefix, mergeMethod, commitTemplate, ssh: bossy deploys.md. deploy run -To &lt;env&gt;: each row's kind deploy verb. schedule {mode auto / parallel / serial, maxParallel (0 = none), marginMinutes 2, historyRuns 10, historyDays 60, deployJobRx, migrationPathRx, breakingMigrationRx (a match in a producer's added migration lines, or a migration file in code, = strict edge)}: deploy schedule / watch (bossy deploys.md) |
+| `qa` | {"seatGB": {"web": 1.5, "api": 0.4, "app": 0.4}, "matrix":… | lanes {&lt;lane&gt;: {kind, parallel (unset: free RAM sets it), followUp, devices}} (unset: one web lane); newDefectIdRx, holdCauses (none), guideDoc (first process doc). shutterText / confirmText: camera label regexes. outOfScope: channels QA never tests (OUT_OF_SCOPE). targets: /testy env rules (target: '&lt;group&gt;'; first match of lists / repos / nameRegex / pathRegex; localEnv: live = in its running release). seatGB: RAM per seat. testerViewport {web, mobile}: the testers' screen per ui goal (testing.md "Proof"). aiWaiver: owner decision id waiving an ai goal's local run while its env runs no services[].aiStack. preflight {env, tool, tenantSql, roles, maxScanRows}: testing.md "Preflight" (unset: off). matrix: UI cases at viewports (WxH) x fontScales x themes x locales. matrixRun {parallel (4), variantSec (300: then FAIL), full / newScreen: path regexes a diff needs every variant for, reduced {viewports, locales} else; tests: paths never counted (specs, cypress, test_*)}: devtools.py… |
+| `deploy` | {"trigger": "owner", "minIntervalHours": {"default": 4, "&lt;target&gt;":… | trigger: owner (default: a person says deploy &lt;env&gt;) / ask (one batched ask per env, at most one per minIntervalHours: a number or per target + default); minIntervalScope: repo (default: a repo's own last deploy to the env starts its window) / env; planTimeoutSec bounds supervise's plan per env (late = UNKNOWN); hold: [&lt;env&gt;] never asked; triggers {&lt;env / repo&gt;: auto}: standing word; answerWords {yes, no, noAll, wait}: more answer words; productionPattern, branchPrefix, mergeMethod, commitTemplate, ssh: bossy deploys.md. deploy run -To &lt;env&gt;: each row's kind deploy verb. schedule {mode auto / parallel / serial, maxParallel (0 = none), marginMinutes 2, historyRuns 10, historyDays 60, deployJobRx, migrationPathRx, breakingMigrationRx (a match in a producer's added migration lines, or a migration file in code, = strict edge)}: deploy schedule / watch |
 | `net` | {"timeoutSec": 60} | timeoutSec per git-host / tracker CLI call; transient errors retry; lost tracker writes wait in .state/outbox.jsonl (supervise replays) |
 | `tests` | {"maven": {"testFor": ["{name}Test", "{name}IT"]}} | Per stack: testFor = test names -Touched derives from a changed file's name ({name}). e2e (check -Step e2e): specs (default *.cy.*, e2e/*.spec, *.e2e.*), map[] {dir?, paths, specs}, else folder, name, import, route; run[] {dir, cmd?, env?, split?: folder, portFiles?: lane ports swapped in}. ciRuns: ["&lt;repo&gt;/&lt;module&gt;" globs] whose MR pipeline runs build + suite: check -Step build / test -AllTests skip there (-Force runs). containerWhen: {"&lt;repo&gt;/&lt;module&gt;" glob: [path globs]}: container / IT tests named alone run locally only when the diff touches one, else CI. |
-| `browsers` | {"chromePolicies": {}} | chromePolicies: {&lt;key under Software/Policies, e.g. Google/Chrome&gt;: {&lt;policy&gt;: &lt;number or text&gt;}}: bossy.ps1 setup writes them per user (HKCU; an admin-only key: prints the elevated command), e.g. GenAILocalFoundationalModelSettings 1 + ComponentUpdatesEnabled 0 = no on-device AI model downloads; setup -BrowserPolicy -Undo removes them, -Clean deletes model folders in kit and Cypress profiles. Kit Chromium gets vocab.json chromeQuietArgs. |
+| `browsers` | {"chromePolicies": {}} | chromePolicies: {&lt;key under Software/Policies, e.g. Google/Chrome&gt;: {&lt;policy&gt;: &lt;number or text&gt;}}: bossy.ps1 setup writes them per user (HKCU; an admin-only key: prints the elevated command); setup -BrowserPolicy -Undo removes them, -Clean deletes model folders in kit and Cypress profiles. |
 | `decide` | {"neverAuto": []} | neverAuto: regex words (an org's) a question never gets a standing rule for, added to the built-in deploy / prod / data / customer list (bossy outcomes.ps1) |
 | `guard` | {"layout": "warn", "writeRoots": []} | heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir; kit scripts exempt). writeRoots: more folders agents may create files in; envChangeCommands: more deployed-env change commands to deny (regexes; built-in: vocab.json); a new file at a drive root or outside the workspace, kit, repos, worktree roots, temp, ~/.claude, ~/Downloads is denied. |
 | `ports` | {"targets": "none", "models": {"haiku": "flash"}} | kitbag.py port workspace copies: none (default) / codex / antigravity / both. models: {&lt;Claude model&gt;: &lt;agy model&gt;} for the runner (default haiku -&gt; flash) |
@@ -340,10 +341,10 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
 | `build` | {"mavenOffline": false} | mavenOffline: Maven -o when ~/.m2/repository exists (default false). |
 | `reverse` | {"toolsDir": ""} | toolsDir: the reversy engines (Ghidra, JADX, apktool, ilspycmd, WABT, frida, ...); default &lt;runtime&gt;/tools, never pruned by cleanup; relative = from the kit. pins: &lt;tool&gt; {version, asset, sha256} overrides one entry of skills/reversy/pins.json (no pin = no download). |
-| `gate` | {} | Memory gate. keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; GB defaults (heaps, params gate.kindGB.&lt;kind&gt;) fit 64 GB RAM and scale down on less (e.g. startHeapGB {gradle 12, maven 8, node 4} at 64 GB, a quarter at 16 GB); cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
-| `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | storage: free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (&gt;= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop &gt;= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: &lt;id&gt; &lt;GB&gt; &lt;s&gt; &lt;query&gt;; db.kill {id}; db.maxGB. TODO-PARAM. |
+| `gate` | {} | keepFreeGB (default 15% of RAM, min 6) = RAM every build leaves free; startHeapGB, heapMinGB: adapters/build-heap.ps1; GB defaults (heaps, params gate.kindGB.&lt;kind&gt;) fit 64 GB RAM and scale down with it (a quarter at 16 GB); cacheFlush (unset) = a command supervise -AutoFix runs when a gate head waited 10+ min and the file cache is 25%+ of RAM (at most every 30 min). labels {row: kindRx}. |
+| `storage` | {"watch": [], "sampleSeconds": 60, "keepDays": 30, "watchFreeGB": 50,… | free GB/drive per sampleSeconds (keepDays). ACT+rescue: 10 min fill, full in actHours or factor x normal (&gt;= minRateGBh) below watchFreeGB; kit-drive floors. Rescue: kill db temp holder, hold builds holdMinutes. Scans: drop &gt;= scanDropGB (scanCooldownMin), scanHours; toolCaches (~, {localAppData}), watch[], learned (drillGB, flatDays). db.use: &lt;id&gt; &lt;GB&gt; &lt;s&gt; &lt;query&gt;; db.kill {id}; db.maxGB. TODO-PARAM. |
 | `watch` | {"windows": ["15m", "2h", "24h"], "rising": {"factor": 3, "hits": 10}} | watchy after a deploy: windows = one-shot timers (default 15m, 2h, 24h; bossy E15); rising = a signature at factor x its baseline and at least hits (default 3, 10) |
-| `pool` | {"size": 10} | Worktree pool: size = slots per repo (default 10; repos[].poolSize per repo, 0 = no pool: wt new), created on lease, never deleted; warm = free slots kept made (default 2; repos[].poolWarm); sync.everyMinutes (60): supervise runs wt pool -Sync (fetch, fast-forward, prune, idle slots at origin/&lt;target&gt;); names: the n-th member of every pool (slot, env lane, phone lane); wipRestore: [globs] tracked files a test run rewrites, restored on release (no WIP commit) |
+| `pool` | {"size": 10} | size = worktree slots per repo (default 10; repos[].poolSize, 0 = no pool: wt new), created on lease, never deleted; warm = free slots kept made (default 2; repos[].poolWarm); sync.everyMinutes (60): supervise runs wt pool -Sync (fetch, fast-forward, prune, idle slots at origin/&lt;target&gt;); names: the n-th member of every pool (slot, env lane, phone lane); wipRestore: [globs] tracked files a test run rewrites, restored on release (no WIP commit) |
 | `params` | {"learning": "on", "shadowDays": 14} | Tunables (param show; keys: params.registry.json) learn both ways per machine (.state/params.json) within default/4..x4: a failure (timeout, OOM, short: holder back past grace, handoff, 2+ new ACTs a sweep) steps safe next use (x1.5 or the need); risky steps &lt;= 10%/day after 5 new samples, none 7 d after a failure; shadowDays: shown, then used; past 2x default: param approve (owner). kit.local.json value = pin; learning on / shadow / off. |
 | `budget` | {"window": 200000, "agentCap": {"_readme": "the kit's own handoff… | Budget = an agent tool's compaction point: handoff at handoffAt x it or a step &gt; stepHours (0: off); run cap = planned budgets: estimate &gt; runStopAt x cap refused (split), at it no new item; runMinutes: a testy run's wall-clock cap (args.maxMinutes wins; 0: none); defaults.&lt;tool&gt;: its compaction point; models: claude id -&gt; row; estimate per agent, item |
 | `tools` | {"roles": {}, "mainOnly": []} | coordinator: every tool; crew: _manifest.agents.&lt;role&gt;.tools + roles.&lt;role&gt; grants (["mcp__&lt;server&gt;"], port renders them); a server no role grants: health line (mainOnly: quiet). A disabled server for one task: the owner enables it (/mcp), grants a role, then reverts both |
@@ -419,7 +420,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 9975 · tests 9000 · start per role 12000 · files:31 content + 9 plumbing
+always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 9975 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: in `tests/`, shared setup in `tests/harness.ps1`; a case name
@@ -434,7 +435,7 @@ Generated by `kitbag.py flow --readme` (pre-commit); interactive: `kitbag_flow.p
 <!-- kit-graph:start map -->
 ```mermaid
 flowchart LR
-  CLAUDE_md["CLAUDE.md"] -->|"import"| AGENTS_md["AGENTS.md Router"]
+  CLAUDE_md["CLAUDE.md"] -->|"main session"| ROUTER_md["ROUTER.md"]
   agents_briefy_md("briefy")
   agents_checky_md("checky")
   agents_datay_md("datay")
@@ -443,6 +444,7 @@ flowchart LR
   agents_opsy_md("opsy")
   agents_rechy_md("rechy")
   agents_revy_md("revy")
+  agents_steppy_md("steppy")
   agents_vidy_md("vidy")
   agents_watchy_md("watchy")
   skills_bossy_SKILL_md["bossy"]
@@ -454,34 +456,47 @@ flowchart LR
   workflows_buildy_js[/"buildy"/]
   workflows_testy_js[/"testy"/]
   workflows_tidy_js[/"tidy"/]
-  AGENTS_md --> agents_briefy_md
-  AGENTS_md --> agents_checky_md
-  AGENTS_md --> agents_datay_md
-  AGENTS_md --> agents_devy_md
   AGENTS_md --> agents_kitty_md
   AGENTS_md --> agents_opsy_md
-  AGENTS_md --> agents_rechy_md
-  AGENTS_md --> agents_revy_md
+  AGENTS_md --> agents_steppy_md
   AGENTS_md --> agents_vidy_md
-  AGENTS_md --> agents_watchy_md
   AGENTS_md --> skills_bossy_SKILL_md
   AGENTS_md --> skills_crafty_SKILL_md
-  AGENTS_md --> skills_envy_SKILL_md
   AGENTS_md --> skills_phoney_SKILL_md
   AGENTS_md --> skills_pokey_SKILL_md
-  AGENTS_md --> skills_reversy_SKILL_md
   AGENTS_md --> workflows_buildy_js
-  AGENTS_md --> workflows_testy_js
-  AGENTS_md --> workflows_tidy_js
+  ROUTER_md --> agents_briefy_md
+  ROUTER_md --> agents_checky_md
+  ROUTER_md --> agents_datay_md
+  ROUTER_md --> agents_devy_md
+  ROUTER_md --> agents_kitty_md
+  ROUTER_md --> agents_opsy_md
+  ROUTER_md --> agents_rechy_md
+  ROUTER_md --> agents_revy_md
+  ROUTER_md --> agents_steppy_md
+  ROUTER_md --> agents_vidy_md
+  ROUTER_md --> agents_watchy_md
+  ROUTER_md --> skills_bossy_SKILL_md
+  ROUTER_md --> skills_crafty_SKILL_md
+  ROUTER_md --> skills_envy_SKILL_md
+  ROUTER_md --> skills_phoney_SKILL_md
+  ROUTER_md --> skills_pokey_SKILL_md
+  ROUTER_md --> skills_reversy_SKILL_md
+  ROUTER_md --> workflows_buildy_js
+  ROUTER_md --> workflows_testy_js
+  ROUTER_md --> workflows_tidy_js
   workflows_buildy_js -->|"spawns"| agents_datay_md
   workflows_buildy_js -->|"spawns"| agents_devy_md
   workflows_buildy_js -->|"spawns"| agents_kitty_md
   workflows_buildy_js -->|"spawns"| agents_rechy_md
   workflows_buildy_js -->|"spawns"| agents_revy_md
+  workflows_buildy_js -->|"spawns"| agents_steppy_md
   workflows_testy_js -->|"spawns"| agents_checky_md
   workflows_testy_js -->|"spawns"| agents_kitty_md
+  workflows_testy_js -->|"spawns"| agents_steppy_md
   workflows_testy_js -->|"spawns"| agents_vidy_md
   workflows_tidy_js -->|"spawns"| agents_kitty_md
+  workflows_tidy_js -->|"spawns"| agents_steppy_md
   agents_checky_md -->|"loads"| skills_pokey_SKILL_md
   agents_devy_md -->|"loads"| skills_crafty_SKILL_md
   agents_opsy_md -->|"loads"| skills_bossy_SKILL_md

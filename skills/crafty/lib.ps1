@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L471 leases · L914 status · L1126 tracker · L1455 prior ·
-  L1474 ask bugs · L1659 deploy words · L1703 git-host · L1891 kitlog · L2002 params · L2307 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L471 leases · L914 status · L1128 tracker · L1457 prior ·
+  L1476 ask bugs · L1661 deploy words · L1705 git-host · L1893 kitlog · L2004 params · L2309 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1047,9 +1047,11 @@ Register-KitAdapter 'transcript' 'antigravity' @{
 Register-KitAdapter 'transcript' 'none' @{ caps = @{ agentMeta = $false }; 'root' = { $null }; 'last' = { $null } }
 # adapter-end:transcript
 # SessionStart output: Antigravity (input has conversationId) takes injectSteps, others a systemMessage
-function Format-KitSessionStart([string]$Text, $Hook) {
-  if ($Hook.conversationId) { @{ injectSteps = @($(if ($Text) { @{ systemMessage = @{ systemMessage = $Text } } })) } | ConvertTo-Json -Compress -Depth 5 }
-  elseif ($Text) { @{ systemMessage = $Text; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $Text } } | ConvertTo-Json -Compress -Depth 4 }
+# $Context: model-only text (ROUTER.md), never shown to the owner; Antigravity has one channel (a system message)
+function Format-KitSessionStart([string]$Text, $Hook, [string]$Context = '') {
+  $all = (@($Text, $Context) | Where-Object { $_ }) -join "`n`n"
+  if ($Hook.conversationId) { @{ injectSteps = @($(if ($all) { @{ systemMessage = @{ systemMessage = $all } } })) } | ConvertTo-Json -Compress -Depth 5 }
+  elseif ($all) { $o = @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $all } }; if ($Text) { $o.systemMessage = $Text }; $o | ConvertTo-Json -Compress -Depth 4 }
 }
 function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } elseif ($KitAdapters.transcript[$Tool]) { $Tool } else { 'none' } }
 # liveness (STUCK rows, stale board rows, lease grace, shell owners): newest board beat or transcript (+ task output) write

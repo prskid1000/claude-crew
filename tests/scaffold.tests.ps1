@@ -18,14 +18,14 @@ $KT = Join-Path $kc 'skills/bossy/kitbag.py'
 $mf = { (Get-Content (Join-Path $kc 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._manifest }
 $null = & $py -X utf8 $KT new agent zappy --skill crafty 2>&1
 $l1 = & $py -X utf8 $KT lint --no-flow 2>&1 | Out-String
-$okNew = (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).agents.zappy -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -match '\| R\d+ \| TODO\(new\).*`zappy` agent' -and $l1 -match 'TODO-STUB'
+$okNew = (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).agents.zappy -and (Get-Content (Join-Path $kc 'ROUTER.md') -Raw) -match '\| R\d+ \| TODO\(new\).*`zappy` agent' -and $l1 -match 'TODO-STUB'
 $tpl = Join-Path $kc 'skills/crafty/templates.md'; Add-Content $tpl "`nsee last-zappys and zappy-stamp" -Encoding utf8
 $null = & $py -X utf8 $KT rename agent zappy zippy 2>&1
 $okRen = (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).renamed.zappy -eq 'zippy' -and
-  (Get-Content $tpl -Raw) -match 'see last-zippys and zippy-stamp' -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -match '`zippy` agent' -and
+  (Get-Content $tpl -Raw) -match 'see last-zippys and zippy-stamp' -and (Get-Content (Join-Path $kc 'ROUTER.md') -Raw) -match '`zippy` agent' -and
   (-not $ports -or ((Test-Path (Join-Path $kc '.codex/agents/zippy.toml')) -and -not (Test-Path (Join-Path $kc '.codex/agents/zappy.toml'))))
 $null = & $py -X utf8 $KT remove agent zippy 2>&1
-$okRem = -not (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (& $mf).agents.zippy -and (Get-Content (Join-Path $kc 'AGENTS.md') -Raw) -notmatch 'zippy'
+$okRem = -not (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (& $mf).agents.zippy -and (Get-Content (Join-Path $kc 'ROUTER.md') -Raw) -notmatch 'zippy'
 $ev = @((& $mf).events); $e1, $e2 = $ev[-1], "E$([int]$ev[-1].Substring(1) + 1)"
 $null = & $py -X utf8 $KT rename event $e1 $e2 2>&1
 $null = & $py -X utf8 $KT new adr Budget per agent 2>&1

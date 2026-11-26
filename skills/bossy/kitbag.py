@@ -23,9 +23,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L994 lint ·
-  L1416 README graph · L1534 lint command · L1847 audit · L1995 registry · L2055 tools · L2143 parity · L2749 arch lint ·
-  L3068 prose · L3323 sections · L3455 budget · L3473 migrate · L3621 plugins · L3678 state lint · L3866 main
+Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L998 lint ·
+  L1420 README graph · L1538 lint command · L1851 audit · L1999 registry · L2059 tools · L2147 parity · L2753 arch lint ·
+  L3072 prose · L3327 sections · L3459 budget · L3477 migrate · L3625 plugins · L3682 state lint · L3870 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -597,6 +597,8 @@ def budget_type(f):
     b = osp.basename(f)
     if f in ('CLAUDE.md', 'AGENTS.md'):
         return None
+    if f == 'ROUTER.md':   # the main session's start, one SessionStart hook output
+        return 'always'
     if f.startswith('tests/'):
         return 'tests'
     if b == 'SKILL.md':
@@ -812,7 +814,7 @@ def load(kit):
         if f.lower().endswith('.md'):
             k.texts[f] = resolve_imports(k.texts[f], k.dir)
     claude = k.texts.get('CLAUDE.md', '')
-    k.router = section(claude, 'Router')
+    k.router = section(k.texts['ROUTER.md'], 'Router') if 'ROUTER.md' in k.texts else section(claude, 'Router')   # main session only
     k.org_rows = ''.join(section(k.texts.get(r, ''), 'Org router rows') or '' for r in k.local_rules)
     k.index = {}   # skill -> [(entry as written, when-cell, [matching files])]
     for s in k.skills:
@@ -844,7 +846,7 @@ def is_overlay(k, f):
 
 def file_kind(f, texts, hook_targets):
     b = osp.basename(f)
-    if f in ('CLAUDE.md', 'AGENTS.md'):
+    if f in ('CLAUDE.md', 'AGENTS.md', 'ROUTER.md'):
         return 'root'
     if f == 'README.md':
         return 'doc'
@@ -933,7 +935,9 @@ def graph(k):
                 add(f'skills/{s}/SKILL.md', h, 'index')
     if 'CLAUDE.md' in nodes and 'AGENTS.md' in nodes:
         add('CLAUDE.md', 'AGENTS.md', 'import')
-    router_file = 'AGENTS.md' if 'AGENTS.md' in nodes else 'CLAUDE.md'
+    if 'CLAUDE.md' in nodes and 'ROUTER.md' in nodes:   # the main session's SessionStart (bossy.ps1 health) adds it
+        add('CLAUDE.md', 'ROUTER.md', 'import')
+    router_file = next(f for f in ('ROUTER.md', 'AGENTS.md', 'CLAUDE.md') if f in nodes or f == 'CLAUDE.md')
     for cells in table_rows(k.router or ''):
         target = ' '.join(cells[2:3])
         for s in k.skills:
@@ -1024,12 +1028,12 @@ def lint(k, g=None, org_terms=None):
         bad('OVERLAY-ROUTER', 'rules/*.local.md', 'no "## Org router rows" section: add one (router format) for org-only skills and needs')
     router = k.router
     if router is None:
-        bad('ROUTER-MISSING', 'CLAUDE.md', 'no "## Router" section')
+        bad('ROUTER-MISSING', 'ROUTER.md', 'no "## Router" section')
         router = ''
     targets = set(k.skills) | {'/' + w for w in k.workflows} | set(k.agents)
     rows = table_rows(router)
     if not rows:
-        bad('ROUTER-MISSING', 'CLAUDE.md', 'the Router section has no table rows')
+        bad('ROUTER-MISSING', 'ROUTER.md', 'the Router section has no table rows')
     for cells in rows + table_rows(k.org_rows):
         if len(cells) < 3:
             bad('ROUTER-TARGET', 'router', f'row needs # | conditions | target: {" | ".join(cells)[:60]}')
@@ -1040,7 +1044,7 @@ def lint(k, g=None, org_terms=None):
     routed = router + '\n' + k.org_rows
     for s in k.skills:
         if '`' + s + '`' not in routed:
-            bad('ROUTER-UNROUTED', f'skills/{s}', 'skill not named (`name`) in the CLAUDE.md router or the org router rows')
+            bad('ROUTER-UNROUTED', f'skills/{s}', 'skill not named (`name`) in the ROUTER.md router or the org router rows')
     for w in k.workflows:
         if '/' + w not in routed:
             bad('ROUTER-UNROUTED', f'workflows/{w}.js', 'workflow not named (/name) in the router')
@@ -1423,7 +1427,7 @@ def readme_sections(k, g):
     # Mermaid text always quoted (bare ( ) ; : parse as shape tokens); token delimiters entity-escaped
     mq = lambda s: '"' + re.sub(r'["#<>`|]', lambda m: {'"': '#quot;', '#': '#35;', '<': '#lt;', '>': '#gt;', '`': '#96;', '|': '#124;'}[m.group(0)], re.sub(r'\s+', ' ', str(s)).strip()) + '"'
     out = {}
-    lines = ['flowchart LR', f'  CLAUDE_md[{mq("CLAUDE.md")}] -->|{mq("import")}| AGENTS_md[{mq("AGENTS.md Router")}]']
+    lines = ['flowchart LR', f'  CLAUDE_md[{mq("CLAUDE.md")}] -->|{mq("main session")}| ROUTER_md[{mq("ROUTER.md")}]']
     # README is published: no local-overlay parts (localOnly, *.local.*)
     pub = lambda f: f in nodes and not nodes[f].get('local')
     tops = [f for f, n in sorted(nodes.items()) if n['kind'] in ('skill', 'workflow', 'agent') and pub(f)]
@@ -1431,8 +1435,8 @@ def readme_sections(k, g):
         shape = {'skill': '[{}]', 'workflow': '[/{}/]', 'agent': '({})'}[nodes[f]['kind']]
         lines.append(f'  {nid(f)}' + shape.format(mq(label(f))))
     for (a, b), typ in sorted(edges.items()):
-        if a in ('AGENTS.md',) and b in tops and typ == 'route':
-            lines.append(f'  AGENTS_md --> {nid(b)}')
+        if a in ('ROUTER.md', 'AGENTS.md') and b in tops and typ == 'route':
+            lines.append(f'  {nid(a)} --> {nid(b)}')
         elif a in tops and b in tops and typ == 'spawn' and nodes[a]['kind'] == 'workflow':
             lines.append(f'  {nid(a)} -->|{mq("spawns")}| {nid(b)}')
     for a, p in sorted(k.agents.items()):   # the skill on its "Load first" line
@@ -2555,7 +2559,7 @@ def registry_lint(k, bad):
             bad('MANIFEST', PATHS_JSON, f'{what} {x} is registered but has no file')
     rows = [c[0].strip('*') for c in table_rows(k.router or '')]
     if rows != list(man.get('router') or []):
-        bad('MANIFEST', 'AGENTS.md', f'Router rows {rows} differ from _manifest.router {man.get("router")}')
+        bad('MANIFEST', 'ROUTER.md', f'Router rows {rows} differ from _manifest.router {man.get("router")}')
     ev = re.findall(r'^\|\s*(E\d+)\s*\|', section(k.texts.get('skills/bossy/SKILL.md', ''), 'Events') or '', re.M)
     if ev != list(man.get('events') or []):
         bad('MANIFEST', 'skills/bossy/SKILL.md', f'Events rows {ev} differ from _manifest.events {man.get("events")}')

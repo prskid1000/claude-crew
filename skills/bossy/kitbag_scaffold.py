@@ -55,7 +55,7 @@ def _router_stub(kit, target, cond):
         rid['id'] = f'R{n}'
         new = f'| R{n} | {cond} | {target} | — |'
         return t.replace(rows[-1], new + '\n' + rows[-1], 1)
-    _sub_file(kit, 'AGENTS.md', fn)
+    _sub_file(kit, 'ROUTER.md', fn)
     _edit_manifest(kit, lambda m: m.setdefault('router', []).insert(len(m.get('router', [])) - 1, rid['id']))
     return rid['id']
 
@@ -419,7 +419,7 @@ def cmd_remove(a):
                         gone.append(l.split('|')[1].strip())
                         t = t.replace(l + '\n', '', 1)
                 return t
-            _sub_file(kit, 'AGENTS.md', fn)
+            _sub_file(kit, 'ROUTER.md', fn)
 
         def m(man):
             man.get('agents', {}).pop(name, None) if kind == 'agent' else None

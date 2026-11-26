@@ -1,6 +1,6 @@
 # buildy (ported procedure, not a native Codex workflow)
 
-> The dev flow for a multi-item build (any stack): devy code, goals, local loop, decisions; review, CI, merge, testing docs + tracker; deploys on a person\'s word
+> Multi-item dev flow (any stack): code, local loop, review, CI, merge, docs, tracker; deploy on a person\'s word
 
 **When to run it:** Coding (features, fixes, QA-raised bugs or failedTesting tasks) with more than 2 items, 2+ repos, or one large item (new feature, migrations, many screens)
 
@@ -25,7 +25,7 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
    - Not reviewed, not merged (the coordinator decides) when the local test is BLOCKED, FAIL beyond env gaps, or NONE in a code area (kind not doc / spike / repro) without an owner word.
    - NONE needs `localTest.decisionId` = `dec-<words>` (older: `dec-<n>`, `dec-<nnnn>`, `d-<14 digits>-<suffix>`) and `& <kit>/skills/bossy/bossy.ps1 decide check -Id <id> -Gate 'merge,scope,other' -Item '<area>,<task>,<branch>,<items>,<repo>!<iid>' -MaxHours 720` printing `WORD ` (any other output: held).
    - One revy per area, plus datay on an area with `migrations`; an empty review blocks the merge.
-5. **Fix** -- fix round (blocking, CI) + local tests; re-review, then a decide ask; should-fix -> Follow-ups; merge in order, tracker
+5. **Fix** -- fix round (blocking, CI) + local tests; re-review, else a decide ask; should-fix -> Follow-ups; ordered merge, tracker
    - Blocking findings or a failed pipeline -> one fix round (local loop again), re-review; still blocking after round 2 -> `decide ask` (A merge + Follow-ups / B hold), not merged; non-blocking re-review findings -> MR Follow-ups (`devtools.py followups`).
    - `holdMerge` repos (`true` = all): reviewed + green, never merged.
    - Merge per MR, producers first, consumers last: `crafty.ps1 wt lease`, then `python -X utf8 <kit>/skills/crafty/devtools.py merge <wt> <iid> --scope '<area paths>'`; kind `foundation` or `dev-env` adds `--no-docs '<kind> <area>'`; a WAIT "waiting for producer" is never merged another way.

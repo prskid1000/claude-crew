@@ -258,11 +258,12 @@ run(args, agent, _n, _n, pipeline).then(() => {
 }).catch(_err)
 '@
 Expect-Each (Invoke-Js dw-areatask $jsat $wfd) 'buildy: #' 'area-task', 'no-release' -Show 5
-# kit-only STEP agents run as kitty (no MCP tools: start 44k -> 29k, 2026-11-22); product MRs (ship, followups) stay devy
+# kit-only STEP agents run as steppy (lean agent file, no MCP tools); product MRs (ship, followups) stay devy; an older session falls back to kitty
 $stT = foreach ($wn in 'buildy', 'testy') { $wt = Get-Content (Join-Path (Split-Path $PSScriptRoot) "workflows/$wn.js") -Raw
   @([regex]::Matches($wt, "(?s)STEP: (?:run exactly this|record this workflow)[^\n]*\n.{0,900}?agentType: '(\w+)'") | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique) -join '/' }
 $stS = [regex]::Matches((Get-Content (Join-Path (Split-Path $PSScriptRoot) 'workflows/buildy.js') -Raw), "label: ``(ship|track|ci):[^\n]*?agentType: '(\w+)'") | ForEach-Object { "$($_.Groups[1].Value)=$($_.Groups[2].Value)" }
-Expect "workflows: kit-command STEP agents are kitty, ship stays devy ($($stT -join ' ') | $($stS -join ' '))" (($stT -join ' ') -eq 'kitty kitty' -and ($stS -join ' ') -eq 'ci=kitty ship=devy')
+$stF = @(foreach ($wn in 'buildy', 'testy') { (Get-Content (Join-Path (Split-Path $PSScriptRoot) "workflows/$wn.js") -Raw) -match "o\.agentType === 'steppy' && /steppy/\.test[^\n]*agentType: 'kitty'" })
+Expect "workflows: kit-command STEP agents are steppy (unknown -> kitty once), ship stays devy ($($stT -join ' ') | $($stS -join ' ') | $stF)" (($stT -join ' ') -eq 'steppy steppy' -and ($stS -join ' ') -eq 'ci=steppy ship=devy' -and "$stF" -eq 'True True')
 # model tiers (T4): budget.models picks the claude row; models.tiers.<tool> with a missing tier = the next stronger, then inherit
 $mt = Invoke-PsTest ctx-tiers @'
 $null = . $args[0] 6>$null
