@@ -195,6 +195,13 @@ $s.tf = Join-Path $args[1] 'other.jsonl'; '{}' | Set-Content $s.tf; "h $(@(Get-K
 $sj = $sc -join "`n"
 Expect "context self-check: none at 150k, once at 180k, next 380k; none for a subagent with no transcript, a workflow agent's own; one record with the beat; <kit>/.rtw runtime ($sj)" ($sj -match '(?m)^a $' -and $sj -match '(?m)^b .*CONTEXT-CHECK: context 185k \(self-check at 180k, next at 380k\).*board check -Decision continue\|handoff .*-Ctx sess1' -and $sj -match '(?m)^c $' -and $sj -match '(?m)^d .*self-check at 380k, next at 580k' -and $sj -match '(?m)^e $' -and $sj -match '(?m)^k\[\]$' -and $sj -match '(?m)^l .*self-check at 380k.*-Ctx agent-ab' -and $sj -match '(?m)^m True$')
 Expect "context self-check: board check records it; supervise INFO, not the design-window WATCH; unanswered -> WATCH; beat line once; HANDOFF checks first (RT1) ($sj)" ($sj -match 'f context check recorded: continue at 380k \(phase ends soon\) continue' -and $sj -match 'j HANDOFF: why: code changed .* crafty\.ps1 check -Dir <worktree> first' -and $sj -match '(?m)^g INFO context: devy b1 self-check continue at 380k => phase ends soon$' -and $sj -match '(?m)^h .*WATCH context: devy b1 past the 200k design window' -and $sj -match '(?m)^i CONTEXT-CHECK: context 200k \(self-check at 180k.* \| $')
+$eq = (Invoke-PsTest evq @'
+$bo = $args[0]; $tq = Join-Path $args[1] 'q7.jsonl'; $run = { (@{ transcript_path = $tq } | ConvertTo-Json -Compress | node (Join-Path (Split-Path $bo) 'ctx_hook.mjs')) -join '' }
+$tok = "$(& $bo board join -Agent q7 -Type devy)" -replace '(?s).*SESSION (\S+).*', '$1'; "{`"t`":`"SESSION $tok   (pass -Session $tok to beat`"}" | Set-Content $tq
+$null = & $bo board msg -Agent lead -To q7 -Text 'lane 2'; "a $(& $run)"; "b $(& $run)"; "c $(& $bo board inbox -Agent q7)"
+$null = & $bo board leave -Session $tok; $null = & $bo board msg -Agent lead -To q7 -Text 'two'; "g $(& $run)"; "f $(& $bo board inbox -Agent q7)"
+'@ @($O, (Kd))) -join "`n"
+Expect "event queue: unread msgs pushed once, not reprinted; a left agent gets none ($eq)" ($eq -match '(?m)^a .*MESSAGE for q7 .*lead: lane 2' -and $eq -match '(?m)^b $' -and $eq -match '(?m)^c inbox: nothing unread' -and $eq -match '(?m)^g $' -and $eq -match '(?m)^f .*two')
 # an answered step is no EMPTY step: [] findings, object lists (they stringify blank), 0 and false are answers
 $se = Invoke-PsTest stepempty @'
 $null = . $args[0] 6>$null

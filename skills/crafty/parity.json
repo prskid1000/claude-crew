@@ -229,8 +229,8 @@
         "antigravity": "fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg"
       },
       "PostToolUse ctx_hook.mjs": {
-        "codex": "fallback: board beat prints the CONTEXT-CHECK line",
-        "antigravity": "fallback: board beat prints the CONTEXT-CHECK line"
+        "codex": "fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print (board beat, crafty.ps1 wt / check / checkpoint, the gate). PostToolUse additionalContext exists (https://learn.chatgpt.com/docs/hooks) but its input names no agent: a sub-agent's hook would drain its parent's inbox",
+        "antigravity": "fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print. PostToolUse returns {} only (https://antigravity.google/docs/hooks/); PostInvocation injectSteps is not wired: sub-agent firing unverified"
       }
     },
     "features": {

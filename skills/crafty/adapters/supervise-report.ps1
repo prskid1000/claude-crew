@@ -2,7 +2,7 @@
 # Usage: dot-sourced by lib.ps1 from adapters/ (moved out of lib.ps1 for its token cap). Exit codes: none here.
 # supervise report: bossy.ps1 supervise -Brief tables, flags, acks, anomalies and the report file; the board's Doing · next;
 # the supervise sweep (sections by learned cost, background calls).
-# Sections: L6 supervise report · L183 transcript tails · L251 supervise sweep · L331 status rows
+# Sections: L6 supervise report · L186 transcript tails · L254 supervise sweep · L334 status rows
 # ---- supervise report: -Brief, no LLM step; pure on $d, so fixtures test it
 # a FINISHED row shows for supervise.finishedMinutes after it ended
 function Select-KitBriefRows($Rows, [datetime]$Now) {
@@ -145,8 +145,11 @@ function Send-BoardMsg([string]$From, [string]$To, [string]$Text, [string]$Kind 
 }
 function Read-KitInboxNew([string]$Agent, [switch]$All) {
   if (-not $Agent) { return }; $f = Get-InboxFile $Agent; if (-not (Test-Path -LiteralPath $f)) { return }
+  # <agent>.pushed: keys of the messages ctx_hook.mjs already put in the agent's context (the event queue): read, not printed again
+  $pf = [IO.Path]::ChangeExtension($f, 'pushed'); $key = { param($x) [uint64]$h = 2166136261; foreach ($c in "$($x.text)".ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; "$(([datetimeoffset]([datetime]$x.at).ToUniversalTime()).ToUnixTimeMilliseconds())|$($x.from)|$(([uint32]$h).ToString('x8'))" }
   Invoke-KitLocked $f { $m = @(Get-Content -LiteralPath $f | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_ }); $new = @($m | Where-Object { $All -or -not $_.read })
-    foreach ($x in $new) { "$(([datetime]$x.at).ToString('HH:mm')) from $($x.from)$(if ($x.kind -and $x.kind -ne 'note') { " [$($x.kind)]" }): $($x.text)$(if ($x.ref) { " (ref $($x.ref))" })" }
+    $pk = @(if (-not $All -and (Test-Path -LiteralPath $pf)) { Get-Content -LiteralPath $pf; Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue })
+    foreach ($x in $new) { if ($pk.Count -and $(try { & $key $x } catch { '' }) -in $pk) { continue }; "$(([datetime]$x.at).ToString('HH:mm')) from $($x.from)$(if ($x.kind -and $x.kind -ne 'note') { " [$($x.kind)]" }): $($x.text)$(if ($x.ref) { " (ref $($x.ref))" })" }
     $cut = (Get-Date).AddDays(-1)   # a read message is kept a day (the hourly rule dedupe), then dropped
     if (@($new | Where-Object { -not $_.read }).Count) { Write-KitAtomic $f ((@($m | Where-Object { -not $_.read -or $(try { [datetime]$_.at -gt $cut } catch { $false }) } | ForEach-Object { $_ | Add-Member -Force NoteProperty read $true; $_ | ConvertTo-Json -Compress }) -join "`n") + "`n") } }
 }

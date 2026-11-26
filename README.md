@@ -195,7 +195,7 @@ fallbacks: `skills/crafty/parity.json` `harness`; `kitbag.py parity`, lint PARIT
 | Feature | Codex | Antigravity |
 |---|---|---|
 | hook PreToolUse bossy.ps1 guard-sendmessage | fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg | fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg |
-| hook PostToolUse ctx_hook.mjs | fallback: board beat prints the CONTEXT-CHECK line | fallback: board beat prints the CONTEXT-CHECK line |
+| hook PostToolUse ctx_hook.mjs | fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print (board beat, crafty.ps1 wt / check / checkpoint, the gate). PostToolUse additionalContext exists (https://learn.chatgpt.com/docs/hooks) but its input names no agent: a sub-agent's hook would drain its parent's inbox | fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print. PostToolUse returns {} only (https://antigravity.google/docs/hooks/); PostInvocation injectSteps is not wired: sub-agent firing unverified |
 | workflow buildy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/buildy.py |
 | workflow testy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/testy.py |
 | workflow tidy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/tidy.py |
