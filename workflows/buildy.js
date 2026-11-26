@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L155 record-args · L174 budget · L192 build-prompt · L277 ship-prompt · L294 plan · L312 spike ·
-//   L324 local-loop · L406 stages · L560 ship · L596 debate · L704 deploy · L718 learn
+//   L324 local-loop · L406 stages · L561 ship · L597 debate · L705 deploy · L719 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -147,7 +147,7 @@ function takeConfig(out) {
  let c
  try { c = JSON.parse((/^CONFIG (\{.*\})\s*$/m.exec(out || '') || [])[1]) } catch (e) { }
  if (!c) { log('WARNING: no CONFIG line: default models, no repo roles'); c = {} }
- // args.config wins: a resume replays the cached CONFIG step; bossy.ps1 recover passes today's tiers / models
+ // args.config wins: a resume replays the cached CONFIG step; recover passes today's tiers / models
  const ov = A0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  CFG.roles = c.roles || {}
  CFG.local = c.local || {}; CFG.humanDoc = c.humanDoc
@@ -284,7 +284,7 @@ const toShip = (r) => { const open = uniqMr(r.mrs).filter((m) => !m.merged && !i
 function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${ENV(`ship-${a.id}`)}
 These merges are authorized for this run: local loop passed, review clean, hold list applied (${SW} SHIP step). Merge in THIS order (producers first, consumers last):
-${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}, ${roleOf(m) || 'independent'})`).join('\n')}
+${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}, ${roleOf(m) || 'independent'}${m.pin ? `; merge --head ${m.head}` : ''})`).join('\n')}
 Per MR: & ${DEV} wt lease -Repo <its repo> -Branch <its source branch> -Agent ${a.id} (its "worktree:" line = <wt>; last: ${r.worktrees.join(', ')}), then python ${DT} merge <wt> <iid>${globs(a) && ` --scope '${globs(a)}'`}${isFnd(a) ? ` --no-docs 'foundation ${a.id}'` : ''}; at the end & ${DEV} wt release -Agent ${a.id}. The merge order is registered (bossy.ps1 track):
 a consumer whose producer is not merged prints WAIT "waiting for producer": report WAIT, never merge it another way.
 Conflicts and merge results: ${SW} SHIP step and Merge results.
@@ -502,6 +502,7 @@ const results = await pipeline(
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }
   // review and CI together (owner 2026-11-25: a task under budget.taskMinutes): one fix round takes both
   const E = EARLY[a.id], ev = E && (await E.p), same = ev ? r.mrs.filter((m) => E.h.includes(nu(m.url) + m.head)) : [], rest = { ...r, mrs: r.mrs.filter((m) => !same.includes(m)) }
+  for (const m of same) m.pin = 1
   if (same.length) say(a, `${urls(same)}: reviewed in the owner wait`)
   const [[rv0, mv], ciFails] = await Promise.all([rest.mrs.length ? reviews(a, rest) : [{}], ciGate(a, r)])
   const rv = rv0 && { findings: [...ls(rv0.findings), ...ls(ev && ev.findings).filter((f) => !rest.mrs.some((m) => has(f, m.url)))] }
@@ -561,7 +562,7 @@ const results = await pipeline(
 async function ciGate(a, r) {
  if (!r.mrs.some((m) => !m.merged)) return []
  const ci = await agent(ciPrompt(r, a), { label: `ci:${a.id}`, phase: 'Review', schema: CI_SCHEMA, agentType: 'kitty', model: MODELS.ci || MODELS.step, effort: 'low' })
- if (!ci) { say(a, `WARNING CI gate agent returned nothing; merge-when-green still waits for the pipelines`); return [] }
+ if (!ci) { say(a, `WARNING CI gate: no answer; merge-when-green still waits for the pipelines`); return [] }
  return (ci.mrs || []).filter((m) => m.status === 'failed').map((m) => ({ mr: m.mr, file: `CI job ${m.job || '?'}`, severity: 'blocking',
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
   fix: 'Reproduce the failing job locally through the gate (crafty.ps1 check), fix the cause, push, green pipeline.' }))

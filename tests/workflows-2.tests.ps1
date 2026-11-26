@@ -44,9 +44,11 @@ const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
 run({ brief: 'C:/b/e.md', ..._kl, agents: [{ id: 'E1', items: 'A1,A2' }] }, agent, _n, _n, pipeline).then((out) => {
  const rv = calls.filter((c) => c.label === 'review:E1'), fs = (out.agents[0] || {}).findings || []
  console.log(`early-review:${rv.length === 2 && mrOf(rv[0]) + '' === '1' && mrOf(rv[1]) + '' === '2' && fs.some((f) => f.mr === 'api!1')}`)
+ const sp = (calls.find((c) => c.label === 'ship:E1') || {}).prompt || ''
+ console.log(`head-pin:${/merge_requests\/1 \([^)]*; merge --head h1\)/.test(sp) && !/--head h3/.test(sp)}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js w2-early $jse $wfd) 'buildy decision wait: # (review:E1 MRs: early !1, after the answer only !2, its head changed; an early finding naming api!1 kept)' 'early-review' -Show 8
+Expect-Each (Invoke-Js w2-early $jse $wfd) 'buildy decision wait: # (review:E1 MRs: early !1, after the answer only !2, its head changed; an early finding naming api!1 kept; the ship prompt pins !1 to its reviewed head)' 'early-review', 'head-pin' -Show 8
 $jst = @'
 const go = async (cfg, ex = {}, pre = null) => { const { calls, agent } = _mock((p, o) => /^test:/.test(o.label) ? _res('W1', [_ck('C2', 'PASS')]) : /^close/.test(o.label) ? _ok('published') : undefined)
  await run({ runDir: 'C:/runs/G', ..._kl, items: [_item('W1', '')], ...ex }, async (p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`) : (pre && pre(o)) || agent(p, o), _n, _n, null)

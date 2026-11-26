@@ -4063,7 +4063,7 @@ def _cli():
     CHECK = cmd == 'mr' and '--check' in a   # the body gates before the push (retro 2026-11-22: 9 mr-body refusals after it)
     DRY = cmd == 'doc' and '--dry-run' in a   # pokey finalize -Check (tidy-6)
     a = [x for x in a if not (CHECK and x == '--check') and not (DRY and x == '--dry-run')]
-    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--run-id', '--override') if cmd in ('doc', 'evidence', 'docgaps') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok', '--no-docs') if cmd == 'merge' else ():
+    for f in ('--type', '--parent', '--folder', '--files-from', '--key', '--mode', '--label', '--run', '--run-id', '--override') if cmd in ('doc', 'evidence', 'docgaps') else ('--prose-ok', '--ai', '--override', '--spec') + (('--scope', '--scope-ok') if cmd == 'mr' else ()) if cmd in ('comment', 'finish', 'mr') else ('--override', '--scope', '--scope-ok', '--no-docs', '--head') if cmd == 'merge' else ():
         if f in a[1:-1]:
             i = a.index(f, 1); opt[f] = a[i + 1]; del a[i:i + 2]
         elif len(a) > 1 and a[-1] == f:   # an empty variable left the flag bare: name it, not "unknown option"
@@ -4125,12 +4125,12 @@ def _cli():
         for u in urls:
             new = followups(of_mr(items, u, urls), u)
             print(f'followups {u}: {len(new)} added' + ''.join(f'{chr(10)}  - {b}' for b in new))
-    elif cmd == 'merge':          # merge now / arm merge-when-green; waits <= 90 s
+    elif cmd == 'merge':   # merge now / arm merge-when-green; waits <= 90 s
         res = auto_merge(a[1], a[2])
         print(res)
         if merge_word(res) == 'MERGED':   # the task's last MR: promoted at once (rechy-5: merge -> promoted p90 156 min)
             track_now(_mr_task({}, remote(a[1])[1], str(a[2]).rsplit('!', 1)[-1].lstrip('#')))
-        sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # 1 = refused, conflict or wait
+        sys.exit(0 if merge_word(res) in ('MERGED', 'SCHEDULED') else 1)   # 1: refused, conflict, wait
     elif cmd == 'selftest':
         sys.exit(selftest())
     elif cmd == 'doc' and DRY:   # the adapter and the title as received

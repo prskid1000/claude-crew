@@ -1,11 +1,11 @@
 # Usage: loaded by devtools.py from adapters/ (a plugin); its verb: python -X utf8 devtools.py proof <task> [--impact] | --branch <b> --impact | selftest · matrix-scope [<task>] --dir <wt> [--json]. Exit codes: 0 ok · 1 gaps · 2 usage.
 """Proof plugin (testing.md "Proof"): each goal (cases spec check) proven on its own channel, and the impact map before code.
-Wraps devtools.py: finish's builtin:testingDocs gate, mr_create (a non-Draft MR), render_cases (goals: proof + impact sections),
+Wraps devtools.py: finish's builtin:testingDocs gate, auto_merge (`merge <wt> <iid> --head <sha>`: the reviewed head), mr_create (a non-Draft MR), render_cases (goals: proof + impact sections),
 cases_cmd (`cases result ... viewport=<WxH> hit=PASS|FAIL`; `cases add` warns), cases_fill_checks (a filled check gets a channel).
 crafty.ps1 wt commit runs `proof --branch <b> --impact` (refuses a non-WIP commit on a task branch without the map).
 Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844);
 qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack).
-Sections: L13 gaps · L176 wraps · L243 matrix scope · L341 verb"""
+Sections: L13 gaps · L176 wraps · L256 matrix scope · L354 verb"""
 import json, os, re, sys
 
 DT = None
@@ -240,6 +240,19 @@ def wrap_fill(orig):
     return run
 
 
+def wrap_merge(orig):
+    def run(worktree, iid, *k):   # merge ... --head <sha>: the reviewed head (buildy early review); the host branch must still be there
+        want = (sys.argv[sys.argv.index('--head') + 1] if '--head' in sys.argv[:-1] else '').strip().lower()
+        if want:
+            br = DT._run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
+            got = str(DT._run(['git', '-C', worktree, 'ls-remote', 'origin', f'refs/heads/{br}']) or '').split('\t')[0].strip().lower()
+            if len(want) < 7 or not got.startswith(want):
+                return (f'HEAD MOVED: !{iid} branch {br} is at {got[:12] or "?"} on the host, the reviewed head is {want[:12]}: later commits are '
+                        'unreviewed. Review them (revy kind mr), then merge without --head\nNOT_MERGED')
+        return orig(worktree, iid, *k)
+    return run
+
+
 # ---- matrix scope: the qa.matrix variants a diff needs (qa.matrixRun); pokey matrix.mjs --task runs the recorded set
 MX_RUN = {'parallel': 4, 'full': [r'\.(css|scss|sass|less|styl|pcss)$', r'(^|/)(layouts?|styles?|themes?|tokens?)(/|\.|$)', r'tailwind\.config',
                                   r'\.(svg|png|jpe?g|webp|gif|woff2?|ttf)$'],
@@ -376,6 +389,15 @@ def selftest():
     ex('ai pass rate (owner 2026-11-26): none declared, 3/5 under 4/5, 8/10 over 4/5 ok, 4/4 too few runs',
        any('no passRate' in g for g in gr('')) and any('pass rate 4/5 not shown' in g for g in gr('4/5', '3/5')) and not gr('4/5', '8/10') and gr('4/5', '4/4'))
     ex('no cases spec = no goals doc', proof_gaps({})[0].startswith('no goals doc'))
+    run0, argv0, DT._run = DT._run, sys.argv, (lambda c, *k, **kw: 'f/x' if 'rev-parse' in c else 'abc1234def\trefs/heads/f/x')
+    try:
+        mg = wrap_merge(lambda w, i, *k: 'ok\nMERGED')
+        hd = lambda *a: [sys.__setattr__('argv', ['devtools.py', 'merge', '.', '7', *a]), mg('.', '7')][1]
+        ex('merge --head: the host branch at the reviewed head merges, a moved head (or a sha under 7 chars) is NOT_MERGED, no --head merges',
+           hd('--head', 'ABC1234').endswith('MERGED') and 'NOT_' not in hd('--head', 'abc1234') and hd('--head', '9999999').startswith('HEAD MOVED') and
+           hd('--head', '9999999').endswith('NOT_MERGED') and hd('--head', 'abc').endswith('NOT_MERGED') and hd() == 'ok\nMERGED')
+    finally:
+        DT._run, sys.argv = run0, argv0
     api_only = {**good, 'cases': [{**good['cases'][0], 'evidence': ['put.json=https://h/x']}, good['cases'][1]]}
     ex('a ui goal proven by API JSON is a gap', any('T1 (ui): no PASS case with UI evidence' in g for g in proof_gaps(api_only)))
     nt = {**good, 'cases': [{**good['cases'][0], 'result': 'NOT_TESTED_LOCAL stubbed'}, good['cases'][1]]}
@@ -511,3 +533,4 @@ def register(dt):
     if 'finish' in gates:
         gates['finish'] = wrap_finish(gates['finish'])
     dt.mr_create, dt.render_cases, dt.cases_cmd, dt.cases_fill_checks = wrap_mr(dt.mr_create), wrap_render(dt.render_cases), wrap_cases(dt.cases_cmd), wrap_fill(dt.cases_fill_checks)
+    dt.auto_merge = wrap_merge(dt.auto_merge)
