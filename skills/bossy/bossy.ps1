@@ -33,8 +33,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
 Sections: L40 init · L51 board · L252 budget · L282 launch · L515 recover · L604 pause · L615 resume · L682 program · L710 param ·
-  L716 track · L1109 supervise · L1463 report · L1543 audit · L1603 storage · L1606 bugbrief · L1608 cleanup · L1695 learn ·
-  L1733 decide · L1907 debate · L1951 health · L2019 setup
+  L716 track · L1109 supervise · L1462 report · L1542 audit · L1602 storage · L1605 bugbrief · L1607 cleanup · L1694 learn ·
+  L1732 decide · L1906 debate · L1950 health · L2018 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -1174,7 +1174,7 @@ foreach ($w in $wfDirs) {
   foreach ($r in $res.Values) { $dl = [string]($started | Where-Object agentId -eq $r.agentId | Select-Object -First 1).label; [void]$doneLabels.Add($dl)
     if (@($r.result.mrs).Count -and -not $r.result.error) { $ak = Get-KitAreaKey $dl; if (-not $shippedAt[$ak] -or $shippedAt[$ak] -lt $w.CreationTime) { $shippedAt[$ak] = $w.CreationTime } }
     foreach ($nm in LabelNames $dl) { if (-not $doneAt[$nm] -or $doneAt[$nm] -lt $w.LastWriteTime) { $doneAt[$nm] = $w.LastWriteTime } } }
-  if ($w.Name -in $finishedRuns) { continue }
+  $decLoops += @(Get-KitDecisionLoops $ev $w); if ($w.Name -in $finishedRuns) { continue }
   $wrec = @(Get-KitWorkflowRecords $w $ev $lnch); $wsc = "$(@($wrec | Where-Object script)[0].script)"
   $done = [bool]($ev | Where-Object { $_.type -in 'finished', 'completed', 'done' }) -or ($wsc -and (Get-Command Test-KitJournalFinished -ErrorAction SilentlyContinue) -and (Test-KitJournalFinished $w.FullName (Split-Path $wsc -Leaf) $(if (@($wrec | Where-Object { (Test-KitHolder $_) -eq $true }).Count) { 10 } else { 2 })))   # the engine writes no end marker
   # stale and closeable (lib Test-KitRunCloseable): its record closes, it stops counting as running
@@ -1193,7 +1193,6 @@ foreach ($w in $wfDirs) {
   # failed, not redone
   $lb = @{}; foreach ($stx in $started) { $lb[$stx.agentId] = $stx.label -replace '~retry\d+$|-retry(?=:|$)|@redo$' }; $okS = $lb[@($res.Keys)]
   foreach ($fs in @($ev | Where-Object type -eq 'failed')) { $fl = $lb[$fs.agentId]; if ($fl -and $fl -notin $okS) { Flag 'ACT' "step failed: run $($w.Name) step $fl" "Redo: bossy.ps1 report -Run $($w.Name)" } }
-  $decLoops += @(Get-KitDecisionLoops $ev $w)
   $running = @(Get-JournalRunning $started @($res.Keys)); if (-not $done) { $wfOpen++ }   # open even paused or between agents: no retro
   if ($w.Name -notin $pausedRuns) { $runTotal += $running.Count }
   $errs = @($res.Values | Where-Object { $_.result.error }).Count; $toolErr += $errs; if ($errs) { $errRun = $w.Name }

@@ -230,8 +230,8 @@ Expect "deploy request: a summary (-Json: target, status, trigger, mrs, file), t
 # owner 2026-11-26: buildy's deploy step records only (-Quiet): no plan, no host call (the plan ran up to 594 s in the step, 37 of 276 calls failed)
 $rqRaw = Px $O deploy request -Mrs 'api!6' -Run w5 -Json -Quiet 2>&1 | Out-String; $rqQ = @(try { $rqRaw | ConvertFrom-Json } catch { }); $rqP = @((Read-Json (Join-Path (TkPath $k deploys) 'pending.json')).requests | Where-Object run -eq 'w5')
 Expect "deploy request -Quiet: pending holds the MR, the JSON its trigger, no plan file ($($rqRaw.Trim()))" ($rqQ.Count -eq 1 -and $rqQ[0].trigger -eq 'owner' -and "$($rqP.mrs)" -eq 'api!6' -and -not (Test-Path (Join-Path (TkPath $k agents) 'w5/deploy-request.json')))
-# a dev-env change (track onMerged closed) asks for no deploy
-& $J @{ task = 'dq1'; track = @{ task = 'dq1'; mrs = @('api!7'); onMerged = @('closed') } } (Join-Path (TkPath $k tasks -Create) 'dq1.json')
+# a dev-env change (track onMerged closed; the stored ref keeps its group path) asks for no deploy
+& $J @{ task = 'dq1'; track = @{ task = 'dq1'; mrs = @('grp/api!7'); onMerged = @('closed') } } (Join-Path (TkPath $k tasks -Create) 'dq1.json')
 $dqRaw = Px $O deploy request -Mrs 'api!7,api!8' -Run w6 -Json -Quiet 2>&1 | Out-String; $dqOnly = Px $O deploy request -Mrs 'api!7' -Run w6 -Json -Quiet 2>&1 | Out-String
 $dqP = @((Read-Json (Join-Path (TkPath $k deploys) 'pending.json')).requests | Where-Object run -eq 'w6')
 Expect "deploy request: a dev-env MR is left out; alone: nothing pending ($($dqRaw.Trim()) $($dqOnly.Trim()))" ($dqP.Count -eq 1 -and "$($dqP.mrs)" -eq 'api!8' -and $dqOnly -match '"devEnv":\["api!7"\]')

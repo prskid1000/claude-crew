@@ -9,7 +9,7 @@ deploys.ps1: the deploy batch of bossy E5, dot-sourced by bossy.ps1 (skills/boss
   bossy.ps1 deploy watch -Env <target>[,..] [-Started <name>=<sha>,..] [-Finished <name>=success|failed,..] [-WaitMinutes <deploy.pipelineWaitMinutes>] [-Json]   one bounded poll loop over the schedule's started pipelines: START (a gate opened) · DONE (verify it) · FAILED (its dependents held) · WAIT; logs actual vs predicted
   bossy.ps1 deploy restart -Env <target>[,..] [-Service <a,b>] [-WaitMinutes 20] [-RecheckSeconds 120] [-Ungated] [-Agent <ids> (laneApk: phones free or leased by them only)]   an ssh deploy's services; ssh.busy re-checked on the host right before each restart: busy past -WaitMinutes = REFUSED (exit 3)
 supervise -AutoFix calls Get-KitSuperviseFlagsDeploys: a done task live on a test env -> inTest (one background run); the plan cached 1 h (DEPLOY ASK; an env's newest deploy word no / wait: one muted held / waiting line).
-Sections: L17 helpers · L108 intest · L314 deploy · L532 schedule · L773 restart · L857 supervise
+Sections: L17 helpers · L108 intest · L314 deploy · L533 schedule · L774 restart · L858 supervise
 Exit codes: 0 ok · 1 failed / unknown (restart) · 2 usage · 3 restart refused: the host stayed busy.
 #>
 #Requires -Version 7
@@ -339,8 +339,9 @@ function Invoke-Deploy {  param([Parameter(Position = 0)][ValidateSet('plan', 'r
     if (-not $Mrs.Count) { 'usage: deploy request -Mrs <repo>!<iid>,... -Run <run> [-Note ..]'; exit 2 }
     $Mrs = @($Mrs | ForEach-Object { ConvertTo-MrRef $_ })
     # a dev-env change (its task closes on merge: track add -OnMerged closed, crafty ship.md) asks for no deploy
-    $dv = @(@((Read-KitTracking).tasks.Values) | Where-Object { $_ -and (@($_.onMerged) -join ',') -eq 'closed' } | ForEach-Object { @($_.mrs) | ForEach-Object { NormRef $_ } })
-    $noDep = @($Mrs | Where-Object { (NormRef $_) -in $dv }); $Mrs = @($Mrs | Where-Object { $_ -notin $noDep })
+    $canon = { param($m) Get-CanonMr (ConvertTo-MrRef "$m") }   # a stored ref keeps its group path
+    $dv = @(@((Read-KitTracking).tasks.Values) | Where-Object { $_ -and (@($_.onMerged) -join ',') -eq 'closed' } | ForEach-Object { @($_.mrs) | ForEach-Object { & $canon $_ } })
+    $noDep = @($Mrs | Where-Object { (& $canon $_) -in $dv }); $Mrs = @($Mrs | Where-Object { $_ -notin $noDep })
     if ($noDep.Count -and -not $Json) { "no deploy request for $($noDep -join ', '): its task closes on merge (a dev-env change)" }
     if (-not $Mrs.Count) { if ($Json) { ConvertTo-Json @([ordered]@{ trigger = 'none'; mrs = @(); devEnv = @($noDep) }) -Compress -Depth 4 }; return }
     & $pendEdit { param($p) $p.requests = @(@($p.requests) + [pscustomobject]@{ at = (Get-Date).ToString('s'); run = $Run; mrs = $Mrs; note = $Note }) }

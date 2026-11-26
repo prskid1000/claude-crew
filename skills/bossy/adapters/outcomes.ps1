@@ -9,7 +9,7 @@ Inputs: .state/tasks/*.json, work/waves/*.json, work/launches/self-*.json, .stat
 standing-rules.json, rules/standing-rules.local.md (approved rules only).
 Exit codes: 0 ok · 1 problem · 2 usage (bossy.ps1 decide).
 Sections: L15 outcomes · L115 summary · L283 patterns · L320 rules · L418 retro due · L429 tidy · L531 collisions ·
-  L549 decisions · L591 run end · L636 decision loops
+  L549 decisions · L591 run end · L641 decision loops
 #>
 
 # ---- outcomes: one row per task state change; tracker-generic (task index, wave reports, launches, decisions)
@@ -590,8 +590,9 @@ function Get-KitAgentBranches([string]$Agent, [string]$Run = '') {
 
 # ---- run end: a closed run's board rows and leases, launch -Done, the launch -Self SUM (from bossy.ps1: its token cap)
 # owner 2026-11-26 (a stopped /testy left 3 rows STUCK): the rows of a closed run's names (its run, its run folder) are left and,
-# without -Rows, their leases released. Kept: a row joined after the run's last journal write (a later one-off agent under the
-# same name), every row of a name another live launch uses (a relaunch into the same run folder), the coordinator
+# without -Rows, their leases released. Kept: a row that joined or beat after the run's last write (a workflow agent's transcript
+# is in the run folder: a later beat = a one-off agent under the same name; no run folder: a row inside its beat window), every
+# row of a name another live launch uses (a relaunch into the same run folder), the coordinator
 function Close-KitRunRows([string[]]$Files, [switch]$Rows, [string]$By = 'launch -Done') {
   $recs = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { $lf = $_; try { Get-Content -LiteralPath $lf -Raw | ConvertFrom-Json | Add-Member -Force NoteProperty file $lf -PassThru } catch {} })
   $namesOf = { param($r) @(@("$($r.run)", "$(Get-LaunchRunName $r.args)") + @(@($r.runDir, $r.args.runDir) | Where-Object { $_ } | ForEach-Object { Split-Path "$_".TrimEnd('\', '/') -Leaf }) | Where-Object { $_ } | Select-Object -Unique) }
@@ -601,15 +602,19 @@ function Close-KitRunRows([string[]]$Files, [switch]$Rows, [string]$By = 'launch
   $ends = @($recs | ForEach-Object { & $dirOf $_ } | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | ForEach-Object { Get-KitWorkflowLastWrite $_ })
   $end = if ($ends.Count) { ($ends | Measure-Object -Maximum).Maximum.AddMinutes(2) }
   $all = @(Read-KitJsonFiles (Get-KitPath board))
-  $gone = @($all | Where-Object { $_.status -ne 'left' -and "$($_.run)" -in $names -and "$($_.run)" -notin $busy -and "$($_.type)" -ne 'coordinator' -and (-not $end -or -not $_.joined -or [datetime]$_.joined -le $end) })
+  $cut = if ($end) { $end } else { (Get-Date).AddMinutes(-[double](Get-KitParam 'idle.beatMinutes')) }; $past = { param($t) -not $t -or [datetime]$t -le $cut }
+  $gone = @($all | Where-Object { $_.status -ne 'left' -and "$($_.run)" -in $names -and "$($_.run)" -notin $busy -and "$($_.type)" -ne 'coordinator' -and (& $past $_.beat) -and (-not $end -or (& $past $_.joined)) })
   if (-not $gone.Count) { return }
   foreach ($e in $gone) { Update-BoardEntry $e.file { param($x) $x.status = 'left'; $x | Add-Member -Force NoteProperty finished (Get-KitStamp); $x | Add-Member -Force NoteProperty closedBy $By; $x } }
   "board: $($gone.Count) row(s) of the closed run left ($(@($gone | ForEach-Object { "$($_.agent) [$($_.run)]" }) -join ', '))"
-  if ($Rows) { return }   # health, pause: no child process; the lease grace releases them
+  if ($Rows) { return }
   $ids = @($gone.agent | Select-Object -Unique | Where-Object { $ag = $_; -not @($all | Where-Object { $_.agent -eq $ag -and $_.status -ne 'left' -and $_.session -notin @($gone.session) }).Count })
   foreach ($e in $gone) { try { Stop-KitLeftShells $e } catch { } }
   if ($ids.Count) { foreach ($ag in $ids) { $null = Remove-KitPoolWaits $ag }; Invoke-KitReleaseAgent -Agent $ids -Reason "run closed ($By)" }
 }
+# Invoke-KitHooks Close-KitFinishedRuns (health, recover, resume) runs this too: the rows of runs completed in the last 2 h (closed by
+# their journal, nobody ran launch -Done). Rows only, no output, no child process (the health hook's 2 s): the lease grace releases
+function Close-KitFinishedRunsRows { try { $since = (Get-Date).AddHours(-2); $null = Close-KitRunRows @(Read-KitJsonFiles (Get-KitPath launches) | Where-Object { $_.script -and $_.completed -and [datetime]$_.completed -gt $since } | ForEach-Object file) -Rows -By 'run finished' } catch { } }
 # board leave found no row to leave: why, and what to do (owner 2026-11-26: -Force on a row supervise had already left said
 # "unknown session ''"). An agent whose rows all left: exit 0; -Force on a row that beats in a live session: kept, exit 1
 function Get-KitLeaveMiss([string]$Session, [string]$Agent, [string]$Run, [bool]$Force, $Rows, [double]$StaleMin) {
@@ -636,18 +641,23 @@ function Get-KitLaunchSum([string[]]$Lines) { "SUM $(Get-KitFnv (@($Lines -cmatc
 # ---- decision loops: an area whose last report repeats a decision it reported before (supervise)
 # buildy.js waits once per decision id: a report that names the id again (the answer never reached the agent, or named no option)
 # is dropped and the area ends without its items (owner 2026-11-26: two areas of one run ended 'Failed', no flag). One row per
-# area: label + created (Select-KitOpenCollisions: open until a later run delivers the area), the decision id and its question
+# area: label + created (Select-KitOpenCollisions: open until a later run delivers the area), the decision id and its question.
+# Open for 24 h after the run's last write, closed runs too; gone once every repeated decision is answered after that write. A
+# ship: report never counts (the Decide stage empties needsDecision, so the area ships its other MRs and drops the item); a step
+# that died without a result is not running (Get-JournalRunning)
 function Get-KitDecisionLoops($Events, $Dir) {
-  $lab = @{}; $open = @{}; $by = [ordered]@{}
-  foreach ($s in @($Events | Where-Object type -eq 'started')) { $lab[$s.agentId] = "$($s.label)" -replace '~retry\d+$|-retry(?=:|$)|@redo$'; $open[$s.agentId] = $true }
-  foreach ($r in @($Events | Where-Object type -eq 'result')) { $open.Remove($r.agentId); $l = $lab[$r.agentId]
-    if ("$l" -notmatch '^[\w-]+:.' -or $null -eq $r.result.needsDecision) { continue }
+  $lw = Get-KitWorkflowLastWrite $Dir.FullName; if (((Get-Date) - $lw).TotalHours -ge 24) { return }
+  $lab = @{}; $by = [ordered]@{}; $st = @($Events | Where-Object type -eq 'started'); $res = @($Events | Where-Object type -eq 'result')
+  foreach ($s in $st) { $lab[$s.agentId] = "$($s.label)" -replace '~retry\d+$|-retry(?=:|$)|@redo$' }
+  foreach ($r in $res) { $l = $lab[$r.agentId]
+    if ("$l" -notmatch '^(?!ship:)[\w-]+:.' -or $null -eq $r.result.needsDecision) { continue }
     $ak = Get-KitAreaKey $l; if (-not $by.Contains($ak)) { $by[$ak] = @() }; $by[$ak] += , [pscustomobject]@{ label = $l; result = $r.result } }
-  $live = @($open.Keys | ForEach-Object { Get-KitAreaKey $lab[$_] })   # a step of the area still runs: it may yet settle
+  $live = @(Get-JournalRunning $st @($res.agentId) | ForEach-Object { Get-KitAreaKey $lab[$_.agentId] })   # a step of the area still runs: it may yet settle
   foreach ($ak in @($by.Keys)) { $rep = @($by[$ak]); if ($rep.Count -lt 2 -or $ak -in $live) { continue }
     $seen = @($rep[0..($rep.Count - 2)] | ForEach-Object { @($_.result.needsDecision) } | ForEach-Object { "$($_.decisionId)" } | Where-Object { $_ })
     $again = @(@($rep[-1].result.needsDecision) | Where-Object { "$($_.decisionId)" -in $seen }); if (-not $again.Count) { continue }
     $ids = @($again | ForEach-Object { "$($_.decisionId)" } | Select-Object -Unique); $q = ("$($again[0].question)" -replace '\s+', ' ').Trim(); if ($q.Length -gt 300) { $q = $q.Substring(0, 297) + '...' }
+    if (@(Read-KitJsonFiles (Get-KitPath decisions) | Where-Object { "$($_.id)" -in $ids -and $_.answeredAt -and [datetime]$_.answeredAt -gt $lw }).Count -ge $ids.Count) { continue }
     $n = 1 + @($rep[0..($rep.Count - 2)] | Where-Object { $ids[0] -in @(@($_.result.needsDecision) | ForEach-Object { "$($_.decisionId)" }) }).Count
     [pscustomobject]@{ label = $rep[-1].label; created = $Dir.CreationTime
       what = "area $ak of run $($Dir.Name) ended on decision $($ids -join ', '), reported $n times ($(@($again | ForEach-Object { "$($_.item)" } | Select-Object -Unique) -join ', ')): $q"

@@ -31,7 +31,7 @@ python $P merge <wt> <iid>   #    producers first; last line MERGED|SCHEDULED|WA
   `devtools.py mr` edits the open MR.
 - **Dev-env change** (owner 2026-11-26): a product-repo change that only serves the dev env (lane settings, every default
   unchanged) keeps its task (tags chore + dev-env): no testing docs, no QA, no deploy request, closed on merge (never
-  `promoted`). Steps (a /buildy area: kind `dev-env`): `python $P precheck --help`.
+  `promoted`). Steps: `python $P precheck --help`.
 
 ## In a /buildy wave (devy, from every goal PASS on)
 - Every goal PASS: `crafty.ps1 checkpoint -Agent <id> -Run <run> -Step loop -Item <task> -Dir <wt> -Evidence "round <n> PASS"` (the owner waives a rerun: `"PASS owner word: <words>"`;

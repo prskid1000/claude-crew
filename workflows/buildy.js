@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L155 record-args · L173 budget · L188 build-prompt · L273 ship-prompt · L293 plan · L311 spike ·
-//   L323 local-loop · L405 stages · L560 ship · L596 debate · L709 deploy · L723 learn
+// Sections: L18 args · L154 record-args · L172 budget · L187 build-prompt · L272 ship-prompt · L292 plan · L310 spike ·
+//   L322 local-loop · L404 stages · L559 ship · L595 debate · L708 deploy · L722 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -139,7 +139,6 @@ const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(sr
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
 setStr(TIERS, (A0.config || {}).tiers); tierModels()
 const jl = (k, s) => { try { return JSON.parse(new RegExp(`^${k} (\\{.*\\})`, 'm').exec(s)[1]) } catch { } }
-// SUM: launch -Self's fnv
 const recOk = (s) => /^RECORDED\b/m.test(s) && jl('CONFIG', s) && jl('BUDGET', s) && (/^SUM (\w+)/m.exec(s) || [])[1] === fnv((s.match(/^(BUDGET|CONFIG|TASKS|AREA TASK).*/gm) || []).join('\n'))
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
@@ -196,7 +195,7 @@ function depNote(a) {
   (cs.length ? `MERGE ORDER: ${cs.join(', ')} consume your work: open your MRs early, say which MR carries the contract.\n` : '')
 }
 const globs = (a) => ls(a.paths).join(',')
-const isFnd = (a) => /^(foundation|dev-env)$/.test((a || {}).kind)   // merge --no-docs
+const isFnd = (a) => /^(foundation|dev-env)$/.test((a || {}).kind), DV = (x) => (A.agents.find((g) => g.id === x.id) || x).kind === 'dev-env'
 const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : '') + (AREA_TASK[a.id] ? `TRACKER TASK: ${AREA_TASK[a.id]} (subtask of ${a.task || A.task}) = <task> in every tracker step (status, MR title, track add); never the parent's status.\n` : '')
 const SW = `${K}/ship.md "In a /buildy wave"`
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules with your agent definition's "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
@@ -410,7 +409,7 @@ const results = await pipeline(
   if (skips(a, 'build')) {
    const r0 = synth(a)
    say(a, `resumed, skipped: ${[].concat(RES[a.id].skip).join(', ')}`)
-   if (r0.resumed !== 'merged' || skips(a, 'testing-doc')) return r0
+   if (r0.resumed !== 'merged' || skips(a, 'testing-doc') || DV(a)) return r0
    const r2 = await agent(postMergePrompt(a, r0), dvo(a, 'postmerge', 'Build'))
    return { ...mergeReports(r0, r2, 'Post-merge'), mrs: r0.mrs, localTest: r0.localTest, resumed: 'merged' }
   }
@@ -438,7 +437,7 @@ const results = await pipeline(
   if (!r || r.error || r.budgetStopped || !(cnt(r.needsDecision) || cnt(r.needsEnvFix) || cnt(r.debate))) return r
   return releasing(a, 'Decide', async () => {
   let cur = r, envCycles = 0
-  // local PASS: MRs with no waiting item reviewed now, reused at the same head (owner 2026-11-26)
+  // local PASS: MRs with no waiting item reviewed now, reused at the same head
   const wt = [...ls(r.needsDecision), ...ls(r.needsEnvFix), ...ls(r.debate)].map((d) => d.item), fr = r.mrs.filter((m) => m.head && cnt(m.items) && !m.items.some((i) => wt.includes(i)))
   if (fr.length && !a.migrations && ltOf(r).status === 'PASS') EARLY[a.id] = { h: fr.map((m) => nu(m.url) + m.head), p: reviews(a, { ...r, mrs: fr }).then(([v]) => v, () => null) }
   const goOn = async (c, why, l, note) => localLoop(a, mergeReports(c, await agent(continuePrompt(a, c, why), dvo(a, l, 'Decide')), note), LOCAL_RETRIES, 'Decide')
@@ -551,7 +550,7 @@ const results = await pipeline(
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) say(a, `tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
   // track add groups MRs by task
-  const tr = await runStep(`& ${ORCH} track add -Discover -Mrs '${urls(x.report.mrs, ',')}'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}${a.kind === 'dev-env' ? ' -OnMerged closed' : ''}`, `track:${a.id}`, 'Fix', { ok: 'when it exits 0', whole: true })
+  const tr = await runStep(`& ${ORCH} track add -Discover -Mrs '${urls(x.report.mrs, ',')}'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}${DV(a) ? ' -OnMerged closed' : ''}`, `track:${a.id}`, 'Fix', { ok: 'when it exits 0', whole: true })
   if (!tr || !tr.ok) say(a, `WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
   return why ? { ...x, trackHeld: why } : x
  },
@@ -694,7 +693,7 @@ const outcome = {
  seed: fromReports('seed'),
  openFindings: out.flatMap((x) => [...(x.fixed ? [] : (x.findings || []).filter(mustFix)), ...(x.shipFindings || [])]),
  followUps: out.flatMap((x) => (x.followUps || []).map((f) => ({ agent: x.id, ...f }))),
- testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, ...(isFnd(A.agents.find((g) => g.id === x.id)) ? { guide: 'exempt (merge --no-docs)', docsExempt: true } : { guide: x.report.testerGuide || 'MISSING' }) })),
+ testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, ...(isFnd(A.agents.find((g) => g.id === x.id)) ? { guide: 'exempt', docsExempt: true } : { guide: x.report.testerGuide || 'MISSING' }) })),
  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop, handoffs: out.filter((x) => /Handoff:/.test((x.report || {}).summary || '')).map((x) => x.id) },
 }
 // budget-stopped areas + those past args.batch: next
@@ -708,7 +707,7 @@ for (const g of outcome.testerGuides) if (g.docsExempt) log(`${g.agent}: ${g.gui
 
 // ---- deploy: merged work joins the deploy batch (bossy E5)
 phase('Deploy')
-const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
+const shipped = out.flatMap((x) => (x.report && x.resumed !== 'done' && !DV(x) ? x.report.mrs.filter((m) => m.merged || m.mergeState === 'SCHEDULED').map((m) => m.url) : []))
 const dp = shipped.length ? await runStep(`# record the merged MRs as pending only: this step deploys nothing and asks nobody
 if (Test-Path '${KIT}/skills/bossy/adapters/deploys.ps1') { & ${ORCH} deploy request -Mrs ${shipped.join(',')} -Run ${RUN} -Note "buildy ${RUN}" -Json -Quiet } else { 'NO-DEPLOYS' }`,
  'deploy-batch', 'Deploy', { whole: true }) : null
