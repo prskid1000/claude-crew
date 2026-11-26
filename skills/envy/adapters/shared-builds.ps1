@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L144 lane pick · L194 start room · L238 thin artifacts
+# Sections: L4 shared builds · L144 lane pick · L194 start room · L238 thin artifacts · L280 lane priority
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -154,7 +154,7 @@ function Get-LaneLoad([string]$n) {
 function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [string]$id, [string]$pinned = '') {
   $names = @(LaneNames $e)
   if ($k) { if ($k -gt $names.Count) { throw "-Lane ${k}: $($names[0]) has $($names.Count) lane(s) (localEnv.envs.$($names[0]).lanes.max)" }; return $names[$k - 1] }
-  $loads = @($names | ForEach-Object { Get-LaneLoad $_ })
+  $loads = @($names | ForEach-Object { Get-LaneLoad $_ }); $high = @(Get-KitHighAgents); $hi = $agent -in $high   # lane priority: others keep off a high agent's lane, a cold one opens for it at once
   if ($id) { foreach ($n in $names) { if (@((Read-State $n).requests | Where-Object id -eq $id).Count) { return $n } } }   # wait -Id: the lane holding that request
   $mine = @($loads | Where-Object { $agent -in $_.agents -and (-not $pinned -or $_.env -eq $pinned) })[0]; if ($mine) { return $mine.env }   # a named lane: never another
   if ($action -notin 'deploy', 'use', 'task') { return $(if ($pinned) { $pinned } else { $e }) }
@@ -163,7 +163,7 @@ function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [stri
   $room = (Get-GateAvailGB (Get-SysMem)) - (KeepFreeGB)
   $fits = { param($n) (@(EnvServices $n | Where-Object { Managed $_ } | ForEach-Object { Need-GB $n $_ }) | Measure-Object -Sum).Sum -le $room }
   $warm = @($loads | Where-Object { $_.up -or $_.train }); if (-not $warm.Count) { $warm = @($loads[0]) }   # all cold: lane 1
-  $best = if ($pinned) { @($loads | Where-Object env -eq $pinned)[0] } else { @($warm | Sort-Object @{ Expression = { $_.agents.Count + [int]$_.train } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })[0] }
+  $best = if ($pinned) { @($loads | Where-Object env -eq $pinned)[0] } else { @($warm | Sort-Object @{ Expression = { $_.agents.Count + [int]$_.train + $(if (-not $hi) { 2 * @($_.agents | Where-Object { $_ -in $high }).Count } else { 0 }) } }, @{ Expression = { $_.up }; Descending = $true }, @{ Expression = { [array]::IndexOf($names, $_.env) } })[0] }
   $why = if ($pinned) { 'the lane -Env names' } else { 'warm lane, free' }
   $taken = @($best.leased | Where-Object { $_ -ne $agent })
   if ($pinned -and -not ($action -eq 'deploy' -and $taken.Count)) { return $pinned }   # no pick: the K58 lanePick reason stays
@@ -171,7 +171,7 @@ function Select-Lane([string]$e, [string]$agent, [int]$k, [string]$action, [stri
   if ($action -eq 'deploy' -and $taken.Count -and $free.Count) { $why = "$($best.env) leased by $($taken -join ', '): a free lane instead of waiting for that lease$(if ($pinned) { "; later calls: -Env $($free[0].env)" })"; $best = $free[0] }
   elseif ($pinned) { }
   elseif ($best.agents.Count + [int]$best.train) {
-    $wait = [int](@($warm | ForEach-Object { Get-LaneWaitMin $_.env }) | Measure-Object -Minimum).Minimum; $after = [double](Get-KitParam 'localEnv.lanes.openAfterMinutes')
+    $wait = [int](@($warm | ForEach-Object { Get-LaneWaitMin $_.env }) | Measure-Object -Minimum).Minimum; $after = if ($hi) { 0.0 } else { [double](Get-KitParam 'localEnv.lanes.openAfterMinutes') }
     $cold = @($loads | Where-Object { $_.env -notin $warm.env -and (& $fits $_.env) })[0]
     $why = if ($wait -lt $after) { "warm lanes busy, shared: queue wait $wait min < lanes.openAfterMinutes $after" } elseif (-not $cold) { "warm lanes busy, shared: queue wait $wait min, no cold lane with room" } else { "cold lane opened: warm lanes busy, queue wait $wait min >= lanes.openAfterMinutes $after" }
     if ($cold -and $wait -ge $after) { $best = $cold }
@@ -200,7 +200,7 @@ function StartQueueDir { $d = Join-Path (Get-KitPath localenv -Create) 'start-qu
 function Get-StartQueueHead {
   $now = Get-Date
   $ts = @(Get-ChildItem (StartQueueDir) -Filter '*.json' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { } } | Where-Object { $_ -and (Test-KitPid $_.pid $_.pstart) })
-  @($ts | Sort-Object @{ e = { [double]$_.cost - ($now - [datetime]$_.since).TotalSeconds } }, @{ e = { [datetime]$_.since } })[0]
+  @($ts | Sort-Object @{ e = { -[int][bool]$_.high } }, @{ e = { [double]$_.cost - ($now - [datetime]$_.since).TotalSeconds } }, @{ e = { [datetime]$_.since } })[0]   # a high lane's start first
 }
 function Wait-Room([string]$e, $s) {
   $need = Need-GB $e $s; $keep = KeepFreeGB; $cost = StartCostSec $e $s; $small = $cost -le [double](Get-KitParam 'localEnv.cpuSmallStartSec')
@@ -213,7 +213,7 @@ function Wait-Room([string]$e, $s) {
       $for = if ($ramOk) { 'CPU' } else { 'RAM' }
       if ($ramOk) { if (-not $cpu0) { $cpu0 = Get-Date } } else { $cpu0 = $null }   # CPU only delays: cpuWaitMinutes of busy CPU in a row, then it starts
       if (-not $cpu0 -and $tk) { Remove-Item -LiteralPath $tk -Force -ErrorAction SilentlyContinue; $tk = $null }   # waiting for RAM: out of the CPU queue
-      if ($cpu0 -and -not $tk) { $tk = Join-Path (StartQueueDir) "$PID-$($s.name).json"; Write-KitAtomic $tk (@{ pid = $PID; pstart = "$(Get-KitPidStart $PID)"; env = $e; service = $s.name; cost = $cost; since = (Get-KitStamp stored $cpu0) } | ConvertTo-Json -Compress) }
+      if ($cpu0 -and -not $tk) { $tk = Join-Path (StartQueueDir) "$PID-$($s.name).json"; Write-KitAtomic $tk (@{ pid = $PID; pstart = "$(Get-KitPidStart $PID)"; env = $e; service = $s.name; cost = $cost; high = (Test-LaneHigh $e); since = (Get-KitStamp stored $cpu0) } | ConvertTo-Json -Compress) }
       $head = if ($tk) { Get-StartQueueHead }; $mine = -not $head -or ("$($head.pid)" -eq "$PID" -and $head.service -eq $s.name)
       $lastF = Join-Path (StartQueueDir) 'last.admit'; $last = try { Get-Content -LiteralPath $lastF -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $null }
       $spaced = -not $last -or ((Get-Date) - [datetime]$last.at).TotalSeconds -ge [math]::Min(60.0, [double]$last.cost)   # busy CPU: one big start at a time
@@ -270,10 +270,61 @@ function Remove-OldReleases([string]$e, $s, [string]$root, [switch]$DryRun) {
   Get-ChildItem -LiteralPath $store -File | Where-Object { -not $refs[$_.BaseName] } | Remove-Item -Force -ErrorAction SilentlyContinue   # no release links it
 }
 # no agent owns a lane build: that agent's release killed train builds (2026-11-25)
-function LaneEnv([string]$e, $item) { $v = EnvVars $e $item; $v.CLAUDE_AGENT = ''; $v }
+function LaneEnv([string]$e, $item) { $v = EnvVars $e $item; $v.CLAUDE_AGENT = ''; if (Test-LaneHigh $e -Train) { $v.KIT_PRIORITY = 'high' }; $v }   # a high train's builds: first in the gate
 # a build the kit stopped (release, PAUSE) blames no layer: new layers and drops fail with "deploy again", the live release stays
 function Set-KilledBuild([string]$why, $kept, [scriptblock]$isNew, $reqs, $cur, [string]$rn, $results) {
   $m = "${why}: not your branch, deploy again"
   foreach ($l in @($kept | Where-Object { & $isNew $_ })) { if ($l.request) { $results[$l.request] = @{ outcome = 'failed'; message = $m } } }
   foreach ($q in @($reqs | Where-Object { $_.kind -eq 'drop' -and @($cur[$rn].branch) -contains $_.branch })) { $results[$q.id] = @{ outcome = 'failed'; message = $m } }
 }
+# ---- lane priority: envy.ps1 priority high | normal -Run <run> | -Agent <id,..> (no op: the list); a high agent (lib Test-KitHigh,
+# params.json priority { <agent>: { run, until } }, 72 h) goes first in the build gate, the start queue, a train's lease wait and the lane pick
+# a run's agents: the area ids of its launch record + its live board rows
+function Get-PriorityAgents([string]$Run) {
+  $ids = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { "$($_.run)" -eq $Run } | ForEach-Object { @($_.args.agents) } | Where-Object { $_ -and $_.id } | ForEach-Object { "$($_.id)" })
+  $ids += @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { "$($_.run)" -eq $Run -and "$($_.status)" -ne 'left' } | ForEach-Object { "$($_.agent)" })
+  @($ids | Where-Object { $_ } | Select-Object -Unique)
+}
+function Set-LanePriority([string]$Level, [string[]]$Agents, [string]$Run) {
+  $f = Get-KitPath param-state -Create
+  Invoke-KitLocked $f { $s = Read-KitParams -Strict; if ($s.priority -isnot [Collections.IDictionary]) { $s.priority = @{} }
+    foreach ($pk in @($s.priority.Keys)) { if ([datetime]$s.priority[$pk].until -le (Get-Date)) { $s.priority.Remove($pk) } }   # ended ones go
+    foreach ($pa in $Agents) { if ($Level -eq 'high') { $s.priority[$pa] = @{ run = $Run; until = (Get-KitStamp stored (Get-Date).AddHours(72)) } } else { $s.priority.Remove($pa) } }   # TODO-PARAM (fixed default)
+    Write-KitAtomic $f ($s | ConvertTo-Json -Depth 8 -Compress) }
+}
+# a lane is high while a high agent has an open request there or (not -Train) a lease
+function Test-LaneHigh([string]$e, [switch]$Train) {
+  $st = Read-State $e
+  $who = @($st.requests | Where-Object { $_.status -in 'queued', 'in-train' } | ForEach-Object agent) + @(if (-not $Train) { $st.leases.Keys | ForEach-Object { if ($st.leases[$_].agent) { $st.leases[$_].agent } else { ($_ -split '/')[0] } } })
+  $high = @(Get-KitHighAgents); [bool]@($who | Where-Object { "$_" -in $high }).Count
+}
+# a train's lease wait (envy.ps1 Wait-Leases) -> idle holders' minutes, a running check's minutes, a note: leaseMinutes and
+# maxLeaseMinutes; a high train: holders are told at once, a running check is waited for leaseMinutes (its next release point)
+function Get-LeaseWaitMin([string]$e) { if (Test-LaneHigh $e -Train) { 0, $script:LeaseMin, ', high priority' } else { $script:LeaseMin, $script:MaxLeaseMin, '' } }
+# a holder a train never swaps under before maxLeaseMinutes: its check runs (gate, browser.mjs with CLAUDE_AGENT: lib
+# Test-KitAgentBusy) or its lease was used in the last localEnv.leaseBusyMinutes (client traffic on its services, a verb of its
+# agent): a matrix or phone UI run writes no busy file (coordinator 2026-11-26: a deploy swapped a lane mid-test)
+function Test-LeaseBusy([string]$e, [string]$key) {
+  if (Test-KitAgentBusy ($key -split '/')[0]) { return $true }
+  $l = (Read-State $e).leases[$key]; [bool]($l -and $l.lastUse -and ((Get-Date) - [datetime]$l.lastUse).TotalMinutes -lt [double](Get-KitParam 'localEnv.leaseBusyMinutes'))
+}
+# train gather (10.5% of requests came during their lane's lease wait and took a train of their own, 2026-11-23..26): deploys,
+# drops and refreshes queued while the train waited for leases join it (nothing merged or built yet) -> $true: Run-Train starts
+# over with them (one lease clock per train: no second wait)
+function Join-LateRequests([string]$e, [string]$tid) {
+  $o = @{ ids = @() }
+  Update-State $e { param($x) if (-not $x.train -or $x.train.id -ne $tid) { return }
+    $late = @($x.requests | Where-Object { $_.status -eq 'queued' -and $_.kind -in 'deploy', 'drop', 'refresh' }); if (-not $late.Count) { return }
+    foreach ($lr in $late) { $lr.status = 'in-train' }; $x.train.requests = @(@($x.train.requests) + @($late | ForEach-Object id)); $o.ids = @($late | ForEach-Object id) }
+  if ($o.ids.Count) { Event $e 'train-join' @{ id = $tid; requests = $o.ids }; Write-Host "[$e] train $tid : $($o.ids.Count) request(s) queued during the lease wait join it" }
+  [bool]$o.ids.Count
+}
+Register-KitAdapter envy-verb priority @{ ops = @('high', 'normal', 'list'); run = {
+  if ($Op -in 'high', 'normal') {
+    $pa = @(if ($Name) { Get-PriorityAgents $Name } else { Split-KitList $Agent | Where-Object { $_ -ne 'main' } })
+    if (-not $pa.Count) { throw "priority $Op needs -Run <run>$(if ($Name) { " ($Name has no launch record with areas and no live board row)" }) or -Agent <id,..>" }
+    Set-LanePriority $Op $pa "$Name"; "priority ${Op}: $($pa -join ', ')$(if ($Op -eq 'high') { ' for 72 h: first in the build gate and the start queue; their train tells holders at once (a running check: leaseMinutes); a cold lane opens without the queue wait' })"; return
+  }
+  $pr = (Read-KitParams).priority; $rows = @(if ($pr) { $pr.Keys | Where-Object { Test-KitHigh $_ } | Sort-Object })
+  if (-not $rows.Count) { 'priority: no high agent (envy.ps1 priority high -Run <run>)' } else { foreach ($pa in $rows) { "high $pa$(if ($pr[$pa].run) { " (run $($pr[$pa].run))" }) until $(([datetime]$pr[$pa].until).ToString('MM-dd HH:mm'))" } }
+} }

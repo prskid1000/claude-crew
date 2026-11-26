@@ -10,7 +10,7 @@ Verbs: envs · status · doctor [-Fix] · deploy · wait (-Id | -Until up [-Serv
        [-Schemas a,b] [-DryRun] [-UseToolRollback] · tenant list | drop -Name <t,..> [-DryRun] | import -From <source> -Tenant <schema>
        [-As <name>] -Mask <profile> [-DryRun] [-Refresh] (adapters/tenant-models.ps1) · cleanup [-Quick] [-DryRun] ·
        lanes -Migrate [-LanesOnly] [-DryRun] | -Sync [-DryRun] (wt-pool.ps1 lanes) ·
-       <verb> an adapter registers (kind envy-verb) ·
+       priority high | normal -Run <run> | -Agent <id,..> (no op: the list; adapters/shared-builds.ps1) · <verb> an adapter registers (kind envy-verb) ·
        _daemon -Env <env> [-Train <id> | -Start <svc> | -Aot <svc>] (controller, workers) · _exec (service wrapper)
 Lanes (envs.<env>.lanes.max > 1): -Env <env> = the agent's lane, else (deploy / use / task) the least busy warm one; a cold one past localEnv.lanes.openAfterMinutes of queue wait, with room;
   -Lane <k> pins one; -Env <env><k> names one; a deploy onto a lane another agent leases: a free lane with room, if any.
@@ -415,7 +415,7 @@ function Send-LeaseNotice([string]$e, [string[]]$keys, [string]$text) {
 # a train's lease wait: leaseMinutes (a running check: maxLeaseMinutes), then the holders are told
 $script:Preempted = @(); $script:LeaseWait0 = $null; $script:DoneWord = 'deploy'
 function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[]]$skipAgents) {
-  $said = $null; $held = @(); $w0 = $null
+  $said = $null; $held = @(); $w0 = $null; $lw, $lx, $ln = Get-LeaseWaitMin $e   # adapters/shared-builds.ps1 (lane priority)
   $logWait = { if ($held.Count) { Event $e 'lease-wait' @{ services = @($services); holders = @($held); min = [math]::Round(((Get-Date) - $w0).TotalMinutes, 1) } } }
   while ($true) {
     $o = @{ who = @() }
@@ -428,14 +428,14 @@ function Wait-Leases([string]$e, [string[]]$services, [string[]]$repos, [string[
     }
     if (-not $o.who.Count) { & $logWait; return }
     $held = @(@($held) + @($o.who) | Select-Object -Unique); if (-not $w0) { $w0 = Get-Date }; $waited = ((Get-Date) - $script:LeaseWait0).TotalMinutes; $on = @(@($services) + @($repos) | Where-Object { $_ }) -join ', '
-    $busy = $waited -ge $script:LeaseMin -and $waited -lt $script:MaxLeaseMin -and @($o.who | Where-Object { Test-KitAgentBusy ($_ -split '/')[0] }).Count   # a check runs (gate, browser.mjs): no swap under it
-    if ($waited -ge $script:LeaseMin -and -not $busy) {
-      Send-LeaseNotice $e $o.who "deploy of $on starting (a train waited $([int]$waited) min, leaseMinutes $($script:LeaseMin)): pause your checks there; resume after 'deploy done'"
+    $busy = $waited -ge $lw -and $waited -lt $lx -and @($o.who | Where-Object { Test-LeaseBusy $e $_ }).Count   # a check runs or the lease is in use: no swap under it
+    if ($waited -ge $lw -and -not $busy) {
+      Send-LeaseNotice $e $o.who "deploy of $on starting (a train waited $([int]$waited) min, leaseMinutes $lw$ln): pause your checks there; resume after 'deploy done'"
       $script:Preempted = @(@($script:Preempted) + @($o.who) | Select-Object -Unique)
       "[$e] told $($o.who -join ', ') after $([int]$waited) min: deploying while their leases stay"
       & $logWait; return
     }
-    $msg = "waiting for lease(s) of $($o.who -join ', ') on $on (at most $(if ($busy) { "$($script:MaxLeaseMin) min: a check runs" } else { "$($script:LeaseMin) min" }))"; if ($msg -ne $said) { "[$e] $msg"; $said = $msg }
+    $msg = "waiting for lease(s) of $($o.who -join ', ') on $on (at most $(if ($busy) { "$lx min: a check runs" } else { "$lw min" }))"; if ($msg -ne $said) { "[$e] $msg"; $said = $msg }
     Start-Sleep 5
   }
 }
@@ -1361,7 +1361,7 @@ function Start-SvcOnce([string]$e, $s, [int]$release, [string]$artifact, [switch
     "[$e] $($s.name): init (once; log $ilog)"; $t0i = Get-Date
     $code = Invoke-Shell $ic $ilog (EnvVars $e $s) ([int]$(if ($s.init.timeoutSec) { $s.init.timeoutSec } else { 1800 }))
     if ($code) { Event $e 'init-failed' @{ service = $s.name; why = (Get-ShellWhy $code) }; throw "[$e] $($s.name): init failed ($(Get-ShellWhy $code)): $((@($script:ShellOut) | Select-Object -Last 5) -join ' | '). Log: $ilog" }
-    Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
+    Assert-InitDonor $e $s (Expand-Placeholders "$($s.init.creates)" $e $s $dir ''); Event $e 'init' @{ service = $s.name; sec = [int]((Get-Date) - $t0i).TotalSeconds }
     if ((DbSvc $e).name -eq $s.name) { $null = New-Mark $e (New-KitName baseline $e) 'baseline' }
   }
   # RAM first, then the machine-wide start lock for launch + health only; RAM is checked again under the lock
@@ -1491,7 +1491,7 @@ function Run-Train {
   $codeSvcs = @(@($liveSvcs) + $adopted | Select-Object -Unique)
   $codeBlock = @(@($codeSvcs) + @(Dependents $e $codeSvcs) | Select-Object -Unique)
   Phase 'waiting for leases (code)' $codeBlock @($affected)
-  Wait-Leases $e $codeBlock @($affected) $own
+  Wait-Leases $e $codeBlock @($affected) $own; if (Join-LateRequests $e $Train) { return Run-Train }
   foreach ($n in $adopted) { "[$e] $n runs from its build output (started before run-from-copy): stopping it for the build"; Stop-Svc $e (Svc $e $n) 'rebuilt: restarts from a staged copy' }
   Phase 'merging and building' $codeBlock @($affected)
 
@@ -2013,7 +2013,7 @@ param(
   [Alias('Env')][string]$EnvName,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string[]]$Dir, [string[]]$Services, [string]$Service, [Alias('Item')][string]$Task, [string]$Note, [string]$Id,
-  [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
+  [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [Alias('Run')][string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
   [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [switch]$Fix, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
   [int]$Lane = 0, [string]$Until, [int]$Timeout = 600, [Alias('All')][switch]$AllServices
 )
@@ -2030,7 +2030,7 @@ if ($EnvName) { $EnvName = Resolve-EnvAlias $EnvName }
 if (-not $EnvName -and $Action -eq 'release') { $relHeld = @(EnvNames | Where-Object { (Read-State $_).leases.ContainsKey($Agent) }); if ($relHeld.Count -eq 1) { $EnvName = $relHeld[0] } elseif ($relHeld.Count) { throw "-Env needed: $Agent leases $($relHeld -join ', ') (envy.ps1 release -Env <env>)" } }
 # down without -Env: -All stops every env and lane (owner "down all"); else usage + env list, no crash
 if (-not $EnvName -and $Action -eq 'down' -and @(EnvNames).Count -gt 1) { if ($AllServices) { foreach ($downEnv in @(EnvNames)) { Invoke-LocalEnv down -Env $downEnv -Agent $Agent }; return }; Stop-KitVerb "usage: envy.ps1 down -Env <env> [-Services <s>] | down -All (every env and lane). Envs: $((EnvNames) -join ', ')" }
-if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
+if (-not $EnvName -and $Action -notin 'envs', 'status', 'doctor', 'cleanup', 'lanes', 'priority' -and -not $Stale) { if (@(EnvNames).Count -eq 1) { $EnvName = @(EnvNames)[0] } else { throw "-Env needed: $((EnvNames) -join ', ') (e.g. envy.ps1 $Action -Env $(@(EnvNames)[0])$(if ($Action -eq 'mark') { " -Name <name>; list: envy.ps1 marks -Env $(@(EnvNames)[0])" }))" } }
 if ($EnvName -and $Lane -or ($EnvName -and $Agent -ne 'main' -and $Action -in 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'status', 'migrations', 'sql', 'drop' -and -not ($Action -eq 'drop' -and ($Branch -or $Stale)) -and (Get-EnvCfg $EnvName).lane -eq 1 -and @(LaneNames $EnvName).Count -gt 1)) { $EnvName = Select-Lane $EnvName $Agent $Lane $Action $Id }
 elseif ($EnvName -and $Agent -ne 'main' -and ($Action -eq 'deploy' -or ($Action -eq 'wait' -and $Id)) -and [int](Get-EnvCfg $EnvName).lane -gt 1) { $EnvName = Select-Lane $EnvName $Agent 0 $Action $Id $EnvName }   # an agent's named lane another agent leases: a deploy takes a free one (wait -Id follows it)
 $e = $EnvName

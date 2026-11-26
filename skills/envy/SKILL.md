@@ -111,5 +111,8 @@ $L = '<kit>/skills/envy/envy.ps1'
   yourself"; it runs `seed` or `restore -Mark <n>`), never repair the shared DB by hand.
 - `up` (only named services), `unhold`, `restart -Services` (keeps leases; `down` ends them), `down`, `drop`, `refresh`,
   `restore`, `teardown`, `tenant`, `cleanup`: owner / coordinator only.
+- `priority high | normal -Run <run>` (coordinator, on the owner's word; 72 h; no op: the list): the run's agents go first in the
+  build gate and the start queue, their train tells holders at once (a running check: `leaseMinutes`), a cold lane opens for
+  them without the queue wait.
 - Out of RAM: starts wait, then fail with the biggest users listed; report it, never kill other processes.
 - Learn: `bossy.ps1 learn -Skill local-env -Kind <kind> -Text "<what + fix>"`.

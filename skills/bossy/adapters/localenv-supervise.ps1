@@ -4,7 +4,7 @@ localenv-supervise.ps1: the local env in bossy.ps1 supervise, dot-sourced by bos
 env rows, owner holds, STALE LAYER drops, RESTART LOOP, TRAIN STALLED, UNKNOWN port owners, ERROR SPIKE, status waits, CPU per service.
 Its hook runs inside supervise (uses $now, $state, Within, Left); Invoke-KitPauseLocalEnv in bossy.ps1 pause.
 Exit codes: none (functions only).
-Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L246 waits · L257 cpu
+Sections: L10 logs · L47 rows · L77 pause · L89 spike · L121 flags · L254 waits · L265 cpu
 #>
 #Requires -Version 7
 # ---- logs: new error lines per log, their classes
@@ -216,6 +216,14 @@ function Get-KitSuperviseFlagsLocalEnv([switch]$AutoFix) {
       if ($ev.marks.binlogDays -and [double]$ev.marks.binlogDays -lt [double](Get-KitParam 'localEnv.marks.keepDays')) { & $watch "SHORT BINLOG: $($ev.env) keeps $($ev.marks.binlogDays) d < marks.keepDays" "envy.ps1 doctor -Env $($ev.env) (it names the DB's retention setting)" }
     }
     if ($ev.seed -and -not $ev.seed.ok) { & $watch "SEED DRIFT: $($ev.env) $(@(@($ev.seed.missing) + @($ev.seed.drift)) -join ', ')" "envy.ps1 seed -Env $($ev.env) (ENV-FIX)" }
+  }
+  # agent cap (2026-11-26, 252 agent hours): an hour with 5+ devy / checky agents at once had 4-5 lane stops under memory pressure, one
+  # under 5 about 1: past localEnv.pressureStopsPerHour (0 = off) nothing new starts until it clears
+  $mpMax = [int](Get-KitParam 'localEnv.pressureStopsPerHour')
+  if ($mpMax -gt 0) {
+    $mpN = @(Read-KitLog env $now.AddHours(-1) | Where-Object { $_.event -eq 'stop' -and "$($_.why)" -match 'memory pressure' }).Count
+    $mpLive = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { "$($_.status)" -ne 'left' -and "$($_.type)" -in 'devy', 'checky' -and $_.beat -and [datetime]$_.beat -gt $now.AddMinutes(-30) }).Count
+    if ($mpN -ge $mpMax) { & $watch "MEMORY PRESSURE: $mpN lane service stop(s) under memory pressure in 60 min (localEnv.pressureStopsPerHour $mpMax), $mpLive devy / checky agent(s) live" "Start no new run, agent or lane until it clears (agent cap now: $([math]::Max(1, $mpLive - 1))); free RAM: & $($KitCmd.orch) cleanup" }
   }
   # no large writes (owner, 2026-11-18): a schema on an env's DB grown past data.maxRows / data.maxMB since its baseline (first
   # sight; reset by a shrink, a flag or 24 h) -> WATCH; sizes: a background envy.ps1 sql -Query schemaSizes (the engine's; the last run read)

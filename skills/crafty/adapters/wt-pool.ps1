@@ -328,7 +328,7 @@ function Test-KitPoolWaiterGone([string]$Agent, [string]$Since) {
 function Move-KitSlotLease($l) {
   if (-not ($l.slot -and $l.path) -or $l.parked -or $l.creating) { return $false }
   $mvPath = [IO.Path]::GetFullPath("$($l.path)").TrimEnd('\', '/'); $mvNow = Get-Date; $mvBeat = [double](Get-KitParam 'idle.beatMinutes')
-  $mvRow = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -and "$($_.status)" -ne 'left' -and "$($_.agent)" -ne "$($l.agent)" -and @($_.worktrees | Where-Object { $_ -and [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') -ieq $mvPath }).Count } |
+  $mvRow = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.agent -and "$($_.status)" -ne 'left' -and -not ("$($_.agent)" -eq "$($l.agent)" -and "$($_.session)" -eq "$($l.session)") -and @($_.worktrees | Where-Object { $_ -and [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') -ieq $mvPath }).Count } |
     Where-Object { ($_.pid -and (Test-KitPid $_.pid $_.pidStart)) -or (($mvAct = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($mvNow - $mvAct).TotalMinutes -lt $mvBeat) })[0]
   if (-not $mvRow) { return $false }
   Write-KitLeaseLog reclaim slot "$($l.slot)" $l "reclaim: moved to $($mvRow.agent), whose board row lists the slot ($($l.agent) has no live holder)"

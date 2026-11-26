@@ -235,48 +235,66 @@ function Add-SeedBaseline([string]$e, [string]$by) {
     if ($script:SeedBad) { "[$e] no baseline mark: the seed check is not green (envy.ps1 seed -Env $e)" } else { "[$e] mark $(New-Mark $e (New-KitName baseline $e) 'baseline') (seed check green at the $by start)" }
   } catch { "[$e] no baseline mark: $("$_".Split("`n")[0])" }
 }
-# why the env's DB is no clean baseline now, cheapest check first ($null = clean): a train or request, an unmerged layer, a lease,
-# its DB down, the seed check, test data (the seed file's clean [ { name, sql, expect: '^0$' } ]; none: never promoted), an applied
-# migration its changelog lacks (the migration tool's unmerged verb: a dropped layer's stays applied)
-function Get-BaselineBlock([string]$e) {
-  if (-not (MarksOn $e)) { return 'no marks here (db.engine)' }
+# why the env's state says it is no clean baseline now ($null = none): a train or request, an unmerged layer, a lease, a hold (a
+# person may test on it; -Donor: allowed, it keeps the donor up for the copy)
+function Get-BaselineBusy([string]$e, [switch]$Donor) {
   $st = Read-State $e
   if ($st.train -or @($st.requests | Where-Object { $_.status -notin 'done', 'deferred' }).Count) { return 'a train or request is open' }
   $ly = @(foreach ($rn in @($st.release.repos.Keys)) { Layers $st $rn | ForEach-Object { "$($_.branch)" } }) | Select-Object -Unique
   if (@($ly).Count) { return "unmerged layer(s) $(@($ly) -join ', ')" }
   if ($st.leases.Count) { return "lease(s) of $(@($st.leases.Keys) -join ', ')" }
+  if (-not $Donor -and $st.holds.Count) { return "hold(s) of $(@($st.holds.Keys) -join ', ')" }
+}
+# why the env's DB is no clean baseline now, cheapest check first ($null = clean): Get-BaselineBusy, its DB down, the seed check,
+# test data (the seed file's clean [ { name, sql, expect: '^0$' } ]; none: never promoted), an applied migration its changelog
+# lacks (the migration tool's unmerged verb: a dropped layer's stays applied; a tool without the verb: never promoted)
+function Get-BaselineBlock([string]$e, [switch]$Donor) {
+  if (-not $Donor -and -not (MarksOn $e)) { return 'no marks here (db.engine)' }
+  if ($busy = Get-BaselineBusy $e -Donor:$Donor) { return $busy }
   if (DbSvcDown $e) { return 'its DB is down' }
   $f = SeedFile $e; if (-not (Test-Path -LiteralPath $f)) { return "no seed file $f" }
   $sd = Get-Content -LiteralPath $f -Raw | ConvertFrom-Json
   $cl = @($sd.clean | Where-Object { $_ -and $_.sql }); if (-not $cl.Count) { return "no test-data check: $f has no clean items ({ name, sql, expect })" }
-  if (@($sd.items | Where-Object { $_ -and -not $_.check.sql }).Count) { return 'its seed has non-SQL checks' }
-  $script:SeedBad = $false; $null = Invoke-Seed $e -Check; if ($script:SeedBad) { return 'the seed check is not green' }
+  $script:SeedBad = $false; $null = Invoke-Seed $e -Check; if ($script:SeedBad) { return 'the seed check is not green (a cmd check needs its service up)' }
   foreach ($c in $cl) {
     $err = Invoke-Hook $e 'query' @{ sql = [string]$c.sql }; if ($err) { return "clean check $($c.name) failed: $err" }
     $v = "$(@($script:HookOut | Where-Object { "$_".Trim() })[0])".Trim()
     if ($v -notmatch $(if ($c.expect) { [string]$c.expect } else { '^0$' })) { return "test data left: $($c.name) = $v" }
   }
   $tool = Get-MigTool $e
-  if (Test-MigVerb $tool 'unmerged') { $um = @(Invoke-MigVerb $tool 'unmerged' @{ e = $e }); if ($um.Count) { return "applied migration(s) its changelog lacks: $(@($um | ForEach-Object { "$($_.schema) $($_.count) ($($_.sample -join ', '))" }) -join '; ')" } }
+  if ($tool -ne 'none' -and -not (Test-MigVerb $tool 'unmerged')) { return "migration tool $tool has no unmerged verb" }
+  if ($tool -ne 'none') { $um = @(Invoke-MigVerb $tool 'unmerged' @{ e = $e }); if ($um.Count) { return "applied migration(s) its changelog lacks: $(@($um | ForEach-Object { "$($_.schema) $($_.count) ($($_.sample -join ', '))" }) -join '; ')" } }
   $null
 }
 # the loop's chore (every 10 min): the release or a lease moved past the newest baseline mark and the env is clean -> a new
-# baseline mark; else why not, said once per reason (state baselineHold). The first baseline: an init or a green seed
-function Update-Baseline([string]$e, $st) {
+# baseline mark; else why not, said once per reason (state baselineHold; the DB checks again at most once an hour). The first
+# baseline: an init or a green seed. A lease, hold, train or mark that came while the checks ran: no mark this round
+function Update-Baseline([string]$e, $st, [switch]$Checked) {   # -Checked: Get-BaselineBlock just passed (a donor)
   if (-not (MarksOn $e)) { return }
   $b = @($st.marks | Where-Object { $_ -and $_.kind -eq 'baseline' })[-1]; if (-not $b) { return }
   if ([int]$st.release.n -le [int]$b.release -and -not @($st.marks | Where-Object { $_ -and $_.kind -ne 'baseline' -and [datetime]$_.at -gt [datetime]$b.at }).Count) { return }
-  $why = try { Get-BaselineBlock $e } catch { "check failed: $("$_".Split("`n")[0])" }
-  if ($why) { if ("$($st.baselineHold.why)" -ne $why) { Update-State $e { param($x) $x.baselineHold = @{ why = $why; at = (Now) } }; "baseline stays $($b.name): $why" }; return }
+  $h = $st.baselineHold; $deep = $false; $why = if (-not $Checked) { Get-BaselineBusy $e }
+  if (-not $why -and -not $Checked) {
+    if ($h.deep -and ((Get-Date) - [datetime]$h.at).TotalMinutes -lt 60) { return }   # TODO-PARAM (fixed default)
+    $deep = $true; $why = try { Get-BaselineBlock $e } catch { "check failed: $("$_".Split("`n")[0])" }
+  }
+  if ($why) {
+    if ("$($h.why)" -ne $why -or $deep) { Update-State $e { param($x) $x.baselineHold = @{ why = $why; at = (Now); deep = $deep } } }
+    if ("$($h.why)" -ne $why) { "baseline stays $($b.name): $why" }; return
+  }
+  $s2 = Read-State $e
+  if ((Get-BaselineBusy $e -Donor:$Checked) -or [int]$s2.release.n -ne [int]$st.release.n -or @($s2.marks).Count -ne @($st.marks).Count) { return }
   $n = New-Mark $e (New-KitName baseline $e) 'baseline'
   Update-State $e { param($x) $x.Remove('baselineHold') }; Event $e 'baseline' @{ name = $n; from = $b.name; release = [int]$st.release.n }
-  "mark ${n}: clean on release $($st.release.n) (no layer, no lease, seed and clean checks green, no unmerged migration): the new baseline (was $($b.name))"
+  "mark ${n}: clean on release $($st.release.n) (no layer, lease or hold, seed and clean checks green, no unmerged migration): the new baseline (was $($b.name))"
 }
-# services[].init.donor (an env or lane id): the init copies that env's DB, so it must be a clean baseline now (owner 2026-11-26:
-# never a lane's live DB); it is promoted first. Not clean: the init is refused with the reason
-function Assert-InitDonor([string]$e, $s) {
+# services[].init.donor (an env or lane id): the init copies that env's DB, so it must be a clean baseline (owner 2026-11-26:
+# never a lane's live DB): checked before the copy (the donor's baseline is promoted first) and again after it (-Copied <the
+# init.creates path>): a lease or train that came during the copy fails the init, its marker removed
+function Assert-InitDonor([string]$e, $s, [string]$Copied) {
   $d = "$($s.init.donor)"; if (-not $d) { return }
-  $why = Get-BaselineBlock $d
+  $why = Get-BaselineBlock $d -Donor
+  if ($why -and $Copied) { if (Test-Path -LiteralPath $Copied -PathType Leaf) { Remove-Item -LiteralPath $Copied -Force }; throw "[$e] $($s.name): init failed: donor $d was used during the copy ($why): remove the copied data, then start again once $d is clean" }
   if ($why) { throw "[$e] $($s.name): init refused: donor $d is no clean baseline ($why): retry once it is (envy.ps1 up -Env $d -Services <its db> keeps it up without a lease), or name another init.donor" }
-  foreach ($k in @(Update-Baseline $d (Read-State $d))) { "[$d] $k" }
+  if (-not $Copied) { foreach ($k in @(Update-Baseline $d (Read-State $d) -Checked)) { "[$d] $k" } }
 }

@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L461 leases · L904 status · L1116 tracker · L1445 prior ·
-  L1464 ask bugs · L1649 deploy words · L1693 git-host · L1881 kitlog · L1992 params · L2297 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L258 OS · L465 leases · L908 status · L1120 tracker · L1449 prior ·
+  L1468 ask bugs · L1653 deploy words · L1697 git-host · L1885 kitlog · L1996 params · L2301 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -307,14 +307,18 @@ function Test-GateStart([double]$Left, [double]$KeepFree, [double]$WaitedMin, [d
 }
 # gate ticket (owner 2026-11-19): class 0 agent, 1 QA, 2 background; since: a retried wait's first
 function Get-GateTicket([string]$Kind, [string]$Cmd, [double]$MedianSec) {
-  $p = switch ("$env:KIT_PRIORITY") { 'agent' { 0 } 'qa' { 1 } 'background' { 2 } default { if ($Kind -eq 'local-ai') { 2 } elseif ($Kind -eq 'emulator' -or $Cmd -match '#qa-seat') { 1 } else { 0 } } }
+  $p = switch ("$env:KIT_PRIORITY") { 'high' { -1 } 'agent' { 0 } 'qa' { 1 } 'background' { 2 } default { if ($Kind -eq 'local-ai') { 2 } elseif ($Kind -eq 'emulator' -or $Cmd -match '#qa-seat') { 1 } else { 0 } } }
   $sv = $env:KIT_GATE_SINCE -as [datetime]; $now = Get-Date
   @{ prio = $p; sec = $(if ($MedianSec -ge 0) { [int]$MedianSec } else { 600 }); since = (Get-KitStamp stored $(if ($sv -and $sv -lt $now -and ($now - $sv).TotalHours -lt 24) { $sv } else { $now })) }
 }
 function Get-GateAhead($Queue, [int]$Pos) { [math]::Ceiling(($Queue | Select-Object -First $Pos | Measure-Object sec -Sum).Sum / 60) }
-# class; then a 20+ min wait, fewer recent starts, shorter, oldest
+# lane priority (envy.ps1 priority): params.json priority { <agent>: { run, until } }
+function Get-KitHighAgents { $p = (Read-KitParams).priority; @(if ($p -is [Collections.IDictionary]) { $p.Keys | Where-Object { [datetime]$p[$_].until -gt (Get-Date) } }) }
+function Test-KitHigh([string]$Agent) { [bool]($Agent -and $Agent -in @(Get-KitHighAgents)) }
+# class (a high owner one class up); then a 20+ min wait, fewer recent starts, shorter, oldest
 function Get-GateOrder($Tickets, [hashtable]$Recent, [datetime]$Now) {
-  @($Tickets | Sort-Object @{ e = { [int]$_.prio } }, @{ e = { if (($Now - [datetime]$_.since).TotalMinutes -ge 20) { 0 } else { 1 } } }, @{ e = { [int]$Recent["$($_.owner)"] } }, @{ e = { [int]$_.sec } }, @{ e = { [datetime]$_.since } })
+  $high = @(Get-KitHighAgents)
+  @($Tickets | Sort-Object @{ e = { [int]$_.prio - [int]("$($_.owner)" -in $high) } }, @{ e = { if (($Now - [datetime]$_.since).TotalMinutes -ge 20) { 0 } else { 1 } } }, @{ e = { [int]$Recent["$($_.owner)"] } }, @{ e = { [int]$_.sec } }, @{ e = { [datetime]$_.since } })
 }
 # one process snapshot shared by many Get-KitTreeGB calls
 function Get-KitProcSnap {
@@ -520,10 +524,10 @@ function Update-KitLease($l) {
     if ($null -ne $l.graceLeft) { Set-KitProp $l graceLeft $null; Set-KitProp $l graceMin $null; Set-KitProp $l released $null }; return $true
   }
   if ($l.owner -or ($l.until -and -not $l.agent -and -not $l.holderPid)) { return $false }
-  if ($l.slot -and (Get-Command Move-KitSlotLease -ErrorAction SilentlyContinue) -and (Move-KitSlotLease $l)) { return $true }   # a live successor's board row lists the slot
   if (-not $l.seen) { Set-KitProp $l seen (Get-KitStamp stored $now) }   # first seen dead: the grace starts now
   if ($null -eq $l.graceMin) { Set-KitProp $l graceMin ([double](Get-KitParam 'idle.graceMinutes')) }   # read once: a running grace keeps its value
   $left = [double]$l.graceMin - ($now - [datetime]$l.seen).TotalMinutes
+  if ($left -le 0 -and $l.slot -and (Get-Command Move-KitSlotLease -ErrorAction SilentlyContinue) -and (Move-KitSlotLease $l)) { return $true }   # past the grace: a live successor's board row lists the slot
   Set-KitProp $l graceLeft ([math]::Max(0, [math]::Ceiling($left)))
   if ($left -le 0 -and "$($l.agent)" -and -not $l.released) { Set-KitProp $l released $true; Set-KitLeaseReleased "$($l.agent)" @{ at = (Get-KitStamp stored (Get-KitNow)); quiet = [math]::Round(($now - [datetime]$l.seen).TotalMinutes, 1); grace = $l.graceMin } }
   $left -gt 0

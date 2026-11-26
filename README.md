@@ -370,7 +370,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 | db-engine | `localEnv db.engine` | query exec jdbc sql; caps: marks temp sizes kill snap revert unsnap |  | mysql, mariadb, postgres, sqlserver, sqlite, oracle, mongodb, redis, elasticsearch, opensearch | gap: binlogs (4), jdbc (1), kill (5), marks (3), pos (3), query (1), revert (3), snap (6), sql (1), temp (5), unsnap (6) | `skills/envy/adapters/db-engines.ps1` |
 | tenant-model | `localEnv tenants.model` | list drop import footprint scopes |  | none, schema, database, column, instance | fallback: drop (1), footprint (1), import (2) · gap: drop (1), footprint (1), import (1), list (1) | `skills/envy/adapters/tenant-models.ps1` |
 | migration | `migrations.tool` | check discover pendingSql tag rollback resetEdited missingRoutines rerunRoutines historyScopes appendOnly unmerged |  | liquibase |  | `skills/crafty/adapters/liquibase.ps1` |
-| envy-verb | `adapters/*.local.ps1` | ops run |  | tenant |  | `skills/envy/adapters/tenant-models.ps1` |
+| envy-verb | `adapters/*.local.ps1` | ops run |  | tenant, priority |  | `skills/envy/adapters/tenant-models.ps1` |
 | api-auth | `targets auth.type` | invoke |  |  |  | `skills/pokey/pokey.ps1` |
 | login | `targets.<t>.users / profiles (targets.local.json)` | users secretRefs profiles | api, app, web |  |  | `skills/pokey/pokey.ps1` |
 | device | `devices.type` | dump tap tapid tapxy type clear key swipe openurl shot shotmark wait photo log mic | android, ios, none |  | gap: clear (1), dump (1), key (1), log (1), mic (2), openurl (1), photo (2), shot (1), shotmark (1), swipe (1), tap (1), tapid (1), tapxy (1), type (1), wait (1) | `skills/pokey/adapters/ui-android.ps1` |

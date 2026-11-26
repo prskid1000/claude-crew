@@ -166,7 +166,7 @@
       "file": "skills/envy/adapters/tenant-models.ps1",
       "verbs": "ops run",
       "names": "",
-      "vendors": "tenant"
+      "vendors": "tenant priority"
     },
     "api-auth": {
       "config": "targets auth.type",

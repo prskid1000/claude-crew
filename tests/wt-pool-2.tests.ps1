@@ -50,9 +50,11 @@ $mvTest = Invoke-PsTest pool-slot-claim @"
 "live-claim:`$r1/`$(`$l1.agent)/`$(`$s1.agent)/`$(`$s1.session)/`$(`$s1.run)/`$(`$null -eq `$s1.graceMin)/`$(Update-KitLease `$s1)"
 `$lg = @(Get-Content (Get-KitLogFile leases) | ForEach-Object { `$_ | ConvertFrom-Json } | Where-Object name -eq 'app·Osprey' | ForEach-Object { "`$(`$_.event):`$(`$_.agent)" }) -join ','
 "log:`$lg"; `$lp = & `$mk; Set-KitProp `$lp parked `$true; "parked:`$(Move-KitSlotLease `$lp)"
+`$lgr = & `$mk; Set-KitProp `$lgr seen `$now; "grace:`$(Update-KitLease `$lgr)/`$(`$lgr.agent)"
+`$lsm = & `$mk; Set-KitProp `$lsm agent 'devy-next'; Set-KitProp `$lsm session 'devy-next-0'; "same-id:`$(Update-KitLease `$lsm)/`$(`$lsm.session)"
 "@
 $mvOut = $mvTest -join ' '
-Expect "pool: a slot lease with no live holder moves to the live agent whose board row lists the slot (saved, logged reclaim + acquire, live after); a left row's claim or a parked slot: never ($mvOut)" ($mvOut -match 'left-claim:False/devy-gone' -and $mvOut -match 'live-claim:True/devy-next/devy-next/devy-next-1/r9/True/True' -and $mvOut -match 'log:reclaim:devy-gone,acquire:devy-next' -and $mvOut -match 'parked:False')
+Expect "pool: a slot lease with no live holder moves to the live agent whose board row lists the slot (saved, logged reclaim + acquire, live after); a left row's claim, a parked slot or a holder still in its grace: never; a successor with the same id and a new session gets it ($mvOut)" ($mvOut -match 'grace:True/devy-gone' -and $mvOut -match 'same-id:True/devy-next-1' -and $mvOut -match 'left-claim:False/devy-gone' -and $mvOut -match 'live-claim:True/devy-next/devy-next/devy-next-1/r9/True/True' -and $mvOut -match 'log:reclaim:devy-gone,acquire:devy-next' -and $mvOut -match 'parked:False')
 # coordinator 2026-11-25: an api suite reads its URLs from cypress/data/config.ts (devys hand-edited it): tests.e2e.run[].portFiles
 # get the lane's ports for the run and are put back after; a file with its own edits is refused; a killed run is restored first
 $pfRepo = Join-Path (Kd) 'pf-repo'; New-Item -ItemType Directory -Force "$pfRepo/cypress/data" | Out-Null; Set-Content "$pfRepo/cypress/data/config.ts" "serverUrl: 'http://localhost:8443'"; Set-Content "$pfRepo/b.ts" "u: 'http://localhost:8443'"; Save-GitRepo $pfRepo base

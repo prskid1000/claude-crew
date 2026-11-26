@@ -2,14 +2,14 @@
 For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NOTICE, wait or lane.
 
 ## Train and leases
-- Train = every deploy queued when it starts: one merge, one gated build, one switch-over; a conflict refuses that branch; a
+- Train = every deploy queued when it starts or during its lease wait: one merge, one gated build, one switch-over; a conflict refuses that branch; a
   failed build bisects to the culprit; merged branches drop out.
 - A layer also leaves when merged, gone from origin, its agent finished (`bossy.ps1 release`) or no live holder past the
   grace (supervise); never a paused or handed-off agent's. An env without lease or hold drops at the next lease (`status`,
   leases.jsonl kind env-layer).
 - A lease keeps services up while its holder is live (README "Leases") and uses them (its gated check or browser.mjs session
   counts); unused `leaseIdleMinutes`: released. Only an `-Owner` lease ends at a time.
-- A train waits for leases on its changes `leaseMinutes` (30; a check runs: `maxLeaseMinutes` 120), tells holders
+- A train waits for leases on its changes `leaseMinutes` (30; a check runs or the lease is in use: `maxLeaseMinutes` 120), tells holders
   ("deploy of <svc> starting, pause"; inbox, `status -Agent` NOTICE), deploys, then "deploy done, re-run your checks"; leases stay.
 - A train whose worker is gone (pid + start time) or quiet (phase, logs) `trainStallMinutes` (45): killed,
   its requests requeue (supervise ACT TRAIN STALLED).
@@ -39,7 +39,7 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
 - API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
 - `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first (`Unknown column` = a guessed name).
 - `services[].init` { cmd, creates, timeoutSec, donor }: runs before a start while `creates` is missing (a lane's own data
-  copy); `donor` (a lane id): refused unless that lane's DB is a clean baseline (db.md).
+  copy); `donor` (a lane id) must be a clean baseline (db.md).
 - A lane's own DB service (port = `db.port`) down: marks wait for its start; db checks, pool, mark expiry and the temp watchdog rest.
   A train starts it for its DB steps and keeps it up.
 - A new release staged for a service in start backoff resets it, like `restart`.
