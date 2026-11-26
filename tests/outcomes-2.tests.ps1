@@ -60,8 +60,11 @@ $ci = { param($v) pwsh @np $O decide check -Gate scope -Item $v | Out-String }; 
 $skA = pwsh @np $O decide ask -Gate scope -Run rs -Agent pay-area -Item K1-fields -Question 'Two files sit outside the area.' -Context 'today: the MR holds them' -Options 'A: record the scope word — they merge', 'B: split them out — a second MR' -Recommend A | Out-String
 $skD = pwsh @np $O decide answer -Id $(if ($skA -match 'DECISION (\S+)') { $Matches[1] }) -Answer 'B' | Out-String; $skDeny = "$(& $ci feat/PAY-9-fields-set)$(& $cm 'api!41')"
 $skR = pwsh @np $O decide record -Run rs -Gate scope -Item K1-fields -Question 'src outside the area?' -Answer yes -Source chat | Out-String
+& $put board 'devy-7-z.json' @{ agent = 'devy-7'; run = 'rz'; area = 'pay-area'; items = 'Z9-x'; status = 'left' }   # a run that left: its area name is rs's now
+$skZ = "$(pwsh @np $O decide record -Run rz -Gate scope -Item Z9-x -Question 'z outside?' -Answer yes -Source chat)" -replace '(?s)^.*RECORDED (\S+).*$', '$1'
+$skZb = @((Get-Content (Join-Path (TkPath $k decisions) "$skZ.json") -Raw | ConvertFrom-Json).branches | Where-Object { $_ }).Count
 $skB = & $ci feat/PAY-9-fields-set; $skM = & $cm 'api!41'; $skNo = "$(& $ci feat/OTHER-1-x)$(& $cm 'web!7')$(& $ci feat/ZED-1-other)"
 Expect "scope word of an item: found by its area's branch and that branch's MR; a denied ask, another branch, the task's other MR, a left agent's worktree: none ($("$skB".Trim()))" (
-  $skD -match 'no scope word' -and $skDeny -notmatch '(?m)^WORD ' -and $skR -match 'RECORDED' -and $skB -match '^WORD ' -and $skB -notmatch 'pin:' -and $skM -match '^WORD ' -and $skNo -notmatch '(?m)^WORD ')
+  $skD -match 'no scope word' -and $skZb -eq 0 -and $skDeny -notmatch '(?m)^WORD ' -and $skR -match 'RECORDED' -and $skB -match '^WORD ' -and $skB -notmatch 'pin:' -and $skM -match '^WORD ' -and $skNo -notmatch '(?m)^WORD ')
 Remove-TestKit $k
 Complete-Tests

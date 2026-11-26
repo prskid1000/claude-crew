@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# Sections: L9 poms · L57 reactor · L80 engine
+# Sections: L9 poms · L57 reactor · L81 engine
 # runtimes: before JVM tests that use Testcontainers (a *Container* / *IT* test, or testcontainers in the build file with
 # -AllTests), crafty.ps1 check leases a configured runtimes.<docker|podman> (started when down), else asks `<engine> info`; none -> exit 4.
 # Dot-sourced from skills/crafty/adapters/; runs inside Invoke-Check and uses its $st, $Tests, $AllTests, $Show.
@@ -57,6 +57,7 @@ function Add-ToolFlags([string]$cmd, [string]$flags) {
 # ---- reactor: a Maven test step's $Cmd + '-f <aggregator in <root>/target> -pl :<module> -am' over the stale reactor deps and
 # those between; unchanged: none stale, -Show (it prints the command without them), or an own -pl / -f (warned: local-repo jars)
 function Add-KitReactorTestFlags([string]$Cmd) {
+  $script:KitMainSkip = $null   # armed per step (check-stamps.ps1 main skip): a non-Maven step records nothing
   $me = Join-Path $st.dir 'pom.xml'
   if ($Show -or $Cmd -notmatch '\b(mvn|mvnw|mvnd)\b' -or -not (Test-Path -LiteralPath $me)) { return $Cmd }
   # no stale reactor dep: the step alone; its main compile is skipped when nothing but tests changed (adapters/check-stamps.ps1)

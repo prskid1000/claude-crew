@@ -27,7 +27,9 @@ $out.Add("own-pl:[$(& $get "$cmd0 -pl x")]"); $out.Add("after-pl:[$(& $get)]"); 
 'Tests run: 3, Failures: 1' | Set-Content $log; Save-KitMainKey 1 $log; $out.Add("failed-tests:[$(& $get)]")
 'class B {}' | Set-Content "$repo/src/main/java/B.java"; $out.Add("new-main-file:[$(& $get)]"); Save-KitMainKey 0
 'class E {}' | Set-Content "$repo/src/main/java/e2e/E.java"; $out.Add("main-package-e2e:[$(& $get)]"); Save-KitMainKey 0
-$out.Add("profile:[$(& $get 'mvn -Pfast -o -q test')]"); Save-KitMainKey 0; $out.Add("other-profile:[$(& $get)]"); Save-KitMainKey 0
+$out.Add("profile:[$(& $get 'mvn -P fast -o -q test')]"); Save-KitMainKey 0; $out.Add("other-profile:[$(& $get 'mvn -P slow -o -q test')]"); Save-KitMainKey 0; & $rec
+# a step skipped by its stamp, or a non-Maven step, records nothing (its armed key would land on another step's save)
+'class B { int v; }' | Set-Content "$repo/src/main/java/B.java"; $null = & $get; $st = @{ dir = $repo }; $Show = $false; $Force = $false; $null = Add-KitReactorTestFlags 'npx tsc --noEmit'; Save-KitMainKey 0; $out.Add("non-maven-step:[$(& $get)]"); Save-KitMainKey 0
 $null = & $get -F; 'class B { int z; }' | Set-Content "$repo/src/main/java/B.java"; Save-KitMainKey 0; $out.Add("edit-during-run:[$(& $get)]"); Save-KitMainKey 0
 $sk = & $get; 'class B { int w; }' | Set-Content "$repo/src/main/java/B.java"; $said = "$(Save-KitMainKey 0 6>&1)"; $out.Add("edit-while-skipped:[$sk>$(& $get)]$($said -match 'old classes; rerun')"); Save-KitMainKey 0
 # the compile mark: the compiler plugin's lists, rewritten by any compile (a hand-run one too)
@@ -39,7 +41,7 @@ function Hash12($x) { "h$("$x".Length)" }; $cmd = '.\mvnw.cmd -Dmaven.main.skip=
 $out -join ' '
 '@ @((Lib), $mr)
 $want = 'first:[] same:[skip] test-edit:[skip] force:[] own-pl:[] after-pl:[] clean:[] no-maven:[] validate-then-test:[] revert-after-failed:[] failed-tests:[skip] new-main-file:[] ' +
-  'main-package-e2e:[] profile:[] other-profile:[] edit-during-run:[] edit-while-skipped:[skip>]True mark-same:[skip] hand-compile:[] no-classes:[] ' +
+  'main-package-e2e:[] profile:[] other-profile:[] non-maven-step:[] edit-during-run:[] edit-while-skipped:[skip>]True mark-same:[skip] hand-compile:[] no-classes:[] ' +
   'step:[.\mvnw.cmd -Dmaven.main.skip=true -o -q test -Dtest=ATest] slot:[test|h18,test|zz]'
 Expect "check main skip: on when only tests changed since a recorded compile; off (key dropped) on a main edit, a new file, a main package named e2e, another profile, a failed compile then a revert, an edit during the run, a hand-run compile, no classes, -Force, an own -pl, clean; a skipped step keeps its stamp slot ($ms)" ("$ms" -eq $want)
 Remove-TestKit $k

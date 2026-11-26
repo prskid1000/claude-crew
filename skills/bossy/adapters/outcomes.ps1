@@ -539,14 +539,17 @@ function Publish-KitDecisions([string]$Task, [string]$Link) {
 }
 # a person's scope word names an item, the gates ask by branch or MR (wt commit, devtools.py mr / precheck / merge; 2026-11-26: 3
 # refusals with a word on record): the record also takes the branches of the item's area and the MRs opened from those branches.
-# Area = the board entries listing the item (the record's run; no run: live entries only); branches = that area's leased slots +
+# Area = the board entries listing the item (the record's run while one of its agents is live: a left entry holds the short area
+# id its slots are leased under; a run that left, or no run: live entries only); branches = that area's leased slots +
 # the worktrees of its live entries that no other holder leases; MRs = the scope log's area rows of those branches (never the
 # task's other areas). An ask (pending, or answered by a deny pick) is no word: only source askuser / chat. bossy.ps1 decide saves
 # every record through it; branches known: kept
 function Add-ScopeKeys($Rec) {
   if ("$($Rec.gate)" -ne 'scope' -or "$($Rec.source)" -notin 'askuser', 'chat' -or -not $Rec.item -or @($Rec.branches | Where-Object { $_ }).Count) { return }
   $it = "$($Rec.item)"
-  $on = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_ -and $(if ($Rec.run) { "$($_.run)" -eq "$($Rec.run)" } else { "$($_.status)" -ne 'left' }) -and $it -in @("$($_.items)" -split '[\s,]+') })
+  $bd = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_ -and (-not $Rec.run -or "$($_.run)" -eq "$($Rec.run)") })
+  $alive = [bool]($Rec.run -and @($bd | Where-Object { "$($_.status)" -ne 'left' }).Count)   # a run with no live agent: its names may be another run's now
+  $on = @($bd | Where-Object { ($alive -or "$($_.status)" -ne 'left') -and $it -in @("$($_.items)" -split '[\s,]+') })
   $areas = @($on | ForEach-Object { "$($_.area)"; "$($_.agent)" } | Where-Object { $_ } | Select-Object -Unique); if (-not $areas.Count) { return }
   $slots = @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_ -and -not $_.parked })
   $foreign = @($slots | Where-Object { $_.agent -notin $areas } | ForEach-Object { "$($_.path)" -replace '\\', '/' })

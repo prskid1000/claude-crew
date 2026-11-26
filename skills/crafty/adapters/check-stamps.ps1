@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (crafty.ps1 check exits).
-# Sections: L4 check builds · L14 check stamps · L55 main skip · L96 ci runs · L104 run digest
+# Sections: L4 check builds · L14 check stamps · L56 main skip · L97 ci runs · L105 run digest
 # ---- check builds: a clean tree's build, keyed by its tree: envy deploys of the same code stage its artifact (envy Find-CheckBuild)
 function Save-CheckBuild([string]$Dir, [string]$Cmd, [datetime]$Start) {
   Save-KitMainKey
@@ -36,6 +36,7 @@ function Test-CheckStamp([string]$Dir, [string]$Slot, [switch]$Force) {
   if ($null -eq $script:CheckSrcKey) { $script:CheckSrcKey = "$(Get-CheckSourceKey $Dir)" }
   $was = if ($script:CheckSrcKey -and -not $Force) { (Read-CheckStamps $Dir)[$Slot] }
   if (-not $was -or "$($was.key)" -ne $script:CheckSrcKey) { return -1 }
+  $script:KitMainSkip = $null   # the step does not run: nothing of it to record (a later step's save would record its key)
   $s = ($Slot -split '\|')[0]; $hm = ([datetime]$was.at).ToString('HH:mm')
   if (-not [int]$was.rc) { Write-Host "[check] $s ok: passed on these sources at $hm, not rerun (-Force reruns)"; return 0 }
   foreach ($l in @($was.sum)) { Write-Host $l }
@@ -71,7 +72,7 @@ function Get-KitMainSkip([string]$Dir, [string]$Cmd, [switch]$Force) {
   $file = Join-Path $Dir 'target/kit-main.key'; $drop = { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue; '' }   # this run may rewrite target/classes
   if ($Cmd -match '(^|\s)(-pl|--projects|-f|--file|clean)(\s|=|$)|maven\.main\.skip') { return (& $drop) }
   $key = "$(Get-CheckSourceKey $Dir $script:KitMainTestRx)"; if (-not $key) { return (& $drop) }
-  $key = "$key $(@([regex]::Matches($Cmd, '(?<=\s)-(P|Dmaven\.compiler|Djava\.version)\S*').Value | Sort-Object) -join ',') $env:JAVA_HOME".Trim()
+  $key = "$key $(@([regex]::Matches($Cmd, '(?<=\s)(-P\s*\S+|--activate-profiles[= ]\S+|-D(maven\.compiler|java\.version)\S*)').Value | Sort-Object) -join ',') $env:JAVA_HOME".Trim()
   $script:KitMainSkip = @{ dir = $Dir; file = $file; key = $key; skipped = $false }
   $was = @(if (-not $Force -and (Test-Path -LiteralPath (Join-Path $Dir 'target/classes') -PathType Container)) { Get-Content -LiteralPath $file -TotalCount 2 -ErrorAction SilentlyContinue })
   if ("$($was[0])".Trim() -ne $key -or "$($was[1])".Trim() -ne (Get-KitMainMark $Dir)) { return (& $drop) }
