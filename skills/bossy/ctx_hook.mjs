@@ -39,7 +39,7 @@ function contextOf(file) {
 function inboxLines(tf, board) {
   const fd = openSync(tf, 'r'); let head = '', row = null
   try { const b = Buffer.alloc(Math.min(fstatSync(fd).size, 512 * 1024)); readSync(fd, b, 0, b.length, 0); head = b.toString('utf8') } finally { closeSync(fd) }
-  for (const m of head.matchAll(/SESSION ([\w.-]+) {3}\(pass -Session \1 to beat/g)) { const r = json(join(board, `${m[1]}.json`)); if (r && r.agent && r.status !== 'left') row = r }
+  for (const m of head.matchAll(/SESSION ([\w.-]+) {3}\(pass -Session \1 to beat/g)) { const r = json(join(board, `${m[1]}.json`)); if (r && r.agent && r.status !== 'left' && (!r.transcript || resolve(r.transcript).toLowerCase() === resolve(tf).toLowerCase())) row = r }   // a row bound to another transcript: a quoted line
   if (!row) return []
   const name = `${row.agent}`.toLowerCase().replace(/[^\w.-]/g, '_'), f = join(board, 'inbox', `${name}.jsonl`), pf = join(board, 'inbox', `${name}.pushed`)
   if (!existsSync(f)) return []

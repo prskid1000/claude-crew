@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L251 budget · L281 launch · L515 recover · L604 pause · L615 resume · L682 program · L710 param ·
-  L716 track · L1109 supervise · L1461 report · L1541 audit · L1601 storage · L1604 bugbrief · L1606 cleanup · L1693 learn ·
-  L1731 decide · L1913 debate · L1957 health · L2025 setup
+Sections: L40 init · L51 board · L252 budget · L282 launch · L516 recover · L605 pause · L616 resume · L683 program · L711 param ·
+  L717 track · L1110 supervise · L1462 report · L1542 audit · L1602 storage · L1605 bugbrief · L1607 cleanup · L1694 learn ·
+  L1732 decide · L1914 debate · L1958 health · L2026 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -121,6 +121,7 @@ switch ($Action) {
       if (-not $Agent) { $Agent = New-KitAgentId $Type $(if ($Run) { "$Type-$Run" }) $Area $Items $Subject }; $notes += "RUN-ID: you are $Agent (checkpoint, inbox: -Agent $Agent)" }
     if ($auto -and $Run) { try { $null = Invoke-KitNaming @('check', 'run', $Run) } catch { $notes += "$_" -replace '^kitbag\.py naming check run \S+: ' } }   # a warning, never a refusal
     if (-not $Agent) { $Agent = $Type }
+    Remove-Item -LiteralPath ([IO.Path]::ChangeExtension((Get-InboxFile $Agent), 'pushed')) -Force -ErrorAction SilentlyContinue   # a successor reads what the hook pushed to the one before
     $now = Get-Date
     $myClaims = @(Split-KitList $Worktrees | ForEach-Object { Norm $_ } | Where-Object { $_ } | Sort-Object -Unique)
     $same = @(All | Where-Object { $_.agent -eq $Agent -and "$($_.run)" -eq "$Run" -and $_.status -ne 'left' })

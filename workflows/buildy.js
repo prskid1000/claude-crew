@@ -74,7 +74,7 @@ const HOLD_NOTE = HOLD.length
  : ''
 const has = (f, u) => new RegExp(u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)').test(String(f.mr || ''))
 const nu = (u) => String(u || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase()
-const uniqMr = (l) => l.filter((m, i) => l.findIndex((n) => nu(n.url) === nu(m.url)) === i).map((m) => ({ ...m, merged: l.every((n) => nu(n.url) !== nu(m.url) || n.merged) }))   // one MR's copies: merged if all say so
+const uniqMr = (l) => l.filter((m, i) => l.findIndex((n) => nu(n.url) === nu(m.url)) === i).map((m) => ({ ...m, merged: l.every((n) => nu(n.url) !== nu(m.url) || n.merged) }))
 const ENV = (name) => PATHS + AGENT_ENV(name), AGENT_ENV = (name) => `
 AGENT NAME: start every shell command with  $env:CLAUDE_AGENT='${name}';  (Bash: export CLAUDE_AGENT='${name}';) - the build gate's
 owner name for your builds (shell state does not persist).`
@@ -284,7 +284,7 @@ const toShip = (r) => { const open = uniqMr(r.mrs).filter((m) => !m.merged && !i
 function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${ENV(`ship-${a.id}`)}
 These merges are authorized for this run: local loop passed, review clean, hold list applied (${SW} SHIP step). Merge in THIS order (producers first, consumers last):
-${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}, ${roleOf(m) || 'independent'}${m.pin ? `; merge --head ${m.head}` : ''})`).join('\n')}
+${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}, ${roleOf(m) || 'independent'}${((EARLY[a.id] || {}).pin || []).includes(nu(m.url) + m.head) ? `; merge --head ${m.head}` : ''})`).join('\n')}
 Per MR: & ${DEV} wt lease -Repo <its repo> -Branch <its source branch> -Agent ${a.id} (its "worktree:" line = <wt>; last: ${r.worktrees.join(', ')}), then python ${DT} merge <wt> <iid>${globs(a) && ` --scope '${globs(a)}'`}${isFnd(a) ? ` --no-docs 'foundation ${a.id}'` : ''}; at the end & ${DEV} wt release -Agent ${a.id}. The merge order is registered (bossy.ps1 track):
 a consumer whose producer is not merged prints WAIT "waiting for producer": report WAIT, never merge it another way.
 Conflicts and merge results: ${SW} SHIP step and Merge results.
@@ -502,7 +502,7 @@ const results = await pipeline(
   if (!r.mrs.length) return { id: a.id, report: r, findings: [] }
   // review and CI together (owner 2026-11-25: a task under budget.taskMinutes): one fix round takes both
   const E = EARLY[a.id], ev = E && (await E.p), same = ev ? r.mrs.filter((m) => E.h.includes(nu(m.url) + m.head)) : [], rest = { ...r, mrs: r.mrs.filter((m) => !same.includes(m)) }
-  for (const m of same) m.pin = 1
+  if (ev) E.pin = E.h
   if (same.length) say(a, `${urls(same)}: reviewed in the owner wait`)
   const [[rv0, mv], ciFails] = await Promise.all([rest.mrs.length ? reviews(a, rest) : [{}], ciGate(a, r)])
   const rv = rv0 && { findings: [...ls(rv0.findings), ...ls(ev && ev.findings).filter((f) => !rest.mrs.some((m) => has(f, m.url)))] }

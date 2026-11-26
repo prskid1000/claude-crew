@@ -5,7 +5,7 @@ cases_cmd (`cases result ... viewport=<WxH> hit=PASS|FAIL`; `cases add` warns), 
 crafty.ps1 wt commit runs `proof --branch <b> --impact` (refuses a non-WIP commit on a task branch without the map).
 Gates on only when process.gates.finish = builtin:testingDocs. Config: qa.testerViewport {web, mobile} (1366x768, 390x844);
 qa.aiWaiver (owner decision id: an ai goal's local run waived while its env runs no localEnv services[].aiStack).
-Sections: L13 gaps · L176 wraps · L256 matrix scope · L354 verb"""
+Sections: L13 gaps · L176 wraps · L258 matrix scope · L356 verb"""
 import json, os, re, sys
 
 DT = None
@@ -241,13 +241,15 @@ def wrap_fill(orig):
 
 
 def wrap_merge(orig):
-    def run(worktree, iid, *k):   # merge ... --head <sha>: the reviewed head (buildy early review); the host branch must still be there
+    def run(worktree, iid, *k):   # merge ... --head <sha>: the reviewed head (buildy early review); the host MR must still be at it
         want = (sys.argv[sys.argv.index('--head') + 1] if '--head' in sys.argv[:-1] else '').strip().lower()
         if want:
-            br = DT._run(['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'])
-            got = str(DT._run(['git', '-C', worktree, 'ls-remote', 'origin', f'refs/heads/{br}']) or '').split('\t')[0].strip().lower()
+            m = DT._mr_api(*DT.remote(worktree), str(iid).rsplit('!', 1)[-1].lstrip('#'))('mr.get')
+            got = str((m if isinstance(m, dict) else {}).get('sha') or '').lower()
+            if not got:
+                return f'!{iid}: no MR head from the host (--head {want[:12]} not checked); run merge again\nWAIT'
             if len(want) < 7 or not got.startswith(want):
-                return (f'HEAD MOVED: !{iid} branch {br} is at {got[:12] or "?"} on the host, the reviewed head is {want[:12]}: later commits are '
+                return (f'HEAD MOVED: !{iid} is at {got[:12]} on the host, the reviewed head is {want[:12]}: later commits are '
                         'unreviewed. Review them (revy kind mr), then merge without --head\nNOT_MERGED')
         return orig(worktree, iid, *k)
     return run
@@ -389,15 +391,18 @@ def selftest():
     ex('ai pass rate (owner 2026-11-26): none declared, 3/5 under 4/5, 8/10 over 4/5 ok, 4/4 too few runs',
        any('no passRate' in g for g in gr('')) and any('pass rate 4/5 not shown' in g for g in gr('4/5', '3/5')) and not gr('4/5', '8/10') and gr('4/5', '4/4'))
     ex('no cases spec = no goals doc', proof_gaps({})[0].startswith('no goals doc'))
-    run0, argv0, DT._run = DT._run, sys.argv, (lambda c, *k, **kw: 'f/x' if 'rev-parse' in c else 'abc1234def\trefs/heads/f/x')
+    api0, rem0, argv0, sha = DT._mr_api, DT.remote, sys.argv, ['abc1234def']
+    DT.remote, DT._mr_api = (lambda w: ('h', 'g/p')), (lambda h, p, n: lambda verb, **a: {'sha': sha[0]} if sha[0] else None)
     try:
         mg = wrap_merge(lambda w, i, *k: 'ok\nMERGED')
-        hd = lambda *a: [sys.__setattr__('argv', ['devtools.py', 'merge', '.', '7', *a]), mg('.', '7')][1]
-        ex('merge --head: the host branch at the reviewed head merges, a moved head (or a sha under 7 chars) is NOT_MERGED, no --head merges',
-           hd('--head', 'ABC1234').endswith('MERGED') and 'NOT_' not in hd('--head', 'abc1234') and hd('--head', '9999999').startswith('HEAD MOVED') and
-           hd('--head', '9999999').endswith('NOT_MERGED') and hd('--head', 'abc').endswith('NOT_MERGED') and hd() == 'ok\nMERGED')
+        hd = lambda *a: [sys.__setattr__('argv', ['devtools.py', 'merge', '.', '7', *a]), mg('.', 'g/p!7')][1]
+        ok = (hd('--head', 'ABC1234').endswith('MERGED') and 'NOT_' not in hd('--head', 'abc1234') and hd('--head', '9999999').startswith('HEAD MOVED') and
+              hd('--head', '9999999').endswith('NOT_MERGED') and hd('--head', 'abc').endswith('NOT_MERGED') and hd() == 'ok\nMERGED')
+        sha[0] = ''
+        ex('merge --head: the host MR at the reviewed head merges, a moved head (or a sha under 7 chars) is NOT_MERGED, no host answer is WAIT, no --head merges',
+           ok and hd('--head', 'abc1234').endswith('\nWAIT') and hd() == 'ok\nMERGED')
     finally:
-        DT._run, sys.argv = run0, argv0
+        DT._mr_api, DT.remote, sys.argv = api0, rem0, argv0
     api_only = {**good, 'cases': [{**good['cases'][0], 'evidence': ['put.json=https://h/x']}, good['cases'][1]]}
     ex('a ui goal proven by API JSON is a gap', any('T1 (ui): no PASS case with UI evidence' in g for g in proof_gaps(api_only)))
     nt = {**good, 'cases': [{**good['cases'][0], 'result': 'NOT_TESTED_LOCAL stubbed'}, good['cases'][1]]}

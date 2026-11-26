@@ -33,22 +33,28 @@ Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-
 # owner 2026-11-26: a pending decision on A2 never holds the review of A1's MR (mrs[].items); a changed head is reviewed again
 $jse = @'
 const mA = { url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false, items: ['A1'], head: 'h1' }, mB = { ...mA, url: 'https://h/g/api/-/merge_requests/2', items: ['A2'], head: 'h2' }
-const calls = [], P = { status: 'PASS', failing: [] }, mrOf = (l) => [1, 2].filter((n) => new RegExp(`merge_requests/${n}\\b`).test(l.prompt))
-const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
- if (/^record-args/.test(o.label)) return _rec()
- if (o.label === 'build:E1') return _rep(P, { mrs: [mA, mB], needsDecision: [{ item: 'A2', decisionId: 'd-20260101000000-x', question: 'q' }] })
- if (/^decide:/.test(o.label)) return { ok: true, output: 'ANSWERED d-20260101000000-x: A' }
- if (/^(resume|ship):E1/.test(o.label)) return _rep(P, { mrs: [mA, { ...mB, head: 'h3' }] })
- if (o.label === 'review:E1' && !calls.some((c, i) => c.label === 'review:E1' && i < calls.length - 1)) return { findings: [{ mr: 'api!1', file: 'a.ts', severity: 'nit', problem: 'p', fix: 'f' }] }
- return /^review/.test(o.label) ? { findings: [] } : /^ci:/.test(o.label) ? { done: true, mrs: [] } : _ok('[]') }
-run({ brief: 'C:/b/e.md', ..._kl, agents: [{ id: 'E1', items: 'A1,A2' }] }, agent, _n, _n, pipeline).then((out) => {
+const P = { status: 'PASS', failing: [] }, mrOf = (l) => [1, 2].filter((n) => new RegExp(`merge_requests/${n}\\b`).test(l.prompt))
+const go = async (fix) => { const calls = [], n = (l) => calls.filter((c) => c.label === l).length
+ const agent = async (p, o) => { calls.push({ label: o.label, prompt: p })
+  if (/^record-args/.test(o.label)) return _rec()
+  if (o.label === 'build:E1') return _rep(P, { mrs: [mA, mB], needsDecision: [{ item: 'A2', decisionId: 'd-20260101000000-x', question: 'q' }] })
+  if (/^decide:/.test(o.label)) return { ok: true, output: 'ANSWERED d-20260101000000-x: A' }
+  if (/^fix:E1/.test(o.label)) return _rep(P, { mrs: [mA, { ...mB, head: 'h4' }] })
+  if (/^(resume|ship):E1/.test(o.label)) return _rep(P, { mrs: [mA, { ...mB, head: 'h3' }] })
+  if (o.label === 'review:E1' && n('review:E1') === 1) return { findings: [{ mr: 'api!1', file: 'a.ts', severity: 'nit', problem: 'p', fix: 'f' }] }
+  if (o.label === 'review:E1' && n('review:E1') === 2 && fix) return { findings: [{ mr: 'api!2', file: 'b.ts', severity: 'blocking', problem: 'p', fix: 'f' }] }
+  return /^review/.test(o.label) ? { findings: [] } : /^ci:/.test(o.label) ? { done: true, mrs: [] } : _ok('[]') }
+ return { calls, out: await run({ brief: 'C:/b/e.md', ..._kl, agents: [{ id: 'E1', items: 'A1,A2' }] }, agent, _n, _n, pipeline) } }
+const sp = (c) => (c.find((x) => x.label === 'ship:E1') || {}).prompt || '', pin = /merge_requests\/1 \([^)]*; merge --head h1\)/
+go(false).then(async ({ calls, out }) => {
  const rv = calls.filter((c) => c.label === 'review:E1'), fs = (out.agents[0] || {}).findings || []
  console.log(`early-review:${rv.length === 2 && mrOf(rv[0]) + '' === '1' && mrOf(rv[1]) + '' === '2' && fs.some((f) => f.mr === 'api!1')}`)
- const sp = (calls.find((c) => c.label === 'ship:E1') || {}).prompt || ''
- console.log(`head-pin:${/merge_requests\/1 \([^)]*; merge --head h1\)/.test(sp) && !/--head h3/.test(sp)}`)
+ console.log(`head-pin:${pin.test(sp(calls)) && !/--head h3/.test(sp(calls))}`)
+ const f = (await go(true)).calls
+ console.log(`head-pin-fix:${f.some((c) => /^fix:E1/.test(c.label)) && pin.test(sp(f)) && !/--head h[34]/.test(sp(f))}`)
 }).catch(_err)
 '@
-Expect-Each (Invoke-Js w2-early $jse $wfd) 'buildy decision wait: # (review:E1 MRs: early !1, after the answer only !2, its head changed; an early finding naming api!1 kept; the ship prompt pins !1 to its reviewed head)' 'early-review', 'head-pin' -Show 8
+Expect-Each (Invoke-Js w2-early $jse $wfd) 'buildy decision wait: # (review:E1 MRs: early !1, after the answer only !2, its head changed; an early finding naming api!1 kept; the ship prompt pins !1 to its reviewed head)' 'early-review', 'head-pin', 'head-pin-fix' -Show 8
 $jst = @'
 const go = async (cfg, ex = {}, pre = null) => { const { calls, agent } = _mock((p, o) => /^test:/.test(o.label) ? _res('W1', [_ck('C2', 'PASS')]) : /^close/.test(o.label) ? _ok('published') : undefined)
  await run({ runDir: 'C:/runs/G', ..._kl, items: [_item('W1', '')], ...ex }, async (p, o) => /^record-args/.test(o.label) ? _ok(`RECORDED\n${cfg}`) : (pre && pre(o)) || agent(p, o), _n, _n, null)

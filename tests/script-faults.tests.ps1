@@ -8,7 +8,7 @@ Usage: pwsh -NoProfile -File <kit>/tests/script-faults.tests.ps1 (or tests/kit-t
 Exit codes: 0 pass · 1 a check failed.
 #>
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/bossy/kitbag_admin.py')
+$TestKitFiles = @('skills/bossy/kitbag_admin.py', 'skills/bossy/ctx_hook.mjs')
 $k = New-TestKit faults; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $O = Join-Path $k 'skills/bossy/bossy.ps1'
 $sfAgents = TkPath $k agents -Create; $sfHere = Join-Path (Kd) 'sf-cwd'; New-Item -ItemType Directory -Force $sfHere, (Join-Path $sfHere 'api') | Out-Null
 Set-Content (Join-Path $sfHere 'api/mvnw') '#!/bin/sh'
@@ -93,7 +93,7 @@ Set-Content (Join-Path $ag 'transcript.jsonl') @((@{ type = 'PLANNER_RESPONSE'; 
 $env:KIT_TRANSCRIPTS = Join-Path $tx 'claude'; $env:KIT_TRANSCRIPTS_CODEX = Join-Path $tx 'codex'; $env:KIT_TRANSCRIPTS_ANTIGRAVITY = Join-Path $tx 'agy'
 $kb = Join-Path $k 'skills/bossy/kitbag.py'
 $f1 = python -X utf8 $kb faults --json --days 7 | Out-String | ConvertFrom-Json; $f2 = python -X utf8 $kb faults --json --days 7 | Out-String | ConvertFrom-Json
-$nx = python -X utf8 $kb faults next --n 1 | Out-String
+$nx = python -X utf8 $kb faults next --n 2 | Out-String   # 2: from 2026-11-26 the guarded py-shim-quote is due too (same hits)
 Remove-Item Env:KIT_TRANSCRIPTS, Env:KIT_TRANSCRIPTS_CODEX, Env:KIT_TRANSCRIPTS_ANTIGRAVITY
 $frob = @($f1.items | Where-Object { $_.sig -like 'exit Error: frobnicate failed*' })[0]; $shim = @($f1.items | Where-Object cls -eq 'py-shim-quote')[0]
 $logged = Get-Content (Join-Path $k ".state/audit/$day/faults.jsonl") -Raw
@@ -122,6 +122,15 @@ $env:CLAUDE_AGENT = 'bm-env'; $null = pwsh -NoProfile -File $O board msg -To bm-
 $bmU = pwsh -NoProfile -File $O board msg -To bm-b -Text 'nobody' | Out-String; $bmUc = $LASTEXITCODE; $bmI = pwsh -NoProfile -File $O board inbox -Agent bm-b | Out-String
 $null = pwsh -NoProfile -File $O board leave -Session $bmS; $env:KIT_AGENT, $env:CLAUDE_AGENT = $bmEnv
 Expect "board msg: sender from -Session, else the env; neither = usage exit 2 ($($bmI.Trim() -replace '\s+', ' '))" ($bmI -match 'from bm-a: by session' -and $bmI -match 'from bm-env: by env' -and $bmUc -eq 2 -and $bmU -match 'usage: board msg -Agent <me> \| -Session')
+# event queue: a transcript quoting another agent's SESSION line drains nothing; a successor's join prints what the hook pushed before
+$eqJ = pwsh -NoProfile -File $O board join -Agent eq-a -Run eq | Out-String; $eqS = if ($eqJ -match 'SESSION (\S+)') { $Matches[1] }
+$eqT = Join-Path $k 'eq-a.jsonl'; $eqQ = Join-Path $k 'eq-q.jsonl'; "{`"t`":`"SESSION $eqS   (pass -Session $eqS to beat`"}" | Set-Content $eqT; Copy-Item $eqT $eqQ
+$eqR = (Get-ChildItem $k -Recurse -Force -Filter "$eqS.json" | Select-Object -First 1).FullName; $eqRow = Get-Content $eqR -Raw | ConvertFrom-Json
+$eqRow | Add-Member -Force NoteProperty transcript $eqT; $eqRow | ConvertTo-Json -Depth 6 | Set-Content $eqR
+$eqH = { param($f) (@{ transcript_path = $f } | ConvertTo-Json -Compress | node (Join-Path (Split-Path $O) 'ctx_hook.mjs')) -join '' }
+$null = pwsh -NoProfile -File $O board msg -Agent eq-lead -To eq-a -Text 'rule one'; $eq1 = & $eqH $eqQ; $eq2 = & $eqH $eqT
+$null = pwsh -NoProfile -File $O board leave -Session $eqS; $null = pwsh -NoProfile -File $O board join -Agent eq-a -Run eq; $eq3 = pwsh -NoProfile -File $O board inbox -Agent eq-a | Out-String
+Expect "event queue: a quoted SESSION line gets nothing, the row's own transcript gets the msg, a successor's join prints it again ($eq1 | $($eq3.Trim()))" (-not $eq1 -and $eq2 -match 'MESSAGE for eq-a .*rule one' -and $eq3 -match 'from eq-lead: rule one')
 # supervise SCRIPT-FAULTS: open items and no fault kitty live = one ACT; a live kitty (subject script-faults) = none; cached per
 # scriptFaults.scanMinutes (one kitbag run); 0 open = none
 $sfl = & { . $O; $global:sfx = 0; $global:sfo = "exit Error: x · 3 hit(s)`nfaults next: 2 open script-fault(s) (0 new failed call(s) captured)"; function Invoke-KitExe { $global:sfx++; [pscustomobject]@{ code = 0; out = $global:sfo; err = '' } }
