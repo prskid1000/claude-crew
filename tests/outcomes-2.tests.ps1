@@ -31,5 +31,12 @@ Expect "outcome rows: local rounds from the goals doc's Rounds table ($($rw.q1.l
 $oh = & { . $O; Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o') }) } | Out-String
 $sp = 'own QA checks failed 1 &#183; reopened \(MRs after promoted\) 1'
 Expect 'dashboard: the came-back split in the tile, the outcomes group line, the task list (no new section)' ($oh -match "came back: [^']*$sp" -and $oh -match "came back 2 \($sp\)" -and $oh -match 'came back: own checks F2 failed' -and $oh -match 'came back: reopened')
+# bossy.ps1 stats reset (owner 2026-11-26: DELETE, no archive): outcomes + clock stream gone, a cutoff for test checks; task files and QA runs kept
+$cd = Join-Path (TkPath $k audit -Create) '2026-11-02'; $null = New-Item -ItemType Directory -Force $cd; '{"at":"2026-11-02T10:00:00Z","phase":"code"}' | Set-Content (Join-Path $cd 'clock.jsonl')
+$qd = Join-Path (TkPath $k qa-runs -Create) 'testy-x/T1'; $null = New-Item -ItemType Directory -Force $qd; '{"checks":[]}' | Set-Content (Join-Path $qd 'results.json')
+$dry = pwsh @np $O stats reset -DryRun | Out-String; $sr = pwsh @np $O stats reset | Out-String; $n3 = pwsh @np $fx 'Update-KitOutcomes'
+Expect "stats reset: -DryRun deletes nothing; then outcomes and clock rows deleted and printed, a cutoff set, no row written back; tasks and QA runs kept ($n3)" (
+  $dry -match 'would delete .*outcomes\.jsonl' -and $sr -match 'deleted .*outcomes\.jsonl' -and $sr -match 'deleted .*clock\.jsonl' -and $sr -match 'cutoff .*stats-reset' -and -not (Test-Path (TkPath $k outcomes)) -and
+  -not (Test-Path (Join-Path $cd 'clock.jsonl')) -and "$n3" -eq '0' -and (Test-Path (Join-Path (TkPath $k tasks) 'q1.json')) -and (Test-Path (Join-Path $qd 'results.json')))
 Remove-TestKit $k
 Complete-Tests

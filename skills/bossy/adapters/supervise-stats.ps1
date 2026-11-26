@@ -8,7 +8,7 @@ every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its ru
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
 Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L733 flags · L958 bands ·
-  L1128 shells · L1199 reset · L1240 parity · L1252 faults
+  L1128 shells · L1199 reset · L1253 parity · L1265 faults
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -1206,7 +1206,8 @@ function Get-KitStatsFiles {
     [pscustomobject]@{ path = $p; rel = Join-Path $(if ($inState) { $script:KitPathMap.stateDir } else { $script:KitPathMap.runtimeDir }) ([IO.Path]::GetRelativePath($(if ($inState) { $sd } else { $rt }), $p)) } }
 }
 function Invoke-Stats {
-  param([switch]$Reset)
+  param([Parameter(Position = 0)][ValidateSet('show', 'reset')][string]$Action = 'show', [switch]$Reset, [switch]$DryRun)
+  if ($Action -eq 'reset') { return Remove-KitStatsHistory -DryRun:$DryRun }
   $dst = if ($Reset) { Join-Path (Get-KitPath forgotten) (New-KitName stats-reset '' (Get-KitPath forgotten)) }   # stats-reset, a tie -2; the time is the folder's
   $moved = 0
   foreach ($f in @(Get-KitStatsFiles)) {
@@ -1217,6 +1218,18 @@ function Invoke-Stats {
     try { [IO.File]::Move($f.path, $to); $moved++; "moved  $($f.rel) ($kb KB)" } catch { "busy  $($f.rel): $($_.Exception.Message)" }
   }
   if ($moved) { "-> $dst"; Write-KitLog calls stats-reset @{ to = $dst; files = $moved } }
+}
+# stats reset (owner 2026-11-26: DELETE, no archive): task outcomes (outcomes.jsonl; the sweep stamp set to now, so old task files
+# write no rows back), the task clock stream (audit/<day>/clock.jsonl), test check history (a stats-reset cutoff: the QA run folders
+# and their reports stay). Kept: retro signals, lessons, decisions, launches, leases, tasks/*.json. Prints each removal.
+function Remove-KitStatsHistory([switch]$DryRun) {
+  $gone = @(@((Get-KitPath outcomes), "$(Get-KitPath outcomes).lock") + @(Get-ChildItem (Get-KitPath audit) -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'clock.jsonl'; Join-Path $_.FullName 'clock.jsonl.lock' }) | Where-Object { Test-Path -LiteralPath $_ })
+  foreach ($f in $gone) { $kb = [math]::Round((Get-Item -LiteralPath $f).Length / 1KB, 1); if ($DryRun) { "would delete  $f ($kb KB)" } else { try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop; "deleted  $f ($kb KB)" } catch { "busy  ${f}: $($_.Exception.Message)" } } }
+  if ($DryRun) { "would set  the outcomes sweep stamp and the stats cutoff to now (test check history before it hidden; QA run folders kept)"; return }
+  $now = Get-Date; Set-Content -LiteralPath (Get-KitPath outcomes-sweep -Create) (Get-KitStamp stored $now)
+  $cut = Join-Path (Get-KitPath forgotten) (New-KitName stats-reset '' (Get-KitPath forgotten)); $null = New-Item -ItemType Directory -Force $cut   # empty: the cutoff mark only
+  "cutoff  $cut (test checks, outcomes and Trends start $(Get-KitStamp stored $now); QA run folders and reports kept)"
+  Write-KitLog calls stats-reset @{ deleted = $gone.Count; cutoff = $cut }
 }
 # the newest reset's time (owner 2026-11-20; its folder's creation, not its day's midnight): charts still built from kept logs (runs,
 # gate, waits, QA, Trends) read nothing before it; the Tuning heatmap and Disk free do; no reset = MinValue
