@@ -340,9 +340,9 @@ function Move-KitSlotLease($l) {
 }
 function Read-KitSlotLease([string]$File) { if (Test-Path -LiteralPath $File) { try { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json } catch { $null } } }
 # a pool slot leased to another agent is theirs (2026-11-26: a round's successor deployed a re-leased slot's branch as its own layer):
-# envy deploy, wt commit and wt sync refuse -> the reason; '' = the caller's slot (-Agent, else the board id), a free one, no slot or no id
+# envy deploy, wt commit and wt sync refuse -> the reason; '' = the caller's slot (-Agent, else KIT_AGENT / CLAUDE_AGENT), a free one, no slot or no id
 function Get-KitSlotForeign([string]$Dir, [string]$Agent) {
-  if (-not $Agent) { $Agent = "$($script:KitWho.agent)" }
+  if (-not $Agent) { $Agent = "$(@($env:KIT_AGENT, $env:CLAUDE_AGENT | Where-Object { "$_".Trim() })[0])" }   # never KitWho: it takes the row that claims $Dir
   if (-not $Dir -or -not $Agent) { return '' }
   $sfTop = "$(git -C $Dir rev-parse --show-toplevel 2>$null)".Trim(); if (-not $sfTop -or -not (Test-KitSlotDir $sfTop)) { return '' }
   $sfLease = Read-KitSlotLease (Get-KitSlotFile (Split-Path ([IO.Path]::GetFullPath($sfTop).TrimEnd('\', '/')) -Leaf))
