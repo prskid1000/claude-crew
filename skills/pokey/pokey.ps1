@@ -19,8 +19,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L30 lanes · L44 report · L161 seat · L310 api · L585 users · L717 login surfaces (parity.json login) · L750 finalize ·
-  L1304 results · L1339 retest · L1396 prepare
+Sections: L30 lanes · L44 report · L164 seat · L313 api · L588 users · L720 login surfaces (parity.json login) · L753 finalize ·
+  L1307 results · L1342 retest · L1399 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -61,6 +61,9 @@ function ImgWidth($f) { if ($f -match '\.png$' -or $f -match '(?i)(^|[_-])(app|p
 # verify = '<status> | <re-test> | <note audit>' (testy.js vJoin)
 function VerifyStatus($v) { $s = ([string]$v -split ' \| ', 2)[0].Trim(); if ($s -match '^Note audit' -or @($s -split '\s+').Count -gt 6) { '' } else { $s } }
 # verify > 20 words (sentence cap 25): own evidence file
+# a fitted note (kitbag.py notes_fit) ends '(full text: <file>)': the content guards read that file, never the cut field
+function NoteFull([string]$Dir, $c, [string]$Field) { $t = [string](Get-KitMember $c $Field); $nf = if ($t -match '\(full text: (?<f>[^)\\/]+\.txt)\)$') { "$Dir/evidence/$($Matches.f)" }
+  if ($nf -and (Test-Path -LiteralPath $nf)) { [IO.File]::ReadAllText($nf) } else { $t } }
 function VerifyFile($Code, $c) { if (@(([string]$c.verify) -split '\s+' | Where-Object { $_ }).Count -gt 20) { "$Code-$(([string]$c.id) -replace '[^A-Za-z0-9-]', '')_verify_retest.txt" } }
 
 function Build-QaReportMd($Title, $Code, $Item, $Res, $Map, $Run, $Tester, $Date, $GuideUrl, [hashtable]$Cells) {
@@ -951,12 +954,12 @@ if ($Check) {
   $noClass = @(@($res.checks) | Where-Object { $_.result -eq 'PASS_WITH_NOTE' -and -not ($_.verify -and "$($_.verify)" -notmatch '^Note audit') -and "$($_.observed)" -notmatch '^\s*\([a-d]\)\s' } | ForEach-Object { [string]$_.id })
   if ($noClass.Count) { $fail = $true; "$Code note check: PASS_WITH_NOTE without its class (observed starts with '(a|b|c|d) <why>', pokey SKILL.md step 5; else FAIL): $($noClass -join ', ')" }
   # devtools.py PRE_EXISTING: doc checks are never waived
-  $preEx = @(@($res.checks) | Where-Object { $_.result -match '^PASS' -and "$($_.observed)" -match '(?i)\b(known|ignored?|waived?|accepted|not (our|my|this)|out of scope)\b.{0,40}pre-?existing|pre-?existing\b.{0,30}\b(bug|defect|issue|failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b' } | ForEach-Object { [string]$_.id })
+  $preEx = @(@($res.checks) | Where-Object { $_.result -match '^PASS' -and "$(NoteFull $D $_ 'observed')" -match '(?i)\b(known|ignored?|waived?|accepted|not (our|my|this)|out of scope)\b.{0,40}pre-?existing|pre-?existing\b.{0,30}\b(bug|defect|issue|failure|error|overlap|problem|broken|behaviou?r)|\b(unrelated to|not caused by) (this|the) (change|task)\b' } | ForEach-Object { [string]$_.id })
   if ($preEx.Count) { $fail = $true; "$Code pre-existing check: a check of the doc is the task's own: a defect in it is FAIL (defect own; outside the change: new), never waived as pre-existing: $($preEx -join ', ')" }
   $kbBad = @(& $knownBad); if ($kbBad.Count) { $fail = $true; "$Code known-bug check: $($kbBad -join '; ')" }
   # OUT_OF_SCOPE only for a qa.outOfScope channel (run.json outOfScope wins), named in the check; an unbuilt app / web part runs on the local env
   $oosCh = @(@(if ($null -ne $run.outOfScope) { $run.outOfScope } else { Get-KitSetting 'qa.outOfScope' @() }) | Where-Object { "$_".Trim() } | ForEach-Object { "$_".Trim() })
-  $oosBad = @(@($res.checks) | Where-Object { $_.result -eq 'OUT_OF_SCOPE' } | Where-Object { $t = "$($_.screen) $($_.what_was_done) $($_.observed)"; -not @($oosCh | Where-Object { $t -match "(?i)\b$([regex]::Escape($_))\b" }).Count } | ForEach-Object { [string]$_.id })
+  $oosBad = @(@($res.checks) | Where-Object { $_.result -eq 'OUT_OF_SCOPE' } | Where-Object { $t = "$($_.screen) $(NoteFull $D $_ 'what_was_done') $(NoteFull $D $_ 'observed')"; -not @($oosCh | Where-Object { $t -match "(?i)\b$([regex]::Escape($_))\b" }).Count } | ForEach-Object { [string]$_.id })
   if ($oosBad.Count) { $fail = $true; "$Code scope check: OUT_OF_SCOPE is only for a qa.outOfScope channel ($(if ($oosCh.Count) { $oosCh -join ', ' } else { 'none set' })), named in the check: $($oosBad -join ', '). A part with no build on the target: test it on the local env (phoney.ps1 build -Local + a lane, a ""local run""); no lane can run it -> NOT_TESTED phone-only (the owner decides)" }
   $shotBad = @(& $noShot); if ($shotBad.Count) { $fail = $true; "$Code screenshot check: human testing doc check(s) without a screenshot of the visible result (pokey SKILL.md Evidence: run each from the UI; JSON is extra, never instead): $($shotBad -join ', ')" }
   $gaps = @(& $docGaps); if ($gaps.Count) { if (-not $docSib) { $fail = $true }; "$Code doc check$(if ($docSib) { ' WARN (a sibling item tests the same task)' }): $($gaps -join ', '): $gapWhy" }

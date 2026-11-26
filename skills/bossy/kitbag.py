@@ -25,7 +25,7 @@ a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L987 lint ·
   L1409 README graph · L1527 lint command · L1840 audit · L1988 registry · L2048 tools · L2136 parity · L2742 arch lint ·
-  L3061 prose · L3307 sections · L3439 budget · L3457 migrate · L3605 plugins · L3662 state lint · L3850 main
+  L3061 prose · L3316 sections · L3448 budget · L3466 migrate · L3614 plugins · L3671 state lint · L3859 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -3176,23 +3176,26 @@ def prose_fit(kind, text, kit=None):
     except OSError:
         return text
     caps = {m.group(1).replace('_', ' '): int(m.group(2)) for t in lim.replace(';', ' ').split() if (m := re.match(r'^(each|[A-Z][\w ()/-]*?):(\d+)b$', t))}
-    out, sec, n, fence, joined = [], None, 0, False, {}
+    out, sec, n, fence, joined, at = [], None, 0, False, {}, None   # at: the last line of the last allowed bullet, None once a block follows it
     for l in text.replace('\r\n', '\n').split('\n'):
         if l.lstrip().startswith('```'):
             fence = not fence
         h = None if fence else re.match(r'^##\s+(.+?)\s*$', l)
         if h:
-            sec, n = h.group(1), 0
+            sec, n, at = h.group(1), 0, None
         cap = caps.get(sec, caps.get('each')) if sec else None
         b = None if fence or not cap else re.match(r'^(?:[-*]|\d+\.)\s+(.*)$', l)
         if b:
             n += 1
-        last = next((i for i in range(len(out) - 1, -1, -1) if out[i].strip()), None)
-        if b and n > cap and last is not None:
-            out[last] = out[last].rstrip().rstrip(';.') + '; ' + b.group(1).strip()
+        if b and n > cap and at is not None:
+            out[at] = out[at].rstrip().rstrip(';.') + '; ' + b.group(1).strip()
             joined[sec] = n
             continue
         out.append(l)
+        if b or (at is not None and l[:1] in (' ', '\t') and l.strip()):   # a bullet, or its indented continuation
+            at = len(out) - 1
+        elif l.strip():   # a fence, table, text line: nothing is joined past it
+            at = None
     if not joined:
         return text
     for s, total in joined.items():
@@ -3253,12 +3256,17 @@ def notes_fit(path, evdir, code):
     lim = (writing_standards(KIT_DIR)[0].get('result-note') or {}).get('limits', '')
     m, one = re.search(r'(?<![\w:])(\d+)w\b', lim), bool(re.search(r'(?<![\w:])1l\b', lim))
     data, out = json.loads(read(path)), []
+    rid_of = lambda c: re.sub(r'[^A-Za-z0-9-]', '', str(c.get('id') or '')) if isinstance(c, dict) else ''
+    ids = [rid_of(c) for c in (data.get('checks') or [])] if isinstance(data, dict) else []
     for c in (data.get('checks') or []) if m and isinstance(data, dict) else []:
         for fld, what in (('observed', '90_full-observed'), ('what_was_done', '91_full-steps')):
             t = c.get(fld) if isinstance(c, dict) else None
             if not isinstance(t, str) or (words(t) <= int(m.group(1)) and not (one and '\n' in t.strip())):
                 continue
-            name = f"{code}-{re.sub(r'[^A-Za-z0-9-]', '', str(c.get('id')))}_{what}.txt"
+            rid = rid_of(c)
+            name = f'{code}-{rid}_{what}.txt'
+            if not rid or ids.count(rid) > 1:   # no file of its own: left for the prose stop, never another row's text overwritten
+                continue
             tail, keep = f' … (full text: {name})', []
             for w in t.split():
                 if words(' '.join(keep + [w]) + tail) > int(m.group(1)):
@@ -3268,7 +3276,8 @@ def notes_fit(path, evdir, code):
             with open(osp.join(evdir, name), 'w', encoding='utf-8', newline='\n') as f:
                 f.write(f"{c.get('id')} — {c.get('screen') or ''}: {fld} in full\n\n{t}\n")
             c[fld] = ' '.join(keep) + tail
-            c['evidence'] = [e for e in (c.get('evidence') or []) if e != name] + [name]
+            ev = c.get('evidence')
+            c['evidence'] = [e for e in ([ev] if isinstance(ev, str) else list(ev or [])) if e != name] + [name]
             out.append(f'FIT {osp.basename(path)} checks[{c.get("id")}].{fld}: {words(t)} words -> {words(c[fld])}, the full text in {name} (nothing cut)')
     if out:
         with open(path, 'w', encoding='utf-8', newline='\n') as f:

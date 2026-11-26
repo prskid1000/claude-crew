@@ -84,15 +84,17 @@ Expect-Each (Invoke-Js tc-stepretry $jsSr $wf) 'workflow step retry: #' 'sr-once
 $jsS = @'
 const P = { status: 'PASS', failing: [] }, mrOf = (n, st) => ({ url: `https://h/g/api/-/merge_requests/${n}`, repo: 'api', merged: false, mergeState: st })
 const F = (severity, problem) => ({ mr: 'api!1', file: 'a.ts', severity, problem, fix: 'f' })
-const go = async (cfg, ags, rv = []) => { const calls = [], order = [], seen = {}
+const go = async (cfg, ags, rv = [], bad = '', boom = false) => { const calls = [], order = [], seen = {}
  const agent = async (p, o) => { calls.push({ label: o.label, model: o.model, prompt: p }); const n = Number((/:S(\d)/.exec(o.label) || [0, 1])[1])
   if (/^record-args/.test(o.label)) return _ok(`RECORDED\n${cfg}`)
   if (/^ci:/.test(o.label)) return { done: true, mrs: [] }
   if (/^review/.test(o.label)) return { findings: seen[o.label]++ ? [] : (seen[o.label] = 1, rv) }
+  if (o.label.startsWith(bad) && bad) { order.push('bad'); if (boom) throw new Error('ship died'); return null }
   if (/^ship:/.test(o.label)) { order.push(`ship${n}`); return _rep(P, { mrs: [mrOf(n, 'SCHEDULED')] }) }
   if (/^merge-wait:/.test(o.label)) { order.push(`merged${n}`); return _ok(JSON.stringify({ mrs: [{ mr: mrOf(n).url, status: 'merged' }] })) }
   return /^(build|fix):/.test(o.label) ? _rep(P, { mrs: [mrOf(n)] }) : _ok('[]') }
- return { calls, order, out: await run({ brief: 'C:/b/s.md', ..._kl, phases: false, agents: ags }, agent, _n, _n, pipeline) } }
+ const out = await run({ brief: 'C:/b/s.md', ..._kl, phases: false, agents: ags }, agent, _n, _n, pipeline).catch((e) => ({ err: e.message }))
+ await new Promise((ok) => setImmediate(ok)); return { calls, order, out } }
 const two = [{ id: 'S1', items: 'A1' }, { id: 'S2', items: 'A2', complex: true }], md = (r, l) => (r.calls.find((c) => c.label === l) || {}).model, pr = (r, l) => (r.calls.find((c) => c.label === l) || {}).prompt || ''
 const d = await go('CONFIG {"roles":{},"qaLanes":null}', [...two, { id: 'S3', items: 'A3', model: 'm-flagged' }])
 console.log(`stage-map:${['build:S1', 'build:S2', 'build:S3', 'review:S1', 'ci:S1', 'ship:S1', 'track:S1'].map((l) => md(d, l)).join() === 'sonnet,sonnet,m-flagged,opus,haiku,haiku,haiku'}`)
@@ -102,9 +104,13 @@ console.log(`serial-merge:${s.order.join() === 'ship1,merged1,ship2,merged2' && 
 const sf = await go('CONFIG {"roles":{},"qaLanes":null}', [two[0]], [F('should-fix', 'soft-p'), F('nit', 'nit-p')])
 console.log(`should-fix-followup:${!sf.calls.some((c) => /^fix:/.test(c.label)) && /soft-p/.test(pr(sf, 'followups:S1')) && !/nit-p/.test(pr(sf, 'followups:S1')) && sf.order.join() === 'ship1' && sf.out.followUps.length === 1 && !sf.out.openFindings.length}`)
 const bl = await go('CONFIG {"roles":{},"qaLanes":null}', [two[0]], [F('should-fix', 'soft-p'), F('blocking', 'hard-p')])
+const sn = await go('CONFIG {"roles":{},"qaLanes":null,"serial":["api"]}', two, [], 'ship:S1'), st = await go('CONFIG {"roles":{},"qaLanes":null,"serial":["api"]}', two, [], 'ship:S1', true)
+console.log(`serial-after-failure:${sn.order.join() === 'bad,bad,ship2,merged2' && st.out.err === 'ship died' && st.order.join() === 'bad,ship2,merged2'}`)
+const nf = await go('CONFIG {"roles":{},"qaLanes":null}', [two[0]], [F('should-fix', 'soft-p'), F('blocking', 'hard-p')], 'fix:S1')
+console.log(`stopped-fix-keeps-soft:${nf.out.agents[0].stopped === true && nf.out.followUps.length === 1 && nf.out.followUps[0].problem === 'soft-p' && nf.out.followUps[0].written === false}`)
 console.log(`blocking-fix:${/hard-p/.test(pr(bl, 'fix:S1')) && !/soft-p/.test(pr(bl, 'fix:S1')) && /soft-p/.test(pr(bl, 'followups:S1')) && bl.order.join() === 'ship1'}`)
 '@
-Expect-Each (Invoke-Js w2-stage $jsS $wfd) 'buildy 2026-11-26: # (map: build / complex sonnet, a brief model wins, review opus, ci / ship / track haiku; serial: the next area ships after the first merged)' 'stage-map', 'parallel-merge', 'serial-merge', 'should-fix-followup', 'blocking-fix' -Show 8
+Expect-Each (Invoke-Js w2-stage $jsS $wfd) 'buildy 2026-11-26: # (map: build / complex sonnet, a brief model wins, review opus, ci / ship / track haiku; serial: the next area ships after the first merged)' 'stage-map', 'parallel-merge', 'serial-merge', 'should-fix-followup', 'serial-after-failure', 'stopped-fix-keeps-soft', 'blocking-fix' -Show 8
 $jsV = @'
 const { calls, agent } = _mock((p, o) => /^test:/.test(o.label) ? _res('W1', [_ck('C1', 'FAIL'), _ck('C2', 'PASS_WITH_NOTE')]) : /^close/.test(o.label) ? _ok('published') : undefined)
 await run({ runDir: 'C:/runs/V', ..._kl, items: [_item('W1', '')] }, async (p, o) => /^record-args/.test(o.label) ? _ok('RECORDED\nCONFIG {"roles":{},"qaLanes":null}') : agent(p, o), _n, _n, null).catch(_err)

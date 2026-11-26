@@ -279,7 +279,7 @@ const repoNames = (m) => [m.repo, String(m.url || '').replace(/[?#].*$/, '').rep
 const roleOf = (m) => repoNames(m).map((n) => CFG.roles[n]).find(Boolean) || ''
 const isConsumer = (m) => roleOf(m) === 'consumer'
 const isProducer = (m) => roleOf(m) === 'producer'
-// CONFIG serial (repos[].appendOnly): one merge at a time, merged (<= ~1 h) before the next syncs
+// CONFIG serial (repos[].appendOnly): one merge at a time (<= ~1 h each)
 let LINE = Promise.resolve()
 const isSerial = (m) => repoNames(m).some((n) => CFG.serial.includes(n))
 const toShip = (r) => { const open = uniqMr(r.mrs).filter((m) => !m.merged && !isHeld(m)); return [...open.filter(isProducer), ...open.filter((m) => !isProducer(m) && !isConsumer(m)), ...open.filter(isConsumer)] }
@@ -510,8 +510,8 @@ const results = await pipeline(
   const rv = rv0 && { findings: [...ls(rv0.findings), ...ls(ev && ev.findings).filter((f) => !rest.mrs.some((m) => has(f, m.url)))] }
   if (!rv || (a.migrations && !mv)) return { id: a.id, report: r, findings: [BLOCK(r.mrs, `The ${rv ? 'migration review (datay)' : 'review agent'} returned nothing: unreviewed, not merged.`, rv ? 'Re-run datay kind migration on these MRs, then merge.' : REREVIEW)], reviewFailed: true }
   const findings = [...rv.findings, ...ls(mv && mv.findings)]
-  let x = { id: a.id, report: r, findings }
   const blocking = [...findings.filter(mustFix), ...ciFails], sf = findings.filter((f) => f.severity === 'should-fix')
+  let x = { id: a.id, report: r, findings, followUps: sf.map((f) => ({ ...f, written: false })) }
   if (blocking.length) {
    if (!(await gate('Fix'))) return halt(x)
    say(a, `${blocking.length} blocking finding(s) / failed pipeline(s) -> fix round`)
@@ -569,7 +569,7 @@ async function ciGate(a, r) {
   problem: `The MR pipeline failed in job ${m.job || '?'}:\n${m.error || '(no error text captured)'}`,
   fix: 'Reproduce the failing job locally through the gate (crafty.ps1 check), fix the cause, push, green pipeline.' }))
 }
-// should-fix (+ re-review nits) -> MR "## Follow-ups"
+// soft findings -> MR "## Follow-ups"
 async function followUps(a, r, soft) {
  const file = `${rp('agents')}/${a.id}/followups.json`, mrs = r.mrs.filter((m) => !m.merged)
  if (!mrs.length) return []

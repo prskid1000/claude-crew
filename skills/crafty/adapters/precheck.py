@@ -120,7 +120,7 @@ def r_commits(c):
         if WIP.search(subj):
             out.append(('COMMITS', f'{sha[:10]} "{subj[:60]}" is a WIP commit', 'squash it into a real commit (crafty.ps1 wt commit), push'))
         out += [('COMMITS', f'{sha[:10]}: {f}', 'reword it (amend the head, push --force-with-lease: your own branch only)') for f in found]
-    if c.get('marker') and c['marker'] not in (c.get('headMsg') or ''):   # CI fails a head the repo's commit hook did not mark
+    if c.get('marker') and c.get('headMsg') and c['marker'] not in c['headMsg']:   # CI fails a head the repo's commit hook did not mark
         out.append(('COMMITS', f'the head commit lacks repos[].commitMarker "{c["marker"]}" (its commit hook did not run)',
                     'fix the hook setup (core.hooksPath, its deps), git commit --amend --no-edit (the hook runs again; never type the marker), push --force-with-lease'))
     return out
@@ -209,8 +209,8 @@ def context(tid, title, body, gdir='', base='', head='', ref='', branch=''):
         files, commits, eol = git_facts(gdir, base, head)
         c.update(head=head, uiFiles=[f for f in files if DT.UI_FILES.search(f)], eol=eol, commits=[(s, m, prose('commit', m)) for s, m in commits],
                  codeFiles=[f for f in files if not DOC_ONLY.search(f)])
-        rn = (c['repo'] or '').split('/')[-1] or os.path.basename(os.path.normpath(gdir))
-        c['marker'] = next((r.get('commitMarker') or '' for r in DT.CFG.get('repos') or [] if rn in [r.get('name'), *(r.get('aliases') or [])]), '')
+        rn = ((c['repo'] or '').split('/')[-1] or os.path.basename(os.path.normpath(gdir))).lower()
+        c['marker'] = next((r.get('commitMarker') or '' for r in DT.CFG.get('repos') or [] if isinstance(r, dict) and rn in [str(x).lower() for x in [r.get('name'), *(r.get('aliases') or [])]]), '')
         c['headMsg'] = git(gdir, 'log', '-1', '--format=%B', head) if c['marker'] else ''
         c['globs'] = DT.scope_of(gdir, DT.SCOPE, ref)
         c['outside'] = DT.scope_outside(files, c['globs']) if DT.scope_refusal(files, c['globs'], branch, ref, 'precheck') else []   # a recorded scope word passes
@@ -346,7 +346,7 @@ def selftest():
     ex('TRACKER: no task link', 'TRACKER' in codes({**good, 'body': body.replace('https://t/t/T1', 'T1')}))
     ex('LINKS: a sibling MR named without its URL', 'LINKS' in codes({**good, 'body': body + '- JT java MR (producer)\n'}))
     ex('COMMITS: a WIP head and a prose finding', len([x for x in run_rules({**good, 'commits': [('b' * 40, 'wip: java released with uncommitted work', []), ('c' * 40, 'Fix', ['subject misses conv'])]}) if x[0] == 'COMMITS']) == 2)
-    ex('COMMITS: a head without repos[].commitMarker; with it, or no marker set: none', 'COMMITS' in codes({**good, 'marker': '☑ hooks', 'headMsg': 'fix: x'}) and 'COMMITS' not in codes({**good, 'marker': '☑ hooks', 'headMsg': 'fix: x\n\n☑ hooks'}) and 'COMMITS' not in codes({**good, 'headMsg': 'fix: x'}))
+    ex('COMMITS: a head without repos[].commitMarker; with it, no marker set, or an unread head: none', 'COMMITS' in codes({**good, 'marker': '☑ hooks', 'headMsg': 'fix: x'}) and 'COMMITS' not in codes({**good, 'marker': '☑ hooks', 'headMsg': 'fix: x\n\n☑ hooks'}) and 'COMMITS' not in codes({**good, 'headMsg': 'fix: x'}) and 'COMMITS' not in codes({**good, 'marker': '☑ hooks', 'headMsg': ''}))
     ex('EOL: 486 lines of which 8 real', 'EOL' in codes({**good, 'eol': [('A.java', 486, 8)]}))
     ex('SCOPE: a file outside the globs', 'SCOPE' in codes({**good, 'globs': ['src/orders/**'], 'outside': ['src/chat/a.ts']}))
     ex('LOOP: none, not PASS, and code changed after the PASS head', all('LOOP' in codes({**good, **x}) for x in ({'loopOk': None}, {'loopOk': False}, {'head': 'def5678', 'sinceLoop': ['src/a.ts']})))

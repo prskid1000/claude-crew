@@ -55,10 +55,10 @@ Expect "finalize -Check: each prose block line names file + field; run.json note
 Expect "finalize -Check: a 60-word observed fails prose; a note needs its (a)-(d) class; never pre-existing" ($LASTEXITCODE -eq 1 -and $po -match 'P1 prose check' -and $po -match 'word' -and $po -match '(?m)P1 note check: .*: C1\r?$' -and $po -match '(?m)P1 pre-existing check: .*: C2\r?$')
 $pp = Fin $pl P1; $ppc = $LASTEXITCODE
 Expect "finalize publish: over prose limits exits 1 like -Check, nothing published ($ppc)" ($ppc -eq 1 -and $pp -match 'P1 prose check' -and $pp -match 'nothing was published' -and -not (Test-Path "$pl/P1/report.md") -and -not (Test-Path "$pl/P1/finalize.json"))
-# owner 2026-11-26: -FixNames fits an over-cap note
-$rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = "(a) $((1..3 | % { ((1..20 | % { "w$_" }) -join ' ') + '.' }) -join ' ')"; & $J $rj "$pl/P1/results.json"
+# 2026-11-26: -FixNames fits a long note
+$rj = Read-Json "$pl/P1/results.json"; $rj.checks[0].observed = "(a) $((1..3 | % { ((1..20 | % { "w$_" }) -join ' ') + '.' }) -join ' ') ignored pre-existing."; & $J $rj "$pl/P1/results.json"
 $pf = Fin $pl P1 -Check -FixNames; $pfc = (Read-Json "$pl/P1/results.json").checks[0]; $pfn = 'P1-C1_90_full-observed.txt'
-Expect "finalize -FixNames: 61-word observed fitted, the full text an evidence file ($($pfc.observed))" ($pf -match 'FIT .*61 words -> ' -and $pf -notmatch 'P1 (prose|note) check' -and $pfc.observed -match "full text: $pfn\)$" -and @($pfc.evidence) -contains $pfn -and (Read-Text "$pl/P1/evidence/$pfn") -match 'w20\. w1 ')
+Expect 'finalize -FixNames: a long observed fitted; the guards read its full text' ($pf -match 'FIT .* words -> ' -and $pf -match 'pre-existing check: .*C1' -and $pf -notmatch 'P1 (prose|note) check' -and $pfc.observed -match "full text: $pfn\)$" -and (Read-Text "$pl/P1/evidence/$pfn") -match 'w20\. w1 ')
 $tm = New-Run 'TM' @(@{ code = 'M1'; task = 'TM1'; checks = , @('C1', 'PASS') }); $rj = Read-Json "$tm/run.json"; $rj.items[0].subtasks[0].name = "really $((1..14 | % { "name$_" }) -join ' ')"; $rj.items[0].subtasks[0] | Add-Member mrs ((1..13 | % { "repo!$_" }) -join ', '); & $J $rj "$tm/run.json"
 $tmo = Fin $tm M1 -Check; $tmc = $LASTEXITCODE; $null = Fin $tm M1; $tmr = "$(Get-Content "$tm/M1/report.md" -Raw -ErrorAction Ignore)"
 Expect "report Tasks row: a 15-word name with 13 MRs -> [id](link) · 13 MRs; a tracker name's filler is no prose finding ($tmc)" ($tmc -eq 0 -and $tmr -match '\| Tasks \| \[TM1\]\([^)]*\) · 13 MRs \|' -and $tmr -notmatch 'repo!')
