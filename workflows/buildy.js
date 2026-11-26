@@ -139,8 +139,8 @@ const MODELS = {}, setStr = (o, src) => { for (const [k, v] of Object.entries(sr
 const tierModels = () => { for (const [k, v] of Object.entries(MT)) MODELS[k] = v in TIERS ? TIERS[v] : v }
 setStr(TIERS, (A0.config || {}).tiers); tierModels()
 const jl = (k, s) => { try { return JSON.parse(new RegExp(`^${k} (\\{.*\\})`, 'm').exec(s)[1]) } catch { } }
-// SUM = launch -Self's fnv of BUDGET / CONFIG lines
-const recOk = (s) => /^RECORDED\b/m.test(s) && jl('CONFIG', s) && jl('BUDGET', s) && (/^SUM (\w+)/m.exec(s) || [])[1] === fnv((s.match(/^(BUDGET|CONFIG) \{.*\}/gm) || []).join('\n'))
+// SUM: launch -Self's fnv
+const recOk = (s) => /^RECORDED\b/m.test(s) && jl('CONFIG', s) && jl('BUDGET', s) && (/^SUM (\w+)/m.exec(s) || [])[1] === fnv((s.match(/^(BUDGET|CONFIG|TASKS|AREA TASK).*/gm) || []).join('\n'))
 const pick = (stage) => (MODELS[stage] ? { model: MODELS[stage] } : {})
 const PM = (stage) => `@${stage}=${MODELS[stage] || ''}`   // plan token
 // repos[].role (name / alias): merge order
@@ -196,7 +196,7 @@ function depNote(a) {
   (cs.length ? `MERGE ORDER: ${cs.join(', ')} consume your work: open your MRs early, say which MR carries the contract.\n` : '')
 }
 const globs = (a) => ls(a.paths).join(',')
-const isFnd = (a) => (a || {}).kind === 'foundation'   // no human-facing change: no human doc, merge --no-docs
+const isFnd = (a) => /^(foundation|dev-env)$/.test((a || {}).kind)   // merge --no-docs
 const areaNote = (a) => (globs(a) ? `AREA PATHS: wt lease -Scope '${globs(a)}'.\n` : '') + (AREA_TASK[a.id] ? `TRACKER TASK: ${AREA_TASK[a.id]} (subtask of ${a.task || A.task}) = <task> in every tracker step (status, MR title, track add); never the parent's status.\n` : '')
 const SW = `${K}/ship.md "In a /buildy wave"`
 const FLOW = `THE DEV FLOW = crafty SKILL.md steps 0-9 and your agent rules with your agent definition's "In a /buildy wave" commands: run ${RUN}, mode ${MODE}, <O> = ${ORCH}. Do NOT merge (the workflow does): merged=false, mergeState OPEN.`
@@ -284,7 +284,7 @@ function shipPrompt(a, r) {
  return `STEP: schedule merge-when-green for devy ${a.id}'s reviewed MRs. Change no code (only append-only conflict resolution).${ENV(`ship-${a.id}`)}
 These merges are authorized for this run: local loop passed, review clean, hold list applied (${SW} SHIP step). Merge in THIS order (producers first, consumers last):
 ${toShip(r).map((m, i) => `${i + 1}. ${m.url} (${m.repo}, ${roleOf(m) || 'independent'}${((EARLY[a.id] || {}).pin || []).includes(nu(m.url) + m.head) ? `; merge --head ${m.head}` : ''})`).join('\n')}
-Per MR: & ${DEV} wt lease -Repo <its repo> -Branch <its source branch> -Agent ${a.id} (its "worktree:" line = <wt>; last: ${r.worktrees.join(', ')}), then python ${DT} merge <wt> <iid>${globs(a) && ` --scope '${globs(a)}'`}${isFnd(a) ? ` --no-docs 'foundation ${a.id}'` : ''}; at the end & ${DEV} wt release -Agent ${a.id}. The merge order is registered (bossy.ps1 track):
+Per MR: & ${DEV} wt lease -Repo <its repo> -Branch <its source branch> -Agent ${a.id} (its "worktree:" line = <wt>; last: ${r.worktrees.join(', ')}), then python ${DT} merge <wt> <iid>${globs(a) && ` --scope '${globs(a)}'`}${isFnd(a) ? ` --no-docs '${a.kind} ${a.id}'` : ''}; at the end & ${DEV} wt release -Agent ${a.id}. The merge order is registered (bossy.ps1 track):
 a consumer whose producer is not merged prints WAIT "waiting for producer": report WAIT, never merge it another way.
 Conflicts and merge results: ${SW} SHIP step and Merge results.
 Return the report with the same MRs and testerGuide "${r.testerGuide || 'none reported'}".${HOLD_NOTE}`
@@ -551,7 +551,7 @@ const results = await pipeline(
   const why = x.blocked || (x.budgetStopped ? 'run budget reached: continues in the next run' : '') || (deferred.length ? `deferred items: ${deferred.map((d) => d.id).join(', ')}` : x.stopped ? 'agent stopped' : '')
   if (why) say(a, `tracker task registered with its promotion HELD (${why}): release with bossy.ps1 track add -Task <id> -HoldPromotion ''`)
   // track add groups MRs by task
-  const tr = await runStep(`& ${ORCH} track add -Discover -Mrs '${urls(x.report.mrs, ',')}'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}`, `track:${a.id}`, 'Fix', { ok: 'when it exits 0', whole: true })
+  const tr = await runStep(`& ${ORCH} track add -Discover -Mrs '${urls(x.report.mrs, ',')}'${why ? ` -HoldPromotion '${why.replace(/'/g, '').slice(0, 200)}'` : AREA_TASK[a.id] ? ` -HoldPromotion ''` : ''}${a.kind === 'dev-env' ? ' -OnMerged closed' : ''}`, `track:${a.id}`, 'Fix', { ok: 'when it exits 0', whole: true })
   if (!tr || !tr.ok) say(a, `WARNING tracker task not registered (${tr ? tr.output : 'agent returned nothing'})`)
   return why ? { ...x, trackHeld: why } : x
  },
@@ -694,7 +694,7 @@ const outcome = {
  seed: fromReports('seed'),
  openFindings: out.flatMap((x) => [...(x.fixed ? [] : (x.findings || []).filter(mustFix)), ...(x.shipFindings || [])]),
  followUps: out.flatMap((x) => (x.followUps || []).map((f) => ({ agent: x.id, ...f }))),
- testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, ...(isFnd(A.agents.find((g) => g.id === x.id)) ? { guide: 'exempt: foundation (merge --no-docs)', docsExempt: true } : { guide: x.report.testerGuide || 'MISSING' }) })),
+ testerGuides: out.filter((x) => x.report).map((x) => ({ agent: x.id, ...(isFnd(A.agents.find((g) => g.id === x.id)) ? { guide: 'exempt (merge --no-docs)', docsExempt: true } : { guide: x.report.testerGuide || 'MISSING' }) })),
  budget: { cap: BUD.cap, estimate: BUD.estimate, spent: BUD.spent, stopped: BUD.stop, handoffs: out.filter((x) => /Handoff:/.test((x.report || {}).summary || '')).map((x) => x.id) },
 }
 // budget-stopped areas + those past args.batch: next

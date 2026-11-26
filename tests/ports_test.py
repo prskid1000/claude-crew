@@ -147,7 +147,7 @@ def gdoc(n):
     return pt.workflow_procedure_doc(pt.workflow_meta(js), 'Codex', 'h', g), gone
 (bd, bg), (td, tg), (_, yg) = gdoc('buildy'), gdoc('testy'), gdoc('tidy')
 ok_gates = not (bg or tg or yg) and pt.workflow_gates('buildy', '')[1] and all(x in bd for x in ("decide check -Id <id> -Gate 'merge,scope,other'",
-    "--no-docs 'foundation", '`holdMerge`', '`args.batch`', 'budget -Run', 'launch -Self -Script buildy.js', 'TASKS REFUSED')) \
+    "--no-docs '<kind> <area>'", '`-OnMerged closed`', '`holdMerge`', '`args.batch`', 'budget -Run', 'launch -Self -Script buildy.js', 'TASKS REFUSED')) \
     and all(x in td for x in ('`select.tasks` = exactly', 'another product', 'budget -Run', 'finalize -RunDir')) and '## Before any phase' in bd
 cfg = tomllib.loads(pt.codex_config_text('D:/w/.claude'))
 pt.write_codex('r', {'description': 'd', 'tools': 'Read, Bash'}, 'body'); pt.write_codex('k', {'description': 'd', 'tools': 'Read, Edit, Write'}, 'body')

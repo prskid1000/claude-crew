@@ -66,7 +66,7 @@ const { calls, agent } = _mock((p, o) => /^build:/.test(o.label) ? _rep(pass) : 
 const o = await run({ brief: 'C:/b/w.md', mandate: ['m'], ..._kl, agents: [{ id: 'F1', items: 'A1', kind: 'foundation' }, { id: 'F2', items: 'A2' }] }, agent, (m) => logs.push(m), _n, pipeline)
 const P = (l) => (calls.find((c) => c.label === l) || {}).prompt || ''
 console.log(`fd-ship:${/merge <wt> <iid> --no-docs 'foundation F1'/.test(P('ship:F1')) && !/--no-docs/.test(P('ship:F2')) && /kind: foundation\)/.test(P('build:F1'))}`)
-console.log(`fd-report:${o.testerGuides.some((g) => g.agent === 'F1' && g.docsExempt && /^exempt: foundation/.test(g.guide)) && o.testerGuides.some((g) => g.agent === 'F2' && !g.docsExempt) && logs.some((l) => /^F1: exempt: foundation/.test(l))}`)
+console.log(`fd-report:${o.testerGuides.some((g) => g.agent === 'F1' && g.docsExempt && /^exempt \(merge/.test(g.guide)) && o.testerGuides.some((g) => g.agent === 'F2' && !g.docsExempt) && logs.some((l) => /^F1: exempt \(merge/.test(l))}`)
 '@
 Expect-Each (Invoke-Js dw-foundation $jsfd $wfd) 'buildy kind foundation: # (no human doc, merge --no-docs, exempt in the report)' 'fd-ship', 'fd-report' -Show 6
 # generic: no CONFIG roles = independent repos, no merge order; repos[].role (any name, GitHub URLs) orders them; models.<phase> win

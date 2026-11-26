@@ -66,5 +66,60 @@ $skZb = @((Get-Content (Join-Path (TkPath $k decisions) "$skZ.json") -Raw | Conv
 $skB = & $ci feat/PAY-9-fields-set; $skM = & $cm 'api!41'; $skNo = "$(& $ci feat/OTHER-1-x)$(& $cm 'web!7')$(& $ci feat/ZED-1-other)"
 Expect "scope word of an item: found by its area's branch and that branch's MR; a denied ask, another branch, the task's other MR, a left agent's worktree: none ($("$skB".Trim()))" (
   $skD -match 'no scope word' -and $skZb -eq 0 -and $skDeny -notmatch '(?m)^WORD ' -and $skR -match 'RECORDED' -and $skB -match '^WORD ' -and $skB -notmatch 'pin:' -and $skM -match '^WORD ' -and $skNo -notmatch '(?m)^WORD ')
+# owner 2026-11-26 (board leave -Agent <id> -Force on a row supervise had left said "unknown session ''"): an agent whose rows all
+# left = "already left", exit 0; -Force on a row that beats in a live session: kept, with why; -Session with -Force keeps the session
+$bdir = TkPath $k board -Create; Get-ChildItem $bdir -Filter 'devy-*.json' | Remove-Item; $sesOf = { param($o) ("$o" -csplit 'SESSION ')[-1].Split(' ')[0] }
+$fz = & $sesOf (pwsh @np $O board join -Agent FZ -Run rfz | Out-String); $fzKept = "$(pwsh @np $O board leave -Agent FZ -Force | Out-String)$LASTEXITCODE"
+$o2Fz = Join-Path $bdir "$fz.json"; $o2Row0 = Read-Json $o2Fz; $o2Row0.status = 'left'; $o2Row0 | Add-Member -Force NoteProperty crashed (Get-Date).ToString('o'); & $J $o2Row0 $o2Fz
+$fzOut = "$(pwsh @np $O board leave -Agent FZ -Force | Out-String)$LASTEXITCODE"
+$fy = & $sesOf (pwsh @np $O board join -Agent FY -Run rfz | Out-String); $fyOut = pwsh @np $O board leave -Session $fy -Force | Out-String
+Expect "board leave -Force: a beating row of a live session is kept (exit 1, why); a row already left (crashed) = already left, exit 0; -Session -Force leaves it ($($fzOut.Trim()) | $($fyOut.Trim()))" (
+  $fzKept -match "board leave -Force: FZ \($([regex]::Escape($fz))\) beat 0 min ago in a live session: kept .*launch -Done" -and $fzKept.Trim().EndsWith('1') -and $fzOut -match "board leave: FZ already left \($([regex]::Escape($fz)), crashed, last beat \d\d:\d\d\): nothing to do" -and $fzOut.Trim().EndsWith('0') -and $fyOut -match "left \($([regex]::Escape($fy))\)")
+# an area whose last report repeats a decision id (buildy.js asked it once, drops the repeat): one ACT with the id and question;
+# not while a step of the area runs, not when the last report has no repeat; cleared once a later run ships the area
+$env:KIT_TRANSCRIPTS = Join-Path (Kd) 'tx-o2'
+function New-O2Journal($id, [object[]]$Lines) { $d = New-Item -ItemType Directory -Force (Join-Path $env:KIT_TRANSCRIPTS "s1/subagents/workflows/$id"); $Lines | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 6 } | Set-Content (Join-Path $d 'journal.jsonl'); $d }
+$o2St = { param($i, $l) @{ type = 'started'; agentId = $i; label = $l } }; $o2Rs = { param($i, $o2Ask, $mrs = @()) @{ type = 'result'; agentId = $i; result = @{ mrs = @($mrs); needsDecision = @($o2Ask) } } }
+$o2Ask = { param($it, $id, $q) @{ item = $it; decisionId = $id; question = $q } }
+$null = New-O2Journal wf_dl1 @((& $o2St p1 'build:pay'), (& $o2Rs p1 (& $o2Ask P1 dec-limit 'Limit 72 or 100?')), (& $o2St p2 'decide:pay'), @{ type = 'result'; agentId = 'p2'; result = @{} }, (& $o2St p3 'resume:pay'), (& $o2Rs p3 (& $o2Ask P1 dec-limit 'Limit: A 72 | B 100. No answer recorded.')),
+  (& $o2St k1 'build:keep'), (& $o2Rs k1 (& $o2Ask K1 dec-keep 'Keep?')), (& $o2St k2 'resume:keep'), (& $o2Rs k2 @()),
+  (& $o2St w1 'build:wait'), (& $o2Rs w1 (& $o2Ask W1 dec-wait 'Wait?')), (& $o2St w2 'resume:wait'), (& $o2Rs w2 (& $o2Ask W1 dec-wait 'Wait?')), (& $o2St w3 'decide:wait'), (& $o2St o1 'build:other'))
+$dlFlags = { @((pwsh @np $O supervise -Json | Out-String | ConvertFrom-Json).flags | Where-Object { "$($_.what)" -match 'ended on decision' } | ForEach-Object { "[$($_.level)] $($_.what) -> $($_.action)" }) }
+$dl1 = @(& $dlFlags); Start-Sleep -Milliseconds 1100
+$null = New-O2Journal wf_dl2 @((& $o2St q1 'resume:pay'), (& $o2Rs q1 @() @(@{ url = 'https://h/g/api/-/merge_requests/5'; merged = $true })), (& $o2St q2 'build:more'))
+$dl2 = @(& $dlFlags)
+Expect "supervise: an area ended on a decision it reported twice = one ACT naming the id and the question; a running area and a settled one: none; gone once a later run ships the area ($($dl1 -join ' // ') | $($dl2.Count))" (
+  $dl1.Count -eq 1 -and $dl1[0] -match '^\[ACT\] area pay of run wf_dl1 ended on decision dec-limit, reported 2 times \(P1\): Limit: A 72 \| B 100\. No answer recorded\. -> .*decide answer -Id dec-limit' -and $dl2.Count -eq 0)
+# launch -Done: the closed run's rows (its run name, its run folder's name) are left and their leases released; kept: a row joined
+# after the run's last journal write, a name a live launch also uses, another run, the coordinator
+$hsO2 = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); $ldir = TkPath $k launches -Create; $o2Ago = { param($m) (Get-Date).AddMinutes(-$m).ToString('o') }
+$o2Dn = New-O2Journal wf_dn1 @((& $o2St d1 'test:T1')); (Get-Item (Join-Path $o2Dn 'journal.jsonl')).LastWriteTime = (Get-Date).AddMinutes(-30)
+& $J @{ runId = 'wf_dn1'; script = 'C:/kit/workflows/testy.js'; args = @{ run = 'rdn-shared'; runDir = 'C:/q/rdn-2' }; at = (& $o2Ago 90) } (Join-Path $ldir 'wf_dn1.json')
+& $J @{ runId = 'wf_dn9'; script = 'C:/kit/workflows/testy.js'; args = @{ run = 'rdn-shared' }; at = (& $o2Ago 20); holderPid = $PID; holderStart = $hsO2 } (Join-Path $ldir 'wf_dn9.json')
+$o2Row = { param($ag, $run, $joinedMin, $type = 'checky') & $J @{ session = "s-$ag"; agent = $ag; run = $run; type = $type; status = 'working'; beat = (& $o2Ago 1); joined = (& $o2Ago $joinedMin); holderPid = $PID; holderStart = $hsO2 } (Join-Path $bdir "s-$ag.json") }
+& $o2Row DN1 rdn-2 60; & $o2Row DN2 rdn-shared 60; & $o2Row DN3 rdn-other 60; & $o2Row DN4 rdn-2 60 coordinator; & $o2Row DN5 rdn-2 5
+& $J @{ leases = @(@{ holder = 'DN1'; kind = 'vision'; pid = $PID; pidStart = $hsO2 }, @{ holder = 'DN5'; kind = 'vision'; pid = $PID; pidStart = $hsO2 }) } (Join-Path (TkPath $k runtimes -Create) 'gpu.json')
+$dnOut = pwsh @np $O launch -Done -RunId wf_dn1 *>&1 | Out-String
+$dnSt = @('DN1', 'DN2', 'DN3', 'DN4', 'DN5' | ForEach-Object { "$_=$((Read-Json (Join-Path $bdir "s-$_.json")).status)" }) -join ' '; $dn1 = Read-Json (Join-Path $bdir 's-DN1.json')
+$dnGpu = @((Read-Json (Join-Path (TkPath $k runtimes) 'gpu.json')).leases | ForEach-Object holder) -join ','
+Expect "launch -Done: the run's row left (closedBy), its lease released; a later row, a live launch's name, another run and the coordinator kept ($dnSt | gpu $dnGpu | $(@($dnOut -split "`n" | Where-Object { $_ -match 'board:' }) -join ''))" (
+  $dnSt -eq 'DN1=left DN2=working DN3=working DN4=working DN5=working' -and $dn1.closedBy -eq 'launch -Done' -and $dn1.finished -and $dnGpu -eq 'DN5' -and $dnOut -match '\[launch\] board: 1 row\(s\) of the closed run left \(DN1 \[rdn-2\]\)' -and (Read-Json (Join-Path $ldir 'wf_dn1.json')).completed)
+# launch -Self SUM covers the task lines: buildy.js recOk takes the real output, refuses it without its TASKS line or with one re-worded
+$sumArgs = Join-Path (Kd) 'sum-args.json'; [IO.File]::WriteAllText($sumArgs, '{"brief":"C:/b/sum.md","agents":[{"id":"s1","items":"S1","task":"zz9sum1"}]}')
+$sumOut = (pwsh @np $O launch -Self -Script buildy.js -Run sum-run -ArgsFile $sumArgs -Plan 'devy/sonnet:1' | Out-String) -replace "`r", ''
+$sumFmt = pwsh -NoProfile -Command ". '$O'; `$l = Format-KitLaunchLines @(`"TASKS REFUSED t1: lacks `u{2014} Items  ``nnext line`", 'AREA TASK a1 T1 https://t/T1', '', 'note'); `"`$(`$l.Count)|`$(`$l[0])|`$(Get-KitLaunchSum (@('CONFIG {}') + `$l))|`$(Get-KitFnv `"CONFIG {}``nTASKS REFUSED t1: lacks ? Items``nAREA TASK a1 T1 https://t/T1`")`""
+$sumT = (pwsh @np $O launch -Self -Script testy.js -Run sum-t -ArgsFile $sumArgs -Plan 'checky/sonnet:1' | Out-String) -replace "`r", ''
+$sumJs = Join-Path (Kd) 'sum-check.mjs'; $sumIn = Join-Path (Kd) 'sum-out.txt'; [IO.File]::WriteAllText($sumIn, $sumOut); [IO.File]::WriteAllText("$sumIn.t", $sumT)
+Set-Content $sumJs @'
+import { readFileSync } from 'node:fs'
+const src = (f) => readFileSync(f, 'utf8'), pick = (s, rx) => (rx.exec(s) || [''])[0]
+for (const [name, f, plan, out] of [['buildy', process.argv[2], undefined, src(process.argv[4])], ['testy', process.argv[3], 'p', src(process.argv[4] + '.t')]]) {
+ const s = src(f), recOk = new Function(`${pick(s, /^(function fnv\(s\)|const fnv = ).*$/m)}\n${pick(s, /^const jl = .*$/m)}\n${pick(s, /^const recOk = .*$/m)}\nreturn recOk`)()
+ console.log(`${name}:${recOk(out, plan)}:${recOk(out.replace(/^TASKS .*\n/m, ''), plan)}:${recOk(out.replace(/^TASKS UNKNOWN/m, 'TASKS  UNKNOWN'), plan)}`)
+}
+'@
+$sumRes = @(node $sumJs (Join-Path $src 'workflows/buildy.js') (Join-Path $src 'workflows/testy.js') $sumIn 2>&1) -join ' '
+Expect "launch -Self SUM: its TASKS / AREA TASK lines are in the hash (one line each, ASCII); buildy.js refuses a dropped or re-worded task line; testy.js (no task lines) reads its own ($sumRes | $sumFmt | $(@($sumOut -split "`n" | Where-Object { $_ -match '^(TASKS|SUM)' }) -join ' / '))" (
+  $sumOut -match '(?m)^TASKS UNKNOWN' -and $sumRes -match 'buildy:true:false:false testy:true' -and $sumFmt -match '^4\|TASKS REFUSED t1: lacks \? Items\|SUM (\w{8})\|\1$')
 Remove-TestKit $k
 Complete-Tests

@@ -32,8 +32,8 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L252 budget · L282 launch · L517 recover · L606 pause · L617 resume · L684 program · L712 param ·
-  L718 track · L1111 supervise · L1463 report · L1543 audit · L1603 storage · L1606 bugbrief · L1608 cleanup · L1695 learn ·
+Sections: L40 init · L51 board · L252 budget · L282 launch · L515 recover · L604 pause · L615 resume · L682 program · L710 param ·
+  L716 track · L1109 supervise · L1463 report · L1543 audit · L1603 storage · L1606 bugbrief · L1608 cleanup · L1695 learn ·
   L1733 decide · L1907 debate · L1951 health · L2019 setup
 #>
 #Requires -Version 7
@@ -207,10 +207,10 @@ switch ($Action) {
   'leave' {
     $mine = @(if (-not $Session -and $Agent) { All | Where-Object { $_.agent -eq $Agent -and $_.status -ne 'left' -and (-not $Run -or $_.run -eq $Run) } })
     if ($mine.Count -and -not $Force) { $Session = @($mine | Sort-Object { (Test-KitHolder $_) -ne $false }, { "$($_.beat)" } -Descending)[0].session }   # token lost: the agent's newest live row
-    elseif ($Force) { $Session = @($mine | Where-Object { (Test-KitHolder $_) -eq $false -or $_.session -notin (Active).session })[0].session }   # else a gone / quiet one
+    elseif ($Force -and -not $Session) { $Session = @($mine | Where-Object { (Test-KitHolder $_) -eq $false -or $_.session -notin (Active).session })[0].session }   # else a gone / quiet one
     elseif (-not $Session -and -not $Agent) { $Session = Find-KitCallerSession }
     $f = Join-Path $dir "$Session.json"
-    if (-not $Session -or -not (Test-Path $f)) { "board leave: unknown session '$Session' (nothing left; token lost: -Agent [-Run]; a gone row: -Force)"; exit 1 }
+    if (-not $Session -or -not (Test-Path $f)) { $lm = Get-KitLeaveMiss $Session $Agent $Run $Force @(All) $staleMin; $lm.text; exit $lm.code }   # adapters/outcomes.ps1
     $paused = $Status -eq 'paused'
     Update-BoardEntry $f { param($x) $x.status = 'left'; $x.beat = (Get-KitStamp); if ($Handoff) { $x | Add-Member -Force NoteProperty handoffBrief $Handoff }; if ($paused) { $x | Add-Member -Force NoteProperty paused $x.beat }; $script:leftEntry = $x; $x }
     $cf = Get-KitCheckpointFile $script:leftEntry.agent "$($script:leftEntry.run)"
@@ -312,8 +312,8 @@ if ($Self) {
   $ln = @(if ($bud) { "BUDGET $($bud | ConvertTo-Json -Compress)" }) + "CONFIG $(Get-KitWorkflowConfig | ConvertTo-Json -Compress -Depth 10 -EscapeHandling EscapeNonAscii)"
   "RECORDED $leaf $Run (fnv $got)"; $ln
   if (-not $prev -or $prev.completed -or $prev.paused) { Clear-KitPauseFor $Run }
-  if ($leaf -like 'buildy*') { Invoke-KitLaunchTaskSteps $a $Run $sf }   # TASKS REFUSED: buildy.js refuses; AREA TASK lines
-  "SUM $(Get-KitFnv ($ln -join "`n"))"   # last: a relay cut short or re-worded is refused
+  if ($leaf -like 'buildy*') { $ln += ($tl = Format-KitLaunchLines (Invoke-KitLaunchTaskSteps $a $Run $sf)); $tl }   # TASKS REFUSED: buildy.js refuses; AREA TASK lines
+  Get-KitLaunchSum $ln   # last: a relay cut short or re-worded (task lines too) is refused
   exit 0
 }
 if ($Check) { Test-KitLaunchTasks -File $ArgsFile }   # the coordinator, before a /buildy launch
@@ -337,9 +337,7 @@ if ($Done) {
   $files = @($files | Select-Object -Unique)
   if (-not $files.Count -and @($wfDirs | Where-Object Name -eq $RunId).Count) { $files = @(Join-Path $dir "$(& $safe $RunId).json"); Write-KitState $files[0] @{ runId = $RunId; at = (Get-KitStamp) } }   # folder without record: stopped, supervise skips it
   if (-not $files.Count) { Write-Host "[launch] no record for $RunId$Run (nothing to mark)"; exit 0 }
-  foreach ($h in $hit) { Invoke-KitStopLearn $h 'launch -Done' | ForEach-Object { Write-Host "[launch] $_" } }
-  foreach ($x in $files) { Invoke-KitLocked $x { $r = Get-Content -LiteralPath $x -Raw | ConvertFrom-Json -AsHashtable; $r.completed = (Get-KitStamp); Write-KitState $x $r } }
-  Write-Host "[launch] marked completed: $(@($files | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')"
+  Complete-KitLaunchDone $hit $files   # adapters/outcomes.ps1: + the run's board rows left, their leases released
   exit 0
 }
 if (-not $List) {
@@ -1167,7 +1165,7 @@ if ($AutoFix) { try { foreach ($x in @(Invoke-ParamLearn -Due -Deadline (Get-Dat
 
 # 1. workflows
 Phase 'workflows'; $wfDirs = @(Get-KitRecentWorkflowDirs $runScope | Sort-Object KitLastWrite -Descending)
-$doneAt = @{}; $shippedAt = @{}; $collisions = @(); $finishedRuns = Get-KitFinishedRuns; $lnch = @(Read-KitJsonFiles (Get-KitPath launches)); $pausedRuns = @($lnch | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
+$doneAt = @{}; $shippedAt = @{}; $collisions = $decLoops = @(); $finishedRuns = Get-KitFinishedRuns; $lnch = @(Read-KitJsonFiles (Get-KitPath launches)); $pausedRuns = @($lnch | Where-Object { $_.paused -and $_.runId -and -not $_.completed } | ForEach-Object runId)
 if (-not $runScope) { foreach ($q in $state.quietRuns, $state.closedRuns) { foreach ($k in @($q.Keys)) { if ($k -notin @($wfDirs | ForEach-Object Name)) { $q.Remove($k) } } } }   # -Session sees only its own runs
 foreach ($w in $wfDirs) {
   $j = Join-Path $w.FullName 'journal.jsonl'; if (-not (Test-Path $j)) { continue }
@@ -1195,6 +1193,7 @@ foreach ($w in $wfDirs) {
   # failed, not redone
   $lb = @{}; foreach ($stx in $started) { $lb[$stx.agentId] = $stx.label -replace '~retry\d+$|-retry(?=:|$)|@redo$' }; $okS = $lb[@($res.Keys)]
   foreach ($fs in @($ev | Where-Object type -eq 'failed')) { $fl = $lb[$fs.agentId]; if ($fl -and $fl -notin $okS) { Flag 'ACT' "step failed: run $($w.Name) step $fl" "Redo: bossy.ps1 report -Run $($w.Name)" } }
+  $decLoops += @(Get-KitDecisionLoops $ev $w)
   $running = @(Get-JournalRunning $started @($res.Keys)); if (-not $done) { $wfOpen++ }   # open even paused or between agents: no retro
   if ($w.Name -notin $pausedRuns) { $runTotal += $running.Count }
   $errs = @($res.Values | Where-Object { $_.result.error }).Count; $toolErr += $errs; if ($errs) { $errRun = $w.Name }
@@ -1223,6 +1222,7 @@ foreach ($w in $wfDirs) {
 
 # a later run that shipped the same area (relaunched alone) clears its collision
 foreach ($c in Select-KitOpenCollisions $collisions $shippedAt) { Flag 'ACT' "$($c.label) in $($c.run) reported a collision/halt" 'Read its result; resume it alone with RESUME_BRIEF after making sure no other writer is active (bossy.ps1 board check).' @{ kind = 'COLLISION'; who = "$($c.label) ($($c.run))"; problem = 'reported a collision/halt' } }
+foreach ($c in Select-KitOpenCollisions $decLoops $shippedAt) { Flag 'ACT' $c.what $c.action $c.cols }
 
 # 2. board
 Phase 'board'; $board = Get-KitPath board

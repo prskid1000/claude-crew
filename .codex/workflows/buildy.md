@@ -28,8 +28,8 @@ Codex has no workflow engine: you are the coordinator. Per phase, in order: `spa
 5. **Fix** -- fix round (blocking, CI) + local tests; re-review, then a decide ask; should-fix -> Follow-ups; merge in order, tracker
    - Blocking findings or a failed pipeline -> one fix round (local loop again), re-review; still blocking after round 2 -> `decide ask` (A merge + Follow-ups / B hold), not merged; non-blocking re-review findings -> MR Follow-ups (`devtools.py followups`).
    - `holdMerge` repos (`true` = all): reviewed + green, never merged.
-   - Merge per MR, producers first, consumers last: `crafty.ps1 wt lease`, then `python -X utf8 <kit>/skills/crafty/devtools.py merge <wt> <iid> --scope '<area paths>'`; kind `foundation` adds `--no-docs 'foundation <area>'`; a WAIT "waiting for producer" is never merged another way.
-   - Register the tasks: `bossy.ps1 track add -Discover -Mrs '<url>,<url>'` (one add per task named in the MR titles; `-HoldPromotion '<why>'` when blocked, budget-stopped or items deferred).
+   - Merge per MR, producers first, consumers last: `crafty.ps1 wt lease`, then `python -X utf8 <kit>/skills/crafty/devtools.py merge <wt> <iid> --scope '<area paths>'`; kind `foundation` or `dev-env` adds `--no-docs '<kind> <area>'`; a WAIT "waiting for producer" is never merged another way.
+   - Register the tasks: `bossy.ps1 track add -Discover -Mrs '<url>,<url>'` (one add per task named in the MR titles; `-HoldPromotion '<why>'` when blocked, budget-stopped or items deferred; kind `dev-env`: `-OnMerged closed`).
 6. **Deploy** -- merged work joins the deploy batch; a person says deploy <env>, never asked
    - Merged MRs: `bossy.ps1 deploy request -Mrs <urls> -Run <run>`, then `deploy plan -Json`; nobody deploys or asks (a `trigger: ask` env: one ask per env).
 7. **Learn** -- signals from this wave, cleanup (/tidy makes lessons)

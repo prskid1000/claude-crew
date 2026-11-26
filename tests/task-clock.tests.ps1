@@ -127,6 +127,18 @@ $dvPc = { param($dvKind) @((& $py -X utf8 $P precheck DV9 --dir $dvRepo --spec (
 "retries = 5`nlane_host = lane" | Set-Content "$dvRepo/app.cfg"; Save-GitRepo $dvRepo 'chore: more retries'; $dvChg = & $dvPc @('--kind', 'dev-env'); $dvPlain = & $dvPc @()
 $null = & $py -X utf8 $P precheck DV9 --kind staging 2>&1; $dvBadKind = $LASTEXITCODE
 Expect "precheck --kind dev-env: a new key passes DEFAULTS, a changed value fails it, no kind runs no DEFAULTS, an unknown kind exits 2 ($($dvNew -join ',') | $($dvChg -join ',') | $($dvPlain -join ',') | $dvBadKind)" ('DEFAULTS' -notin $dvNew -and 'LOOP' -in $dvNew -and 'DEFAULTS' -in $dvChg -and 'DEFAULTS' -notin $dvPlain -and 'LOOP' -in $dvPlain -and $dvBadKind -eq 2)
+# a /buildy area of kind dev-env: devy is told its kind, the merge passes the docs gate as 'dev-env <area>' (DEFAULTS runs), the track
+# step registers -OnMerged closed, the report says exempt; a plain area: none of these
+$dvJs = @'
+const pass = { status: 'PASS', failing: [] }, logs = []
+const { calls, agent } = _mock((p, o) => /^build:/.test(o.label) ? _rep(pass) : /^ship:/.test(o.label) ? _rep(pass, _merged(1)) : /^review:/.test(o.label) ? { findings: [] } : undefined, '[]')
+const o = await run({ brief: 'C:/b/w.md', mandate: ['m'], ..._kl, agents: [{ id: 'D1', items: 'A1', kind: 'dev-env' }, { id: 'D2', items: 'A2' }] }, agent, (m) => logs.push(m), _n, pipeline)
+const P = (l) => (calls.find((c) => c.label === l) || {}).prompt || ''
+console.log(`dv-ship:${/merge <wt> <iid> --no-docs 'dev-env D1'/.test(P('ship:D1')) && !/--no-docs/.test(P('ship:D2')) && /kind: dev-env\)/.test(P('build:D1'))}`)
+console.log(`dv-track:${/track add -Discover -Mrs '[^']+' -OnMerged closed/.test(P('track:D1')) && /track add -Discover/.test(P('track:D2')) && !/-OnMerged/.test(P('track:D2'))}`)
+console.log(`dv-report:${o.testerGuides.some((g) => g.agent === 'D1' && g.docsExempt) && o.testerGuides.some((g) => g.agent === 'D2' && !g.docsExempt) && !logs.some((l) => /^D1: no human testing doc/.test(l))}`)
+'@
+Expect-Each (Invoke-Js dv-buildy $dvJs (Join-Path $src 'workflows/buildy.js')) 'buildy kind dev-env: # (merge --no-docs dev-env, track -OnMerged closed, no human doc asked)' 'dv-ship', 'dv-track', 'dv-report' -Show 6
 # usage limit (owner 2026-11-26): two agents of two runs hit one weekly limit -> ONE ACT naming it, its reset, the models and runs; an older one (4 h) none
 $ulT = Join-Path (Kd) 'txul'
 foreach ($ul in @('wf_ul1', 'claude-m-a', 0), @('wf_ul2', 'claude-m-b', 0), @('wf_ul3', 'claude-m-c', 240)) {

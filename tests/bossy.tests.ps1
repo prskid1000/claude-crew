@@ -63,7 +63,7 @@ Expect "board join: a ':' in the agent name -> a file-safe session ($sc); launch
 $lv = pwsh @np $O board leave -Session no-such-s -Handoff x.md | Out-String; $lvc = $LASTEXITCODE
 $null = pwsh -NoProfile -Command "& '$O' board join -Agent IA -Items A1,B2"; $fl = pwsh @np $O board leave -Agent IA -Force; $rf = (Get-ChildItem $bd -Filter 'IA-*')[0]
 (Get-Content $rf -Raw) -replace '"beat": "2', '"beat": "1' | Set-Content $rf; $fz = pwsh @np $O board leave -Agent IA -Force; $ir = Get-Content $rf -Raw | ConvertFrom-Json
-Expect 'board leave: unknown session exits 1; -Force spares a live row, leaves a quiet one; -Items A1,B2 kept' ("$lvc $lv|$fl|$fz|$($ir.status) $($ir.items)" -match '(?s)^1 [^|]*unknown[^|]*\|[^|]*unknown[^|]*\|.*left \(IA-.*\|left A1,B2$')
+Expect 'board leave: unknown session exits 1; -Force spares a live row, leaves a quiet one; -Items A1,B2 kept' ("$lvc $lv|$fl|$fz|$($ir.status) $($ir.items)" -match '(?s)^1 [^|]*unknown[^|]*\|[^|]*: kept[^|]*\|.*left \(IA-.*\|left A1,B2$')
 $null = & $self buildy.js wave-x '{"brief":"C:/b/wave-y.md","agents":[{"id":"Y1","items":"B1"}]}'
 # the holder is the test runner's first non-shell ancestor (claude.exe under the PowerShell tool: alive = a live run, not listed)
 foreach ($wx in Get-ChildItem $ld -Filter 'self-buildy-wave-x-*.json') { $wr = Read-Json $wx.FullName; $wr.holderPid = $null; & $J $wr $wx.FullName }

@@ -56,7 +56,8 @@ Non-negotiables:
    (<= 12 chars: `ask-prompts`; render refuses `area-<AREA>-<n>`; none: from `area`). Each area's `paths`: repo-relative globs
    (`wt commit`, `devtools.py mr / merge` refuse other files): the full file set the fix touches, from the impact check
    (mappers, DTOs, serializers, unit tests, api-tests); a test- or spec-only area gets only its test / spec globs; an area
-   with no human-facing change (its consumers show it) gets `kind: foundation` (no human testing doc of its own).
+   with no human-facing change (its consumers show it) gets `kind: foundation` (no human testing doc of its own);
+   one that only serves the dev env (every default unchanged): `kind: dev-env` (crafty ship.md "Dev-env change").
 4. **Contracts** (`<brief>.contracts.md`): per crossing field or endpoint: name, type, producer area, consumers, merge and deploy
    order, backward-compatible or not.
 5. `## openQuestions` (one per line: question, what it blocks, who answers: rechy / owner); empty -> "none".
