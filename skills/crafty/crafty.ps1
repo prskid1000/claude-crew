@@ -16,10 +16,11 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
  checkpoint -Agent <id> [-Run <run>] -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (bossy.ps1 pause / resume)
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
+ local claude|desktop|code|codex|status [-Model] [-Print]  a client on the local model server
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L25 init · L34 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L2041 dir · L2051 checkpoint ·
-  L2091 prior · L2130 tracker · L2152 task spec · L2358 scope · L2406 host
+Sections: L26 init · L33 wt · L294 stack · L393 gate · L709 check · L1038 pipes · L1103 guard · L2040 dir · L2050 checkpoint ·
+  L2090 prior · L2129 tracker · L2151 task spec · L2357 scope · L2405 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -29,8 +30,6 @@ $__rest = @($args | Select-Object -Skip 1)
 function Lock-Gate($m) { try { $m.WaitOne([TimeSpan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $true } }
 . (Join-Path $PSScriptRoot 'lib.ps1')
 $script:TscNoOutput = [string]$script:KitVocab.tscNoOutput   # unset: no typecheck command
-# e2e test runners: kit.local.json tests.runners, else vocab.json testRunners [{ name, deps, files, cmd, wholeSuiteRx, specGlobs, ignore }]
-function Get-KitTestRunners { $r = Get-KitSetting 'tests.runners' $null; @($(if ($r) { $r } else { $script:KitVocab.testRunners }) | Where-Object { $_ }) }
 # ---- wt: a worktree per agent; deps linked, never installed
 function Invoke-Wt {
 param(
@@ -2442,6 +2441,7 @@ if ($MyInvocation.InvocationName -ne '.') {   # dot-sourced: functions only
     'host' { Invoke-KitVerb Invoke-Host $__rest }
     'scope' { Invoke-KitVerb Invoke-Scope $__rest }
     'runtime' { Invoke-KitVerb Invoke-Runtime $__rest }
+    'local' { Invoke-KitVerb Invoke-Local $__rest }
     default { Get-Content $PSCommandPath -TotalCount 18 | Select-Object -Skip 1; exit $(if ($__verb -in '-h', '--help', 'help', '-?') { 0 } else { 2 }) }
   }
 }

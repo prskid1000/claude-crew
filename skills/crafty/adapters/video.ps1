@@ -4,13 +4,13 @@ skills/pokey/video.py (fetch, index, read-chunk, frames, write-vision, status: i
   & <kit>/skills/pokey/pokey.ps1 evidence <verb> [args]     -> python video.py <verb> [args] (exit code passed on)
   & <kit>/skills/pokey/pokey.ps1 evidence stt <key> [-WaitMinutes 30] [-Agent a] [-Refresh]   (video.py index calls it) the
       transcribe stage under the `local-stt` lease (one job) and the memory gate (media.stt.ramGB, kind local-ai); JSON
-  Use-KitLocalAi -Name local-stt [-Agent] [-Session] [-WaitMinutes 30]   -> $true held · $false timed out (waiting)
+  Use-KitLocalAi -Name local-stt [-Agent] [-Session] [-WaitMinutes 30] [-Max <n>]   -> $true held · $false timed out (waiting)
   Remove-KitLocalAi -Name <n> · Get-KitLocalAiState -Name <n>   -> { leases, waiting } (dead pids pruned)
 Inputs: kit.local.json media.stt (maxConcurrent 1, ramGB, baseUrl). State: <runtime>/cache/media/_leases/<name>.json; a lease
 belongs to the job process (pid + start time): a killed job frees it at once. Loaded by lib.ps1 (adapters/*.ps1): bossy.ps1
 supervise gets Get-KitSuperviseGuardLocalAi ("waiting for local AI").
 Exit codes: 0 ok · 1 problem (video.py's) · 2 usage.
-Sections: L16 lease · L66 stt · L85 verb
+Sections: L16 lease · L71 stt · L90 verb
 #>
 #Requires -Version 7
 # ---- lease: local-stt, one job at a time per server, bound to the job's process
@@ -30,8 +30,8 @@ function Update-KitLocalAi([string]$Name, [scriptblock]$Change) {
   $r = Invoke-KitLocked $f { $st = Get-KitLocalAiState $Name; $r = & $Change $st; Write-KitAtomic $f ($st | ConvertTo-Json -Depth 5); $r }
   foreach ($d in @($script:KitAiDropped)) { Write-KitLeaseLog release local-ai $Name $d 'holder process ended' }; $script:KitAiDropped = @(); $r
 }
-function Use-KitLocalAi([string]$Name, [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session = '', [double]$WaitMinutes = 30) {
-  $max = [math]::Max(1, [int](Get-KitSetting 'media.stt.maxConcurrent' 1))
+function Use-KitLocalAi([string]$Name, [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session = '', [double]$WaitMinutes = 30, [int]$Max = 0) {
+  $max = if ($Max -gt 0) { $Max } else { [math]::Max(1, [int](Get-KitSetting 'media.stt.maxConcurrent' 1)) }   # -Max: local-model.ps1 seats
   $me = @{ agent = $Agent; session = $Session; pid = $PID; pidStart = (Get-KitPidStart $PID); at = (Get-KitStamp) }
   $end = (Get-Date).AddMinutes($WaitMinutes); $said = $false
   while ($true) {
@@ -51,16 +51,21 @@ function Remove-KitLocalAi([string]$Name) {
   foreach ($g in @($gone)) { Write-KitLeaseLog release local-ai $Name $g }
 }
 
-# bossy.ps1 supervise: who holds the local STT server, who waits (a wait is fine: the server is busy or RAM is short)
+# bossy.ps1 supervise: who holds the local STT server or a local model seat, who waits (a wait is fine: the server is busy or RAM is short)
 function Get-KitSuperviseGuardLocalAi([switch]$AutoFix) {
-  $n = 'local-stt'; $f = Get-KitLocalAiFile $n; if (-not (Test-Path $f)) { return }
-  $st = Get-KitLocalAiState $n
-  if ($AutoFix -and @($script:KitAiDropped).Count) { $null = Update-KitLocalAi $n { } }   # writes out (and logs) the leases of ended jobs
-  if (-not ($st.leases.Count + $st.waiting.Count)) { return }
-  $now = Get-Date
-  "${n}: $(if ($st.leases.Count) { ($st.leases | ForEach-Object { "$($_.agent) $([int]($now - [datetime]$_.at).TotalMinutes) min" }) -join ', ' } else { 'free' })$(if ($st.waiting.Count) { "; $($st.waiting.Count) waiting for local AI" })"
-  $longMin = Get-KitParam 'media.stt.longWaitMinutes'; $long = @($st.waiting | Where-Object { ($now - [datetime]$_.at).TotalMinutes -ge $longMin })
-  if ($long.Count) { [pscustomobject]@{ level = 'WATCH'; what = "waiting for local AI: $n ($(@($long.agent) -join ', ') $longMin+ min)"; action = 'Normal while the server or RAM is busy; the job degrades (index without transcript) at its wait limit.' } }
+  foreach ($n in 'local-stt', 'local-model') {
+    $seats = if ($n -eq 'local-model' -and (Get-Command Get-KitLocalModelSeats -ErrorAction SilentlyContinue)) { Get-KitLocalModelSeats }   # null: mode cloud, no seat
+    $f = Get-KitLocalAiFile $n; if (-not (Test-Path $f) -and -not $seats) { continue }
+    $st = Get-KitLocalAiState $n
+    if ($AutoFix -and @($script:KitAiDropped).Count) { $null = Update-KitLocalAi $n { } }   # writes out (and logs) the leases of ended jobs
+    $tag = if ($seats) { "$n (mode $($seats.mode), $($st.leases.Count)/$($seats.max) seats)" } else { $n }
+    if (-not ($st.leases.Count + $st.waiting.Count)) { if ($seats) { "${tag}: free" }; continue }
+    $now = Get-Date
+    "${tag}: $(if ($st.leases.Count) { ($st.leases | ForEach-Object { "$($_.agent) $([int]($now - [datetime]$_.at).TotalMinutes) min" }) -join ', ' } else { 'free' })$(if ($st.waiting.Count) { "; $($st.waiting.Count) waiting for local AI" })"
+    if ($n -ne 'local-stt') { continue }   # a local-model start waits at most models.local.queueMinutes
+    $longMin = Get-KitParam 'media.stt.longWaitMinutes'; $long = @($st.waiting | Where-Object { ($now - [datetime]$_.at).TotalMinutes -ge $longMin })
+    if ($long.Count) { [pscustomobject]@{ level = 'WATCH'; what = "waiting for local AI: $n ($(@($long.agent) -join ', ') $longMin+ min)"; action = 'Normal while the server or RAM is busy; the job degrades (index without transcript) at its wait limit.' } }
+  }
 }
 
 # ---- stt: the transcribe stage under the lease and the memory gate; a wait past the limit degrades (JSON on the last line)

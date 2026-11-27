@@ -3,8 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L411 context · L775 waste (owner 2026-11-23 · L845 split · L919 budget · L1005 handoffs · L1017 limits ·
-  L1036 workflow config · L1061 dead runs
+Sections: L10 usage · L411 context · L775 waste (owner 2026-11-23 · L845 split · L919 budget · L1006 handoffs · L1018 limits ·
+  L1037 workflow config · L1062 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -925,10 +925,11 @@ function Get-KitInstrCap([double]$Window) {
   $st = [double](Get-KitSetting 'budget.instructions.start' $ei.start); $cap = [math]::Max($cap, $st + [double](Get-KitSetting 'budget.instructions.skillAlways' $ei.skillAlways))   # a small window still holds the kit start + one skill
   [pscustomobject]@{ start = [int]$st; cap = [int]$cap; watch = [int][math]::Max($st, $cap * [double](Get-KitSetting 'budget.instructions.watchAt' $ei.watchAt)) }   # never under the kit start (a 32k window)
 }
-# the agent tool this runs under: a model id's prefix, KIT_TOOL, then the tool's own env vars
+# the agent tool this runs under: local mode (crafty.ps1 local: the server answers claude-* ids too), a model id's prefix,
+# KIT_TOOL, then the tool's own env vars
 function Get-KitTool([string]$Model = '') {
   $envs = @(Get-ChildItem env: | ForEach-Object Name)
-  if ($Model -match '^local/') { 'local' } elseif ($Model -match '^(claude|fable|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
+  if ($Model -match '^local/' -or $env:KIT_MODEL_MODE -eq 'local') { 'local' } elseif ($Model -match '^(claude|fable|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
   elseif ($Model -match '^gemini') { 'antigravity' } elseif ($v = $env:KIT_TOOL) { $v } elseif ($env:CLAUDECODE) { 'claude' }
   elseif ($envs -like 'CODEX_*') { 'codex' } elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' } else { 'unknown' }
 }

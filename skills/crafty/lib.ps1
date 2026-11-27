@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L96 state · L177 config · L266 OS · L479 leases · L922 status · L1136 tracker · L1465 prior ·
-  L1484 ask bugs · L1669 deploy words · L1713 git-host · L1901 kitlog · L2012 params · L2317 entry-scripts
+  L1484 ask bugs · L1669 deploy words · L1713 git-host · L1901 kitlog · L2013 params · L2318 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1987,6 +1987,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {
     $t = "$($Tokens[$i])"
+    if ($t -eq '--') { $i++; while ($i -lt $Tokens.Count) { $pos.Add($Tokens[$i]); $i++ }; break }   # the rest: a client's own args
     if ($t -in '--help', '-?' -or ($t -in '-h', '-help' -and -not @($own | Where-Object { $_ -ieq $t.TrimStart('-') }).Count)) { & $help }
     if ($t -match '^--\w') { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): unknown option $t (parameters take one dash; --help prints the usage)"); exit 2 }
     if ($t -match '^-([A-Za-z][\w-]*)(?::(.*))?$') {

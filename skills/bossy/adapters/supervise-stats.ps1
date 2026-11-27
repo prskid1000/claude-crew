@@ -7,8 +7,8 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages); the PARITY next batch flag.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L735 flags · L956 bands ·
-  L1126 shells · L1197 reset · L1251 parity · L1263 faults
+Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L737 flags · L958 bands ·
+  L1128 shells · L1199 reset · L1253 parity · L1265 faults
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -548,10 +548,12 @@ function Format-KitMachineTop($Gs, $Nw, $MemPct, $MemFree, $TotalGB, [double]$Fl
   $fr0 = [math]::Min([double]$TotalGB, [double]$MemFree); $fa = [math]::Max(0.0, $fr0 - $Floor); $pr = [math]::Min($fa, [double]$Gs.ram); $fm = { param($v) if ($null -eq $v) { '—' } else { & $n1 $v } }
   $ramBar = if ($TotalGB -and $null -ne $MemFree) { Format-KitStackBar @(@{ v = $TotalGB - $fr0; l = 'used'; c = 'sk-u' }, @{ v = $pr; l = 'promised to builds'; c = 'sk-p' }, @{ v = $fa - $pr; l = 'free above the floor'; c = 'sk-f' }, @{ v = [math]::Min($fr0, $Floor); l = 'floor (kept free)'; c = 'sk-r' }) $TotalGB "RAM of $(& $n1 $TotalGB) GB" }
   $gq = if ($Gs) { [int]$Gs.queued } else { [int]$Nw.gq }; $gw = if ($Gs) { [double]$Gs.waitMax } else { [double]$Nw.gw }
+  $lms = if (Get-Command Get-KitLocalModelSeats -ErrorAction SilentlyContinue) { try { Get-KitLocalModelSeats } catch { $null } }   # crafty adapters/local-model.ps1; null: mode cloud, no seat
   $tiles = @(@{ v = (& $fm $MemPct); u = '%'; l = 'RAM used'; t = $(if ($MemPct -ge 90) { 'act' } elseif ($MemPct -ge 75) { 'watch' }) },
     @{ v = $(if ($Gs) { [int]$Gs.running } else { & $fm $Nw.gr }); l = 'builds running' }, @{ v = $gq; l = 'builds queued'; t = $(if ($gq -ge 6) { 'watch' }) },
     $(if ($Gs) { @{ v = [int]$Gs.today; l = 'builds today' } }), @{ v = (& $n1 $gw); u = ' min'; l = 'longest gate wait'; t = $(if ($gw -ge 30) { 'act' }) },
-    $(if ($null -ne $Nw.seatsMax) { @{ v = "$(& $fm $Nw.seats) / $(& $fm $Nw.seatsMax)"; l = 'QA seats' } }), $(if ($Gs.lanes) { @{ v = "$($Gs.leased) / $($Gs.lanes)"; l = 'phone lanes leased' } }),
+    $(if ($null -ne $Nw.seatsMax) { @{ v = "$(& $fm $Nw.seats) / $(& $fm $Nw.seatsMax)"; l = 'QA seats' } }),
+    $(if ($lms) { @{ v = "$($lms.used) / $($lms.max)"; l = "local model seats · $($lms.mode)"; t = $(if ($lms.used -ge $lms.max) { 'watch' }); tip = "local model seats: clients on the local model server now (crafty.ps1 local, lease local-model) of models.local.maxConcurrent $($lms.max); mode $($lms.mode) (models.mode; KIT_MODEL_MODE in a session crafty.ps1 local started)$(if ($lms.holders.Count) { ': ' + ($lms.holders -join ', ') })" } }), $(if ($Gs.lanes) { @{ v = "$($Gs.leased) / $($Gs.lanes)"; l = 'phone lanes leased' } }),
     $(if ($Gs.emulators) { @{ v = $Gs.emulators; l = 'emulators running' } }), $(if ($Gs.browsers) { @{ v = $Gs.browsers; l = "test browsers · $(& $n1 $Gs.browserGB) GB" } }))
   # owner 2026-11-27 (the row fills the width): agents live vs supervise.manyAgents, lane services up, CPU now / 24 h peak, disk written
   # today; from the caller's report ($j, $st: dynamic scope), each tile's source in its tooltip

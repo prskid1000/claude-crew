@@ -590,7 +590,7 @@ def read_rows(k, sizes):
     return rows
 # token budgets (UTF-8 bytes / 4), README "Extending"; skill = its always-part (budget.instructions.skillAlways): the rest in references
 BUDGETS = {'always': 3500, 'skill': 3000, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 9975, 'tests': 9000}   # config +5% (retro 1549: 3-6 lint rounds per new key)
+  'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 10075, 'tests': 9000}   # config +5% (retro 1549: 3-6 lint rounds per new key), +100 models.mode / models.local (2026-11-27)
 
 def budget_type(f):
     """The BUDGETS key of a tracked kit file (relative, /), None = no per-file cap (CLAUDE.md, AGENTS.md: the 'always' cap)."""

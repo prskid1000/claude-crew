@@ -290,6 +290,10 @@
         "codex": "port: the SessionStart hook runs the same health (hookSpecificOutput.additionalContext); fallback: AGENTS.md 'Crew and routing' has the main session Read ROUTER.md when it is not in context; a sub-agent firing SessionStart is unverified (if it does, it holds the router too: same outcome, no saving)",
         "antigravity": "port: SessionStart health injects it as a system message (injectSteps: agy has no model-only channel, the owner sees it); fallback: AGENTS.md 'Crew and routing' Read rule; sub-agent firing unverified"
       },
+      "local model launcher (crafty.ps1 local: a client on a local server, its env from models.local, seats, RAM and forbidden-model checks)": {
+        "codex": "port: crafty.ps1 local codex starts Codex on the server (-c model_providers.local.{base_url, wire_api, env_key, stream_idle_timeout_ms}, model_provider=local; headless: codex exec --output-schema); the same verb runs from a Codex shell",
+        "antigravity": "gap: no such feature: https://antigravity.google/docs/settings/ (read 2026-11-27) the app, CLI and IDE add custom models only over the Gemini API (customModelsConfig, modelName gemini-api://<base_url>/models/<model>, modelProvider gemini + GEMINI_API_KEY), not an OpenAI or Anthropic endpoint; only the Python SDK has LocalOpenAIAgentConfig(base_url) (https://antigravity.google/docs/sdk/local-models/), which the kit's agy port does not run. Closes when the local server answers the Gemini API (then local antigravity writes customModelsConfig) or the port runs on the SDK"
+      },
       "context plan (kit instructions 30k / 50k, slices, kit scripts run not read, a kit worktree's CLAUDE.md never loaded twice)": {
         "codex": "port: usage.ps1 reads its rollouts into the same slices and flags; the kit-script Read rule runs in guard_client.mjs; AGENTS.md loads once at session start, so no claudeMdExcludes is needed",
         "antigravity": "port: usage.ps1 reads transcript.jsonl into the same slices and flags; the kit-script Read rule runs on view_file; AGENTS.md loads once at session start, so no claudeMdExcludes is needed"

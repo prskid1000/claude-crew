@@ -3,10 +3,12 @@
 # stack-presets: crafty.ps1 stack presets: core (Maven, Gradle, Angular, Node, Python) and presets (Android Gradle, .NET (SDK and
 # legacy MSBuild), Go, Rust, CMake, Make). crafty.ps1 stack calls each 'detect' in turn, core first, until one names the stack:
 # $a.dir, $a.commands (filled), $a.deps -> the stack name. A local adapters/*.local.ps1 registers more the same way.
-# Sections: L7 core · L97 presets
+# Sections: L7 core · L99 presets
 # ---- core: Maven, Gradle (not Android), Angular, Node and Python; always tried first (stack.presets filters the others). Runs inside
 # crafty.ps1 stack: its helpers (Wrapper, Has, ReadText, Get-NodeTools, Get-NodePm, NodeRun, TsProject, NodeSpecCmd) resolve there.
 # $a.deps <- the dependency folders wt lease links.
+# e2e test runners (crafty.ps1 stack, check, wt commit): kit.local.json tests.runners, else vocab.json testRunners [{ name, deps, files, cmd, wholeSuiteRx, specGlobs, ignore }]
+function Get-KitTestRunners { $r = Get-KitSetting 'tests.runners' $null; @($(if ($r) { $r } else { $script:KitVocab.testRunners }) | Where-Object { $_ }) }
 Register-KitAdapter 'stack' 'core' @{ 'detect' = { param($a)
   $d = $a.dir; $c = $a.commands; $s = $null
   if (Test-Path (Join-Path $d 'pom.xml')) {

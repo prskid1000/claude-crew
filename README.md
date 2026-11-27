@@ -122,7 +122,8 @@ One rule (`lib.ps1` `Update-KitLease`, lint LEASE-HOLDER) for env services, brow
 only owner holds (`envy.ps1 up -Owner`, phone `manual`) keep minutes, with a reminder.
 Worktree slots (`crafty.ps1 wt lease / release / pool`): a fixed pool per repo (`pool.size`), created lazily, never deleted; a
 released slot keeps its build caches and goes detached, a fair queue when all are leased. Names: "Worktrees and lanes".
-The local STT server (`local-stt`; `skills/pokey/media.md`): one job at a time, bound to the job's process, its RAM through the memory gate.
+Local AI, held by a process: `local-stt` (`skills/pokey/media.md`) one job, RAM via the memory gate; `local-model`
+(`crafty.ps1 local`) `models.local.maxConcurrent` seats.
 GPU (`gpu.exclusive.<kind>`, `lib.ps1` `Use-KitGpu`): one kind at a time (e.g. lane emulators), others wait (`waiting for GPU:
 held by <holder>`); `processes` (regex) hold it; `idleExcept` (the kind's own backend): also waits on any other nvidia-smi process,
 or over `idleMaxMB` (512) with its backend down; `minFreeMB` (caller's, lanes 2048; 0 off): waits while `memory.free` is lower,
@@ -214,6 +215,7 @@ fallbacks: `skills/crafty/parity.json` `harness`; `kitbag.py parity`, lint PARIT
 | heartbeat cron (CronList) | fallback: bossy.ps1 heartbeat (OS timer) | fallback: schedule |
 | blocking owner questions | fallback: request_user_input in Plan mode, else bossy.ps1 decide ask (blocking) | fallback: ask_question when listed, else bossy.ps1 decide ask |
 | run journals (Runs band, stuck checks, recover) | fallback: the .codex/workflows procedure journals each step (kitbag.py port --journal) into <runtime>/work/port-runs/codex/ | port: run_workflow journal in <runtime>/work/port-runs/ |
+| local model launcher (crafty.ps1 local: a client on a local server, its env from models.local, seats, RAM and forbidden-model checks) | port: crafty.ps1 local codex starts Codex on the server (-c model_providers.local.{base_url, wire_api, env_key, stream_idle_timeout_ms}, model_provider=local; headless: codex exec --output-schema); the same verb runs from a Codex shell | gap: no such feature: https://antigravity.google/docs/settings/ (read 2026-11-27) the app, CLI and IDE add custom models only over the Gemini API (customModelsConfig, modelName gemini-api://<base_url>/models/<model>, modelProvider gemini + GEMINI_API_KEY), not an OpenAI or Anthropic endpoint; only the Python SDK has LocalOpenAIAgentConfig(base_url) (https://antigravity.google/docs/sdk/local-models/), which the kit's agy port does not run. Closes when the local server answers the Gemini API (then local antigravity writes customModelsConfig) or the port runs on the SDK |
 <!-- kit-graph:end -->
 
 ## Using it
@@ -311,7 +313,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "briefSeconds": 40,… | heartbeat: ramActPct, ramCleanupPct (85: RAM % to clean), minDiskFreeGB, ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent = STUCK / a shell with no CPU, IO, output = STALLED; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: section cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: profiles kept; worktreeDays (7): idle days before a clean worktree with a gone upstream goes; idleDaemons: idle build daemons to stop [{process, match, label, busyKinds}] |
-| `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger) |
+| `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger); mode cloud / local / mixed; local: crafty.ps1 local (token env:&lt;VAR&gt; / secret:&lt;name&gt;; wireApi, commands, env) |
 | `localOnly`, `orgTerms` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words pre-push blocks |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example only (setup -WriteLocal) |
 | `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (envy reference.md); baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
@@ -423,7 +425,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 9975 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
+always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 10075 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: in `tests/`, shared setup in `tests/harness.ps1`; a case name
@@ -567,6 +569,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_guard_scripts_ps1["guard-scripts.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_ps1["liquibase.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_liquibase_py["liquibase.py"]
+  skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_local_model_ps1["local-model.ps1"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_module_audit_py["module_audit.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_precheck_py["precheck.py"]
   skills_crafty_SKILL_md -->|"loaded by lib.ps1 / devtools.py; a vendor one…"| skills_crafty_adapters_process_gates_ps1["process-gates.ps1"]
