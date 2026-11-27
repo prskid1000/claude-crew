@@ -16,7 +16,7 @@ An item ticks only when done: its MRs merged, no open fix-round MR naming it, no
 an area not delivered); else unticked with ' · <reason>'; checklists are pruned of stale kit lines and repeats.
 Every subtask closed: the rollup closes the parent, one comment links the subtasks; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
-Sections: L24 triage · L73 render · L152 rollup · L257 items · L311 close
+Sections: L24 triage · L73 render · L152 rollup · L258 items · L312 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
 #>
 #Requires -Version 7
@@ -173,7 +173,7 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   if (-not $Force -and $fresh -and $ro.localSig -eq $sig0) { return }   # open or closed: the tracker read once per rollupMinutes
   $stamp = { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.readAt = (Get-KitStamp); $x.rollup.localSig = $sig0 } }   # a failed or empty read waits too
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { & $stamp; return "ROLLUP ${Parent}: tracker read failed, nothing written" }
-  if (Sync-TrackerParent -ParentId $Parent -Reopen) { Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent }   # status follows the open subtasks (both ways; a closed parent with an open subtask reopens)
+  if (Sync-TrackerParent -ParentId $Parent -Reopen:([bool]$ro.closedByRollup)) { Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent }   # status follows the open subtasks (both ways; reopens only a parent the rollup closed)
   if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) {   # still closed: final, but a subtask closed after it still ticks its Items line
       & $stamp; $co = @{}; foreach ($a in @((ConvertTo-KitTriage $ro.triage).agents)) { if ($a.task) { $co["$($a.task)"] = "$($a.area)" } }
       $pio = try { Update-KitParentItems $Parent $pt $co } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { return "ROLLUP ${Parent}: $pio" }; return } }
@@ -242,13 +242,14 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   if ($n -and -not @($kit | Where-Object { -not $_.merged }).Count) { $due['merged'] = "All $n subtasks merged: delivery status in the description." }
   foreach ($en in @($kit | ForEach-Object { @($_.envs) } | Select-Object -Unique)) { if (-not @($kit | Where-Object { @($_.envs) -notcontains $en }).Count) { $due["deployed:$en"] = "All $n subtasks deployed to ${en}: delivery status in the description." } }
   if ($n -and -not @($kit | Where-Object { -not $_.closed }).Count) { $due['closed'] = "All $n subtasks closed." }
-  if ($pc.comment) { $due.Remove('closed'); if ($ms -notcontains 'parent-closed') { $due['parent-closed'] = $pc.comment }; $ms = @(@($ms) + 'closed' | Select-Object -Unique) }   # one comment for the close
+  if ($pc.comment) { $due.Remove('closed'); if ($ms -notcontains 'parent-closed') { $due['parent-closed'] = $pc.comment } }   # one comment for the close
   foreach ($k in @($due.Keys | Where-Object { $ms -notcontains $_ })) { try { $null = Add-TrackerComment $Parent $due[$k]; $ms += $k; $did.Add("milestone $k") } catch { $did.Add("milestone $k FAILED: $("$_".Split("`n")[0])") } }
   $subIds = @($subs.id)
   Update-KitTaskIndex $Parent { param($x)
     if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }
     $x.rollup.subtasks = $subIds; $x.rollup.mrs = $mc; $x.rollup.sections = $sec; $x.rollup.milestones = @($ms); $x.rollup.readAt = (Get-KitStamp)
-    foreach ($ok in 'closeAsk', 'closeActed') { $x.rollup.Remove($ok) }; $x.rollup.parentClosed = $pc.note -eq 'parent closed' }
+    foreach ($ok in 'closeAsk', 'closeActed') { $x.rollup.Remove($ok) }; $x.rollup.closedByRollup = [bool]$pc.byRollup
+    $x.rollup.parentClosed = $pc.note -eq 'parent closed' -and (-not $pc.comment -or $ms -contains 'parent-closed') }   # a failed close comment: posted next run
   $sig1 = Get-KitRollupLocalSig (Read-KitState (Get-KitTaskFile $Parent)).rollup $subIds $trk
   Update-KitTaskIndex $Parent { param($x) $x.rollup.localSig = $sig1 }
   if ($did.Count) { "ROLLUP ${Parent}: $($did -join ' · ')" }
@@ -311,13 +312,13 @@ function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
 # ---- close: every subtask in the tracker's closed status -> the rollup closes the parent; one comment links the subtasks
 # (owner 2026-11-27: "you can close it, it's fine, no need for my word"; a task without subtasks never gets here). A person reopened it: no re-close until a subtask reopens
 function Update-KitParentClose([string]$Parent, $Pt, $Rows, $Ro) {
-  if (Test-TrackerStatus "$($Pt.status)" 'closed') { return @{ note = 'parent closed' } }
+  $txt = { (@("All $($Rows.Count) subtasks closed: parent closed.") + @($Rows | ForEach-Object { $nm = ConvertTo-KitOneLine "$($_.name)"; "- $(if ($_.url) { "[$nm]($($_.url))" } else { "$nm ($($_.id))" })" })) -join "`n" }
+  if (Test-TrackerStatus "$($Pt.status)" 'closed') { return $(if ($Ro.closedByRollup) { @{ note = 'parent closed'; byRollup = $true; comment = (& $txt) } } else { @{ note = 'parent closed' } }) }   # its comment: once (milestone parent-closed)
   if (-not $Rows.Count -or @($Rows | Where-Object { -not $_.closed }).Count) { if ($Ro.closeHold) { Update-KitTaskIndex $Parent { param($y) $y.rollup.closeHold = '' } }; return @{ note = '' } }
   if ($Ro.closeHold) { return @{ note = 'parent reopened: closed again once a subtask reopens and closes' } }
   $sr = try { Set-TrackerStatus $Parent closed } catch { return @{ note = 'parent: close failed, retried next run'; did = "parent close FAILED: $("$_".Split("`n")[0])" } }
   if (@($sr) -like 'SKIPPED*') { return @{ note = 'parent: close skipped, retried next run'; did = "parent close $(@($sr) -like 'SKIPPED*' | Select-Object -First 1)" } }
-  $ls = @($Rows | ForEach-Object { $nm = ConvertTo-KitOneLine "$($_.name)"; "- $(if ($_.url) { "[$nm]($($_.url))" } else { "$nm ($($_.id))" })" })
-  @{ note = 'parent closed'; did = 'parent closed'; comment = (@("All $($Rows.Count) subtasks closed: parent closed.") + $ls) -join "`n" }
+  @{ note = 'parent closed'; did = 'parent closed'; byRollup = $true; comment = (& $txt) }
 }
 
 # ---- verb and hook
