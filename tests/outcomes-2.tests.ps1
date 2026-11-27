@@ -59,6 +59,14 @@ $sdK = & { . $O; $sdS = Get-KitOutcomeStats; $sdT = @($sdS.tasks | Where-Object 
 $sdBud = pwsh @np $O budget -Run solo-sd -Json | ConvertFrom-Json; $sdCx = @(pwsh @np $O usage -Context -Run solo-sd -Json | ConvertFrom-Json); $sdTp = Get-Content (pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json).digest -Raw
 Expect "agents outside a workflow: the row's start = the devy's join, its spend; rounds from the goals doc (r2, a KPI sample); one board run (not a workflow's devy or QA runDir), counted in Runs and runs started; budget -Run; usage -Context -Run; the tidy digest ($sdK)" ("$(@($sdCx.label) -join ',')" -eq 'devy sd' -and
   $sdR.spend -eq 4000 -and ([datetimeoffset]$sdR.startAt).UtcDateTime.ToString('yyyy-MM-ddTHH:mm') -eq '2026-11-20T12:00' -and $sdK -match '^r2\|2\|[1-9]\d*\|solo-sd:build:4000\|1 ended in 7 days\|solo-sd$' -and $sdBud.spent -eq 4000 -and $sdBud.agents -eq 1 -and -not $sdBud.workflow -and $sdTp -match 'solo-sd \(build, 1 agent\(s\), no workflow\) spent 4000')
+# revy 2026-11-27: a workflow run past its launch record's 72 h is still one (usage runs); a run of untyped rows = agents, no throw;
+# the run titles: one naming call for every board run (a cold call per run cost 89 s on 295 runs)
+$sdU0 = Get-Content (Join-Path (TkPath $k cache) 'usage.result.json') -Raw | ConvertFrom-Json -AsHashtable; $sdU0.runs = @(@{ run = 'old-wf'; id = 'wf_old'; ids = @('wf_old') }); & $put cache 'usage.result.json' $sdU0
+$sdC = { param($ag, $ty, $run) & $put board "sd-$ag.json" @{ agent = $ag; type = $ty; session = "sd-$ag"; run = $run; items = 'zz-none'; status = 'left'; joined = (Get-Date).AddHours(-2).ToString('o'); beat = (Get-Date).AddHours(-1).ToString('o'); spend = 10 } }
+& $sdC devy-ow devy old-wf; & $sdC anon '' solo-nt; & $sdC devy-c devy solo-c
+$sdN = & { . $O; $sdOrig = ${function:Invoke-KitNaming}; $global:sdNm = 0; function Invoke-KitNaming { $global:sdNm++; & $sdOrig @args }
+  $br = @(Get-KitBoardRuns ([datetime]::MinValue) -All); "$(@($br | ForEach-Object { "$($_.run):$($_.kind)" }) -join ',')|$global:sdNm" }
+Expect "board runs: an aged-out workflow run (in the usage runs) excluded, an untyped run = agents, titles in one naming call ($sdN)" ("$sdN" -match '^(?!.*old-wf)(?=.*solo-nt:agents)(?=.*solo-c:build).*\|[01]$')
 Get-ChildItem (TkPath $k board) -Filter 'sd-*.json' | Remove-Item; Remove-Item (Join-Path (TkPath $k cache) 'usage.result.json')
 # bossy.ps1 stats reset (owner 2026-11-26: DELETE, no archive): outcomes + clock stream gone, a cutoff for test checks; task files and QA runs kept
 $cd = Join-Path (TkPath $k audit -Create) '2026-11-02'; $null = New-Item -ItemType Directory -Force $cd; '{"at":"2026-11-02T10:00:00Z","phase":"code"}' | Set-Content (Join-Path $cd 'clock.jsonl')

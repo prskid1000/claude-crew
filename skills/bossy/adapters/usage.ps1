@@ -3,8 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L410 context · L774 waste (owner 2026-11-23 · L844 split · L918 budget · L1004 handoffs · L1016 limits ·
-  L1035 workflow config · L1060 dead runs
+Sections: L10 usage · L411 context · L775 waste (owner 2026-11-23 · L845 split · L919 budget · L1005 handoffs · L1017 limits ·
+  L1036 workflow config · L1061 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -135,15 +135,16 @@ function Get-KitBoardRunTopic($Rows) { @(@($Rows | ForEach-Object { "$($_.subjec
 # runs outside a workflow (owner 2026-11-27: Agent-tool spawns joined to the board by run, solo-* / adhoc): one per run name with no
 # launch record, usage workflow run or workflow transcript, active since $Since, live or started after the stats reset (Select-KitUsageSince)
 # -> { run; label; kind; started; at; live; spend; agents; rows = its board rows }
-function Get-KitBoardRuns([datetime]$Since, $U = $null, [switch]$All) {   # -All: before the stats reset too
+function Get-KitBoardRuns([datetime]$Since, $U = $null, [switch]$All, [string]$Run = '', [switch]$NoLabel) {   # -All: before the stats reset too; -NoLabel: no titles (budget, tidy)
   $cutS = if ($All) { [datetime]::MinValue } else { Get-KitStatsCutoff }
   $wf = Get-KitWorkflowRunNames $U
-  $rows = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -and "$($_.run)" -ne 'solo' -and "$($_.type)" -ne 'coordinator' -and $_.joined -and $_.beat -and [datetime]$_.beat -ge $Since -and -not $wf.ContainsKey("$($_.run)") -and "$($_.transcript)" -notmatch '[\\/]workflows[\\/]' })
+  $rows = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -and (-not $Run -or "$($_.run)" -eq $Run) -and "$($_.run)" -ne 'solo' -and "$($_.type)" -ne 'coordinator' -and $_.joined -and $_.beat -and [datetime]$_.beat -ge $Since -and -not $wf.ContainsKey("$($_.run)") -and "$($_.transcript)" -notmatch '[\\/]workflows[\\/]' })
   $kindOf = @{ devy = 'build'; briefy = 'build'; checky = 'test'; kitty = 'kit'; opsy = 'deploy' }
-  foreach ($g in @($rows | Group-Object { "$($_.run)" })) { $ty = @($g.Group | ForEach-Object { "$($_.type)" } | Where-Object { $_ } | Select-Object -Unique)
+  $grp = @($rows | Group-Object { "$($_.run)" }); if (-not $NoLabel) { Register-KitShownNames @(foreach ($g in $grp) { , (Get-KitRunShownRow $g.Name (Get-KitBoardRunTopic $g.Group)) }) }   # one naming call, not one per run
+  foreach ($g in $grp) { $ty = @($g.Group | ForEach-Object { "$($_.type)" } | Where-Object { $_ } | Select-Object -Unique)
     $st0 = @($g.Group | ForEach-Object { [datetime]$_.joined } | Sort-Object)[0]; $lv = [bool]@($g.Group | Where-Object { $_.status -notin 'left', 'crashed' -and (Test-KitHolder $_) -ne $false }).Count
     if (-not $lv -and $st0 -lt $cutS) { continue }
-    [pscustomobject]@{ run = $g.Name; label = (Get-KitRunTitle $g.Name (Get-KitBoardRunTopic $g.Group)); kind = $(if ('devy' -in $ty) { 'build' } elseif ($kindOf[@($ty)[0]]) { $kindOf[@($ty)[0]] } else { 'agents' })
+    [pscustomobject]@{ run = $g.Name; label = $(if (-not $NoLabel) { Get-KitRunTitle $g.Name (Get-KitBoardRunTopic $g.Group) }); kind = $(if ('devy' -in $ty) { 'build' } elseif ($ty.Count -and $kindOf[$ty[0]]) { $kindOf[$ty[0]] } else { 'agents' })
       started = $st0; at = @($g.Group | ForEach-Object { [datetime]$_.beat } | Sort-Object)[-1]; live = $lv
       spend = [long](@($g.Group | ForEach-Object { [double]$_.spend }) | Measure-Object -Sum).Sum; agents = $g.Count; rows = @($g.Group) } }
 }
@@ -152,7 +153,7 @@ function Get-KitBoardRunAgents($BoardRuns, $Agents) { $have = @{}; @($Agents); f
   foreach ($b in @(@($BoardRuns | Where-Object { $_ -and -not $_.live }) | ForEach-Object { $_.rows })) { if ($b -and -not $have.ContainsKey("$($b.run)|$($b.agent)")) {
       [pscustomobject]@{ name = "$($b.agent) ($($b.type))"; area = "$($b.area)"; run = "$($b.run)"; tx = "$($b.transcript)"; started = $b.joined; ended = $b.beat; last = $b.beat; since = $b.beat; state = 'FINISHED' } } } }
 # budget -Run of a run outside a workflow: its board agents' spend, no cap; returns the exit code
-function Write-KitBoardRunBudget([string]$Run, [bool]$Json) { $br = @(Get-KitBoardRuns ([datetime]::MinValue) -All | Where-Object run -eq $Run)[0]; if (-not $br) { "no launch record or board agent for run $Run"; return 1 }
+function Write-KitBoardRunBudget([string]$Run, [bool]$Json) { $br = @(Get-KitBoardRuns ([datetime]::MinValue) -All -Run $Run -NoLabel)[0]; if (-not $br) { "no launch record or board agent for run $Run"; return 1 }
   $o = [ordered]@{ run = $Run; spent = [int]$br.spend; agents = [int]$br.agents; cap = 0; workflow = $false }
   if ($Json) { $o | ConvertTo-Json -Compress } else { "run $Run`: spent $($o.spent) ($($o.agents) board agents, no workflow: no cap)" }; 0 }
 function Get-KitRunTitle([string]$Run, [string]$Subject = '') { $rw = Get-KitRunShownRow $Run $Subject; Get-KitShownName @rw }

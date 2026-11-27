@@ -58,7 +58,7 @@ function Get-KitOutcomeContext {
   $c
 }
 # every name a workflow's board agents join with: launch record run, its transcript folder, its QA runDir (checky rows); usage runs and ids
-function Get-KitWorkflowRunNames($U = $null) { $wf = @{}; $leaf = { param($p) if ("$p") { Split-Path "$p".TrimEnd('\', '/') -Leaf } }
+function Get-KitWorkflowRunNames($U = $null) { if (-not $U -and (Get-Command Read-KitUsageResult -ErrorAction SilentlyContinue)) { $U = Read-KitUsageResult }; $wf = @{}; $leaf = { param($p) if ("$p") { Split-Path "$p".TrimEnd('\', '/') -Leaf } }   # launch records age out (72 h) before board rows: the usage runs keep the rest
   foreach ($l in @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json')) { foreach ($n in @("$($l.run)", (& $leaf $l.wfDir), (& $leaf $l.runDir), (& $leaf $l.args.runDir))) { if ($n) { $wf["$n"] = 1 } } }
   foreach ($r in @($U.runs | Where-Object { $_ })) { foreach ($n in @(@($r.run, $r.id) + @($r.ids))) { if ($n) { $wf["$n"] = 1 } } }; $wf }
 function Get-KitTaskOutcome($Ix, $Ctx) {
@@ -88,7 +88,7 @@ function Update-KitOutcomes([switch]$All) {
   $t0 = Get-Date; $stampFile = Get-KitPath outcomes-sweep -Create
   $stamp = if (-not $All -and (Test-Path -LiteralPath $stampFile)) { try { [datetime](Get-Content -LiteralPath $stampFile -Raw).Trim() } catch { $null } }
   $fresh = { param($n, $f) @(Get-ChildItem -LiteralPath (Get-KitPath $n) -Filter $f -File -ErrorAction SilentlyContinue | Where-Object { -not $stamp -or $_.LastWriteTime -gt $stamp }).Count }
-  if ($stamp -and -not ((& $fresh tasks '*.json') + (& $fresh waves '*.json') + (& $fresh launches 'self-*.json') + (& $fresh board '*.json'))) { Set-Content -LiteralPath $stampFile (Get-KitStamp stored $t0); return 0 }
+  if ($stamp -and -not ((& $fresh tasks '*.json') + (& $fresh waves '*.json') + (& $fresh launches 'self-*.json') + @(Get-ChildItem -LiteralPath (Get-KitPath board) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { -not $stamp -or $_.LastWriteTime -gt $stamp } | Where-Object { (Get-Content -LiteralPath $_.FullName -Raw) -match '"status":\s*"left"' }).Count)) { Set-Content -LiteralPath $stampFile (Get-KitStamp stored $t0); return 0 }
   $ctx = Get-KitOutcomeContext
   $n = Invoke-KitLocked (Get-KitPath outcomes -Create) {   # supervise and tidy prep: one sweep at a time, else duplicate rows
   $prev = @{}; foreach ($r in @(Read-KitOutcomeRows)) { if ($r.task) { $prev["$($r.task)"] = $r } }
@@ -482,7 +482,7 @@ $errs = @($log | Where-Object { $_.stream -eq 'calls' -and ($_.event -eq 'error'
 $bld = & $by builds '^end$'
 $envF = & $by env 'fail'
 $runs = @(Read-KitJsonFiles (Get-KitPath launches) 'self-*.json' | Where-Object { $_.at -and [datetime]$_.at -gt $since } | Sort-Object { [datetime]$_.at })
-$bRuns = @(Get-KitBoardRuns $since -All | Where-Object { $_.started -gt $since } | Sort-Object started)   # runs outside a workflow (usage.ps1)
+$bRuns = @(Get-KitBoardRuns $since -All -NoLabel | Where-Object { $_.started -gt $since } | Sort-Object started)   # runs outside a workflow (usage.ps1)
 $qa = @(Get-ChildItem (Get-KitPath qa-runs) -Directory -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)
 $lp = if ("$(@($steps | Where-Object step -eq 'lint').out)" -match '(\d+) problem') { [int]$Matches[1] } else { 0 }
 $oc = @(if (Get-Command Get-KitOutcomeLines -ErrorAction SilentlyContinue) { Get-KitOutcomeLines })
