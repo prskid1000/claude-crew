@@ -63,8 +63,8 @@ Board and disagreements: AGENTS.md "Crew".
   ships it (`deploy.trigger`).
 - `/testy`: checky lead / test / verify per testing doc; the result rule closes the task, fails it back to dev or files one [Bug].
 - Every task the kit builds: rendered from a spec (`skills/crafty/crafty.ps1` "task spec": description, Items and Decisions checklists, its
-  line on the parent's Items; `tracker create` refuses free text but a QA / watch defect keyed `qa-` / `watch-`, `tracker describe` one that drops a section), the process.docs links before promoted; a parent with every subtask closed closes only on the owner's
-  answer to its one close ask.
+  line on the parent's Items; `tracker create` refuses free text but a QA / watch defect keyed `qa-` / `watch-`, `tracker describe` one that drops a section), the process.docs links before promoted; the rollup closes a parent once every subtask is
+  closed (one comment).
 - **Status roles**: tasks move through fixed roles, never board names: open -> inProgress -> review -> promoted (all MRs merged)
   -> inTest (deployed) -> closed; review -> failedReview (a person or revy rejects) or inProgress (review changes); failedReview,
   failedTesting -> inProgress; inTest (or promoted: undeployed) -> failedTesting; any role -> inProgress on a new code round

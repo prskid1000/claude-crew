@@ -19,7 +19,7 @@ Paths: `kit.example.json` `_paths`; schemas: the Inventory (`kitbag.py state lin
 - `.state/tasks/<id>.json`: `track` (`bossy.ps1 track`: MRs in merge order, mergeAfter, onMerged, done, `removed[]`, `routes[]`), `docs.<kind>` (url,
   key, type: `devtools.py doc --key <id>:<kind>`), `comments.<kind>` (the comment `tracker comment -Kind` edits), `envRuns[]`
   (env, run, code, pass, fail, notTested, doc: `pokey.ps1 finalize`), `cases` (`devtools.py cases`); `rollup` (`task-rollup.ps1`; a parent: sections, milestones,
-  `closeAsk` = its one close-parent decision, `parentClosed`), `itemIds` / `itemsFrom` / `itemsSig` / `itemsFinal` (the Items checklist), `itemsDropped` (`track forget-item`: never written back), `itemsOpenMrs` (open MRs -> ids: a fix round unticks them), `heldNote` (held ids: the parent's line unticked).
+  `parentClosed`, `closeHold`: a person reopened it), `itemIds` / `itemsFrom` / `itemsSig` / `itemsFinal` (the Items checklist), `itemsDropped` (`track forget-item`: never written back), `itemsOpenMrs` (open MRs -> ids: a fix round unticks them), `heldNote` (held ids: the parent's line unticked).
 - `<qa run>/index.json`: `items.<code>` -> tasks, doc, pubKey, pass, fail (`pokey.ps1 finalize`); a build run:
   `work/waves/<run>.json` (`bossy.ps1 report`).
 

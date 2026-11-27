@@ -72,18 +72,18 @@ Expect "rollup: an unchanged second run writes nothing and fetches merged MRs ne
 Expect "rollup: nothing changed locally + inside track.rollupMinutes -> no tracker read ($($res.r3) reads)" ($res.r3 -eq 0 -and -not $res.o3)
 Expect "rollup milestone: all merged posted once; the next run posts nothing ($($res.o4) | $($res.o5))" (@($res.c4).Count -eq 1 -and $res.c4[0] -match '^All 2 subtasks merged: delivery status in the description\.$' -and $res.o4 -match 'milestone merged' -and $res.o5 -match 'no change')
 Expect 'marker splice: only the section between markers changes; a new one goes after its -After section' ($res.splice -eq "x`n<!-- kit:delivery -->`nnew`n<!-- /kit:delivery -->`ny" -and $res.after -eq "<!-- kit:delivery -->`nd`n<!-- /kit:delivery -->`n`n<!-- kit:triage -->`nT`n<!-- /kit:triage -->`n`nowner")
-# close: every subtask closed -> ONE close-parent ask (gate close), closed only on the owner's answer; a reopen re-asks; no subtasks: no ask.
+# close: every subtask closed -> the rollup closes the parent, ONE comment links the subtasks, no decision; a reopened subtask reopens it; no subtasks: untouched.
 # items: a task's own Items list as its checklist, ticked by merged MRs naming an id, all when its MRs are all merged
 $cl = & {
   $env:KIT_TRACKER_TYPE = 'none'; . (Join-Path $k 'skills/bossy/bossy.ps1') 6>$null; $dd = Get-KitPath decisions -Create
   $view = { param($i) __TrA 'view' @{ id = $i } }; $st = { param($i, $s) $null = __TrNone $i 'st' { param($o) $o.status = $s } }
   $p = (__TrA 'create' @{ name = 'Close parent'; description = 'ask' }).id; $a = (__TrA 'create' @{ name = 'Sub a'; parent = $p }).id; $b = (__TrA 'create' @{ name = 'Sub b'; parent = $p }).id
   $solo = (__TrA 'create' @{ name = 'Solo'; description = 'x' }).id; & $st $a closed; & $st $solo closed
-  $r0 = Update-KitParentRollup $p -Force; & $st $b closed; $r1 = Update-KitParentRollup $p -Force; $r2 = Update-KitParentRollup $p -Force
-  $ask = (Read-KitState (Get-KitTaskFile $p)).rollup.closeAsk; $dec = Get-Content (Join-Path $dd "$ask.json") -Raw | ConvertFrom-Json; $n1 = @(Get-ChildItem $dd -Filter '*.json').Count; $s1 = (& $view $p).status
-  $null = Invoke-Decide answer -Id $ask -Answer 'a lot of docs pending' -NoPublish; $null = Update-KitParentRollup $p; $d3 = (& $view $p).description; $r3b = Update-KitParentRollup $p; $act3 = (Read-KitState (Get-KitTaskFile $p)).rollup.closeActed
-  & $st $b 'in progress'; $null = Update-KitParentRollup $p -Force; & $st $b closed; $r5 = Update-KitParentRollup $p -Force; $ask2 = (Read-KitState (Get-KitTaskFile $p)).rollup.closeAsk
-  $null = Invoke-Decide answer -Id $ask2 -Answer 'A' -NoPublish; $r6 = Update-KitParentRollup $p; $null = Invoke-TaskRollup -Task $solo
+  $cm = { (@(__TrA 'comments' @{ id = $p }) | ConvertTo-Json -Depth 4 -Compress) }
+  $r0 = Update-KitParentRollup $p -Force; $s0 = (& $view $p).status; & $st $b closed; $r1 = Update-KitParentRollup $p -Force; $s1 = (& $view $p).status; $c1 = "$(& $cm)"; $r2 = Update-KitParentRollup $p -Force
+  $n1 = @(Get-ChildItem $dd -Filter '*.json').Count
+  & $st $b 'in progress'; $r3 = Update-KitParentRollup $p -Force; $s3 = (& $view $p).status; & $st $b closed; $r5 = Update-KitParentRollup $p -Force
+  $r6 = "$r1"; $null = Invoke-TaskRollup -Task $solo; $c5 = "$(& $cm)"
   $it = (__TrA 'create' @{ name = 'Own'; description = "**Items (ids):** A1, A2 (deferred)`n`n- note" }).id; Update-KitTaskIndex $it { param($x) $x.track = @{ task = $it; mrs = @('api-repo!9'); done = $false } }
   function ProjPath($r) { "g/$r" }; function Invoke-HostVerb([string]$Verb, [hashtable]$A) { if ($Verb -eq 'mr.url') { return "https://git/$($A.repo)/$($A.n)" }; @{ state = 'merged'; title = 'fix: A1' } }
   $i1 = Update-KitTaskItems $it (& $view $it); $id1 = (& $view $it).description; $i2 = Update-KitTaskItems $it
@@ -96,14 +96,15 @@ $cl = & {
   $c = (__TrA 'create' @{ name = 'Late bug'; parent = $p }).id; & $st $c closed   # K53: closed after the parent
   Update-KitTaskIndex $p { param($x) $x.rollup.readAt = (Get-Date).AddHours(-2).ToString('o') }; $late2 = "$(Update-KitParentRollup $p)|$((& $view $p).description)"
   $null = Update-KitParentRollup $p; & $st $p 'in progress'; Update-KitTaskIndex $p { param($x) $x.rollup.readAt = (Get-Date).AddHours(-2).ToString('o') }; $null = Update-KitParentRollup $p -Force   # reopened: rolls up again (the verb forces)
-  [pscustomobject]@{ r0 = "$r0"; r1 = "$r1"; r2 = "$r2"; gate = $dec.gate; dtask = $dec.task; n1 = $n1; s1 = $s1; d3 = $d3; ask = $ask; ask2 = $ask2; r3b = "$r3b"; act3 = $act3; r5 = "$r5"; r6 = "$r6"; s6 = $s6
+  [pscustomobject]@{ r0 = "$r0"; s0 = $s0; r1 = "$r1"; r2 = "$r2"; n1 = $n1; s1 = $s1; c1 = $c1; r3 = "$r3"; s3 = $s3; c5 = $c5; r5 = "$r5"; r6 = "$r6"; s6 = $s6
     d6 = $d6; fin = $fin; reopen = "$((Read-KitState (Get-KitTaskFile $p)).rollup.parentClosed) $((& $view $p).status) $(@(Get-ChildItem $dd -Filter '*.json').Count)"; n7 = @(Get-ChildItem $dd -Filter '*.json').Count; i1 = "$i1"; id1 = $id1; i2 = "$i2"; i3 = $i3; it = $it; iSplit = $iSplit; oneItem = $oneItem; late = $late; late2 = $late2; a = $a; c = $c }
 }
 Expect "rollup of a closed parent: a subtask closed after it ticks its Items line, unforced ($($cl.late2 -split '\|' | Select-Object -First 1))" ($cl.late2 -match "parent items .*3/3 done" -and $cl.late2 -match "- \[x\] $($cl.c) · Late bug" -and $cl.late2 -match "- \[x\] $($cl.a) · Sub a")
-Expect "close: none while a subtask is open; all closed -> ONE ask (gate close, task = parent), the parent untouched ($($cl.r1) | $($cl.n1))" ($cl.r0 -notmatch 'close asked' -and $cl.r1 -match "close asked $($cl.ask)" -and $cl.r2 -notmatch 'close asked' -and $cl.n1 -eq 1 -and $cl.gate -eq 'close' -and $cl.dtask -and $cl.s1 -ne 'closed')
-Expect "close: any answer but A (here 'a lot of ...') -> kept, acted on once (no re-read), shown in the delivery line; a reopened subtask spends it, all closed again asks once more; 'A' closes it, final ($($cl.r6))" ($cl.d3 -match 'parent kept open: a lot of docs pending' -and -not $cl.r3b -and $cl.act3 -eq $cl.ask -and $cl.ask2 -and $cl.ask2 -ne $cl.ask -and $cl.r5 -match 'close asked' -and
-  $cl.r6 -match 'parent closed' -and $cl.s6 -eq 'closed' -and $cl.d6 -match '\*\*Delivery status\*\*:[^\n]* · parent closed' -and $cl.fin -eq $true -and $cl.reopen -eq 'False in progress 2')   # reopened by a person: rolls up again, never re-closed or re-asked
-Expect "close: a task without subtasks is never asked about (its flow unchanged) ($($cl.n7) decisions)" ($cl.n7 -eq 2)
+Expect "close: none while a subtask is open; all closed -> the rollup closes the parent, no decision, ONE comment linking each subtask ($($cl.r1) | $($cl.n1) | $($cl.c1))" ($cl.r0 -notmatch 'parent closed' -and $cl.s0 -ne 'closed' -and $cl.r1 -match 'parent closed' -and $cl.s1 -eq 'closed' -and $cl.n1 -eq 0 -and
+  $cl.c1 -match 'All 2 subtasks closed: parent closed\.' -and $cl.c1 -match 'Sub a' -and $cl.c1 -match 'Sub b' -and ([regex]::Matches($cl.c1, 'subtasks closed')).Count -eq 1 -and $cl.r2 -notmatch 'parent closed \(|milestone')
+Expect "close: a reopened subtask reopens the parent (never left on a stale status), all closed again closes it again without a 2nd comment; final, shown in the delivery line ($($cl.r3) | $($cl.s3) | $($cl.r5))" ($cl.s3 -ne 'closed' -and $cl.r5 -match 'parent closed' -and ([regex]::Matches($cl.c5, 'subtasks closed')).Count -eq 1 -and
+  $cl.s6 -eq 'closed' -and $cl.d6 -match '\*\*Delivery status\*\*:[^\n]* · parent closed' -and $cl.fin -eq $true -and $cl.reopen -eq 'False in progress 0')   # reopened by a person: rolls up again, never re-closed
+Expect "close: a task without subtasks is never closed or asked about (its flow unchanged) ($($cl.n7) decisions)" ($cl.n7 -eq 0)
 Expect "items: the task's own Items list -> its checklist, an id a merged MR names ticked; unchanged = no write; all ticked once its MRs are all merged ($($cl.i1) | $($cl.i3))" ($cl.i1 -match '1/2 done' -and $cl.id1 -match '(?s)\*\*Items\*\*\n- \[x\] A1 · https://git/g/api-repo/9\n- \[ \] A2 · deferred' -and -not $cl.i2 -and $cl.i3 -match "items $($cl.it): 2/2 done")
 Expect "items: one MRs item (no Items list) resolved at once when its only MR is already merged, before promotion (track add of a late-linked merged MR) ($($cl.late))" ($cl.late -match '^items \S+: 1/1 done\|' -and $cl.late -match '- \[x\] MRs')
 Expect "items: split on ' · ' and bullets, on ',' only after a bare id (never inside an item's text: 'PS-04 golden cases T1, N1'); id = its leading token; a **Label:** piece ends the list ($($cl.iSplit))" ($cl.iSplit -eq 'TP-01|TP-02 / B3|Fix the grid / A1|A2|High / PS-04')

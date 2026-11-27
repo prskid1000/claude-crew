@@ -14,7 +14,7 @@ Update-KitParentItems), each subtask's "Items" checklist (adapter verb checklist
 one comment per milestone (all merged, deployed to <env>, all closed).
 An item ticks only when done: its MRs merged, no open fix-round MR naming it, not held (crafty adapters/task-items.ps1: deferred, held,
 an area not delivered); else unticked with ' · <reason>'; checklists are pruned of stale kit lines and repeats.
-Every subtask closed: one close-parent decision (decide ask -Gate close); the parent closes only on the owner's answer; a reopened parent rolls up again.
+Every subtask closed: the rollup closes the parent, one comment links the subtasks; a reopened parent rolls up again.
 No read while nothing local changed and track.rollupMinutes (30) has not passed: an unchanged run makes 0 calls.
 Sections: L24 triage · L73 render · L152 rollup · L257 items · L311 close
 Exit codes: 0 ok · 1 no item table in -From · 2 usage.
@@ -169,16 +169,15 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   $ix = Read-KitState (Get-KitTaskFile $Parent); $ro = if ($ix.rollup -is [Collections.IDictionary]) { $ix.rollup } else { @{} }
   $trk = (Read-KitTracking).tasks; $known = @($ro.subtasks | Where-Object { $_ })
   $sig0 = Get-KitRollupLocalSig $ro $known $trk; $mins = [double](Get-KitParam 'track.rollupMinutes')
-  $ans = $ro.closeAsk -and $ro.closeActed -ne $ro.closeAsk -and (Get-KitCloseAsk "$($ro.closeAsk)").status -eq 'answered'   # a new answer: act now
   $fresh = $ro.readAt -and ((Get-Date) - [datetime]$ro.readAt).TotalMinutes -lt $mins
-  if (-not $Force -and (($ro.parentClosed -and $fresh -and $ro.localSig -eq $sig0) -or (-not $ro.parentClosed -and -not $ans -and $ro.localSig -eq $sig0 -and $fresh))) { return }   # a closed parent: its status read once per rollupMinutes
+  if (-not $Force -and $fresh -and $ro.localSig -eq $sig0) { return }   # open or closed: the tracker read once per rollupMinutes
   $stamp = { Update-KitTaskIndex $Parent { param($x) if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }; $x.rollup.readAt = (Get-KitStamp); $x.rollup.localSig = $sig0 } }   # a failed or empty read waits too
   Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent; if (-not $pt.name) { & $stamp; return "ROLLUP ${Parent}: tracker read failed, nothing written" }
-  if (Sync-TrackerParent -ParentId $Parent) { Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent }   # status follows the open subtasks (both ways; a closed parent stays closed here)
+  if (Sync-TrackerParent -ParentId $Parent -Reopen) { Clear-TrackerMemo $Parent; $pt = Get-TrackerTask $Parent }   # status follows the open subtasks (both ways; a closed parent with an open subtask reopens)
   if ($ro.parentClosed -and (Test-TrackerStatus $pt.status 'closed')) { if (-not $Force) {   # still closed: final, but a subtask closed after it still ticks its Items line
       & $stamp; $co = @{}; foreach ($a in @((ConvertTo-KitTriage $ro.triage).agents)) { if ($a.task) { $co["$($a.task)"] = "$($a.area)" } }
       $pio = try { Update-KitParentItems $Parent $pt $co } catch { "parent items FAILED: $("$_".Split("`n")[0])" }; if ($pio) { return "ROLLUP ${Parent}: $pio" }; return } }
-  elseif ($ro.parentClosed) {   # -Force too: the old answer never re-closes it
+  elseif ($ro.parentClosed) {   # -Force too: a person reopened it, never re-closed until a subtask reopens
     Update-KitTaskIndex $Parent { param($x) $x.rollup.parentClosed = $false; $x.rollup.closeHold = 'reopened' }; $ro.parentClosed = $false; $ro.closeHold = 'reopened' }   # reopened: its delivery table updates again
   $tri = ConvertTo-KitTriage $ro.triage; $areaOf = @{}; foreach ($a in @($tri.agents)) { if ($a.task) { $areaOf[$a.task] = $a } }
   $subs = @($pt.subtasks | Where-Object { $_.id }); $leaf = -not $subs.Count   # no subtasks + an item table: its own Items checklist only
@@ -243,12 +242,13 @@ function Update-KitParentRollup([string]$Parent, [switch]$Force) {
   if ($n -and -not @($kit | Where-Object { -not $_.merged }).Count) { $due['merged'] = "All $n subtasks merged: delivery status in the description." }
   foreach ($en in @($kit | ForEach-Object { @($_.envs) } | Select-Object -Unique)) { if (-not @($kit | Where-Object { @($_.envs) -notcontains $en }).Count) { $due["deployed:$en"] = "All $n subtasks deployed to ${en}: delivery status in the description." } }
   if ($n -and -not @($kit | Where-Object { -not $_.closed }).Count) { $due['closed'] = "All $n subtasks closed." }
+  if ($pc.comment) { $due.Remove('closed'); if ($ms -notcontains 'parent-closed') { $due['parent-closed'] = $pc.comment }; $ms = @(@($ms) + 'closed' | Select-Object -Unique) }   # one comment for the close
   foreach ($k in @($due.Keys | Where-Object { $ms -notcontains $_ })) { try { $null = Add-TrackerComment $Parent $due[$k]; $ms += $k; $did.Add("milestone $k") } catch { $did.Add("milestone $k FAILED: $("$_".Split("`n")[0])") } }
   $subIds = @($subs.id)
   Update-KitTaskIndex $Parent { param($x)
     if ($x.rollup -isnot [Collections.IDictionary]) { $x.rollup = @{} }
     $x.rollup.subtasks = $subIds; $x.rollup.mrs = $mc; $x.rollup.sections = $sec; $x.rollup.milestones = @($ms); $x.rollup.readAt = (Get-KitStamp)
-    $x.rollup.closeAsk = "$($pc.ask)"; $x.rollup.closeActed = "$($pc.acted)"; $x.rollup.parentClosed = $pc.note -eq 'parent closed' }
+    foreach ($ok in 'closeAsk', 'closeActed') { $x.rollup.Remove($ok) }; $x.rollup.parentClosed = $pc.note -eq 'parent closed' }
   $sig1 = Get-KitRollupLocalSig (Read-KitState (Get-KitTaskFile $Parent)).rollup $subIds $trk
   Update-KitTaskIndex $Parent { param($x) $x.rollup.localSig = $sig1 }
   if ($did.Count) { "ROLLUP ${Parent}: $($did -join ' · ')" }
@@ -308,22 +308,16 @@ function Update-KitTaskItems([string]$Task, $T, [switch]$Force) {
   "items ${Task}: $(@($items | Where-Object done).Count)/$($items.Count) done"
 }
 
-# ---- close: every subtask in the tracker's closed status -> ONE close-parent decision; the parent closes only on the owner's answer
-# (owner, 2026-11-11; a task without subtasks never gets here). Reopened subtask: an answered ask is spent, the next all-closed asks again
-function Get-KitCloseAsk([string]$Id) { $f = if ($Id) { Join-Path (Get-KitPath decisions) "$(Resolve-KitIdAlias $Id (Get-KitPath decisions)).json" }; if ($f -and (Test-Path -LiteralPath $f)) { Get-Content -LiteralPath $f -Raw | ConvertFrom-Json } }
+# ---- close: every subtask in the tracker's closed status -> the rollup closes the parent; one comment links the subtasks
+# (owner 2026-11-27: "you can close it, it's fine, no need for my word"; a task without subtasks never gets here). A person reopened it: no re-close until a subtask reopens
 function Update-KitParentClose([string]$Parent, $Pt, $Rows, $Ro) {
-  $ask = "$($Ro.closeAsk)"; $d = Get-KitCloseAsk $ask
-  if (Test-TrackerStatus "$($Pt.status)" 'closed') { return @{ ask = $ask; note = 'parent closed' } }
-  if (-not $Rows.Count -or @($Rows | Where-Object { -not $_.closed }).Count) { if ($Ro.closeHold) { Update-KitTaskIndex $Parent { param($y) $y.rollup.closeHold = '' } }; return @{ ask = $(if ($d.status -eq 'pending') { $ask }); note = '' } }
-  if ($Ro.closeHold) { return @{ ask = ''; note = 'parent reopened: no close ask until a subtask reopens' } }   # a person reopened it: never closed again by the old answer
-  if (-not $d) {
-    $o = Invoke-Decide ask -Run rollup -Agent coordinator -Item $Parent -Task $Parent -Gate close -Context "every subtask is closed; the parent task stays open until a person says close" -Question "All $($Rows.Count) subtasks of $Parent are closed: close the parent?" -Options 'A: close the parent — every subtask is closed', 'B: keep it open — the answer says why' -Recommend A
-    $nid = if ("$o" -match 'DECISION (\S+) pending') { $Matches[1] }; Update-KitTaskIndex $Parent { param($y) if ($y.rollup -isnot [Collections.IDictionary]) { $y.rollup = @{} }; $y.rollup.closeAsk = "$nid" }; return @{ ask = "$nid"; note = "parent: close asked ($nid)"; did = "close asked $nid" }
-  }
-  if ($d.status -ne 'answered') { return @{ ask = $ask; note = "parent: close asked ($ask)" } }
-  $acted = @{ ask = $ask; acted = $ask }
-  if ("$($d.answer)" -cnotmatch '^\s*A\s*(?:[:.)—-]|$)' -and "$($d.answer)" -notmatch '^\s*close(?: it| the parent)?\s*\.?\s*$') { return $acted + @{ note = "parent kept open: $(ConvertTo-KitOneLine $d.answer) ($ask)" } }
-  try { $null = Set-TrackerStatus $Parent closed; $acted + @{ note = 'parent closed'; did = "parent closed ($ask)" } } catch { @{ ask = $ask; note = "parent: close failed, retried next run ($ask)"; did = "parent close FAILED: $("$_".Split("`n")[0])" } }
+  if (Test-TrackerStatus "$($Pt.status)" 'closed') { return @{ note = 'parent closed' } }
+  if (-not $Rows.Count -or @($Rows | Where-Object { -not $_.closed }).Count) { if ($Ro.closeHold) { Update-KitTaskIndex $Parent { param($y) $y.rollup.closeHold = '' } }; return @{ note = '' } }
+  if ($Ro.closeHold) { return @{ note = 'parent reopened: closed again once a subtask reopens and closes' } }
+  $sr = try { Set-TrackerStatus $Parent closed } catch { return @{ note = 'parent: close failed, retried next run'; did = "parent close FAILED: $("$_".Split("`n")[0])" } }
+  if (@($sr) -like 'SKIPPED*') { return @{ note = 'parent: close skipped, retried next run'; did = "parent close $(@($sr) -like 'SKIPPED*' | Select-Object -First 1)" } }
+  $ls = @($Rows | ForEach-Object { $nm = ConvertTo-KitOneLine "$($_.name)"; "- $(if ($_.url) { "[$nm]($($_.url))" } else { "$nm ($($_.id))" })" })
+  @{ note = 'parent closed'; did = 'parent closed'; comment = (@("All $($Rows.Count) subtasks closed: parent closed.") + $ls) -join "`n" }
 }
 
 # ---- verb and hook
