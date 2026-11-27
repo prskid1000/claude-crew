@@ -30,7 +30,7 @@ Register-KitAdapter 'guard' 'deployed-env' @{ check = { param($a)
     if ($envHit.Count) {
       # the owner's word for this target (the env / cluster / function / namespace on the line), used once
       $tgt = if ($a.raw -match '--(?:environment-name|cluster|function-name|service|name|namespace|app)[ =](?<t>[^\s;&|"'']+)|\s-n\s+(?<t>[^\s;&|"'']+)') { $Matches.t } else { '' }
-      $dId = if ($a.raw -match '\bKIT_DECISION\s*=\s*[''"]?(?<d>d-[\w-]+)') { $Matches.d }
+      $dId = if ($a.raw -match '\bKIT_DECISION\s*=\s*[''"]?(?<d>dec-[a-z0-9]+(?:-[a-z0-9]+)*|d-\d{8,}-[\w-]+)') { $Matches.d }
       if (-not ($dId -and $tgt -and "$(pwsh -NoProfile -File $KitCmd.orch decide check -Id $dId -Gate deploy -Item $tgt -MaxHours 12 -Use -Agent guard)" -match '^WORD ')) {
         return "kit guard: that changes a deployed env's config or restarts it ($("$($envHit[0])" -replace '\s+', ' ')), which restarts it for every run and tester on it. A feature behind an env switch that is off there is NOT_TESTED (tool-down) plus bossy.ps1 decide ask; never toggle it. With the owner's yes for this one change: bossy.ps1 decide record -Gate deploy -Item <the env / cluster / function name on the line> ..., then KIT_DECISION=<decision id> <command> (one use)" } } }
   } }

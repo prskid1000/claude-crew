@@ -197,5 +197,9 @@ Expect 'cut: emojis, -Parameters whole' ($ec -eq 'FalseTrueTrue')
 $ecq = { $gpy = Join-Path $k 'skills/bossy'; "$(& { . (Lib); 'mytool flip-env x' -match (Get-KitEnvChangeRx) })$(python -X utf8 -c "import sys; sys.path.insert(0, r'$gpy'); import kitbag; print(bool(kitbag.env_change_rx().search('Run mytool flip-env now')))")" }
 $ecg0 = & $ecq; Set-JsonFile $kl @{ guard = @{ envChangeCommands = @('mytool\s+flip-env') } }; $ecg1 = & $ecq
 Expect "guard.envChangeCommands: an org command joins the guard and testing-doc lists ($ecg0 -> $ecg1)" ($ecg0 -eq 'FalseFalse' -and $ecg1 -eq 'TrueTrue')
+# deployed-env: KIT_DECISION takes every id decide mints (dec-<words>, old d-<stamp>-<suffix>); a word for another env still refused
+$dwAt = (Get-Date).ToString('o'); & { . (Lib); foreach ($dw in @(@('dec-own-domain-3', 'e1'), @('d-20261127080000-coordinator-ab12', 'e2'), @('dec-set-website-3', 'e9'))) { Write-KitState (Join-Path (Get-KitPath decisions -Create) "$($dw[0]).json") @{ id = $dw[0]; gate = 'deploy'; status = 'answered'; item = $dw[1]; mrs = @(); by = 'owner'; source = 'chat'; question = 'change it?'; answer = 'yes'; answeredAt = $dwAt } } }
+$dwOut = foreach ($dw in @(@('dec-own-domain-3', 'e1'), @('d-20261127080000-coordinator-ab12', 'e2'), @('dec-set-website-3', 'e1'))) { $dwJ = @{ tool_name = 'Bash'; cwd = $k; tool_input = @{ command = "KIT_DECISION=$($dw[0]) aws elasticbeanstalk update-environment --environment-name $($dw[1]) --option-settings Namespace=n,OptionName=A,Value=true" } } | ConvertTo-Json -Compress; "$((pwsh @np $D guard -Json $dwJ 2>&1) -join '' -match 'changes a deployed env')" }
+Expect "guard deployed-env: a dec-<words> and a d-<stamp> owner word pass, a word for another env is refused ($($dwOut -join ' '))" (($dwOut -join ' ') -eq 'False False True')
 Remove-TestKit $k
 Complete-Tests
