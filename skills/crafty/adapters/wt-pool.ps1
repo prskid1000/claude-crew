@@ -151,7 +151,7 @@ function Copy-HookDirs($path, $sources, [string]$hooksDir = '.husky') {
 function Get-WtDepSource($rp, $tg) {
   $rc = Get-WtRepoConf $rp; if (-not $rc) { return }
   $cand = @(if ($rc.linkFromByTarget -and (Get-KitMember $rc.linkFromByTarget $tg)) { (Get-KitMember $rc.linkFromByTarget $tg) } elseif ($rc.linkFrom -and $tg -eq $rc.target) { $rc.linkFrom }) | Where-Object { $_ } | ForEach-Object { "$_" }
-  if (-not $cand.Count -and $tg -and $tg -ne $rc.target) {   # a feature-branch target: the worktree (lease) on that branch has its deps, the main checkout another branch's
+  if (-not $cand.Count -and $tg -and $tg -notin @(Get-KitMainLines $rc.name)) {   # a feature-branch target: the worktree (lease) on that branch has its deps, the main checkout another branch's
     $cand = @(git -C $rp worktree list --porcelain 2>$null | ForEach-Object { if ($_ -match '^worktree (.+)$') { $wtAt = $Matches[1] } elseif ($_ -eq "branch refs/heads/$tg") { $wtAt } } | Select-Object -First 1)
   }
   foreach ($c in $cand) { if (-not (Test-Path $c)) { throw "kit.local.json dep source $c ($(Split-Path $rp -Leaf), target $tg) is missing: create it (git worktree add --detach <path> origin/$tg + frozen-lockfile install) or fix kit.local.json" } }
@@ -370,7 +370,7 @@ function Invoke-WtLease {   # a free slot of the repo's pool on -Branch (fair qu
   if ($miss.Count) { throw "lease needs $($miss -join ' '): wt lease -Repo <repo> -Branch <branch> -Agent <id> (-Agent: -Session <board session> or KIT_AGENT; -Repo / -Branch: run it in the linked worktree or pass -Dir <it>)" }
   $Repo = Resolve-WtRepo $Repo; $rl = Split-Path $Repo -Leaf; $size = Get-KitPoolSize $Repo
   if ($size -lt 1) { throw "wt lease: $(Get-KitCheckoutName $Repo) has no pool (repos[].poolSize 0, or the kit itself): wt new" }
-  if (-not $Target) { $Target = "$(Get-RepoConf (Get-KitCheckoutName $Repo) 'target' '')"; if (-not $Target) { $Target = "$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/' } }
+  if (-not $Target) { $Target = Resolve-KitTarget (Get-KitCheckoutName $Repo) @($Paths); if (-not $Target) { $Target = "$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/' } }
   if (-not $Target) { throw 'wt lease: no target (repos[].target, origin/HEAD): pass -Target' }
   G -C $Repo fetch -q origin $Target | Out-Null
   $remoteBranch = "$(git -C $Repo ls-remote --heads origin "refs/heads/$Branch" 2>$null)".Trim()   # bare name would suffix-match

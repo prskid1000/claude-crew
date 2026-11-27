@@ -19,8 +19,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  local claude|desktop|code|status [-Model] [-Print]  a client on the local model server
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L26 init · L33 wt · L294 stack · L393 gate · L709 check · L1038 pipes · L1103 guard · L1790 dir · L1800 checkpoint ·
-  L1840 prior · L1879 tracker · L1901 task spec · L2106 scope · L2154 host
+Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L1791 dir · L1801 checkpoint ·
+  L1841 prior · L1880 tracker · L1902 task spec · L2107 scope · L2155 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -101,7 +101,8 @@ function Set-WtDeps($path, $rp, $tg, $from) {
 switch ($Action) {
   'new' {
     if (-not $Branch -and $Task) { $Branch = Get-KitTaskBranch $Task } elseif ($Task) { Test-KitTaskBranch $Task $Branch }   # naming make branch
-    if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch (or -Task: a keyed task names it) -Target -Name' }
+    if (-not $Target -and $Repo -and $Paths) { $Target = Resolve-KitTarget $Repo $Paths }   # repos[].targets: the main line of the paths
+    if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch (or -Task: a keyed task names it) -Target (or -Paths of repos[].targets) -Name' }
     $Repo = Resolve-WtRepo $Repo
     if (($tx = Get-KitTaskTagRx) -and $Branch -match $tx -and (Get-KitPoolSize $Repo) -gt 0 -and -not $Override) { throw "wt new refused: $(Get-KitCheckoutName $Repo) has a worktree pool and $Branch is a task branch: & $($KitCmd.dev) wt lease -Repo $Repo -Branch $Branch -Agent <your id> (a free slot, kept warm); a dedicated worktree on purpose: -Override '<why>'" }
     if (-not $Root) { $Root = Get-KitWtRootFor $Repo }
@@ -1692,7 +1693,7 @@ if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP
 # rule push (was force-push, deploy-branch-push, protected-push, kit-main-ff): per git push / branch / update-ref, in the folder it runs
 # in (-C, else the last cd before it, Git Bash /d/x too, else the hook's cwd): never forced on a shared branch; deploy branches
 # (repos[].deploys) only through a deploy MR; protected product branches through merged MRs; kit main (kitBranch) fast-forward only
-$deployBr = @(@($kc.repos) | ForEach-Object { $repoTarget = $_.target; @($_.deploys).branch | Where-Object { $_ -and $_ -ne $repoTarget } } | Sort-Object -Unique)
+$deployBr = @(@($kc.repos) | ForEach-Object { $repoLines = @(Get-KitMainLines $_.name); @($_.deploys).branch | Where-Object { $_ -and $_ -notin $repoLines } } | Sort-Object -Unique)
 if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b') {
   $pushText = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs or dirs; other quoted text is data
   $kitGit = GitCommon (Split-Path (Split-Path $K))

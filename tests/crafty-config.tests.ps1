@@ -209,5 +209,12 @@ $ctr = @(& $ctRun 'OrderIT'; & $ctRun 'OrderIT,OrderTest'; (New-Item -Force -Ite
 $env:PATH = $ctP0; if ($ctWas) { Set-Content $ctCf $ctWas -NoNewline } else { Remove-Item $ctCf }
 Expect "check: tests.containerWhen leaves container tests to CI without a persistence change; mixed run with a hint; a repository change runs them ($($ctr -join ' '))" (($ctr -join ' ') -eq '0:1:0:0 4:0:1:0 4:0:0:1')
 Expect "check stamps: an edit during the run is said and not stamped; a clean run is ($([int]($rc1 -match 'changed during')) $rs1 $rs2)" ($rc1 -match 'sources changed during the run' -and $rs1 -eq 0 -and $rs2 -eq 1)
+# repos[].targets (owner 2026-11-27): one repo, several main lines by path; unmatched paths default, two lines refused, devtools.py agrees
+$mlCf = Join-Path $k 'skills/crafty/kit.local.json'; $mlWas = Get-Content $mlCf -Raw -ErrorAction SilentlyContinue
+& $J @{ repos = @(@{ name = 'ml-web'; target = 'rm/new'; targets = @(@{ branch = 'main'; paths = @('hm/web/**'); label = 'hm' }, @{ branch = 'rm/new'; paths = @('rm/web/**'); label = 'rm new' }) }) } $mlCf
+$mlRes = pwsh -NoProfile -Command ". '$(Lib)'; `$r = foreach (`$p in @('hm/web/a.ts'), @('rm/web/a.ts'), @('common/x.ts'), @('common/x.ts', 'hm/web/b.ts'), @()) { Resolve-KitTarget 'ml-web' `$p }; `$r -join ' '; try { Resolve-KitTarget 'ml-web' @('hm/web/a.ts', 'rm/web/a.ts') } catch { 'REFUSED ' + `$_.Exception.Message }; (Get-KitMainLines 'ml-web') -join ','" 2>&1 | Out-String
+$mlPy = "$(python -X utf8 -c "import sys; sys.path.insert(0, r'$k/skills/crafty'); import devtools as m; r = {'name': 'w', 'target': 'rm/new', 'targets': [{'branch': 'main', 'paths': ['hm/web/**']}]}; print(m.resolve_target(r, ['hm/web/a.ts']), m.resolve_target(r, ['x']))" 2>&1)"
+if ($mlWas) { Set-Content $mlCf $mlWas -NoNewline } else { Remove-Item $mlCf }
+Expect "repos[].targets: the touched paths pick the main line, a change on two is refused, python agrees ($($mlRes.Trim() -replace '\s+', ' ') | $mlPy)" ($mlRes -match 'main rm/new rm/new main rm/new' -and $mlRes -match 'REFUSED main lines: .*main and rm/new' -and $mlRes -match 'rm/new,main' -and $mlPy -eq 'main rm/new')
 Remove-TestKit $k
 Complete-Tests

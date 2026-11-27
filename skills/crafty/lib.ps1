@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L98 state · L179 config · L268 OS · L476 leases · L919 status · L1109 tracker · L1438 prior ·
-  L1457 ask bugs · L1656 deploy words · L1699 git-host · L1887 kitlog · L1999 params · L2304 entry-scripts
+  L1457 ask bugs · L1656 deploy words · L1699 git-host · L1896 kitlog · L2008 params · L2313 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1718,6 +1718,15 @@ function Get-RepoConf([string]$Repo, [string]$Key, $Default) {
   foreach ($r in @(Get-KitValue 'repos' @())) { if (($r.name -in $n, $Repo -or @($r.aliases) -contains $n) -and "$((Get-KitMember $r $Key))" -ne '') { return (Get-KitMember $r $Key) } }
   $Default
 }
+# Main lines of a repo: repos[].target (default) + repos[].targets [{branch, paths, label}]; one repo may have several (product / path / UI)
+function Get-KitMainLines([string]$Repo) { @(@(Get-RepoConf $Repo 'target' '') + @(@(Get-RepoConf $Repo 'targets' @()) | ForEach-Object { $_.branch }) | Where-Object { $_ } | Select-Object -Unique) }
+# The main line for the paths a change touches: unmatched paths do not vote (none matched = the default); two lines = refused
+function Resolve-KitTarget([string]$Repo, [string[]]$Paths = @()) {
+  $ts = @(Get-RepoConf $Repo 'targets' @()); $def = "$(Get-RepoConf $Repo 'target' '')"
+  $hit = @(foreach ($p in @($Paths | Where-Object { $_ })) { $q = ("$p" -replace '\\', '/') -replace '^\./', ''; $m = $ts | Where-Object { $t = $_; @($t.paths | Where-Object { $q -like $_ }).Count } | Select-Object -First 1; if ($m) { "$($m.branch)" } }) | Sort-Object -Unique
+  if (@($hit).Count -gt 1) { throw "main lines: this change touches $(@($hit) -join ' and ') (repos[].targets of $Repo): split it into one change per main line" }
+  if ($hit) { "$hit" } else { $def }
+}
 # repos[].ci: a CI type string or an object ({ type, mrPipelines }); only the type names the adapter
 function Get-KitCiType([string]$Repo, [string]$HostT = $script:HostType) { $rc = Get-RepoConf $Repo 'ci' 'host'; $c = ([string]$(if ($rc -is [string]) { $rc } elseif ($rc.type) { $rc.type } else { 'host' })).ToLower(); if ($c -eq 'external') { $c = ([string](Get-KitSetting 'ci.type' 'host')).ToLower() }; if ($c -eq 'host') { $HostT } else { $c } }
 function __HostJson($out) { $t = (@($out) | ForEach-Object { "$_" }) -join "`n"; if (-not $t.Trim()) { return $null }; try { $t | ConvertFrom-Json } catch { $null } }
@@ -1880,7 +1889,7 @@ function Test-KitDeployMr([string]$Repo, [string]$Source, [string]$Target) {
   $prx = Get-KitProtectedBranches -Rx
   if ($Source -match ('^(?:deploy/.+' + $(if ($prx) { "|$prx" }) + ')$')) { return $true }
   $r = @(Get-KitValue 'repos' @()) | Where-Object { $_.name -eq ($Repo -split '/')[-1] } | Select-Object -First 1
-  [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -ne $r.target }))
+  [bool]($Target -and $r -and $Target -in @(@($r.deploys).branch | Where-Object { $_ -and $_ -notin @(Get-KitMainLines $r.name) }))
 }
 function Get-KitRepoSweep { $rf = Get-KitPath repo-sweep; if (Test-Path -LiteralPath $rf) { try { $o = Read-KitText $rf | ConvertFrom-Json; $o.at = (Get-KitStamp stored ([IO.File]::GetLastWriteTime($rf))); $o } catch { $null } } }   # last cleanup's counts per repo; at = the file time
 

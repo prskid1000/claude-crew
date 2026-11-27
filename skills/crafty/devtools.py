@@ -1,46 +1,41 @@
 """devtools.py: tracker / git-host / docs helpers for agents (crafty steps 6-7). Host and project come from the worktree's
 `origin` remote, the MR target from its crafty.ps1 wt record. Tracker reads and status changes: crafty.ps1 tracker.
 
- python -X utf8 devtools.py comment <taskId> --spec <c.json> [comment-solution|comment-status] (templates.md "Comment spec"; <file.md | "text"> [kind] warns) [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
+ python -X utf8 devtools.py comment <taskId> --spec <c.json> [comment-solution|comment-status] (templates.md "Comment spec") [--prose-ok "<why>"]   kind: comment-status (default), comment-deploy, decision-request ...
  python -X utf8 devtools.py finish <taskId> <testing.md|url|-> <solution.md> [review] [--ai <ai.md|url>] [--prose-ok "<why>"]   the docs given
-  (process.gates.finish builtin:testingDocs: the required process.docs) by key after the local loop PASS, the description's links block, the solution comment (edits the last kit one), status;
-  `cases` for a doc (finish <task> cases ... --ai cases, doc "<t>" cases --key <task>:testing-ai): rendered from the cases spec (a doc process.docs lacks: skipped)
+  (process.gates.finish builtin:testingDocs: process.docs) by key after the local loop PASS, the links block, the solution comment, status;
+  `cases` for a doc (finish <task> cases ... --ai cases): rendered from the cases spec
  python -X utf8 devtools.py cases add|result|round|render|show <task> ...   the task's test cases (one spec, "render" section):
-  goals file, AI doc and human doc rendered from it, never hand-written
+  goals file, AI doc and human doc rendered from it
  python -X utf8 devtools.py mr <worktree> --spec <mr.json> [target] [--prose-ok "<why>"] [--check]   open a merge/pull request from the current branch: title
-  (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec; the old form `mr <wt> "<title>" <body.md>` still works;
-  --check: only the title / body gates, before the push (CHECK OK, nothing opened)
- python -X utf8 devtools.py spec write|link|gaps|show <task|subject> ...   the task's or a subject's spec doc (S-id rules, versioned,
-  change log; Spec line on the task; finish refuses S-ids no case cites); spec --help: the JSON fields
+  (mrTitleFormat) and body (templates.md "MR spec") rendered from the spec;
+  --check: only the gates, before the push; target: wt record, else repos[].targets of the changed paths (two lines: refused)
+ python -X utf8 devtools.py spec write|link|gaps|show <task|subject> ...   the task's or a subject's spec doc (versioned; finish refuses S-ids no case cites); spec --help: the JSON fields
  python -X utf8 devtools.py render <kind> <spec.json> [<out file>]   an artefact rendered from its spec (kinds: mr-title mr-body commit
   comment-solution comment-status final-report retro wave-brief; crafty.ps1 wt commit -Spec)
-  comment / finish / mr: a text over its prose limits is refused (exit 1, nothing written); --prose-ok keeps a format the brief fixes
+  comment / finish / mr: a text over its prose limits is refused (exit 1); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
  python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
  mr / merge [--scope "<glob>,.."] [--scope-ok <decision id>]: a diff outside the area (--scope, else the wt lease / new -Scope record)
-  is refused naming the files (merge: the host's diff; a --scope dropping a recorded glob too); --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
+  is refused naming the files; --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
  python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"] [--no-docs "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
-  last line (read back): MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
-  whose AI testing doc has no local reproduction; --override passes, logged); --no-docs: an area with no human-facing change
-  (brief kind foundation) passes the testing-docs gate, logged
+  last line: MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
+  whose AI testing doc has no local reproduction; --override passes, logged); --no-docs: no human-facing change, logged
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]] [--dry-run]
-  publish a document (reports.type), prints its URL/path; --key: one doc (.state/published), a dated round each (same text:
-  none; human doc: untested earlier rounds = one "Replaced drafts (not tested): <dates>" line)
-  --run <cells.json> [--run-id <id>] (pokey finalize, key <task>:testing-doc): each human doc row's Result / Evidence from its
-  checks (id, `case`, a screen starting with the row id) over every run (newest PASS / FAIL decides, envs named) + a dated
-  "<env> run" section (same --run-id: replaced)
+  publish a document (reports.type), prints its URL/path; --key: one doc (.state/published), a dated round each
+  --run <cells.json> [--run-id <id>] (pokey finalize): each human doc row's Result / Evidence from its checks over every run
+  (newest PASS / FAIL decides) + a dated "<env> run" section (same --run-id: replaced)
  python -X utf8 devtools.py docgaps --key <task>:testing-doc --run <cells.json> [--run-id <id>]   human doc row ids neither this run nor an earlier one covers
- python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout (cell-fit images): same rows and link
+ python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout
  python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
- python -X utf8 devtools.py keepboth <file> [...]   append-only rebase conflicts: keep OURS then THEIRS
- python -X utf8 devtools.py selftest   offline self-test (and each installed plugin's)
-Plugins: skills/crafty/adapters/*.py register report adapters and verbs (lbcheck, keepboth: liquibase.py; findings: module_audit.py).
+ python -X utf8 devtools.py keepboth <file> [...]   rebase conflicts: keep OURS then THEIRS
+ python -X utf8 devtools.py selftest   offline self-test (and each plugin's)
 Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L55 config · L110 run · L198 tracker · L394 process · L609 git host · L682 scope · L780 MR · L998 merge · L1332 docs ·
-  L1569 publish · L2129 render · L2739 spec · L3283 plugins · L3297 selftest · L4046 CLI
+Sections: L50 config · L105 run · L193 tracker · L389 process · L604 git host · L677 scope · L784 MR · L1004 merge · L1338 docs ·
+  L1575 publish · L2135 render · L2745 spec · L3289 plugins · L3303 selftest · L4052 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
-kit.example.json reports._readme), "gitHost" / "githubHost" (self-hosted; default gitlab.com / github.com).
-Windows: from PowerShell (python hangs in git-bash); Linux/macOS: python3. CLIs: shutil.which.
+kit.example.json reports._readme), "gitHost" / "githubHost".
+Windows: from PowerShell (python hangs in git-bash). CLIs: shutil.which.
 """
 import contextlib, difflib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zlib
 from datetime import datetime, timezone
@@ -748,6 +743,14 @@ def scope_note(url, globs, branch):
         kitlog('scope-log', 'area', {'mr': f'{m.group(1)}!{m.group(2)}', 'url': url, 'branch': branch, 'globs': globs})
 
 
+def resolve_target(r, paths):
+    """repos[].targets [{branch, paths}]: the main line of the touched paths (unmatched: repos[].target); two lines: refused."""
+    hit = sorted({t['branch'] for p in paths for t in r.get('targets') or [] if any(glob.fnmatch.fnmatchcase(p.replace(chr(92), '/'), g) for g in t.get('paths') or [])})
+    if len(hit) > 1:
+        raise SystemExit(f"main lines: this change touches {' and '.join(hit)}: split it per main line")
+    return hit[0] if hit else r.get('target')
+
+
 def target_of(worktree):
     """MR target: the worktree's record (crafty.ps1 wt lease / new), else kit.local.json repos[].target, else origin/HEAD.
     A fallback is printed (stderr) with its source; None when all three are missing."""
@@ -768,11 +771,12 @@ def target_of(worktree):
         same = bool(co and main and os.path.normcase(os.path.abspath(co)) == main)
         names = [str(n).lower() for n in [r.get('name') or ''] + list(r.get('aliases') or []) if n]
         if same or (name and name in names):
-            print(f"[mr] target {r['target']} (no crafty.ps1 wt record; kit.local.json repos[].target of {r.get('name') or co})", file=sys.stderr)
-            return r['target']
+            tg = resolve_target(r, _run(['git', '-C', worktree, '-c', 'core.quotepath=false', 'diff', '--name-only', f"origin/{r['target']}...HEAD"]).splitlines())
+            print(f"[mr] target {tg} (no wt record; repos[].target(s) of {r.get('name') or co})", file=sys.stderr)
+            return tg
     head = _run(['git', '-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
     if head.startswith('origin/') and '\n' not in head:
-        print(f'[mr] target {head[7:]} (no crafty.ps1 wt record, no kit.local.json repos[].target; origin/HEAD)', file=sys.stderr)
+        print(f'[mr] target {head[7:]} (no wt record, no repos[].target; origin/HEAD)', file=sys.stderr)
         return head[7:]
     return None
 
@@ -905,8 +909,10 @@ def mr_create(worktree, title, body_md, tgt=None, check=False):
             print(f'[mr] WARNING: process.gates.mrBody: {why}', file=sys.stderr)
     tgt = tgt or target_of(worktree)
     if not tgt:
-        raise SystemExit('no target: no crafty.ps1 wt record, no kit.local.json repos[].target for this repo and no origin/HEAD'
-                  ' - pass it as the 4th argument (git remote set-head origin --auto fixes origin/HEAD)')
+        raise SystemExit('no target: no wt record, repos[].target or origin/HEAD: pass it as the 4th argument')
+    for r in CFG.get('repos') or []:   # two main lines of one repo: refused
+        if isinstance(r, dict) and r.get('targets') and r.get('name', '').lower() == remote(worktree)[1].rsplit('/', 1)[-1].lower():
+            resolve_target(r, _run(['git', '-C', worktree, '-c', 'core.quotepath=false', 'diff', '--name-only', f'origin/{tgt}...HEAD']).splitlines())
     globs = scope_of(worktree, SCOPE)
     if globs and (no := scope_refusal(_run(['git', '-C', worktree, '-c', 'core.quotepath=false', 'diff', '--name-only', f'origin/{tgt}...HEAD']).splitlines(), globs, src)):
         raise SystemExit(no)
