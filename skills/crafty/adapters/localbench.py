@@ -13,7 +13,7 @@ writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<se
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (~/.claude/projects/<workspace>/*/subagents/**); Codex / Antigravity sessions:
 no reader (README parity row). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L32 store · L66 reply parsing · L111 outcome · L203 build · L336 run
+Sections: L32 store · L66 reply parsing · L111 outcome · L224 build · L361 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
@@ -22,7 +22,7 @@ from kitbag import kit_path, local_config, KIT_DIR  # noqa: E402
 
 CUT_RES, CUT_CMD, CUT_ALL = 2500, 1500, 60000
 DEFAULT_ROLES = ['steppy', 'checky:close', 'checky:hold', 'kitty:learn', 'kitty:track', 'devy:track', 'devy:followups', 'checky:audit',
-                 'checky:verify', 'checky:test', 'devy:build', 'devy:fix', 'watchy', 'vidy', 'revy', 'briefy', 'rechy', 'opsy', 'checky@lead', 'kitty']
+                 'checky:verify', 'checky:test', 'devy:build', 'devy:fix', 'watchy', 'vidy', 'revy', 'briefy', 'rechy', 'opsy', 'checky@lead', 'kitty@']
 PREFIX = ('SHADOW TASK. No tools exist in this session: never call a tool, never search for one; every command below has already run.\n'
           'Below: the instructions a workflow step gave an agent, then every tool call that agent made, in order, with its output '
           '(long outputs cut). Your job: write the final answer that step returns, judged from those outputs, as ONE JSON object '
@@ -121,12 +121,16 @@ ITEM_KEYS = ('id', 'code', 'file', 'path', 'check', 'ref', 'name', 'title', 'key
 
 def salient(text):
     """Words that carry the facts: identifiers, paths, numbers, words of 5+ letters."""
-    return {w for w in re.findall(r'[\w./:#!-]+', str(text).lower()) if len(w) >= 5 or re.search(r'\d|[._/:#!]', w)}
+    ws = (w.rstrip('.:!-') for w in re.findall(r'[\w./:#!-]+', str(text).lower()))
+    return {w for w in ws if len(w) >= 5 or re.search(r'\d|[._/:#!]', w)}
 
 
 def recall(c, l):
-    cs = salient(c)
-    return 1.0 if not cs else len(cs & salient(l)) / len(cs)
+    """Share of the cloud text's facts in the local text; a local text 4x longer than needed is an echo, not an answer."""
+    cs, ls = salient(c), salient(l)
+    if not cs:
+        return float(' '.join(str(c).lower().split()) == ' '.join(str(l).lower().split()))
+    return 0.0 if len(ls) > 4 * max(4, len(cs)) else len(cs & ls) / len(cs)
 
 
 def enum(s):
@@ -140,8 +144,13 @@ def item_key(x):
 
 def same_value(c, l):
     """One field: flags, numbers and short strings equal; long text by its salient words; lists item by item; objects field by field."""
-    if isinstance(c, bool) or isinstance(c, (int, float)):
-        return c == l
+    if isinstance(c, bool):
+        return l is c or str(l).lower() == str(c).lower()
+    if isinstance(c, (int, float)):
+        try:
+            return not isinstance(l, bool) and float(l) == c
+        except (TypeError, ValueError):
+            return False
     if c is None:
         return l in (None, '', [], {})
     if isinstance(c, str):
@@ -157,25 +166,32 @@ def list_match(c, l):
     """Each cloud item finds its local item (same id / file / name..., else most of its words) with the same short fields."""
     if not c:
         return not l, f'items: {len(l)} where none'
+    vals = lambda x: ' '.join(map(str, x.values())) if isinstance(x, dict) else str(x)   # an item's words, not its key names
     used, hit = set(), 0
     for ci in c:
         k = item_key(ci)
-        j = next((j for j, li in enumerate(l) if j not in used and (item_key(li) == k if k is not None else recall(json.dumps(ci, ensure_ascii=False) if not isinstance(ci, str) else ci, json.dumps(li, ensure_ascii=False) if not isinstance(li, str) else li) >= 0.5)), None)
-        if j is None:
-            continue
-        used.add(j)
-        if isinstance(ci, dict) and isinstance(l[j], dict):
-            flags = [f for f, v in ci.items() if isinstance(v, (bool, int, float)) or (isinstance(v, str) and enum(v))]
-            hit += (not flags or sum(same_value(ci[f], l[j].get(f)) for f in flags) / len(flags) >= 0.8)
+        if isinstance(ci, dict):
+            cands = [j for j, li in enumerate(l) if j not in used and isinstance(li, dict) and (item_key(li) == k if k is not None else recall(vals(ci), vals(li)) >= 0.5)]
+            j = max(cands, key=lambda j: sum(same_value(v, l[j].get(f)) for f, v in ci.items()), default=None)   # the closest of equal keys
+            ok = j is not None and compare(ci, l[j])[0]
         else:
+            j = next((j for j, li in enumerate(l) if j not in used and same_value(ci, li)), None)
+            ok = j is not None
+        if j is not None and ok:
+            used.add(j)
             hit += 1
     extra = len(l) - len(used)
     return hit / len(c) >= 0.6 and extra <= max(1, len(c) // 2), f'items {hit}/{len(c)}' + (f' +{extra} extra' if extra else '')
 
 
 def compare(cloud, loc):
-    bad = [k for k, v in cloud.items() if not same_value(v, (loc or {}).get(k))]
-    return (len(cloud) - len(bad)) / max(1, len(cloud)) >= 0.7, f'fields {len(cloud) - len(bad)}/{len(cloud)}' + (f' differ {bad[:5]}' if bad else '')
+    """Every flag and status / id field the same (the decision), and >= 70% of the rest."""
+    if not cloud:
+        return not loc, 'fields 0/0'
+    loc = loc if isinstance(loc, dict) else {}
+    bad = [k for k, v in cloud.items() if not same_value(v, loc.get(k))]
+    gate = [k for k in bad if isinstance(cloud[k], bool) or (isinstance(cloud[k], str) and enum(cloud[k]))]
+    return not gate and (len(cloud) - len(bad)) / len(cloud) >= 0.7, f'fields {len(cloud) - len(bad)}/{len(cloud)}' + (f' differ {bad[:5]}' if bad else '')
 
 
 def outcome(loc, cloud):
@@ -191,12 +207,17 @@ def outcome(loc, cloud):
         ids = lambda o, k: sorted(str(x.get('id')) for x in o.get('reclassify') or [] if isinstance(x, dict) and x.get(k))
         same = ids(loc, 'defect') == ids(cloud, 'defect') and ids(loc, 'notExercised') == ids(cloud, 'notExercised') and len(loc.get('newDefects') or []) == len(cloud.get('newDefects') or [])
         return same, f"defect {ids(loc, 'defect')} vs {ids(cloud, 'defect')}; newDefects {len(loc.get('newDefects') or [])} vs {len(cloud.get('newDefects') or [])}"
-    if set(cloud) == {'commit'}:   # a ship text: the spec renders the same type, a subject <= 72 chars, the commit's facts
-        subj = f"{loc.get('type')}({loc.get('scope')}): {loc.get('change')}"
-        body = subj + ' ' + ' '.join(f"{c.get('text', '')} {c.get('technical', '')}" for c in loc.get('changes') or [] if isinstance(c, dict))
+    if set(cloud) == {'commit'}:   # a ship text (the commit, or an MR spec that renders it): same type, subject <= 72 chars, its facts
+        if 'commit' in loc:
+            subj, body = str(loc['commit']).strip().split('\n')[0], str(loc['commit'])
+            ltype = re.split(r'[(:!]', subj)[0]
+        else:
+            subj = f"{loc.get('type')}({loc.get('scope')}): {loc.get('change')}"
+            body = subj + ' ' + ' '.join(f"{c.get('text', '')} {c.get('technical', '')}" for c in loc.get('changes') or [] if isinstance(c, dict))
+            ltype = loc.get('type')
         ctype = re.split(r'[(:!]', cloud['commit'].strip())[0]
         rc = recall(cloud['commit'], body)
-        return loc.get('type') == ctype and len(subj) <= 72 and rc >= 0.4, f"type {loc.get('type')} vs {ctype}; subject {len(subj)} ch; facts {round(rc * 100)}%"
+        return ltype == ctype and len(subj) <= 72 and rc >= 0.4, f"type {ltype} vs {ctype}; subject {len(subj)} ch; facts {round(rc * 100)}%"
     return compare(cloud, loc)   # any other answer: >= 70% of its fields the same (see same_value)
 
 
@@ -264,12 +285,16 @@ def kind_of(prompt):
     head = prompt[:1500]
     if re.search(r'\brole[: ]+lead\b', head, re.I):
         return 'lead'
-    m = re.search(r'\bkind[: ]+([a-z][\w-]*)', head, re.I)
-    return m.group(1).lower() if m else ''
+    for m in re.finditer(r'(?im)(?:^|[.,;]\s*)kind[: ]+([a-z][\w-]*)\b(?!\s*/)', head):   # 'Kind mr.', 'role test, kind task'; not 'kind window / sweep'
+        if m.group(1).lower() not in ('of', 'the', 'a', 'an', 'this', 'that'):
+            return m.group(1).lower()
+    return ''
 
 
 def wanted(want, role):
-    """A wanted role matches itself, a bare type all its steps and kinds (checky), type@kind its kind (revy@mr)."""
+    """A wanted role matches itself, a bare type all its steps and kinds (checky), type@ its ad hoc runs only, type@kind its kind."""
+    if want.endswith('@'):
+        return ':' not in role and role.split('@')[0] == want[:-1]
     return role == want or role.split(':')[0].split('@')[0] == want or role.startswith(want + '@')
 
 

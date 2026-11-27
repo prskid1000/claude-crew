@@ -100,6 +100,8 @@ Set-Content $pt "import sys; sys.path.insert(0, r'$k/skills/crafty/adapters'); i
 $po = "$(& (Get-Command python).Source -X utf8 $pt 2>&1)".Trim()
 Expect "bench parse: a raw newline in a string or a code fence is repairable, not strict; prose around an object: lenient; a PowerShell tool call as text named ($po)" ($po -eq 'True True True True True True')
 
+$oc = & (Get-Command python).Source -X utf8 (Join-Path $PSScriptRoot 'local_bench_cases.py') (Join-Path $k 'skills/crafty/adapters') 2>&1; $ocRc = $LASTEXITCODE
+Expect "bench outcome rules: ship texts, a flipped verdict, multi-word statuses, plain-string and keyless items, reordered items, empty objects, numbers as strings, echoes, kinds, wanted ($(@($oc)[-1]))" ($ocRc -eq 0)
 $m2 = Join-Path $k '.state/local-bench/t1/small-b'; Copy-Item $md $m2 -Recurse
 $s2 = Get-Content (Join-Path $m2 'score.json') -Raw | ConvertFrom-Json; $s2.($c1.id).accepted = $false; $s2 | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $m2 'score.json') -Encoding utf8
 $df = Invoke-TestScript $D local bench diff -Set t1 -Model small-a -Against small-b
