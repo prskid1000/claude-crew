@@ -11,13 +11,13 @@
   report ... -WriteRunonEvidence   + each unit's accept rate on this set into kit.local.json models.runOn.<unit>.evidence.<set>
          (never flips its cloud | local)
   run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-TimeoutSec 600] [-Force]   resumable: skips ids that
-         ran (rc 0) on the same prompt + contract; -Ids re-runs them; claude --tools= (none); every run appends the kit's final-answer
-         contract (AGENTS.md "Final answer" + the answer's shape, as StructuredOutput's schema is in production) as a system prompt file
+         ran (rc 0) on the same prompt + contract; -Ids re-runs them; claude --tools= (none); a ~contract model appends the answer's shape
+         (as StructuredOutput's schema is in production) as a system prompt file; loop 1 measured it: the 35B reasoned in the reply, no gain
   score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (fields, list items, text facts)
   judge: score -Judge <model> (or models.local.bench.judge; none: word recall) = free text judged by a cheap claude model, one call per
          text pair, "same facts as the reference, nothing contradicted or invented?"; ids, URLs, counts, statuses, enums stay strict;
          verdict + reason cached in <set>/<model>/judge.json (audit: score -Judge x -Json prints none; read the file)
-  bare: -Model <m>~bare runs and scores without the system contract (the before of a contract change), stored apart
+  contract: -Model <m>~contract runs with the system contract (reply-shape text as a system prompt file), stored apart; a plain -Model runs bare
   report -Model m [-Set s] [-Json]   accept rate over the ids that ran, infra fails apart, median / p90 s per role, cloud tier
   diff   -Model m -Against m2 [-Set s] [-Json]   per role delta and the ids that flip
 A role: <agentType>:<step label> (workflow steps, e.g. checky:close, kitty:learn) or <agentType> (ad hoc agents, e.g. watchy).
@@ -582,8 +582,8 @@ def deep_schema(v):
 
 def contract_of(td, tid):
     cloud = rjson(osp.join(td, tid, 'cloud.json'), {}) or {}
-    return ('SYSTEM CONTRACT. ' + final_rule() + '\nStructuredOutput schema of this answer (reply with exactly this JSON object, nothing else; no prose, no code fence):\n'
-            + json.dumps(deep_schema(cloud), ensure_ascii=False) + '\n')
+    return ('Your whole reply is ONE JSON object: no analysis, no reasoning, no prose before or after, no code fence. Shape of the answer '
+            '(every key required, values copied from the tool outputs, list items with the keys shown):\n' + json.dumps(deep_schema(cloud), ensure_ascii=False) + '\n')
 
 
 MODES = ('vague', 'noformat', 'noisy')
@@ -650,7 +650,7 @@ def cmd_run(a):
     res_p = osp.join(md, 'results.json')
     res = rjson(res_p, {}) or {}
     env = dict(os.environ)
-    real, bare = a.model.split('~')[0], a.model.endswith('~bare')
+    real, bare = a.model.split('~')[0], not a.model.endswith('~contract')
     benv = (cfg().get('bench') or {}).get('env')
     for k, v in (benv if isinstance(benv, dict) else {'ANTHROPIC_CUSTOM_HEADERS': 'User-Agent: kit-local-bench'}).items():   # a proxy's own client profile (tool split, managed tools) stays out of the replay
         if v is None:
