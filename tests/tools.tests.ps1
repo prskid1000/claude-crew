@@ -15,6 +15,7 @@ Expect 'parity: a declared gap the adapter now has, or one naming no adapter, fa
 Expect 'parity: braces in strings and comments are no code; verbs after them are read (retro tidy-6)' ($res -contains 'parity-strings:True')
 Expect "parity from code (owner 2026-11-24): an adapter registered but undeclared fails, a verb that only throws UNSUPPORTED is missing, a verb code calls in no list fails, a fallback no adapter uses fails ($($res -match '^parity-code:'))" ($res -contains 'parity-code:True|True|True|True|True|True')
 Expect "parity next: the org's adapter first, no none adapter, only fallback / gap cells, a no-such-feature gap and an accepted fallback left out, one without its link fails ($($res -match '^parity-next:'))" ($res -contains 'parity-next:True|True|True|True|True|True|True')
+Expect "migrate retires the old port copies: unedited ones and their folders go, an edited one is kept and named, the manifest goes, a second run does nothing ($($res -match '^tools-retire:'))" (@($res -match '^tools-retire:True').Count -eq 1)
 # tools --write on a kit copy: Character blocks and tools lines already match the manifest, nothing rewritten; a drifted block is restored
 $root = Join-Path ([IO.Path]::GetTempPath()) "tools-kit-$PID"; $kc = Join-Path $root 'kit'
 Copy-KitTree $kc
@@ -25,6 +26,14 @@ $tw = & $py -X utf8 $kbp tools --write 2>&1 | Out-String; $twc = $LASTEXITCODE; 
 $null = & $py -X utf8 $kbp tools --write 2>&1; $back = [IO.File]::ReadAllText($ag) -eq $before
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 Expect "tools --write: idempotent on a clean kit, a drifted Character block restored from the manifest (exit $twc, same $same, restored $back $($tw.Trim()))" ($twc -eq 0 -and $same -and $back)
+# pre-commit, a staged manifest change: agents' tools lines regenerated and staged, never an agent file holding a person's unstaged edit
+$pcRoot = Join-Path ([IO.Path]::GetTempPath()) "tools-pc-$PID"; $pk = New-GitKitCopy $pcRoot
+$pad = New-Item -ItemType Directory -Force (Join-Path $pk 'skills/bossy/adapters'); Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/adapters/kit-admin.ps1') $pad
+$mfx = Join-Path $pk 'skills/crafty/kit.example.json'; $mj = Get-Content $mfx -Raw | ConvertFrom-Json -AsHashtable
+$mj._manifest.agents.devy.tools += ', WebFetch'; $mj._manifest.agents.revy.tools += ', WebFetch'; $mj | ConvertTo-Json -Depth 50 | Set-Content $mfx; git -C $pk add -- $mfx
+'person edit' | Add-Content (Join-Path $pk 'agents/revy.md'); $null = pwsh -NoProfile -File (Join-Path $pk 'skills/bossy/bossy.ps1') precommit 2>&1
+Expect 'tools: pre-commit stages a regenerated agent tools line, never an agent file with unstaged edits' ((@(git -C $pk show :agents/devy.md) -match '^tools:.*WebFetch') -and 'agents/revy.md' -notin @(git -C $pk diff --cached --name-only) -and (Get-Content (Join-Path $pk 'agents/revy.md') -Raw) -match 'person edit')
+Remove-Item $pcRoot -Recurse -Force -ErrorAction SilentlyContinue
 # the kittools git filter in a real repo: tools --deploy renders a grant, commits and checkouts keep the manifest line, status clean
 $k = New-TestKit 'tools-git'; $tg = Join-Path (Kd) 'tg/ws/.claude'
 foreach ($sub in 'skills/bossy', 'skills/crafty', 'agents') { New-Item -ItemType Directory -Force (Join-Path $tg $sub) | Out-Null }

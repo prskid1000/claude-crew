@@ -135,7 +135,7 @@
    }
   }
  },
- "tools": { "_readme": "coordinator: every tool; crew: _manifest.agents.<role>.tools + roles.<role> grants ([\"mcp__<server>\"], port renders them); a server no role grants: health line (mainOnly: quiet). A disabled server for one task: the owner enables it (/mcp), grants a role, then reverts both", "roles": {}, "mainOnly": [] },
+ "tools": { "_readme": "coordinator: every tool; crew: _manifest.agents.<role>.tools + roles.<role> grants ([\"mcp__<server>\"], kitbag.py tools --write and the kittools filter render them); a server no role grants: health line (mainOnly: quiet). A disabled server for one task: the owner enables it (/mcp), grants a role, then reverts both", "roles": {}, "mainOnly": [] },
  "_manifest": {
   "_readme": "The kit's registry: crew, skills, workflows, Router / Events rows, caps; names live only here (lint; kitbag.py new / rename / remove edit it; port writes Character blocks + Crew table). renamed: old -> new (setup -Migrate).",
   "agents": {

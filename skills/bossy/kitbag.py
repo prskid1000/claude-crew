@@ -24,7 +24,7 @@ a non-kit dir).
 
 Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L493 load · L996 lint ·
   L1418 README graph · L1534 lint command · L1847 audit · L1995 registry · L2056 tools · L2144 parity · L2674 arch lint ·
-  L2993 prose · L3248 sections · L3380 budget · L3398 migrate · L3548 plugins · L3605 state lint · L3793 main
+  L2993 prose · L3248 sections · L3380 budget · L3398 migrate · L3584 plugins · L3641 state lint · L3829 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -3398,11 +3398,47 @@ def cmd_budget(a):
 # ---- migrate: one-time cleanup of the retired local-install path (2026-11-14); .githooks/post-merge runs it after a pull
 BLOCK_LINE = re.compile(r'^# kitbag (\w+) (\S+)$')   # `# kitbag <marker> <part>` ... `# kitbag <marker> end` blocks in .git/info/exclude
 
+def retire_ports(kit):
+    """One-time (owner 2026-11-27: Claude Code only): the workspace copies the retired port deploy wrote, by its manifest
+    <state>/ports-deployed.json: a file whose sha256 still matches goes, an edited one is kept and named; then its skill
+    links, the emptied folders and the manifest. [what it did]."""
+    import hashlib
+    pm, out = osp.join(kit, '.state', 'ports-deployed.json'), []
+    if osp.basename(osp.normpath(kit)) != '.claude' or not osp.isfile(pm):
+        return out
+    ws = osp.dirname(osp.normpath(osp.abspath(kit)))
+    files = (load_json(pm)[0] or {}).get('files') or {}
+    tops = sorted({r.split('/')[0] for r in files if '/' in r and r.startswith('.')} | {'.agents'})   # the port folders it wrote
+    for rel, sha in sorted(files.items()):
+        p = osp.normpath(osp.join(ws, rel))
+        if osp.commonpath([ws, p]) != ws or not osp.isfile(p):
+            continue
+        with open(p, 'rb') as fh:
+            same = hashlib.sha256(fh.read()).hexdigest() == sha
+        if same:
+            os.remove(p)
+            out.append(f'<workspace>/{rel}: removed (retired port)')
+        else:
+            out.append(f'<workspace>/{rel}: kept (edited since the deploy): delete it by hand')
+    sk = osp.join(ws, '.agents', 'skills')
+    for n in (os.listdir(sk) if osp.isdir(sk) else []):
+        q = osp.join(sk, n)
+        if osp.islink(q) or osp.realpath(q) != osp.abspath(q):   # a link or junction only: never the skill it points to
+            os.rmdir(q) if os.name == 'nt' else os.unlink(q)
+    for top in tops:
+        for r, _, _ in sorted(os.walk(osp.join(ws, top)), key=lambda x: -len(x[0])):
+            with contextlib.suppress(OSError):
+                os.rmdir(r)
+    os.remove(pm)
+    return out + ['ports-deployed.json: removed']
+
 def cmd_migrate(a):
     """kitbag.py migrate: drops the retired install blocks from .git/info/exclude (shared by every worktree), deletes the
     files they listed that git no longer tracks (never a kit.local.json localOnly path), the install-use stamps
-    (<state>/extras-used) and this kit's kit.local.json key named after the blocks' marker. Idempotent; silent when done."""
+    (<state>/extras-used) and this kit's kit.local.json key named after the blocks' marker; the retired port copies
+    (retire_ports). Idempotent; silent when done."""
     kit, done = KIT_DIR, []
+    done += retire_ports(kit)
     rc, ex, _ = git(kit, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude', timeout=20)
     lines = read(ex).split('\n') if rc == 0 and ex and osp.isfile(ex) else []
     keep, listed, markers, inside = [], [], set(), False

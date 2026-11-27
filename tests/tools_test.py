@@ -116,3 +116,14 @@ print(f'parity-next:{nLin > 0 and all(c[:2] == ("tracker", "linear") for c in ce
       f'|{("tracker", "youtrack", "checklist") in cells and ("tracker", "youtrack", "checklist") not in nf and ("tracker", "linear", "checklist") in nf}'
       f'|{any("says no such feature without its doc link" in x for x in p8)}'
       f'|{any("accepted \"clickup/checklist\": clickup/checklist is native" in x for x in p8) and any("accepted \"linear/checklist\" has no reason" in x for x in p8)}')
+
+# migrate retires the old port copies (owner 2026-11-27: Claude Code only): unedited ones go, an edited one stays, links, folders, manifest
+import hashlib, os
+rw = tmp / 'rw'; rk = rw / '.claude'; (rk / '.state').mkdir(parents=True); (rw / '.agents' / 'agents').mkdir(parents=True)
+(rw / 'X.md').write_text('gen', encoding='utf-8'); (rw / '.agents' / 'agents' / 'a.md').write_text('gen2', encoding='utf-8'); (rw / 'K.md').write_text('mine', encoding='utf-8')
+sha = lambda s: hashlib.sha256(s.encode()).hexdigest()
+(rk / '.state' / 'ports-deployed.json').write_text(json.dumps({'files': {'X.md': sha('gen'), '.agents/agents/a.md': sha('gen2'), 'K.md': sha('other'), '../out.md': sha('x')}}), encoding='utf-8')
+said = kt.retire_ports(str(rk)); again = kt.retire_ports(str(rk))
+ok_r = not (rw / 'X.md').exists() and not (rw / '.agents').exists() and (rw / 'K.md').exists() and not (rk / '.state' / 'ports-deployed.json').exists() \
+    and any('K.md: kept' in x for x in said) and again == [] and kt.retire_ports(str(tmp / 'tw' / 'x-claude')) == []
+print(f'tools-retire:{ok_r} {said}')

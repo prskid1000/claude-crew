@@ -11,7 +11,7 @@ A task: the step's prompt, every tool call it made with its output (cut), then "
 derived from the answer the cloud run returned (cloud.json). Nothing runs tools: run passes --tools "" (claude); a reply that
 writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<set>/tasks/<id>/ (set) and
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
-Transcripts: Claude Code subagent transcripts (~/.claude/projects/<workspace>/*/subagents/**). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
+Transcripts: Claude Code subagent transcripts (the transcript adapter's root, */subagents/**). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
 Sections: L31 store · L65 reply parsing · L110 outcome · L223 build · L360 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
