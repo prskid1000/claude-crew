@@ -33,7 +33,7 @@ $sd = Join-Path $k '.state/local-bench/t1/tasks'
 $byLabel = @{}; foreach ($td in @(Get-ChildItem $sd -Directory -ErrorAction SilentlyContinue)) { $mt = Get-Content (Join-Path $td.FullName 'meta.json') -Raw | ConvertFrom-Json; $byLabel[$mt.label] = $mt }
 $c1 = $byLabel['close:T1']; $cj = try { Get-Content (Join-Path $sd "$($c1.id)/cloud.json") -Raw | ConvertFrom-Json } catch { $null }
 $dsch = try { Get-Content (Join-Path $sd "$($byLabel['data check'].id)/schema.json") -Raw | ConvertFrom-Json } catch { $null }
-Expect "bench build: one task per recorded step, the cloud answer (StructuredOutput / final JSON), its tier, a prompt hash, a missing role named ($($bd.code): $($bd.out.Trim()))" ($bd.code -eq 0 -and $byLabel.Count -eq 10 -and $cj.ok -eq $true -and $byLabel['nightly sweep 2'].tier -eq 'sonnet' -and $byLabel['review mr'].role -eq 'revy@mr' -and $byLabel['review plan'].tier -eq 'opus' -and $c1.tier -eq 'haiku' -and $c1.promptSha -and $bd.out -match 'no samples: vidy' -and (Get-Content (Join-Path $sd "$($c1.id)/prompt.md") -Raw) -match '(?s)never call a tool.*run close:T1.*3/3 pass.*JSON SCHEMA')
+Expect "bench build: one task per recorded step, the cloud answer (StructuredOutput / final JSON), its tier, a prompt hash, a missing role named ($($bd.code): $($bd.out.Trim()))" ($bd.code -eq 0 -and $byLabel.Count -eq 10 -and $cj.ok -eq $true -and $byLabel['nightly sweep 2'].tier -eq 'sonnet' -and $byLabel['review mr'].role -eq 'revy@mr' -and $byLabel['review plan'].tier -eq 'opus' -and $c1.tier -eq 'haiku' -and $c1.promptSha -and $bd.out -match 'no history: vidy' -and (Get-Content (Join-Path $sd "$($c1.id)/prompt.md") -Raw) -match '(?s)never call a tool.*run close:T1.*3/3 pass.*JSON SCHEMA')
 Expect "bench build: a null in the cloud answer allows any type in the schema" ($dsch -and $null -eq $dsch.properties.mr.type -and $dsch.properties.rows.type -eq 'number')
 $b2 = Invoke-TestScript $D local bench build -Set t1 -Roles watchy -Since 2000-01-01 -Transcripts $tr
 Expect "bench build: an existing set is not rebuilt without -Force, exit 1 ($($b2.code))" ($b2.code -eq 1 -and $b2.out -match '-Force rebuilds it')
@@ -107,6 +107,24 @@ Expect "bench build -Force: the set's old runs and scores go with its tasks (ids
 $nm = Invoke-TestScript $D local bench report -Set nope -Model small-a
 Expect "bench report: a set never scored says so, exit 1 ($($nm.code))" ($nm.code -eq 1 -and $nm.out -match 'no score for nope/small-a')
 
+# runOn coverage, evidence, -Add on a set of their own (owner 2026-11-27: tuning from data, every unit 3+ real tasks)
+$null = Invoke-TestScript $D local bench build -Set cov -Roles 'checky:close,watchy,datay' -N 9 -Since 2000-01-01 -Transcripts $tr
+$cd = Join-Path $k '.state/local-bench/cov'; $cvIds = @(Get-ChildItem (Join-Path $cd 'tasks') -Directory).Name
+$cv = Invoke-TestScript $D local bench coverage -Set cov -Json; $cvj = try { $cv.out | ConvertFrom-Json } catch { $null }; $cvRow = { param($u) @($cvj.units | Where-Object unit -eq $u)[0] }
+Expect "bench coverage: tasks per run unit, under 3 = gap, every unit listed ($($cv.code): close $((& $cvRow 'checky:close').total), sweep $((& $cvRow 'watchy@sweep').total), check $((& $cvRow 'datay@check').total))" ($cv.code -eq 0 -and (& $cvRow 'checky:close').total -eq 5 -and -not (& $cvRow 'checky:close').gap -and (& $cvRow 'watchy@sweep').total -eq 2 -and (& $cvRow 'watchy@sweep').gap -and (& $cvRow 'datay@check').total -eq 1 -and $cvj.units.Count -ge 100 -and $cvj.tasks -eq 8)
+# a score: close tasks accepted but one, the rest accepted; an infra fail is no evidence
+$scObj = [ordered]@{}; $cvI = 0; foreach ($cvId in $cvIds) { $cvM = Get-Content (Join-Path $cd "tasks/$cvId/meta.json") -Raw | ConvertFrom-Json; $cvI++
+  $scObj[$cvId] = @{ id = $cvId; role = $cvM.role; tier = 'haiku'; rc = $(if ($cvM.role -like 'datay*') { '1' } else { '0' }); sec = 1; strict = $true; repairable = $true; lenient = $true; toolText = $false; schema = $true; outcome = $true; accepted = -not ($cvM.label -eq 'close:T2'); why = '' } }
+New-Item -ItemType Directory -Force (Join-Path $cd 'm1') | Out-Null; & $J $scObj (Join-Path $cd 'm1/score.json')
+& $J @{ models = @{ mode = 'mixed'; runOn = @{ 'checky:close' = 'local'; 'watchy@sweep' = 'cloud' }; local = @{ baseUrl = "http://127.0.0.1:$port"; defaultModel = 'small-a' } } } $cfgFile
+$ev = Invoke-TestScript $D local bench report -Model m1 -Set cov -WriteRunonEvidence; $evc = (Get-Content $cfgFile -Raw | ConvertFrom-Json -AsHashtable).models
+$evClose = $evc.runOn['checky:close']; $evSweep = $evc.runOn['watchy@sweep']
+Expect "bench report -WriteRunonEvidence: accepted / n per unit into models.runOn.<unit>.evidence.<set>, settings unchanged, an infra fail no evidence ($($ev.code): close $($evClose.evidence.cov.accepted)/$($evClose.evidence.cov.n))" ($ev.code -eq 0 -and $evClose.on -eq 'local' -and $evClose.evidence.cov.model -eq 'm1' -and $evClose.evidence.cov.accepted -eq 4 -and $evClose.evidence.cov.n -eq 5 -and $evClose.evidence.cov.rate -eq 80 -and $evSweep.on -eq 'cloud' -and $evSweep.evidence.cov.n -eq 2 -and -not $evc.runOn.ContainsKey('datay@check') -and $evc.local.defaultModel -eq 'small-a')
+# build -Add tops a unit up from transcripts the set lacks and keeps every task; nothing new for a unit: no history
+Add-Fixture $ah 'agent-w3' watchy 'nightly sweep 3' 'Kind sweep, watch W3.' '2 errors' $null "``````json`n{`"status`": `"bug`", `"bugs`": 2}`n``````"
+$ad = Invoke-TestScript $D local bench build -Set cov -Roles 'watchy@sweep,datay@check' -N 3 -Add -Since 2000-01-01 -Transcripts $tr
+$after = @(Get-ChildItem (Join-Path $cd 'tasks') -Directory).Name
+Expect "bench build -Add: one new watchy@sweep task (the third), old tasks kept, datay@check no history ($($ad.code): $($ad.out.Trim()))" ($ad.code -eq 0 -and $after.Count -eq $cvIds.Count + 1 -and @($cvIds | Where-Object { $_ -notin $after }).Count -eq 0 -and $ad.out -match 'watchy@sweep 1' -and $ad.out -match 'no history: datay@check')
 Stop-Job $srv -ErrorAction SilentlyContinue; Remove-Job $srv -Force -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

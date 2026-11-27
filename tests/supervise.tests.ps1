@@ -172,7 +172,7 @@ $tp = pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json; $tg = Get-Content 
 Expect 'tidy prep: group, lesson, retired; done stamps' (-not $tp.stamped -and $tg -match '(?s)2x kitty \[idea,win\].*-> lesson.*<- retired' -and (Get-Content (TkPath $k last-retro)) -match "T$(([datetime]'2026-01-02T03:04').ToUniversalTime().ToString('HH:mm')):00\.000Z")   # stored: UTC
 $jr = Invoke-Js wf-rel @'
 const c = _mock(_pass); await run({ brief: 'C:/b/w.md', ..._kl, agents: [{ id: 'X1' }] }, c.agent, _n, _n, pipeline); const L = c.calls.map((x) => x.label)
-console.log(`release:${L.indexOf('release-X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release-X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release-X1').prompt)}`)
+console.log(`release:${L.indexOf('release:X1') > L.indexOf('build:X1') && L.filter((l) => l === 'release:X1').length === 2 && /release -Agent 'X1' -Reason 'agent finished'/.test(c.calls.find((x) => x.label === 'release:X1').prompt)}`)
 '@ (Join-Path $src 'workflows/buildy.js')
 # owner's untracked MRs merged in 24 h = one WATCH; host list cached a beat, tracking re-read
 $um = @'

@@ -11,8 +11,8 @@ export const meta = {
  ],
 }
 
-// Sections: L16 args · L72 record-args · L92 prepare · L122 config · L151 prompts · L240 local · L268 app · L298 test-prompt ·
-//   L356 verify · L418 run-item · L597 pool · L619 budget · L660 run · L714 learn
+// Sections: L16 args · L79 record-args · L99 prepare · L129 config · L158 prompts · L247 local · L275 app · L305 test-prompt ·
+//   L363 verify · L425 run-item · L604 pool · L626 budget · L667 run · L721 learn
 // ---- args: the run's input
 /* args, one of:
 1. Select (Prepare, pokey L1): { select: { statuses?: ['promoted', 'inTest'] (default inTest, else the next on-role), lists?, tasks?, exclude?, mine? },
@@ -35,8 +35,14 @@ const say = (it, s) => log(`${it.code}: ${s}`)
 const _S = { type: 'string' }, _B = { type: 'boolean' }, _I = { type: 'integer' }, _SA = { type: 'array', items: _S }, dsc = (d, t = _S) => ({ ...t, description: d }), FINAL_SCHEMA = { type: 'object', properties: { ok: _B, output: _S }, required: ['ok', 'output'] }
 // a tester step, no result (2026-11-25 login race): one retry, <label>~retry1; close/hold never
 const agent1 = agent, TRY2 = /^([\w-]*test|retest-strong|handoff|verify|audit):/
+// models.runOn: a unit in CONFIG runOn.units runs through crafty.ps1 local run (its STEP text); refused or no JSON: the cloud, logged
+let RUNON = { units: [] }
+const onLocal = async (p, o) => { const u = `${o.agentType}:${String(o.label).split(/[:@~]/)[0].replace(/-retry$/, '')}`; if (!RUNON.units.some((x) => x === u || x === '*')) return
+ const r = await agent1(RUNON.step.replace(/\{name\}/g, String(o.label).replace(/[^\w.-]/g, '_')).replace('{job}', () => JSON.stringify({ unit: u, agentType: o.agentType, schema: o.schema, prompt: p })), { label: `${o.label}@local`, phase: o.phase, schema: FINAL_SCHEMA, agentType: 'steppy', model: MODELS.step, effort: 'low' }).catch(() => null)
+ try { if (r && r.ok) return JSON.parse(r.output) } catch { }
+ log(`${o.label}: ${u} on the cloud (local: ${String((r && r.output) || 'no answer').slice(0, 160)})`) }
 // usage limit: next tier once (<label>@up); steppy unknown (older session): kitty once (buildy.js the same)
-const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const lr = await onLocal(p, o); if (lr) return lr; const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
  try { return await agent1(p, o) } catch (e) { const em = String(e.message || e); if (o.agentType === 'steppy' && /steppy/.test(em)) return agent1(p, { ...o, agentType: 'kitty' }); if (!up || !LIMIT.test(em)) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { let r; for (let n = 0; n < (TRY2.test(o.label) ? 2 : 1) && r == null; n++) { if (n) log(`RETRY ${o.label}: no result`); r = await agentUp(p, n ? { ...o, label: `${o.label}~retry${n}` } : o) } return r } } catch { log('WARNING: no retry') }
 const ARGS0 = args || {}   // recorded as given: a resume needs them byte-exact
@@ -66,6 +72,7 @@ function takeConfig(out) {
  const c = jl('CONFIG', out)
  // args.config wins: a resume replays the cached CONFIG step; bossy.ps1 recover passes today's tiers / models
  const ov = ARGS0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
+ if (c.runOn) RUNON = c.runOn
  if (c.qaLanes && typeof c.qaLanes === 'object' && Object.keys(c.qaLanes).length) QL = c.qaLanes
  if (typeof c.intermittentRx === 'string' && c.intermittentRx) { try { INTERMITTENT = new RegExp(c.intermittentRx, 'i') } catch (e) { log(`WARNING: qa.intermittentRx is no regex (${e.message}): the default stays`) } }
 }
@@ -608,7 +615,7 @@ async function pool(list, size, offset, deviceOf) {
   // app lane done: every lease of its id goes (phone unless someone waits, env, GPU, builds, tabs; leases.jsonl)
   const L = deviceOf ? deviceOf(w) : null
   if (L && L.name) {
-   await runStep(`& ${ORCH} release -Agent '${LEASE(L)}' -Reason 'agent finished'`, `release-${L.name}`, 'Close').catch(() => null)
+   await runStep(`& ${ORCH} release -Agent '${LEASE(L)}' -Reason 'agent finished'`, `release:${L.name}`, 'Close').catch(() => null)
    log(`lane ${L.name} (${L.serial}) released`)
   }
  }
@@ -665,7 +672,7 @@ const lanes = LN.map((n, i) => ({ n, i, c: QL[n], items: R.items.filter((it) => 
 // a lane's cap: args <lane>Parallel, else qa.lanes.<lane>.parallel, else free RAM (seat capacity), never login count
 const CAP = {}
 for (const l of lanes.filter((x) => x.items.length > 1 && !x.c.devices && !R[`${x.n}Parallel`] && !x.c.parallel)) {
- const r = await runStep(`& ${Q} seat capacity -Kind ${l.n}`, `capacity-${l.n}`, 'Test').catch(() => null)
+ const r = await runStep(`& ${Q} seat capacity -Kind ${l.n}`, `capacity:${l.n}`, 'Test').catch(() => null)
  CAP[l.n] = +((/CAPACITY \S+ (\d+)/.exec((r && r.output) || '') || [])[1]) || 0
 }
 const par = (l) => R[`${l.n}Parallel`] || l.c.parallel || CAP[l.n] || 5
@@ -706,7 +713,7 @@ Then return ok=true and the list of item codes now in the file.`, { label: 'add-
  }
 }
 await measure('Test')
-if (LANES.length) await runStep(`& ${ORCH} release -Agent '${LANES.map(LEASE).join(',')}' -Reason 'agent finished'`, 'release-lanes', 'Close').catch(() => null)   // backstop: idempotent
+if (LANES.length) await runStep(`& ${ORCH} release -Agent '${LANES.map(LEASE).join(',')}' -Reason 'agent finished'`, 'release:lanes', 'Close').catch(() => null)   // backstop: idempotent
 // the run's seat logins are deactivated (a crashed run: bossy.ps1 cleanup deactivates idle ones)
 await runStep(`& ${Q} seat cleanup -RunDir '${R.runDir}'`, 'seat-logins', 'Close').catch(() => null)
 log('DONE: ' + all.map((r) => r.summary || (r.skipped ? `${r.code}: skipped (other worker)` : `${r.code}: ${r.error}`)).join(' | '))

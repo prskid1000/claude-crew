@@ -44,6 +44,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `forgotten` | `kitbag.py forget` | `text v0` | `forget --purge` |
 | `naming` | `kitbag.py naming` | `json v1` | keep |
 | `local-bench` | `localbench.py` | `dir v0` | keep |
+| `local-fallbacks` | `local-model.ps1` | `jsonl v0: at unit why` | 30 d |
 | `pool-usage` | `adapters/wt-pool.ps1` | `json v1: repos` | keep (samples 7 d) |
 | `disk-writes` | `bossy.ps1 supervise` | `jsonl v0: at m k o + d` | 35 d |
 | `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: server port key holders` | keep |

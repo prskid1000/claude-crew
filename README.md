@@ -284,7 +284,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "briefSeconds": 40,… | heartbeat: ramActPct, ramCleanupPct (85: RAM % to clean), minDiskFreeGB, ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent = STUCK / a shell with no CPU, IO, output = STALLED; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: section cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: profiles kept; worktreeDays (7): idle days before a clean worktree with a gone upstream goes; idleDaemons: idle build daemons to stop [{process, match, label, busyKinds}] |
-| `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger); mode cloud / local / mixed; local: crafty.ps1 local (token env:&lt;VAR&gt; / secret:&lt;name&gt;; commands, env, bench.env) |
+| `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger); mode cloud / local (every unit) / mixed (runOn); runOn: cloud / local per run unit (local bench runon lists them; evidence: bench report -WriteRunonEvidence, never flips it); local: crafty.ps1 local (token env:&lt;VAR&gt; / secret:&lt;name&gt;; commands, env, bench.env) |
 | `localOnly`, `orgTerms` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words pre-push blocks |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example (setup -WriteLocal) |
 | `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (envy reference.md); baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
@@ -396,7 +396,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16500 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 10075 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
+always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16750 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 11000 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: in `tests/`, shared setup in `tests/harness.ps1`; a case name

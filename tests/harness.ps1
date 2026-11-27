@@ -223,6 +223,7 @@ const login = async () => { const b = await import(BM + '?a'); return { b, home:
 function NodeT($n, $js) { $f = Join-Path (Kd) "$n.mjs"; [IO.File]::WriteAllText($f, "const BM = '$([Uri]::new("$k/skills/pokey/browser.mjs").AbsoluteUri)', m = await import(BM)`n$js"); @(node $f @args 2>&1) }
 # workflow sims: Invoke-Js <name> <js> <workflow>: $jsLib + $js in node, run() = the workflow body (agents mocked)
 $jsLib = @'
+import * as _fs from 'node:fs'
 const _ck = (id, result, extra = {}) => ({ id, subtask_id: 'T1', screen: 's', result, what_was_done: 'w', observed: `o ${id}`, evidence: [], attempts: 1, ...extra })
 const _res = (code, checks) => ({ code, checks, findings: [], setup_changes: [], data_created: [] })
 const _rep = (localTest, more = {}) => ({ mrs: [{ url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false }], worktrees: ['C:/wt/x1'], done: ['A1'], deferred: [], needsDecision: [], needsEnvFix: [], localTest, needsLiveCheck: [], seed: [], foreignHooks: [], summary: 's', testerGuide: 'https://doc', ...more })
@@ -248,7 +249,9 @@ const _sum = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h
 const _seal = (o, r) => { if (!r || typeof r.output !== 'string' || !/^record-args/.test((o || {}).label || '') || /^SUM/m.test(r.output)) return r
  const out = /^BUDGET /m.test(r.output) ? r.output : r.output.replace(/^(?=CONFIG )/m, 'BUDGET {"cap":0,"estimate":0,"stopAt":0.8}\n')
  return { ...r, output: `${out}\nSUM ${_sum((out.match(/^(BUDGET|CONFIG|TASKS|AREA TASK).*/gm) || []).join('\n'))}` } }
-const run = async (args, _agent0, log, phase, pipeline, parallel) => { let agent = (p, o) => /^record-args/.test((o || {}).label || '') ? Promise.resolve(_agent0(p, o)).then((r) => _seal(o, r)) : _agent0(p, o); __BODY__ }
+// every step a sim runs: <agentType> TAB <label> TAB <phase> (runon tests: each maps to a models.runOn unit); KIT_UNITS_OUT: appended there
+const _units = new Set(); process.on('exit', () => { if (process.env.KIT_UNITS_OUT && _units.size) _fs.appendFileSync(process.env.KIT_UNITS_OUT, [..._units].join('\n') + '\n') })
+const run = async (args, _agent0, log, phase, pipeline, parallel) => { let agent = (p, o) => (_units.add(`${(o || {}).agentType}\t${(o || {}).label}\t${(o || {}).phase}`), /^record-args/.test((o || {}).label || '') ? Promise.resolve(_agent0(p, o)).then((r) => _seal(o, r)) : _agent0(p, o)); __BODY__ }
 const pipeline = async (items, ...stages) => Promise.all(items.map(async (a) => { let x = await stages[0](a); for (const s of stages.slice(1)) x = await s(x, a); return x }))
 '@
 function Invoke-Js($name, $js, $wf) { $f = Join-Path (Kd) "$name.mjs"; [IO.File]::WriteAllText($f, ($jsLib + "`n" + $js).Replace('__BODY__', ([IO.File]::ReadAllText($wf) -replace '(?m)^export const meta', 'const meta'))); @(node $f 2>&1) }

@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L154 record-args · L172 budget · L187 build-prompt · L272 ship-prompt · L292 plan · L310 spike ·
-//   L322 local-loop · L403 stages · L558 ship · L594 debate · L707 deploy · L721 learn
+// Sections: L18 args · L160 record-args · L178 budget · L193 build-prompt · L278 ship-prompt · L298 plan · L316 spike ·
+//   L328 local-loop · L409 stages · L564 ship · L600 debate · L713 deploy · L727 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -117,10 +117,16 @@ const REVIEW_SCHEMA = obj({ findings: arr(obj({ mr: S, file: S, line: N, severit
 const mustFix = (f) => f.severity === 'blocking'   // should-fix -> MR Follow-ups (owner 2026-11-26)
 const CI_SCHEMA = obj({ done: B, mrs: arr(obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status'])) })
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
+// models.runOn: a unit in CONFIG runOn.units runs through crafty.ps1 local run (its STEP text); refused or no JSON: the cloud, logged
+let RUNON = { units: [] }
+const onLocal = async (p, o) => { const u = `${o.agentType}:${String(o.label).split(/[:@~]/)[0].replace(/-retry$/, '')}`; if (!RUNON.units.some((x) => x === u || x === '*')) return
+ const r = await agent1(RUNON.step.replace(/\{name\}/g, String(o.label).replace(/[^\w.-]/g, '_')).replace('{job}', () => JSON.stringify({ unit: u, agentType: o.agentType, schema: o.schema, prompt: p })), { label: `${o.label}@local`, phase: o.phase, schema: OK_SCHEMA, agentType: 'steppy', model: MODELS.step, effort: 'low' }).catch(() => null)
+ try { if (r && r.ok) return JSON.parse(r.output) } catch { }
+ log(`${o.label}: ${u} on the cloud (local: ${String((r && r.output) || 'no answer').slice(0, 160)})`) }
 // no result: one retry after a wait (<label>@redo); edits check state
 const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|merge-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
 // usage limit: next tier (<label>@up); steppy unknown (older session): kitty
-const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const lr = await onLocal(p, o); if (lr) return lr; const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
  try { return await agent1(p, o) } catch (e) { const em = String(e.message || e); if (o.agentType === 'steppy' && /steppy/.test(em)) return agent1(p, { ...o, agentType: 'kitty' }); if (!up || !LIMIT.test(em)) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
@@ -149,7 +155,7 @@ function takeConfig(out) {
  // args.config wins (a resume replays the cached CONFIG)
  const ov = A0.config || {}; setStr(TIERS, c.tiers); setStr(MT, c.models); setStr(TIERS, ov.tiers); setStr(MT, ov.models); tierModels()
  CFG.roles = c.roles || {}; CFG.serial = ls(c.serial)
- CFG.local = c.local || {}; CFG.humanDoc = c.humanDoc
+ CFG.local = c.local || {}; CFG.humanDoc = c.humanDoc; if (c.runOn) RUNON = c.runOn
 }
 // ---- record-args: the launch record (a resume reads it)
 function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
@@ -344,7 +350,7 @@ function mergeReports(x, r2, note) {
   testerGuide: r2.testerGuide && !/^none/i.test(r2.testerGuide) ? r2.testerGuide : x.testerGuide, summary: `${x.summary}\n\n${note}: ${r2.summary}` }
 }
 const settleOnThrow = async (a, fn) => { try { return await fn() } catch (e) { SETTLED[a.id].done(null); throw e } }
-const releaseAll = (ids, phaseName) => runStep(`& ${ORCH} release -Agent '${[].concat(ids).join(',')}' -Reason 'agent finished'`, `release-${[].concat(ids).join('-')}`, phaseName, { ok: 'when it exits 0' })
+const releaseAll = (ids, phaseName) => runStep(`& ${ORCH} release -Agent '${[].concat(ids).join(',')}' -Reason 'agent finished'`, `release:${[].concat(ids).join('-')}`, phaseName, { ok: 'when it exits 0' })
  .then((r) => { if (!r || !r.ok) log(`WARNING release of ${ids} failed (${r ? r.output : 'no answer'}): supervise -AutoFix reclaims after the grace`) }).catch(() => null)
 const releasing = async (a, phaseName, fn) => { try { return await fn() } finally { await releaseAll(a.id, phaseName) } }
 const decisions = []

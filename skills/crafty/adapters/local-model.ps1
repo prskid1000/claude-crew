@@ -8,26 +8,67 @@ local-model.ps1: Claude Code, Claude Desktop or VS Code on a local model server 
       -PromptFile: agents never skip permissions).
   & <kit>/skills/crafty/crafty.ps1 local claude -PromptFile <f> [-SchemaFile <f>] [-AgentType <crew>] [-Agent <id>]
       headless, the prompt on stdin: claude -p --output-format json [--json-schema] [--agent]
-  & <kit>/skills/crafty/crafty.ps1 local status [-Json]   mode, mixed-mode use list, server models, seats, RAM, token set or not
-  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] ...
-      recorded real steps replayed on the local model, scored per role (localbench.py header: verbs, store, scoring)
+  & <kit>/skills/crafty/crafty.ps1 local status [-Json]   mode, runOn counts + fallbacks in 24 h, server models, seats, RAM, token set or not
+  & <kit>/skills/crafty/crafty.ps1 local resolve -Unit <unit> [-Json]   cloud | local for one run unit (models.mode wins over
+      models.runOn) + how a local one starts; the coordinator asks it before each spawn, launch -Self puts the local units in CONFIG
+  & <kit>/skills/crafty/crafty.ps1 local run -JobFile <f>   one workflow step on the local model: the job { unit, agentType,
+      schema, prompt } through local claude (every check below); prints the step's JSON on one line, or exits 3 with
+      "FALLBACK cloud: <why>" (unit not local, refused, no seat, no JSON), logged to local-fallbacks
+  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff|coverage|runon [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Add] [-Write <f>] [-WriteRunonEvidence] ...
+      recorded real steps replayed on the local model, scored per role; run units and their bench coverage (localbench.py header)
 Checks before a start, in order: forbidden model ids (models.local.forbiddenModels, wildcards: -Model, ANTHROPIC_*MODEL,
 --model / -m in the client args), free RAM (Get-GateAvailGB - models.local.needGB >= Get-KitKeepFreeGB; skipped while the requested model is resident: GET /v1/models/active), the server
 (GET <baseUrl>/v1/models within models.local.probeSec lists the model), a seat (lease local-model, models.local.maxConcurrent;
 full: a mixed-mode headless run with models.local.overflow cloud exits 3 OVERFLOW at once, else waits up to -WaitMinutes /
 models.local.queueMinutes, then exits 3 QUEUED).
-Inputs: kit.local.json models.mode (cloud | local | mixed; env KIT_MODEL_MODE wins: every client started here gets local),
-models.local { baseUrl, token (env:<VAR> | secret:<name>; never printed), defaultModel, forbiddenModels, commands,
-env (name: value, null drops a default), use, overflow, maxConcurrent, needGB, probeSec, queueMinutes }
+Inputs: kit.local.json models.mode (cloud | local: every unit; mixed: models.runOn; env KIT_MODEL_MODE wins: every client started
+here gets local), models.runOn { <unit>: cloud | local | { on, evidence } } (units: local bench runon), models.local { baseUrl,
+token (env:<VAR> | secret:<name>; never printed), defaultModel, forbiddenModels, commands, env (name: value, null drops a
+default), overflow, maxConcurrent, needGB, probeSec, queueMinutes }
 (README "Configuration"). Lease state: video.ps1 Get-KitLocalAiState local-model. Outputs: text, JSON with -Json.
-Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat · else the client's (its 1-3 as 11-13).
-Sections: L27 config · L102 checks · L132 verb
+Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat, run: fall back to the cloud · else the client's (its 1-3 as 11-13).
+Sections: L33 config · L143 checks · L173 verb
 #>
 #Requires -Version 7
 # ---- config: models.mode, models.local, the token, each client's env and arguments
 function Get-KitModelMode { $mm = "$(if ($env:KIT_MODEL_MODE) { $env:KIT_MODEL_MODE } else { Get-KitSetting 'models.mode' 'cloud' })".ToLower(); if ($mm -in 'cloud', 'local', 'mixed') { $mm } else { 'cloud' } }
-# mixed mode: crew types or <type>:<label prefix> whose work fits a local model (peak context under 64k, low judgement)
-$script:KitLocalUse = @('steppy', 'checky:close', 'checky:audit', 'devy:ship')
+# models.runOn per run unit (<agent>, <agent>@<kind>, <agentType>:<step label>): local | cloud (anything else, unset: cloud)
+function Get-KitRunOnMap {
+  $ro = [ordered]@{}
+  foreach ($rp in @(Get-KitProps (Get-KitSetting 'models.runOn' $null))) { if ($rp.Name -like '_*') { continue }
+    $rv = if ($rp.Value -is [string]) { $rp.Value } else { Get-KitMember $rp.Value 'on' }; $ro[$rp.Name] = $(if ("$rv".ToLower() -eq 'local') { 'local' } else { 'cloud' }) }
+  $ro
+}
+# one unit: models.mode cloud | local forces it, mixed follows models.runOn; an unknown unit runs on the cloud
+function Resolve-KitRunOn([string]$Unit) {
+  $mo = Get-KitModelMode; $map = Get-KitRunOnMap
+  $on, $why = if ($mo -ne 'mixed') { $mo, "models.mode $mo" } elseif ($map.Contains($Unit)) { $map[$Unit], 'models.runOn' } else { 'cloud', 'not in models.runOn (local bench runon lists the units)' }
+  [pscustomobject]@{ unit = $Unit; on = $on; why = $why; mode = $mo }
+}
+# CONFIG runOn for the workflows (usage.ps1 Get-KitWorkflowConfig): $null when every unit is cloud (the workflows run unchanged)
+function Get-KitRunOnConfig {
+  $mo = Get-KitModelMode; $map = Get-KitRunOnMap
+  $units = if ($mo -eq 'local') { @('*') } elseif ($mo -eq 'mixed') { @($map.Keys | Where-Object { $map[$_] -eq 'local' }) } else { @() }
+  if (-not $units.Count) { return $null }
+  $dir = "$((Get-KitPath 'agents' -Create) -replace '\\', '/')/local-runs"   # agent scratch: the STEP's Write tool makes the folder
+  [ordered]@{ units = $units; step = "STEP: run one workflow step on the local model, nothing else:`n1. Write the line between the markers to $dir/{name}.json with the Write tool, byte for byte (one line of JSON; no markers, nothing added):`n<<<JOB`n{job}`nJOB>>>`n2. Run in PowerShell (pwsh 7; tool timeout 600000): & $($KitLibDir -replace '\\', '/')/crafty.ps1 local run -JobFile '$dir/{name}.json'`nReturn ok=true when it exits 0 (else ok=false); output = its last output line, verbatim." }
+}
+function Add-KitRunOnFallback([string]$Unit, [string]$Why) {
+  $lf = Get-KitPath 'local-fallbacks' -Create; $ln = [ordered]@{ at = (Get-Date).ToString('s'); unit = $Unit; why = "$Why".Trim() -replace '\s+', ' ' } | ConvertTo-Json -Compress
+  Add-Content -LiteralPath $lf -Value $ln -Encoding utf8
+}
+function Get-KitRunOnFallbacks([double]$Hours = 24) {
+  $lf = Get-KitPath 'local-fallbacks'; if (-not (Test-Path -LiteralPath $lf)) { return @() }
+  $since = (Get-Date).AddHours(-$Hours)
+  @(Get-Content -LiteralPath $lf -Tail 2000 | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_ -and [datetime]$_.at -ge $since })
+}
+# status and the dashboard Machine row: $null without models.runOn
+function Get-KitRunOnCounts {
+  $map = Get-KitRunOnMap; if (-not $map.Count) { return $null }
+  $mo = Get-KitModelMode; $nl = if ($mo -eq 'local') { $map.Count } elseif ($mo -eq 'cloud') { 0 } else { @($map.Values | Where-Object { $_ -eq 'local' }).Count }
+  $fb = @(Get-KitRunOnFallbacks)
+  [pscustomobject]@{ mode = $mo; local = $nl; cloud = $map.Count - $nl; fallbacks = $fb.Count; last = $(if ($fb.Count) { "$($fb[-1].unit): $($fb[-1].why)" }) }
+}
 function Get-KitLocalModelConfig {
   $lc = Get-KitSetting 'models.local' $null
   $cmds = @{ claude = @('claude'); code = @('code', 'code-insiders'); desktop = @() }
@@ -36,7 +77,7 @@ function Get-KitLocalModelConfig {
     baseUrl = "$(Get-KitSetting 'models.local.baseUrl' 'http://localhost:8080')".TrimEnd('/')
     token = "$(Get-KitSetting 'models.local.token' 'env:LOCAL_MODEL_TOKEN')"; defaultModel = "$(Get-KitSetting 'models.local.defaultModel' '')"
     forbidden = @(Get-KitSetting 'models.local.forbiddenModels' @() | Where-Object { $_ })
-    commands = $cmds; env = (Get-KitMember $lc 'env'); use = @(Get-KitSetting 'models.local.use' $script:KitLocalUse)
+    commands = $cmds; env = (Get-KitMember $lc 'env'); retiredUse = @(Get-KitSetting 'models.local.use' @() | Where-Object { $_ })
     overflow = "$(Get-KitSetting 'models.local.overflow' 'cloud')".ToLower(); maxConcurrent = [math]::Max(1, [int](Get-KitParam 'models.local.maxConcurrent'))
     needGB = [double](Get-KitParam 'models.local.needGB')
   }
@@ -132,26 +173,53 @@ function Format-KitLocalEnv($EnvMap, [string]$Token) {
 # ---- verb: crafty.ps1 local
 function Invoke-Local {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('claude', 'desktop', 'code', 'status', 'bench')][string]$Client,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('claude', 'desktop', 'code', 'status', 'bench', 'resolve', 'run')][string]$Client,
+  [string]$Unit, [string]$JobFile,   # resolve, run
   [string]$Model, [switch]$Unsafe, [switch]$Print, [switch]$Json, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session, [double]$WaitMinutes = -1,
   [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [int]$TimeoutSec, [switch]$Force,   # bench
+  [switch]$Add, [string]$Write, [switch]$WriteRunonEvidence, [int]$Min,   # bench build / runon / report / coverage
   [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'
 $Rest = @($Rest | Where-Object { $null -ne $_ })
 if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step comes back here as local claude)
-  $ba = @($Rest) + @('-Agent', $Agent) + @(if ($Json) { '-Json' }) + @(if ($Force) { '-Force' }) + @(if ($N) { '-N', $N }) + @(if ($TimeoutSec) { '-TimeoutSec', $TimeoutSec })
-  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Since', $Since), @('-Transcripts', $Transcripts))) { if ($bp[1]) { $ba += $bp } }
+  $ba = @($Rest) + @('-Agent', $Agent) + @(if ($Json) { '-Json' }) + @(if ($Force) { '-Force' }) + @(if ($Add) { '-Add' }) + @(if ($WriteRunonEvidence) { '-WriteRunonEvidence' }) + @(if ($N) { '-N', $N }) + @(if ($Min) { '-Min', $Min }) + @(if ($TimeoutSec) { '-TimeoutSec', $TimeoutSec })
+  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Since', $Since), @('-Transcripts', $Transcripts), @('-Write', $Write))) { if ($bp[1]) { $ba += $bp } }
   & (Get-Python) -X utf8 (Join-Path $KitLibDir 'adapters/localbench.py') @ba; $global:LASTEXITCODE = $LASTEXITCODE; if ($LASTEXITCODE) { exit $LASTEXITCODE }; return
+}
+if ($Client -eq 'resolve') {   # one run unit: cloud | local and how a local one starts (the coordinator, before each spawn)
+  if (-not $Unit) { Stop-KitVerb 'local resolve: -Unit <agent | agent@kind | agentType:step label> (local bench runon lists them)' }
+  $rs = Resolve-KitRunOn $Unit
+  $rs | Add-Member launch $(if ($rs.on -eq 'local') { "& $($KitLibDir -replace '\\', '/')/crafty.ps1 local claude -AgentType $(($Unit -split '[:@]')[0]) -PromptFile <prompt file> [-SchemaFile <schema file>]$(if ($Unit -match '^\w+:') { " (a workflow step: local run -JobFile)" })" } else { '' })
+  if ($Json) { return ($rs | ConvertTo-Json -Compress) }
+  "$($rs.on)   $Unit ($($rs.why))"; if ($rs.launch) { "launch: $($rs.launch); refused or exit 3: spawn it on the cloud and say so (Add-KitRunOnFallback logs a workflow step's)" }; return
+}
+if ($Client -eq 'run') {   # one workflow step (a job file a STEP wrote) on the local model; any refusal: exit 3, the workflow runs it on the cloud
+  $job = try { Get-Content -LiteralPath $JobFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch { Stop-KitVerb "local run: -JobFile <job json { unit, agentType, schema, prompt }>: $($_.Exception.Message)" }
+  $fall = { param($why) Add-KitRunOnFallback "$($job.unit)" $why; Stop-KitVerb "FALLBACK cloud: $($job.unit) $why" 3 }
+  $rs = Resolve-KitRunOn "$($job.unit)"; if ($rs.on -ne 'local') { & $fall "is cloud ($($rs.why))" }
+  $stem = $JobFile -replace '\.json$', ''; $pf = "$stem.prompt.md"; Set-Content -LiteralPath $pf -Value "$($job.prompt)" -Encoding utf8 -NoNewline
+  $la = @('-NoProfile', '-File', (Join-Path $KitLibDir 'crafty.ps1'), 'local', 'claude', '-PromptFile', $pf, '-AgentType', "$($job.agentType)", '-Agent', $Agent)
+  if ($job.schema) { $sf = "$stem.schema.json"; Set-Content -LiteralPath $sf -Value ($job.schema | ConvertTo-Json -Depth 30 -Compress) -Encoding utf8; $la += '-SchemaFile', $sf }
+  $out = @(& (Get-Process -Id $PID).Path @la 2>&1 | ForEach-Object { "$_" }); $rc = $LASTEXITCODE
+  if ($rc) { & $fall "launcher exit ${rc}: $((@($out | Where-Object { $_ -match 'REFUSED|OVERFLOW|QUEUED' })[0], $out[-1] | Where-Object { $_ } | Select-Object -First 1))" }
+  $res = $null   # claude -p --output-format json: the last JSON line with result / structured_output
+  foreach ($ol in @($out)[($out.Count - 1)..0]) { $oj = try { $ol | ConvertFrom-Json -ErrorAction Stop } catch { $null }; if ($oj -and @((Get-KitProps $oj).Name | Where-Object { $_ -in 'result', 'structured_output' }).Count) { $res = $oj; break } }
+  $val = if ($res.structured_output) { $res.structured_output } elseif ($res.result) { try { "$($res.result)".Trim() -replace '^```(json)?\s*|\s*```$', '' | ConvertFrom-Json -ErrorAction Stop } catch { $null } }
+  if ($null -eq $val -or $val -is [string]) { & $fall "no JSON answer ($("$($res.result)$(if (-not $res) { $out[-1] })".Trim() -replace '\s+', ' ' | ForEach-Object { $_.Substring(0, [math]::Min(160, $_.Length)) }))" }
+  return ($val | ConvertTo-Json -Depth 30 -Compress)
 }
 $cfg = Get-KitLocalModelConfig; $tok = Get-KitLocalModelToken $cfg.token
 if ($Client -eq 'status') {
   $sv = Get-KitLocalModelServed $cfg $tok; $ram = Test-KitLocalModelRam $cfg $tok $cfg.defaultModel; $sts = Get-KitLocalAiState 'local-model'; $mo = Get-KitModelMode
-  $so = [ordered]@{ mode = $mo; use = @($cfg.use); baseUrl = $cfg.baseUrl; up = $sv.up; served = @($sv.ids); forbidden = @($sv.ids | Where-Object { Test-KitLocalModelForbidden $cfg $_ }); error = $sv.error
+  $roc = Get-KitRunOnCounts
+  $so = [ordered]@{ mode = $mo; runOn = $roc; baseUrl = $cfg.baseUrl; up = $sv.up; served = @($sv.ids); forbidden = @($sv.ids | Where-Object { Test-KitLocalModelForbidden $cfg $_ }); error = $sv.error
     seats = $sts.leases.Count; maxConcurrent = $cfg.maxConcurrent; overflow = $cfg.overflow; holders = @($sts.leases | ForEach-Object { "$($_.agent)" }); waiting = $sts.waiting.Count; ram = $ram; token = $(if ($tok) { 'set' } else { 'unset' }) }
   if ($Json) { return ($so | ConvertTo-Json -Depth 5 -Compress) }
-  "mode: $mo$(if ($mo -eq 'mixed') { " · local use: $($cfg.use -join ', ') · overflow $($cfg.overflow)" })"
+  "mode: $mo$(if ($mo -eq 'mixed') { " · overflow $($cfg.overflow)" })"
+  "runOn: $(if ($roc) { "$($roc.local) local / $($roc.cloud) cloud · fallbacks to the cloud in 24 h: $($roc.fallbacks)$(if ($roc.last) { " (last $($roc.last))" })" } else { 'not set: every unit cloud (local bench runon -Write <kit.local.json> lists them all)' })"
+  if ($cfg.retiredUse.Count) { "WARNING: models.local.use is retired and ignored: local bench runon -Write <kit.local.json> folds it into models.runOn" }
   "server $($cfg.baseUrl): $(if ($sv.up) { "up, serves $(@($sv.ids) -join ', ')$(if ($so.forbidden.Count) { " (forbidden: $($so.forbidden -join ', '))" })" } else { "DOWN ($($sv.error))" })"
   "seats: $($sts.leases.Count)/$($cfg.maxConcurrent)$(if ($sts.leases.Count) { " ($($so.holders -join ', '))" }) · $($sts.waiting.Count) waiting"
   "RAM: $($ram.availGB) GB available, a start needs $($ram.needGB) GB over the $($ram.keepFreeGB) GB floor: $(if ($ram.resident) { 'ok, a model is resident (no new start)' } elseif ($ram.ok) { 'ok' } else { 'SHORT' })"

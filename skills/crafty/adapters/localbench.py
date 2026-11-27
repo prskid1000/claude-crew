@@ -1,6 +1,12 @@
 """localbench.py: replay recorded real agent steps against a local model and score them (crafty.ps1 local bench).
-  build  [-Set s] [-Roles r1,r2] [-N 4] [-Since yyyy-mm-dd] [-Transcripts dir] [-Force]   replay set from recorded steps, per
-         role; an existing set: -Force empties it (results of a changed task are never reused: meta.promptSha)
+  build  [-Set s] [-Roles r1,r2] [-N 4] [-Since yyyy-mm-dd] [-Transcripts dir] [-Force | -Add]   replay set from recorded steps, per
+         role; an existing set: -Force empties it (results of a changed task are never reused: meta.promptSha), -Add tops each
+         run unit up to -N with transcripts the set lacks (a unit with none: "no history")
+  coverage [-Set s,s2] [-Min 3] [-Json]   bench tasks per models.runOn unit and set; a unit under -Min: gap
+  runon  [-Write <kit.local.json | kit.example.json>] [-Json]   every run unit (kitbag.py runon_units), its setting and source;
+         -Write: missing units added as cloud, models.local.use folded in (its units local) and dropped, unknown units listed
+  report ... -WriteRunonEvidence   + each unit's accept rate on this set into kit.local.json models.runOn.<unit>.evidence.<set>
+         (never flips its cloud | local)
   run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-TimeoutSec 600] [-Force]   resumable: skips ids that
          ran (rc 0) on the same prompt; -Ids re-runs them; claude --tools= (none)
   score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (fields, list items, text facts)
@@ -12,12 +18,12 @@ derived from the answer the cloud run returned (cloud.json). Nothing runs tools:
 writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<set>/tasks/<id>/ (set) and
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (the transcript adapter's root, */subagents/**). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L31 store · L65 reply parsing · L110 outcome · L223 build · L360 run
+Sections: L37 store · L71 runon · L202 reply parsing · L247 outcome · L360 build · L511 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
 sys.path.insert(0, osp.join(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))), 'bossy'))   # <kit>/skills/bossy
-from kitbag import kit_path, local_config, KIT_DIR  # noqa: E402
+from kitbag import kit_path, local_config, local_config_path, runon_units, runon_unit_of, KIT_DIR  # noqa: E402
 
 CUT_RES, CUT_CMD, CUT_ALL = 2500, 1500, 60000
 DEFAULT_ROLES = ['steppy', 'checky:close', 'checky:hold', 'kitty:learn', 'kitty:track', 'devy:track', 'devy:followups', 'checky:audit',
@@ -60,6 +66,137 @@ def wjson(p, v):
     with open(tmp, 'w', encoding='utf-8') as fh:
         json.dump(v, fh, ensure_ascii=False, indent=1)
     os.replace(tmp, p)
+
+
+# ---- runon: models.runOn units, edited in place in a config file (its layout kept: only the runOn object is rewritten)
+def bench_unit(meta, units):
+    """The run unit of a bench task (its role and step label); None: no unit (an ad hoc kind the manifest lacks)."""
+    role, label = str(meta.get('role') or ''), str(meta.get('label') or '')
+    t = re.split(r'[:@]', role)[0]
+    if '@' in role:
+        return role if role in units else None
+    if ':' in role or t == 'steppy':
+        lab = label if t == 'steppy' else role.split(':', 1)[1]
+        for u in (runon_unit_of(t, lab, units), runon_unit_of('steppy', lab, units)):   # a step whose steppy was unknown ran as another type
+            if u in units:
+                return u
+        return None
+    return t if t in units else None
+
+
+def members(text, start):
+    """{key: (key start, value start, value end)} of the JSON object whose { is at text[start] (its own keys only)."""
+    dec, gap, i, out = json.JSONDecoder(strict=False), re.compile(r'[\s,]*'), start + 1, {}
+    while True:
+        i = gap.match(text, i).end()
+        if text[i] == '}':
+            return out
+        k, j = dec.raw_decode(text, i)
+        vs = re.compile(r'\s*:\s*').match(text, j).end()
+        _, ve = dec.raw_decode(text, vs)
+        out[k], i = (i, vs, ve), ve
+
+
+def runon_text(ro, ind):
+    parts, line, out = [f'{json.dumps(u)}: {json.dumps(v, ensure_ascii=False, separators=(", ", ": "))}' for u, v in ro.items()], '', []
+    for p in parts:
+        if line and len(line) + len(p) > 150:
+            out.append(line.rstrip(', '))
+            line = ''
+        line += p + ', '
+    out.append(line.rstrip(', '))
+    return '"runOn": {\n' + ',\n'.join(ind + x for x in out) + ' }'
+
+
+def write_runon(path, ro, drop_use=False):
+    """Replace (or add) models.runOn in a config file; drop_use: remove models.local.use. The rest of the file is untouched."""
+    text = open(path, encoding='utf-8').read()
+    top = lambda: members(text, text.index('{'))
+    if 'models' not in top():
+        text = text[:text.rindex('}')].rstrip() + ',\n "models": {} }\n'
+    mo = top()['models'][1]
+    if drop_use:
+        lm = members(text, mo).get('local')
+        us = lm and members(text, lm[1]).get('use')
+        if us:
+            after = re.compile(r'\s*,\s*').match(text, us[2])
+            text = text[:us[0]] + text[after.end():] if after else re.sub(r',\s*$', '', text[:us[0]]) + text[us[2]:]
+    mm = members(text, mo)
+    ks = top()['models'][0]
+    new = runon_text(ro, ' ' * (len(text[:ks]) - len(text[:ks].rstrip(' ')) + 2))
+    if 'runOn' in mm:
+        text = text[:mm['runOn'][0]] + new + text[mm['runOn'][2]:]
+    elif 'mode' in mm:   # next to the override that wins over it
+        text = text[:mm['mode'][2]] + ', ' + new + text[mm['mode'][2]:]
+    else:
+        text = text[:mo + 1] + ' ' + new + (',' if mm else ' ') + text[mo + 1:]
+    json.loads(text)   # never leave a broken config
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='') as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
+def cmd_runon(a):
+    units = runon_units()
+    src = a.write or local_config_path(KIT_DIR, 'kit.local.json')
+    conf = rjson(src, {}) if src else {}
+    mo = conf.get('models') or {}
+    have, use = mo.get('runOn') or {}, ((mo.get('local') or {}).get('use')) or []
+    unknown = [u for u in have if u not in units]
+    if a.write:
+        ro = {u: have.get(u, 'cloud') for u in units}
+        for w in use:   # the retired list: '<type>' = all its units, '<type>:<label prefix>' = its steps
+            for u in units:
+                if not units[u]['boot'] and (u == w or u.startswith(w + ':') or u.startswith(w + '@') or (':' in w and u.startswith(w))):
+                    ro[u] = {**ro[u], 'on': 'local'} if isinstance(ro[u], dict) else 'local'
+        ro.update({u: have[u] for u in unknown})   # never dropped silently: listed below, the owner removes them
+        write_runon(a.write, ro, drop_use=bool(use))
+        have = ro
+    on = lambda v: (v.get('on') if isinstance(v, dict) else v) or 'cloud'
+    rows = [{'unit': u, 'on': on(have.get(u, 'cloud')), 'set': u in have, 'by': units[u]['by'], 'boot': units[u]['boot']} for u in units]
+    if a.json:
+        print(json.dumps({'file': src, 'units': rows, 'unknown': unknown, 'use': use})); return 0
+    nl = sum(r['on'] == 'local' for r in rows)
+    print(f'{len(rows)} run units in {src or "(no kit.local.json)"}: {nl} local, {len(rows) - nl} cloud, {sum(not r["set"] for r in rows)} not set (cloud)'
+          + (f'; models.local.use folded in: {", ".join(use)}' if a.write and use else ''))
+    for r in rows:
+        print(f'  {r["unit"]:28} {r["on"]:6} {r["by"]}{" (before CONFIG: always cloud)" if r["boot"] else ""}{"" if r["set"] else " · not set"}')
+    for u in unknown:
+        print(f'  UNKNOWN {u}: no such run unit (a typo or a retired step): remove it')
+    if use and not a.write:
+        print('  models.local.use is retired: crafty.ps1 local bench runon -Write <kit.local.json> folds it into models.runOn')
+    return 1 if unknown else 0
+
+
+def set_names(a):
+    root = kit_path('local-bench')
+    return a.sets or (sorted(d for d in os.listdir(root) if osp.isdir(osp.join(root, d, 'tasks'))) if osp.isdir(root) else [])
+
+
+def cmd_coverage(a):
+    units, sets = runon_units(), set_names(a)
+    cnt, unmapped = {u: {s: 0 for s in sets} for u in units}, {}
+    for s in sets:
+        td = osp.join(bench_dir(s), 'tasks')
+        for tid in sorted(os.listdir(td)) if osp.isdir(td) else []:
+            m = rjson(osp.join(td, tid, 'meta.json'), {}) or {}
+            u = bench_unit(m, units)
+            if u:
+                cnt[u][s] += 1
+            else:
+                unmapped[str(m.get('role'))] = unmapped.get(str(m.get('role')), 0) + 1
+    rows = [{'unit': u, 'by': units[u]['by'], 'sets': cnt[u], 'total': sum(cnt[u].values()), 'gap': sum(cnt[u].values()) < a.min} for u in units]
+    tot = sum(r['total'] for r in rows) + sum(unmapped.values())
+    if a.json:
+        print(json.dumps({'sets': sets, 'min': a.min, 'tasks': tot, 'units': rows, 'unmapped': unmapped})); return 0
+    print(f'coverage: {sum(not r["gap"] for r in rows)}/{len(rows)} units with {a.min}+ tasks · {tot} tasks in {", ".join(sets) or "no set"}'
+          + ''.join(f' · {s} {sum(r["sets"][s] for r in rows)}' for s in sets))
+    for r in rows:
+        print(f'  {r["unit"]:28} {r["total"]:3}  {" ".join(f"{s} {n}" for s, n in r["sets"].items())}{"  GAP" if r["gap"] else ""}')
+    if unmapped:
+        print('  no unit (an ad hoc kind the manifest lacks): ' + ', '.join(f'{k} {v}' for k, v in sorted(unmapped.items())))
+    return 0
 
 
 # ---- reply parsing: strict (the whole reply), repairable (fence / raw newlines), lenient (the longest object anywhere)
@@ -305,9 +442,19 @@ def cmd_build(a):
     since = datetime.datetime.strptime(a.since, '%Y-%m-%d').timestamp() if a.since else time.time() - 14 * 86400
     sd, made, seen = bench_dir(a.set, create=True), {}, set()
     old = osp.join(sd, 'tasks')
-    if osp.isdir(old) and os.listdir(old):
+    units, have, used = runon_units(), {}, set()   # -Add: tasks per unit already in the set; transcripts any set holds
+    if a.add:
+        for s in set_names(argparse.Namespace(sets=[])):
+            sd2 = osp.join(bench_dir(s), 'tasks')
+            for tid in os.listdir(sd2):
+                om = rjson(osp.join(sd2, tid, 'meta.json'), {}) or {}
+                used.add(om.get('transcript'))
+                if s == a.set:
+                    ou = bench_unit(om, units) or om.get('role')
+                    have[ou] = have.get(ou, 0) + 1
+    elif osp.isdir(old) and os.listdir(old):
         if not a.force:
-            print(f'build: set {a.set} has tasks ({old}): -Force rebuilds it, or name a new -Set'); return 1
+            print(f'build: set {a.set} has tasks ({old}): -Force rebuilds it, -Add tops it up, or name a new -Set'); return 1
         for e in os.listdir(sd):   # tasks and every model's runs and scores: ids are reused
             shutil.rmtree(osp.join(sd, e)) if osp.isdir(osp.join(sd, e)) else os.remove(osp.join(sd, e))
     metas = []
@@ -321,17 +468,21 @@ def cmd_build(a):
     for _, p, js in sorted(metas, reverse=True):   # newest first
         m = rjson(p, {})
         role = role_of(m, js)
-        if not any(wanted(w.split('@')[0], role) for w in want):
+        if not any(wanted(re.split(r'[@:]', w)[0], role) for w in want):   # a unit (steppy:release) by its type; matched below
             continue
         prompt, seq, final, model = read_transcript(js)
         if ':' not in role and kind_of(prompt):
             role = f'{role}@{kind_of(prompt)}'   # ad hoc: per kind (revy@mr, revy@plan, checky@lead)
-        hit = role if any(wanted(w, role) for w in want) else None
-        if not hit or made.get(hit, 0) >= a.n or not isinstance(final, dict) or not final or not seq or prompt[:3000] in seen:
+        hit = role if any(wanted(w, role) or bench_unit({'role': role, 'label': m.get('description')}, units) == w for w in want) else None
+        key = (bench_unit({'role': hit, 'label': m.get('description')}, units) or hit) if a.add and hit else hit   # -Add caps per unit
+        if not hit or have.get(key, 0) + made.get(key, 0) >= a.n or js in used or not isinstance(final, dict) or not final or not seq or prompt[:3000] in seen:
             continue
         seen.add(prompt[:3000])
-        made[hit] = made.get(hit, 0) + 1
-        tid = f"{re.sub(r'[^a-z0-9]+', '-', hit.lower()).strip('-')}-{made[hit]}"
+        made[key] = made.get(key, 0) + 1
+        slug, nr = re.sub(r'[^a-z0-9]+', '-', hit.lower()).strip('-'), made[key]
+        while a.add and osp.exists(osp.join(sd, 'tasks', f'{slug}-{nr}')):
+            nr += 1
+        tid = f'{slug}-{nr}'
         sch = derive_schema(final)
         body = PREFIX + prompt[:20000] + '\n\n=== TOOL CALLS ALREADY RUN (in order) ===\n' + replay(seq)
         body += f'\n\n=== JSON SCHEMA OF THE ANSWER (reply with the JSON object only) ===\n{json.dumps(sch)}\n'
@@ -342,9 +493,9 @@ def cmd_build(a):
         wjson(osp.join(td, 'schema.json'), sch)
         wjson(osp.join(td, 'cloud.json'), final)
         wjson(osp.join(td, 'meta.json'), {'id': tid, 'role': hit, 'tier': model, 'label': m.get('description'), 'transcript': js, 'calls': len(seq), 'promptSha': sha(body)})
-    missing = [w for w in want if not any(wanted(w, r) for r in made)]
-    print(f"build {a.set}: {sum(made.values())} task(s) in {sd}: " + ', '.join(f'{k} {v}' for k, v in made.items()) + (f' · no samples: {", ".join(missing)}' if missing else ''))
-    return 0 if made else 1
+    missing = [w for w in want if not any(wanted(w, r) or r == w for r in made) and not (a.add and have.get(w, 0) >= a.n)]
+    print(f"build {a.set}: {sum(made.values())} task(s) in {sd}: " + ', '.join(f'{k} {v}' for k, v in made.items()) + (f' · no history: {", ".join(missing)}' if missing else ''))
+    return 0 if made or a.add else 1
 
 
 def tasks_of(a):
@@ -467,11 +618,36 @@ def pct(rate):
     return '-' if rate is None else f'{rate}%'
 
 
+def write_evidence(a, sc):
+    """models.runOn.<unit>.evidence.<set> = this model's accepted / answered tasks of that unit; the unit's cloud | local stays."""
+    p, units = local_config_path(KIT_DIR, 'kit.local.json'), runon_units()
+    if not p:
+        print('report: no kit.local.json: evidence not written'); return
+    td = osp.join(bench_dir(a.set), 'tasks')
+    per = {}
+    for tid, s in sc.items():
+        u = bench_unit(rjson(osp.join(td, tid, 'meta.json'), {}) or {'role': s.get('role')}, units)
+        if u and s['rc'] in ('0', 'timeout'):   # infra fails are no evidence
+            e = per.setdefault(u, [0, 0])
+            e[0] += bool(s['accepted'])
+            e[1] += 1
+    ro = dict(((rjson(p, {}) or {}).get('models') or {}).get('runOn') or {})
+    for u, (acc, n) in per.items():
+        v = ro.get(u, 'cloud')
+        v = dict(v) if isinstance(v, dict) else {'on': v}
+        v['evidence'] = {**(v.get('evidence') or {}), a.set: {'model': a.model, 'accepted': acc, 'n': n, 'rate': round(100 * acc / n), 'at': datetime.date.today().isoformat()}}
+        ro[u] = v
+    write_runon(p, ro)
+    print(f'report: evidence for {len(per)} unit(s) written to {p} (models.runOn.<unit>.evidence.{a.set}; settings unchanged)')
+
+
 def cmd_report(a):
     sc = rjson(osp.join(bench_dir(a.set, a.model), 'score.json'), {}) or {}
     if not sc:
         print(f'report: no score for {a.set}/{a.model} (local bench score first)'); return 1
     rows = summary(sc)
+    if a.evidence:
+        write_evidence(a, sc)
     if a.json:
         print(json.dumps(rows)); return 0
     print(f'{a.set} on {a.model}: {sum(r["accepted"] for r in rows)}/{sum(r["n"] - r["infra"] for r in rows)} accepted ({sum(r["infra"] for r in rows)} infra)')
@@ -503,8 +679,12 @@ def cmd_diff(a):
 
 def main(argv):
     ap = argparse.ArgumentParser(prog='crafty.ps1 local bench', add_help=True)
-    ap.add_argument('verb', choices=['build', 'run', 'score', 'report', 'diff'])
+    ap.add_argument('verb', choices=['build', 'run', 'score', 'report', 'diff', 'coverage', 'runon'])
     ap.add_argument('-Set', '--set', dest='set', default='default')
+    ap.add_argument('-Add', '--add', dest='add', action='store_true')
+    ap.add_argument('-Min', '--min', dest='min', type=int, default=3)
+    ap.add_argument('-Write', '--write', dest='write', default='')
+    ap.add_argument('-WriteRunonEvidence', '--write-runon-evidence', dest='evidence', action='store_true')
     ap.add_argument('-Model', '--model', dest='model', default='')
     ap.add_argument('-Against', '--against', dest='against', default='')
     ap.add_argument('-Roles', '--roles', dest='roles', default='')
@@ -519,6 +699,7 @@ def main(argv):
     a = ap.parse_args(argv)
     a.roles = [x for x in re.split(r'[,\s]+', a.roles) if x]
     a.ids = [x for x in re.split(r'[,\s]+', a.ids) if x]
+    a.sets = [x for x in re.split(r'[,\s]+', a.set) if x] if a.verb == 'coverage' and a.set != 'default' else []
     if a.verb in ('run', 'score', 'report', 'diff') and not a.model:
         a.model = str(cfg().get('defaultModel') or '')
         if not a.model:
@@ -527,7 +708,7 @@ def main(argv):
         print('diff: -Against <model>'); return 2
     if a.ids and a.verb == 'run':
         a.force = True   # named ids: a repro re-runs them
-    return {'build': cmd_build, 'run': cmd_run, 'score': cmd_score, 'report': cmd_report, 'diff': cmd_diff}[a.verb](a)
+    return {'build': cmd_build, 'run': cmd_run, 'score': cmd_score, 'report': cmd_report, 'diff': cmd_diff, 'coverage': cmd_coverage, 'runon': cmd_runon}[a.verb](a)
 
 
 if __name__ == '__main__':

@@ -5,7 +5,7 @@
 # /v1/models), seats full (OVERFLOW in mixed mode, QUEUED else), a resident model skips the RAM need, a schema run keeps StructuredOutput in the
 # crew agent's tools, a fake client gets the env and its exit code, supervise line.
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/local-model.ps1', 'skills/crafty/adapters/video.ps1', 'agents/steppy.md')
+$TestKitFiles = @('skills/crafty/adapters/local-model.ps1', 'skills/crafty/adapters/video.ps1', 'agents/steppy.md', 'skills/crafty/adapters/localbench.py')
 $k = New-TestKit lm; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $cfgFile = Join-Path $k 'skills/crafty/kit.local.json'
 $env:LM_TEST_TOKEN = 'tok-' + [guid]::NewGuid().ToString('N')   # a value the output must never show
 $lmCfg = @{ baseUrl = 'http://127.0.0.1:9/'; token = 'env:LM_TEST_TOKEN'; defaultModel = 'small-a'; forbiddenModels = @('big-*-mtp'); env = @{ BASH_MAX_TIMEOUT_MS = $null; EXTRA_FLAG = '1' } }
@@ -81,6 +81,73 @@ $pg = (Invoke-PsTest lmpage @'
 Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; history = @(); stats = [pscustomobject]@{ now = (Get-KitSuperviseNow @('memory: 61% used, 24.7 GB available') 20); live = @() } })
 '@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
 Expect "local: the dashboard Machine row has a local model seats tile with the mode, amber when full" ($pg -match "<div class='tl watch' title='local model seats: [^']*: busy \d+ min'><b>1 / 1</b><span>local model seats (&#183;|·) mixed</span>")
+
+# models.runOn (owner 2026-11-27): one setting per run unit, models.mode wins, a refused local run falls back to the cloud (logged)
+$roRes = { param($roMode, $roMap, [string[]]$roUnits) & $J @{ models = @{ mode = $roMode; runOn = $roMap; local = $lmCfg } } $cfgFile; @($roUnits | ForEach-Object { $roR = Invoke-TestScript $D local resolve -Unit $_ -Json; "$(($roR.out | ConvertFrom-Json).on)" }) -join ',' }
+$roMap = @{ 'devy@fix' = 'local'; 'checky:close' = @{ on = 'local'; evidence = @{ pilot = @{ accepted = 12; n = 13 } } }; 'revy@mr' = 'cloud' }
+$roU = @('devy@fix', 'checky:close', 'revy@mr', 'devy:nope')
+$roC = & $roRes 'cloud' $roMap $roU; $roL = & $roRes 'local' $roMap $roU; $roX = & $roRes 'mixed' $roMap $roU
+Expect "runOn resolve: mode cloud = all cloud, local = all local, mixed follows runOn (string or { on, evidence }), an unknown unit cloud ($roC | $roL | $roX)" ($roC -eq 'cloud,cloud,cloud,cloud' -and $roL -eq 'local,local,local,local' -and $roX -eq 'local,local,cloud,cloud')
+$roT = Invoke-TestScript $D local resolve -Unit 'devy@fix'
+Expect "runOn resolve: a local unit prints its launch line ($($roT.out.Trim() -replace '\s+', ' '))" ($roT.code -eq 0 -and $roT.out -match '^local\s+devy@fix \(models\.runOn\)' -and $roT.out -match 'local claude -AgentType devy -PromptFile')
+$roWc = { param($roMode) & $J @{ models = @{ mode = $roMode; runOn = $roMap; local = $lmCfg } } $cfgFile; @(Invoke-PsTest rowc "`$null = . `$args[0] 6>`$null`nGet-KitWorkflowConfig | ConvertTo-Json -Depth 8 -Compress" @((Join-Path $k 'skills/bossy/bossy.ps1')))[-1] }
+$roW0 = & $roWc 'cloud'; $roW1 = & $roWc 'mixed'; $roW1j = $roW1 | ConvertFrom-Json
+Expect "runOn CONFIG: all cloud = no runOn key and no runOn map (the workflows run unchanged); mixed = the local units + the STEP text ($($roW1.Substring(0, [math]::Min(160, $roW1.Length))))" ($roW0 -notmatch 'runOn' -and (@($roW1j.runOn.units | Sort-Object) -join ',') -eq 'checky:close,devy@fix' -and $roW1j.runOn.step -match '\{name\}\.json' -and $roW1j.runOn.step -match 'local run -JobFile' -and "$($roW1j.models)" -notmatch 'runOn')
+$roJob = Join-Path (Kd) 'job-close.json'; @{ unit = 'checky:close'; agentType = 'steppy'; schema = @{ type = 'object'; properties = @{ ok = @{ type = 'boolean' } }; required = @('ok') }; prompt = 'close T1' } | ConvertTo-Json -Depth 8 | Set-Content $roJob -Encoding utf8
+$roFb = TkPath $k 'local-fallbacks'; Remove-Item $roFb -ErrorAction SilentlyContinue
+& $J @{ models = @{ mode = 'cloud'; runOn = $roMap; local = $lmCfg } } $cfgFile; $roR1 = Invoke-TestScript $D local run -JobFile $roJob
+$roDown = $lmCfg.Clone(); $roDown.baseUrl = 'http://127.0.0.1:9'; & $J @{ models = @{ mode = 'mixed'; runOn = $roMap; local = $roDown } } $cfgFile; $roR2 = Invoke-TestScript $D local run -JobFile $roJob
+$roOk = Join-Path (Kd) 'fakeok.ps1'; Set-Content $roOk "`$null = @(`$input); '{`"type`":`"result`",`"result`":`"`",`"structured_output`":{`"ok`":true,`"output`":`"closed T1`"}}'; exit 0" -Encoding utf8
+$roUp = $lmCfg.Clone(); $roUp.commands = @{ claude = @($roOk) }; $roUp.maxConcurrent = 4; & $J @{ models = @{ mode = 'mixed'; runOn = $roMap; local = $roUp } } $cfgFile; $roR3 = Invoke-TestScript $D local run -JobFile $roJob
+$roLog = @(Get-Content $roFb -ErrorAction SilentlyContinue | ForEach-Object { $_ | ConvertFrom-Json })
+Expect "runOn run: a cloud unit and a server down exit 3 FALLBACK cloud, each logged with its reason ($($roR1.code) $($roR2.code): $($roR2.out.Trim() -replace '\s+', ' '))" ($roR1.code -eq 3 -and $roR1.out -match 'FALLBACK cloud: checky:close is cloud \(models\.mode cloud\)' -and $roR2.code -eq 3 -and $roR2.out -match 'REFUSED: no local model server' -and $roLog.Count -eq 2 -and $roLog[1].unit -eq 'checky:close')
+Expect "runOn run: a local unit runs through the launcher and prints the step's JSON on one line ($($roR3.code): $($roR3.out.Trim()))" ($roR3.code -eq 0 -and ($roR3.out.Trim() -split "`n")[-1] -eq '{"ok":true,"output":"closed T1"}')
+$roS = Invoke-TestScript $D local status -Json; $roSj = $roS.out | ConvertFrom-Json; $roSt = Invoke-TestScript $D local status
+Expect "runOn status: N local / M cloud and the fallbacks in 24 h ($($roSt.out -split "`n" | Where-Object { $_ -match '^runOn' }))" ($roSj.runOn.local -eq 2 -and $roSj.runOn.cloud -eq 1 -and $roSj.runOn.fallbacks -eq 2 -and $roSt.out -match 'runOn: 2 local / 1 cloud · fallbacks to the cloud in 24 h: 2')
+$roPg = (Invoke-PsTest ropage @'
+. $args[0]
+Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; history = @(); stats = [pscustomobject]@{ now = (Get-KitSuperviseNow @('memory: 61% used, 24.7 GB available') 20); live = @() } })
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
+Expect "runOn dashboard: the Machine row shows local / cloud units and the fallbacks, amber with fallbacks" ($roPg -match "<div class='tl watch' title='models\.runOn units[^']*'><b>2 / 1</b><span>runOn local / cloud (&#183;|·) 2 fallbacks 24 h</span>")
+# runon -Write folds the retired models.local.use list in (its units local), drops it, keeps an unknown unit and names it
+$roUse = $lmCfg.Clone(); $roUse.use = @('steppy', 'checky:close'); & $J @{ models = @{ mode = 'mixed'; runOn = @{ 'devy@nope' = 'local' }; local = $roUse } } $cfgFile
+$roWr = Invoke-TestScript $D local bench runon -Write $cfgFile; $roCf = Get-Content $cfgFile -Raw | ConvertFrom-Json -AsHashtable
+$roVals = $roCf.models.runOn
+Expect "runon -Write: every unit listed, use folded in (steppy steps + checky:close local, a step before CONFIG stays cloud), use dropped, unknown kept and named, exit 1 ($($roWr.code))" ($roWr.code -eq 1 -and $roVals['steppy:budget'] -eq 'local' -and $roVals['checky:close'] -eq 'local' -and $roVals['steppy:record-args'] -eq 'cloud' -and $roVals['devy@feature'] -eq 'cloud' -and -not $roCf.models.local.ContainsKey('use') -and $roVals['devy@nope'] -eq 'local' -and $roWr.out -match 'UNKNOWN devy@nope' -and $roVals.Count -ge 100)
+# the workflows: no runOn in CONFIG (all cloud) = the same steps as an empty list; a local unit runs as one steppy STEP; refused -> the cloud step, logged
+$roJs = @'
+const mk = (ro, ans) => { const calls = [], logs = []; return { calls, logs, agent: async (p, o) => { calls.push(`${o.label}|${o.agentType}|${o.model}|${p.length}`)
+  if (/^record-args/.test(o.label)) return _ok(`RECORDED\nCONFIG ${JSON.stringify({ roles: {}, ...(ro ? { runOn: { units: ro, step: 'STEP: job {name}: {job}' } } : {}) })}`)
+  if (/@local$/.test(o.label)) { calls.push(`PROMPT ${p}`); return ans } return _pass(p, o) } } }
+const base = { brief: 'C:/b/w.md', mandate: ['m'], ..._kl, agents: [{ id: 'X1', items: 'A1' }] }
+const go = async (ro, ans) => { const m = mk(ro, ans); await run(base, m.agent, (l) => m.logs.push(l), _n, pipeline); return m }
+const a = await go(null), b = await go([]), c = await go(['devy:build'], _ok(JSON.stringify(_rep({ status: 'PASS', failing: [] }, _merged(1))))), d = await go(['devy:build'], { ok: false, output: 'FALLBACK cloud: devy:build launcher exit 1: REFUSED: RAM' })
+console.log(`noop:${a.calls.join() === b.calls.join() && !a.calls.some((x) => /@local\|/.test(x))}`)
+console.log(`local:${c.calls.some((x) => /^build:X1@local\|steppy\|/.test(x)) && c.calls.some((x) => /^PROMPT STEP: job build_X1: \{"unit":"devy:build","agentType":"devy","schema":\{/.test(x)) && !c.calls.some((x) => /^build:X1\|/.test(x))}`)
+console.log(`fallback:${d.calls.some((x) => /^build:X1\|devy\|/.test(x)) && d.logs.some((l) => /^build:X1: devy:build on the cloud \(local: FALLBACK cloud: devy:build launcher exit 1/.test(l))}`)
+'@
+Expect-Each (Invoke-Js ro-buildy $roJs (Join-Path $src 'workflows/buildy.js')) 'runOn buildy.js: #' 'noop', 'local', 'fallback' -Show 4
+# every step the sims run maps to a run unit the generator lists (buildy, testy, tidy)
+$roOut = Join-Path (Kd) 'units.tsv'; $env:KIT_UNITS_OUT = $roOut
+$null = Invoke-Js ro-b2 'await run({ brief: "C:/b/w.md", mandate: ["m"], ..._kl, agents: [{ id: "X1", items: "A1", migrations: true }] }, _mock(_pass).agent, _n, _n, pipeline)' (Join-Path $src 'workflows/buildy.js')
+$null = Invoke-Js ro-t2 'await run({ runDir: "C:/runs/G", ..._kl, items: [_item("W1", "")] }, _mock((p, o) => /^test:/.test(o.label) ? _res("W1", [_ck("C1", "PASS")]) : undefined).agent, _n, _n, null)' (Join-Path $src 'workflows/testy.js')
+$null = Invoke-Js ro-d2 'await run({ kitDir: "C:/k" }, _mock((p, o) => o.label === "prep" ? { ok: true, record: "RECORDED", prep: JSON.stringify({ work: 1, steps: [] }), run: "tidy" } : { applied: [], proposedForApproval: [], rejected: [], report: "r" }).agent, _n, _n, null)' (Join-Path $src 'workflows/tidy.js')
+Remove-Item Env:KIT_UNITS_OUT
+$roAll = @((Invoke-TestScript $D local bench runon -Json).out | ConvertFrom-Json | ForEach-Object { $_.units.unit })
+$roSeen = @(Get-Content $roOut | ForEach-Object { $roP = $_ -split "`t"; "$($roP[0]):$((($roP[1] -split '[:@~]')[0]) -replace '-retry$', '')" } | Sort-Object -Unique)
+$roMiss = @($roSeen | Where-Object { $_ -notin $roAll })
+Expect "runOn generator: every step the buildy / testy / tidy sims ran is a listed unit ($($roSeen.Count) seen, $($roAll.Count) units; missing: $($roMiss -join ', '))" ($roSeen.Count -ge 12 -and -not $roMiss.Count -and $roAll.Count -ge 100)
+# lint RUNON: kit.example.json names every unit once (an unknown or a missing one fails), a workflow step label maps to a declared unit
+$roPy = Join-Path (Kd) 'rolint.py'; Set-Content $roPy @'
+import json, sys, types
+sys.path.insert(0, sys.argv[1] + '/skills/bossy'); import kitbag
+src = open(sys.argv[1] + '/' + kitbag.PATHS_JSON, encoding='utf-8').read(); d = json.loads(src); ro = d['models']['runOn']
+ro.pop('devy@fix'); ro['devy@typo'] = 'cloud'; ro['revy@mr'] = 'maybe'
+k = types.SimpleNamespace(dir=sys.argv[1], texts={kitbag.PATHS_JSON: json.dumps(d), 'workflows/x.js': "await agent(p, { label: `zzz:${a}`, agentType: 'devy' })"}, workflows={'buildy': 'workflows/x.js'})
+out = []; kitbag.runon_lint(k, kitbag.manifest(sys.argv[1]), lambda c, w, m: out.append(f'{c} {w} {m}')); print('\n'.join(out))
+'@ -Encoding utf8
+$roLn = @(python -X utf8 $roPy $src 2>&1) -join "`n"
+Expect "lint RUNON: an unknown unit, a missing one, a bad value, a step label no unit declares ($($roLn -replace '\s+', ' '))" ($roLn -match 'RUNON .*"devy@typo" is no run unit' -and $roLn -match 'misses unit "devy@fix"' -and $roLn -match '"revy@mr" = "maybe"' -and $roLn -match 'workflows/x\.js:1.*step unit devy:zzz')
 Stop-Job $srv -ErrorAction SilentlyContinue; Remove-Job $srv -Force -ErrorAction SilentlyContinue
 Remove-Item Env:LM_TEST_TOKEN; Remove-TestKit $k
 Complete-Tests

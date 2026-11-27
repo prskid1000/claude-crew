@@ -8,7 +8,7 @@ export const meta = {
  ],
 }
 
-// Sections: L12 args · L28 prep · L54 judge
+// Sections: L12 args · L28 prep · L62 judge
 // ---- args: all optional
 /* args (all optional): {
  applyScripts: false,  // true: also apply script/default edits
@@ -31,6 +31,14 @@ const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relati
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`
 const STEP = { type: 'object', properties: { ok: { type: 'boolean' }, record: { type: 'string' }, prep: { type: 'string' }, run: { type: 'string' } }, required: ['ok', 'record', 'prep', 'run'] }
+// models.runOn: a unit in CONFIG runOn.units runs through crafty.ps1 local run (its STEP text); refused or no JSON: the cloud, logged
+let RUNON = { units: [] }
+const onLocal = async (p, o) => { const u = `${o.agentType}:${String(o.label).split(/[:@~]/)[0].replace(/-retry$/, '')}`; if (!RUNON.units.some((x) => x === u || x === '*')) return
+ const sp = RUNON.step.replace(/\{name\}/g, String(o.label).replace(/[^\w.-]/g, '_')).replace('{job}', () => JSON.stringify({ unit: u, agentType: o.agentType, schema: o.schema, prompt: p }))
+ const r = await agent(sp, { label: `${o.label}@local`, phase: o.phase, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'steppy', model: A.model || 'haiku', effort: 'low' }).catch(() => null)
+ try { if (r && r.ok) return JSON.parse(r.output) } catch { }
+ log(`${o.label}: ${u} on the cloud (local: ${String((r && r.output) || 'no answer').slice(0, 160)})`) }
+const agentOn = async (p, o) => (await onLocal(p, o)) || agent(p, o)
 phase('Prep')
 let P = null, RUN = 'tidy'   // N3 run id from the prep step (legacy: 'tidy')
 for (const [label, model] of [['prep', A.model || 'haiku'], ['prep-retry', A.model || 'sonnet']]) {
@@ -44,7 +52,7 @@ ARGS>>>
 3. Run in PowerShell (takes up to 2 min): & ${C}/skills/bossy/bossy.ps1 tidy prep -Json
  prep = its last output line (one line of JSON), verbatim.
 Return ok=true when step 3 printed the JSON line.`, { label, phase: 'Prep', schema: STEP, agentType: 'steppy', ...(label !== 'prep' && { agentType: 'kitty' }), model, effort: 'low' }).catch((e) => log(`${label}: ${String(e.message || e).slice(0, 200)}`))   // a throw (no steppy here): the kitty retry runs
- try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy(?:-[a-z0-9]+)*$/.test(r.run) ? r.run : 'tidy'; break } catch (e) { P = null }
+ try { P = JSON.parse((r && r.prep) || ''); RUN = /^tidy(?:-[a-z0-9]+)*$/.test(r.run) ? r.run : 'tidy'; RUNON = (() => { try { return JSON.parse(/^CONFIG (\{.*\})/m.exec(r.record)[1]).runOn } catch { } })() || RUNON; break } catch (e) { P = null }
 }
 if (!P) return { applied: [], proposedForApproval: [], rejected: [], report: 'tidy prep failed twice: run bossy.ps1 tidy prep by hand' }
 log(`tidy prep: ${P.work} item(s), ${P.groups} group(s) of 2+, ${P.sec} s: ${(P.steps || []).join(', ')}`)
@@ -83,10 +91,10 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
 5. python -X utf8 W/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report. Ship W: & ${C}/skills/crafty/crafty.ps1 wt commit -Dir W, git -C W rebase origin/main, git -C W push origin HEAD:main (fast-forward only), & ${C}/skills/crafty/crafty.ps1 wt release -Agent ${RUN}; a refused push goes in the report, never into ${C}.
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
 Return the lists and the report path.`
-let res = await agent(JP, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: A.model || 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
+let res = await agentOn(JP, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: A.model || 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
 // no result (2026-11-25 login race): one retry after a wait that checks what is done first: never a second worktree, edit or push
 if (!res) { log('apply: redo'); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))
- res = await agent(`No report came back: first find what is done: ${rp('retros')}/${RUN}.md exists -> return its lists, edit nothing, run step 6 if its signals are not marked reviewed; a kit/${RUN} worktree (git -C ${C} worktree list) -> continue in it, never a second; a pushed commit is never redone.\n${JP}`, { label: 'apply@redo', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: A.model || 'sonnet' }) }
+ res = await agentOn(`No report came back: first find what is done: ${rp('retros')}/${RUN}.md exists -> return its lists, edit nothing, run step 6 if its signals are not marked reviewed; a kit/${RUN} worktree (git -C ${C} worktree list) -> continue in it, never a second; a pushed commit is never redone.\n${JP}`, { label: 'apply@redo', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: A.model || 'sonnet' }) }
 
 if (res) res.proposedForApproval = [].concat(res.proposedForApproval || [], PN)
 log(`applied ${res ? res.applied.length : 0}, awaiting approval ${res ? res.proposedForApproval.length : 0}`)

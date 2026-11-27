@@ -23,8 +23,8 @@ Exit codes: 0 ok · 1 problems found (lint, ACT/ASK audit findings) · 2 usage e
 a non-kit dir).
 
 Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L493 load · L996 lint ·
-  L1418 README graph · L1534 lint command · L1847 audit · L1995 registry · L2056 tools · L2144 parity · L2674 arch lint ·
-  L2993 prose · L3248 sections · L3380 budget · L3398 migrate · L3584 plugins · L3641 state lint · L3829 main
+  L1418 README graph · L1534 lint command · L1847 audit · L1995 registry · L2056 runOn · L2107 tools · L2195 parity ·
+  L2726 arch lint · L3045 prose · L3300 sections · L3432 budget · L3450 migrate · L3636 plugins · L3693 state lint · L3881 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -588,7 +588,7 @@ def read_rows(k, sizes):
     return rows
 # token budgets (UTF-8 bytes / 4), README "Extending"; skill = its always-part (budget.instructions.skillAlways): the rest in references
 BUDGETS = {'always': 3500, 'skill': 3000, 'agent': 2400, 'rule': 900, 'template': 2600, 'templates': 4000, 'doc': 7000, 'lessons': 30000,
-  'workflow': 16500, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 10075, 'tests': 9000}   # config +5% (retro 1549: 3-6 lint rounds per new key), +100 models.mode / models.local (2026-11-27)
+  'workflow': 16750, 'ps1': 58000, 'py': 77000, 'mjs': 8000, 'json': 7000, 'config': 11000, 'tests': 9000}   # config +5% (retro 1549: 3-6 lint rounds per new key), +100 models.mode / models.local (2026-11-27), +925 models.runOn: every run unit listed; workflow +250 its wiring (owner 2026-11-27: "keep all cloud", nothing implicit)
 
 def budget_type(f):
     """The BUDGETS key of a tracked kit file (relative, /), None = no per-file cap (CLAUDE.md, AGENTS.md: the 'always' cap)."""
@@ -2053,6 +2053,57 @@ def manifest(kit=None):
     except ValueError:
         return {}
 
+# ---- runOn: the run units of models.runOn (cloud | local each): <agent> and <agent>@<kind | role> (coordinator spawns) from
+# _manifest.agents, <agentType>:<step label> (workflow steps) from _manifest.workflows.<w>.units { <Phase>: "unit ..." };
+# a unit ending ! runs before the workflow reads its CONFIG line: always cloud
+def runon_units(kit=None):
+    """{unit: {'by': 'coordinator' | '<workflow> <Phase>[, ...]', 'boot': bool}} in manifest order."""
+    man, out = manifest(kit), {}
+    for a, m in (man.get('agents') or {}).items():
+        if a != 'steppy':   # steppy runs workflow steps only: steppy:<label>
+            for u in [a] + [f'{a}@{x}' for x in list(m.get('kinds') or []) + list(m.get('roles') or [])]:
+                out[u] = {'by': 'coordinator', 'boot': False}
+    for w, wm in (man.get('workflows') or {}).items():
+        for ph, us in ((wm or {}).get('units') or {}).items():
+            for u in str(us).split():
+                e = out.setdefault(u.rstrip('!'), {'by': '', 'boot': False})
+                e['by'] = ', '.join(x for x in (e['by'], f'{w} {ph}') if x) if f'{w} ' not in e['by'] else e['by']
+                e['boot'] = e['boot'] or u.endswith('!')
+    return out
+
+
+def runon_unit_of(agent_type, label, units=None):
+    """A workflow step's unit, as the workflows compute it: <agentType>:<label up to : @ ~ or space, -retry cut>; with units
+    given, an older <name>-<id> label (release-X1) maps to the longest unit it starts with."""
+    u = f"{agent_type}:{re.sub(r'-retry$', '', re.split(r'[:@~ ]', str(label or ''))[0])}"
+    if units is not None and u not in units:
+        hit = [x for x in units if x.startswith(f'{agent_type}:') and u.startswith(x + '-')]
+        return max(hit, key=len) if hit else u
+    return u
+
+
+def runon_lint(k, man, bad):
+    """RUNON: kit.example.json models.runOn names every unit once, each cloud | local; a workflow step label maps to a declared unit."""
+    units = runon_units(k.dir)
+    try:
+        ro = ((json.loads(k.texts.get(PATHS_JSON, '') or '{}').get('models') or {}).get('runOn')) or {}
+    except ValueError:
+        return
+    for u in sorted(set(ro) - set(units)):
+        bad('RUNON', PATHS_JSON, f'models.runOn "{u}" is no run unit (crafty.ps1 local bench runon lists them): a typo, or register it in _manifest')
+    for u in [x for x in units if x not in ro]:
+        bad('RUNON', PATHS_JSON, f'models.runOn misses unit "{u}" ({units[u]["by"]}): crafty.ps1 local bench runon -Write <file> adds it as cloud')
+    for u, v in ro.items():
+        if (v.get('on') if isinstance(v, dict) else v) not in ('cloud', 'local'):
+            bad('RUNON', PATHS_JSON, f'models.runOn "{u}" = {json.dumps(v)[:60]}: cloud | local | {{"on": .., "evidence": ..}}')
+    for w, p in k.workflows.items():
+        mine = {x.rstrip('!') for us in (((man.get('workflows') or {}).get(w) or {}).get('units') or {}).values() for x in str(us).split()}
+        src = k.texts.get(p, '')
+        for m in re.finditer(r"""label:\s*[`']([a-z][\w-]*)[:`'@][^\n]*?agentType:\s*'([\w-]+)'|SO\([`']([a-z][\w-]*)[:`'][^\n]*?agentType:\s*'([\w-]+)'""", src):
+            u = runon_unit_of(m.group(2) or m.group(4), m.group(1) or m.group(3))
+            if u not in mine:
+                bad('RUNON', f'{p}:{src.count(chr(10), 0, m.start()) + 1}', f'step unit {u} is not in _manifest.workflows.{w}.units: add it under its phase')
+
 # ---- tools: per-role allowlists (owner 2026-11-24: the coordinator keeps every tool, a crew role only what its list names)
 TOOLS_LINE_RX = re.compile(r'^(?:tools|disallowedTools):[^\r\n]*(\r?\n)', re.M)
 
@@ -2470,6 +2521,7 @@ def registry_lint(k, bad):
         bad('MANIFEST', PATHS_JSON, 'no _manifest section (the registry of agents, skills, workflows, Router and Events rows, caps)')
         return
     adapter_lint(k, man, bad)
+    runon_lint(k, man, bad)
     ag, sk, wf = man.get('agents') or {}, man.get('skills') or [], man.get('workflows') or {}
     local = lambda p: '.local.' in p or any(p == x or p.startswith(x + '/') for x in k.local_only)   # the org overlay registers nothing
     pub = lambda d: {n for n, p in d.items() if not local(p)}

@@ -44,7 +44,7 @@ console.log(`budget-reworded:${_sb.every((x) => /re-worded twice: not started/.t
 // 2026-11-26 (steppy review): a session that predates steppy throws on its agentType: its STEPs run on kitty (record-args, release)
 const seenAt = [], noStep = await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ id: 'G1' }] }, async (p, o) => { seenAt.push(`${o.label}=${o.agentType}`); if (o.agentType === 'steppy') throw new Error("Agent type 'steppy' not found")
  return /^record-args/.test(o.label) ? _ok(`RECORDED x\n${_B}\n${_C}\n${_S}`) : _ok('[]') }, _n, _n, pipeline).then(() => 'ran', (e) => String(e.message))
-const okNoStep = !/steppy/.test(noStep) && seenAt.includes('record-args=kitty') && seenAt.includes('release-G1=kitty'); console.log(`no-steppy:${okNoStep}`); if (!okNoStep) console.log(`  ${noStep.slice(0, 80)} | ${seenAt.join(' ').slice(0, 300)}`)
+const okNoStep = !/steppy/.test(noStep) && seenAt.includes('record-args=kitty') && seenAt.includes('release:G1=kitty'); console.log(`no-steppy:${okNoStep}`); if (!okNoStep) console.log(`  ${noStep.slice(0, 80)} | ${seenAt.join(' ').slice(0, 300)}`)
 '@
 Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script', 'config-reworded', 'budget-reworded', 'no-steppy' -Show 6
 # a devy that hands off forever (a 200k agentCap.devy, owner 2026-11-27): HANDOFFS 8, then the item halts, never reviewed half-done

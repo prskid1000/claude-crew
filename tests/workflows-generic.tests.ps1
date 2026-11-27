@@ -155,7 +155,7 @@ const { calls, agent } = _mock((prompt, o) => {
 const args = { runDir: 'C:/runs/R2', ..._kl, verify: false, localEnv: 'shop', lanes: [{ n: 1, name: 'Falcon', serial: 'emulator-5556' }],
  items: [_item('P1', 'app'), _item('P2', 'app', { target: 'stg', localParts: ['app!2'] })] }
 run(args, agent, _n, _n, null).then(() => {
- const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release-Falcon') || {}).prompt || ''
+ const tp = (calls.find((c) => /^test:P1/.test(c.label)) || {}).prompt || '', rel = (calls.find((c) => c.label === 'release:Falcon') || {}).prompt || ''
  console.log(`local-call:${tp.includes("& 'C:/kit/skills/envy/envy.ps1' use -Env shop -Services ") && !/Test-Path/.test(tp)}`)
  console.log(`phone-call:${tp.includes("& 'C:/kit/skills/phoney/phoney.ps1' acquire -Agent qa-w1-Falcon -Lane Falcon")}`)
  const lp = (calls.find((c) => /^test:P2/.test(c.label)) || {}).prompt || ''

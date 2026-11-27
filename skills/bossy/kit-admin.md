@@ -6,7 +6,8 @@ Parts are added, renamed or removed with the scaffold (`kitbag.py new | rename |
 template, manifest, Router / Events rows, test stub; lint TODO-STUB refuses unfilled ones); then `tools --write`, lint 0, tests. A vendor
 adapter sits in its skill's `adapters/` and runs only when config selects it.
 - **Registry** [MANIFEST, OLD-NAME]: `_manifest` holds every agent, skill, workflow, Router / Events row and cap; README tables,
-  Character blocks and tools lines are generated from it; `renamed` lists old names (no aliases).
+  Character blocks and tools lines are generated from it; `renamed` lists old names (no aliases). New step
+  label / kind [RUNON]: `workflows.<w>.units`.
 - **Parity** [PARITY]: `skills/crafty/parity.json`; new verb: `verbs` / `fallback`, a sibling lacking it: `gaps`.
 - **Renames**: no forwarders or old-name stand-ins; outside callers of a renamed path or name (settings, scheduled tasks, notes,
   local files) get the exact edit as a coordinator step in the report.
