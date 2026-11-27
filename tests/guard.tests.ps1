@@ -7,8 +7,256 @@ Usage: pwsh -NoProfile -File <kit>/tests/guard.tests.ps1 (or tests/kit-tests.ps1
 $k = New-TestKit guard; $D = Join-Path $k 'skills/crafty/crafty.ps1'
 $gi = -not (Test-Path "$k/.git"); if ($gi) { git init -q $k }; '.runtime/' | Set-Content "$k/.gitignore"   # {KIT} cases; a plain clone ignores .runtime (strict allow cases, K63s)
 $kl = "$k/skills/crafty/kit.local.json";'{"guard":{"layout":"block"}}' | Set-Content $kl
-$out = pwsh @np $D guard -SelfTest 2>&1 | Out-String; Remove-Item $kl
-Expect 'guard self-test (guard.layout block; strict: an allow case fails on any deny): every case, at least one' ($out -match '([1-9]\d*)/\1 passed')
+# the guard table (was crafty.ps1 guard -SelfTest): tool, command, deny ($true / $false / 'rw' = runs rewritten), the text its answer holds
+$out = Invoke-PsTest guard-table @'
+$D = $args[0]; $cDir = Split-Path $D; . (Join-Path $cDir 'lib.ps1'); $gbn = 'KIT_GUARD_BY' + 'PASS'
+$da = 'default desktop app'; $mg = 'the memory gate';$sx = 'through its interpreter'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
+$cases = @(
+@('P', 'git stash', $true),
+@('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
+@('P', 'git stash push -m x', $true),
+@('P', '$s = $(git stash list); $s', $false),
+@('P', 'pwsh -NoProfile -Command "git stash"', $true),
+@('B', 'cd repo && git -C x stash pop', $true),
+@('B', 'FOO=1 git --no-pager stash show', $false),
+@('B', 'git -C x stash push -m x', $true),
+@('B', "bash -c 'git stash'", $true),
+@('P', 'git commit -m "fix: never git stash here"', $false),
+@('P', "`$m = @'`nnever run git stash`n'@`ngit commit -m `$m", $false),
+@('B', "git commit -m `"`$(cat <<'EOF'`nfix: never git stash in worktrees`nEOF`n)`"", $false),
+@('B', 'git checkout fix/stash-list', $false),
+@('B', 'echo done # not git stash', $false),
+@('B', 'aws elasticbeanstalk update-environment --environment-name e1 --option-settings Namespace=aws:elasticbeanstalk:application:environment,OptionName=A,Value=true', $true, 'changes a deployed env'),
+@('B', 'aws --region eu-west-1 elasticbeanstalk restart-app-server --environment-name e1', $true, 'changes a deployed env'),
+@('P', 'aws ecs update-service --cluster c --service s --force-new-deployment', $true, 'changes a deployed env'),
+@('B', 'cd x && kubectl -n qa rollout restart deploy/api', $true, 'changes a deployed env'),
+@('B', 'KIT_DECISION=d-none aws lambda update-function-configuration --function-name f', $true, 'changes a deployed env'),
+@('B', 'aws elasticbeanstalk describe-configuration-settings --environment-name e1', $false),
+@('B', 'git commit -m "test: never aws elasticbeanstalk update-environment"', $false),
+@('B', 'kubectl get pods -n qa | grep edit', $false),
+@('B', 'kubectl get deploy && npm run scale', $false),
+@('B', "git commit -m `"x`naws ecs update-service --cluster c`"", $false),
+@('B', 'echo "after web restart"', $false),
+@('P', '& "C:\Program Files\Amazon\AWSCLIV2\aws.exe" elasticbeanstalk restart-app-server --environment-name e1', $true, 'changes a deployed env'),
+@('B', 'sudo aws ecs update-service --cluster c --service s', $true, 'changes a deployed env'),
+@('B', 'bash -c "aws elasticbeanstalk update-environment --environment-name e1"', $true, 'changes a deployed env'),
+@('P', 'pwsh -Command "aws ssm put-parameter --name x --value y"', $true, 'changes a deployed env'),
+@('P', '& D:\kit\skills\crafty\LESSONS.md', $true, $da),
+@('P', 'Invoke-Item .\report.html', $true, $da),
+@('P', 'Start-Process https://example.com', $true, $da),
+@('B', 'xdg-open out/report.html', $true, $da),
+@('B', 'cmd /c start "" report.pdf', $true, $da),
+@('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden', $false, ''),
+@('P', 'Start-Process pwsh -ArgumentList x.ps1 -PassThru -RedirectStandardOutput o.txt', $false, $da),
+@('P', 'Start-Process -FilePath .\r.html', $true, $da),
+@('P', 'Start-Process -Wait .\r.html', $true, $da),
+@('P', 'cd x; ii "out.pdf"', $true, $da),
+@('P', '& D:/kit/learn.ps1 -Skill crafty -Text "resumed agent; . templates.md "Resume brief" was read (see notes.md); & LESSONS.md"', $false, $da),
+@('P', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, $da),
+@('P', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, $da),
+@('P', '& D:/kit/learn.ps1 -Skill crafty -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, $da),
+@('P', "& D:/kit/learn.ps1 -Skill crafty -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/crafty/LESSONS.md | Out-Null", $true, $da),
+@('P', '& D:\kit\skills\crafty\devtools.py merge 12', 'rw', 'python -X utf8 D:\kit\skills\crafty\devtools.py merge 12'),
+@('P', "& 'D:\kit\skills\crafty\devtools.py' merge", 'rw', "python -X utf8 'D:\kit\skills\crafty\devtools.py' merge"),
+@('P', '& "$k/skills/pokey/browser.mjs" shot', 'rw', 'node "$k/skills/pokey/browser.mjs" shot'),
+@('P', '.\x.py --flag', 'rw', 'python -X utf8 .\x.py --flag'),
+@('P', 'tool.ts run', $true, $sx),
+@('P', 'Start-Process x.py', $true, $sx),
+@('P', 'cmd /c x.js', $true, $sx),
+@('B', './skills/crafty/devtools.py merge 12', 'rw', 'python -X utf8 ./skills/crafty/devtools.py merge 12'),
+@('B', 'cd x && FOO=1 tool.mjs a', 'rw', 'cd x && FOO=1 node tool.mjs a'),
+@('B', 'start x.py', $true, $sx),
+@('P', 'python -X utf8 skills/crafty/devtools.py merge 12', $false, ''),
+@('P', 'node skills/pokey/browser.mjs shot; npx tsx a.ts', $false, ''),
+@('P', 'pwsh -File x.ps1; & D:/kit/x.ps1 -A b.py', $false, ''),
+@('P', 'Get-Content x.json; Select-String foo x.md', $false, ''),
+@('B', 'python -X utf8 skills/crafty/devtools.py merge 12; node a.mjs', $false, ''),
+@('B', 'cat devtools.py; grep -n foo x.md; ls *.json > out.txt', $false, ''),
+@('B', 'cd ../MR3/scripts; E=../evidence; ls ../ev/MR3-T2A_0*; cp ../ev/MR3-T2A_02_vin-photo.jpg $E/MR3-T2_00_vin-input.jpg; for i in 1 2 3; do node t2a/run-app-vin.cjs $E/MR3-T2_00_vin-input.jpg $E/MR3-T2_0${i}_run$i.json 1; done', $false, $da),
+@('B', 'E=../evidence; cat ../ev/MR3-T2A_02_vin-photo.jpg > $E/MR3-T2_00_vin-input.jpg; for i in 1 2 3; do node t2a/run-app-vin.cjs $E/in.jpg $E/MR3-T2_0${i}_run$i.json 1; done', $false, $da),
+@('B', 'LN=D:/x/{RT}/work/lead-notes.md; for i in $(seq 1 30); do m=$(curl -s https://x/ | grep -o ''"mode":"[a-z]*"''); a=$(grep -E "^- .*MR4:" $LN | grep -v "REQUEST"); echo "$m ${a:0:200}"; done', $false, $da),
+@('B', 'E=D:/x/{RT}/work/MR4/evidence; F=$E/MR4-T2_retry_03_history.log; { echo "== NRQL"; echo x; } > $F', $false, $da),
+@('P', '$x = ''notes.md''; Get-Content $x', $false, $da),
+@('B', 'x=$(cat a.md); a=(x.md y.md)', $false, $da),
+@('B', 'x.md', $true, $da),
+@('B', 'cd x; for f in a; do r.pdf; done', $true, $da),
+@('B', 'X=1 r.html', $true, $da),
+@('B', 'start x.html', $true, $da),
+@('P', 'ii x.pdf', $true, $da),
+@('P', '& x.py', 'rw', 'python -X utf8 x.py'),
+@('P', '& .\notes.md', $true, $da),
+@('P', 'ii .', $true, $da),
+@('P', 'explorer.exe D:\x', $true, $da),
+@('P', 'code skills/crafty/devtools.py', $true, $da),
+@('P', 'notepad a.txt', $true, $da),
+@('P', 'mmc; control', $true, $da),
+@('P', 'rundll32 url.dll,FileProtocolHandler https://x', $true, $da),
+@('P', 'Start-Process report.docx', $true, $da),
+@('P', 'cmd /c start https://x', $true, $da),
+@('B', 'start https://example.com', $true, $da),
+@('B', 'explorer .', $true, $da),
+@('B', 'cmd //c start "" a.xlsx', $true, $da),
+@('B', 'code .', $true, $da),
+@('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden; Start-Process -FilePath node.exe -WindowStyle Hidden', $false, ''),
+@('B', 'cd D:/x/src/code-review; echo code', $false, ''),
+@('P', 'glab mr view 12 --web', $true, $wb),
+@('B', 'gh pr view 3 -w', $true, $wb),
+@('B', 'gh browse', $true, $wb),
+@('P', 'glab mr view 12 -R g/web; gh pr view 3 --json title', $false, ''),
+@('B', 'gh run list -w ci.yml; gh workflow run -w x; gh browse -n 12', $false, ''),
+@('P', 'code --version; code --list-extensions', $false, ''),
+@('B', 'code --version', $false, ''),
+@('P', 'Start-Process -FilePath notepad.exe -WindowStyle Hidden', $false, ''),
+@('P', 'powershell -c "ii ."', $true, $da),
+@('B', 'pwsh -c ". a.py"', $true, $sx),
+@('P', 'cmd.exe /k a.js', $true, $sx),
+@('B', 'mshta x.hta', $true, $da),
+@('B', "cd {KRT} && mkdir -p work/agents/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/agents/g5/body.md; cat >> work/agents/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/agents/g5/body.md)`"", $false, $rp),
+@('P', '& D:/kit/learn.ps1 -Skill crafty -Text "never rm the {RT}/work folder" -Source workflow', $false, $rp),
+@('B', 'rm -rf {KRTB}/work', $true, $rp),
+@('P', 'Remove-Item -Recurse -Force "{KRT}\work"', $true, $rp),
+@('B', "python -c `"import shutil; shutil.rmtree('{KRT}/work')`"", $true, $rp),
+@('B', 'cd {KRTB} && rm -rf work', $true, $rp), @('B', 'cd {KIT}; rm -rf {RT}/work', $true, $rp), @('B', 'rm -rf $K/{RT}/work', $true, $rp),
+@('B', 'rm -rf /d/x/{RT}/work', $false, $rp), @('P', 'Remove-Item -Recurse "D:\x\{RT}\work"', $false, $rp), @('B', 'cd /d/x/{RT} && rm -rf work', $false, $rp),
+@('B', 'cd {WS}; rmdir {RT}/work/agents/a {RT}/work {RT}', $false, $rp), @('B', 'cd {WS}; mkdir -p {RT}/work/agents/a', $true, 'outside the kit'),
+@('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > {KRTB}/../x/y/{RT}/a.txt', $false, 'outside the kit'),
+@('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/work/agents/x/b.md', $false, 'outside the kit'),
+@('B', 'cd {WS}; echo "{RT}/" >> .gitignore; ls {RT} 2>&1', $false, 'outside the kit'), @('B', 'cd {WS}; mkdir -p a/b/c/{RT}', $false, 'outside the kit'),
+@('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
+@('P', 'Remove-Item -Force "{KRT}\work\a.json"', $false, $rp), @('B', 'rm -r {KRTB}/work/a.d', $true, $rp),
+@('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
+@('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $false),
+@('B', 'glab mr update 5 --description "$(cat /tmp/mr-body.md)"', $true, 'shared temp root'),
+@('P', 'Set-Content $env:TEMP\desc-8543.md $d', $true, 'shared temp root'),
+@('B', 'cp body.md /tmp/w1-run/body.md; cat /tmp/out.log', $false, 'shared temp root'),
+@('B', 'git push origin +HEAD:main', $true, 'force-push'),
+@('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
+@('B', 'git push origin HEAD:main', $true, 'push refused: a protected branch'),
+@('B', 'git push -u origin HEAD; git push origin HEAD:f/CU-1-x --force-with-lease', $false, 'force-push'),
+@('B', 'git push -fu origin main', $true, 'force-push'),
+@('P', 'git -C "{KIT}" push origin ":main"', $true, $pb),
+@('B', 'cd "{KIT}" && git push origin --delete "main"', $true, $pb),
+@('P', 'Set-Location -Path "{KIT}"; git push -d origin main', $true, $pb),
+@('P', 'Push-Location "{KIT}"; git push --mirror origin', $true, $pb),
+@('B', 'git -C "{KIT}" branch -D main', $true, $pb),
+@('B', 'git -C "{KIT}" branch -f main HEAD~1', $true, $pb),
+@('P', 'git -C "{KIT}" branch -dr origin/main', $true, $pb),
+@('P', 'git -C "{KIT}" update-ref -d refs/remotes/origin/main', $true, $pb),
+@('B', 'git -C "{KIT}" push -u origin HEAD:main; git -C "{KIT}" branch --show-current', $false, $pb),
+@('B', 'cd {KITB} && git push origin HEAD:main', $false, 'push refused'), @('B', 'cd {KITB} && git push --force origin HEAD:main', $true, $pb),   # Git Bash /d/... cd: the kit, not a product repo (audit pick 7)
+@('B', 'git -C "{KIT}" push origin --delete kit/build-x; git -C "{KIT}" branch -D kit/main-x', $false, $pb),
+@('B', 'git -C /nowhere/repo push origin --delete f/x; git -C /nowhere/repo branch -D develop', $false, $pb),
+@('B', 'git -C /nowhere/repo push origin --delete main; git push origin main --tags', $true, 'push refused: a protected branch'),
+@('B', 'git push --all origin', $true, 'push refused: a protected branch'),
+@('B', 'git -C /nowhere/repo push origin --force-with-lease HEAD:release', $false, $pb),
+@('P', 'git commit -m "never git push origin --delete main"', $false, $pb),
+@('B', 'git commit -n -m "x"', $true, $hk),
+@('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
+@('B', 'git commit --no-edit --amend', $false, $hk),
+@('P', 'git commit -m "use -n for a dry run"', $false, $hk),
+@('B', 'git log -n 3; git commit -m x', $false, $hk),
+@('E', '{LIVE}/skills/crafty/crafty.ps1', $true, $lk),
+@('E', '{LIVE}/{RT}/work/agents/x/x.md', $false, $lk),
+@('E', '{LIVE}/.git/info/exclude', $false, $lk),
+@('E', '{LIVE}/../wt/skills/crafty/crafty.ps1', $false, $lk),
+@('P', 'Set-Content {LIVE}/AGENTS.md x', $true, $lk),
+@('B', 'sed -i s/a/b/ {LIVE}/README.md', $true, $lk),
+@('B', 'git -C "{LIVE}" commit -m x', $true, $lk),
+@('P', 'cd {LIVE}; git pull; git log -1; Get-Content AGENTS.md > {RT}/work/agents/x/a.txt; cp AGENTS.md ../a.md', $false, $lk),
+@('B', 'cd {LIVE}; grep -c ">" README.md; git clean -n', $false, $lk),
+@('B', 'KIT_LIVE_EDIT=1 git -C "{LIVE}" commit -m x', $false, $lk),
+@('B', 'node shot.mjs --out /d/x/{RT}/work/evidence/t1/a.png', 'rw', 'node shot.mjs --out D:/x/{RT}/work/evidence/t1/a.png'),
+@('B', "python -c `"open('/d/x/a.txt', 'w')`"", 'rw', "open('D:/x/a.txt', 'w')"),
+@('B', "cd /d/x; python3 - <<'E'`nopen('/c/Users/x/a.json')`nE", 'rw', "open('C:/Users/x/a.json')"),
+@('B', 'OUT=/d/x/a.png node shot.mjs', 'rw', 'OUT=D:/x/a.png node shot.mjs'),
+@('B', 'cd /d/x && node shot.mjs ''{"out":"/d/x/a.png"}''', 'rw', 'cd /d/x && node shot.mjs ''{"out":"D:/x/a.png"}'''),
+@('B', 'bash -c "java -jar a.jar /d/x/in.txt"', 'rw', 'java -jar a.jar D:/x/in.txt'),
+@('B', 'curl -s -o /d/x/a.json https://h.io/api; x=$(npx tsx a.ts --dir=/e/y)', 'rw', 'curl -s -o D:/x/a.json https://h.io/api; x=$(npx tsx a.ts --dir=E:/y)'),
+@('P', 'node shot.mjs /d/x/a.png; adb.exe pull /sdcard/a.png /d/x/', 'rw', 'node shot.mjs D:/x/a.png; adb.exe pull /sdcard/a.png D:/x/'),
+@('B', 'command node a.mjs /d/x; { sudo python a.py /d/y; }', 'rw', 'command node a.mjs D:/x; { sudo python a.py D:/y; }'),
+@('B', 'curl -sSo /d/x/a.json https://h.io/api', 'rw', 'curl -sSo D:/x/a.json https://h.io/api'),
+@('B', 'curl -d @/d/x/body.json https://h.io/api', 'rw', 'curl -d @D:/x/body.json https://h.io/api'),
+@('B', 'curl --output=/d/x/a.zip https://h.io/a; curl -T /d/x/a.zip https://h.io/u', 'rw', 'curl --output=D:/x/a.zip https://h.io/a; curl -T D:/x/a.zip https://h.io/u'),
+@('B', 'curl -K /d/x/c.txt; curl -F file=@/d/x/a.png https://h.io', 'rw', 'curl -K D:/x/c.txt; curl -F file=@D:/x/a.png https://h.io'),
+@('B', 'curl -s -d ''{"route":"/c/orders"}'' https://h.io/api; curl --json ''{"p":"/d/x"}'' "https://h.io/api?path=/d/x"', $false, $gb),
+@('B', 'curl --data-raw /c/orders -H "X-Path: /v/1" https://h.io; curl -X POST --data /d/x https://h.io', $false, $gb),
+@('B', 'node a.mjs D:/x > {KRTB}/work/agents/a/out.log 2>{KRTB}/work/agents/a/err.log; python a.py < /d/x/in.txt', $false, $gb),
+@('B', 'curl -s https://h.io/d/files/a.json -o D:/x/a.json; node a.mjs abc/c/def x/d/y ${R}/c/z', $false, $gb),
+@('B', "python a.py D:/x # was /d/x`n# node b.mjs /d/y", $false, $gb),
+@('B', 'python a.py x#y /d/z', 'rw', 'python a.py x#y D:/z'),
+@('B', 'ls /d/x; cat /d/x/a.md; grep -rn foo /d/x; git -C /d/x status; cd /d/x && node shot.mjs D:/x/a.png', $false, $gb),
+@('B', "git commit -m `"fix: node got /d/x paths`"; cat <<'EOF' > /d/x/a.md`npython /d/x/a.py`nEOF", $false, $gb),
+@('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb),
+@('B', 'cd web && npx cypress run', $true, 'e2e runs go through'), @('P', 'yarn e2e:ci; npx playwright test x.spec.ts', $true, 'e2e runs go through'),
+@('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
+@('B', 'cat cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through'),
+# a file path as the command
+@('B', '"{KIT}/skills/bossy/SKILL.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
+@('B', 'start {CR}/NOTICE', $true, $rt), @('B', '& "{CR}\NOTICE"', $true, $rt), @('B', 'cd x; "./tool.ps1" -A', 'rw', 'cd x; pwsh -NoProfile -File "./tool.ps1" -A'),
+@('B', 'cd "{CR}" && ./run; bash .githooks/pre-push; cat "{KIT}/README.md"; echo "a; ./x.md"; ls {KIT}', $false, $rt),
+@('B', 'f=$(ls -d */wf_1)/journal.jsonl; grep -c x $f', $false, $rt), @('B', '(ls){ ./NOTICE.md; }', $true, $rt),
+@('P', '& "{CR}/NOTICE"', $true, $rt), @('P', '& "{KIT}"', $true, $rt), @('P', 'Set-Location "{CR}"; .\NOTICE', $true, $rt),
+@('P', '$g = Join-Path "{KIT}" ''skills/bossy/SKILL.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
+@('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
+@('B', "git log \`n  -- docs/readme.md; git diff \`n  skills/crafty/crafty.ps1", $false, $rt),
+@('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt),
+# pytest / docker runs go through the gate
+@('B', 'cd api && pytest tests/test_a.py -q', $true, $mg), @('P', '& "C:\v\python.exe" -X utf8 -m pytest t', $true, $mg), @('B', 'uv run pytest', $true, $mg),
+@('B', 'docker compose -f a.yml -f b.yml up -d --wait', $true, $mg), @('P', 'docker build -t x .', $true, $mg), @('B', 'docker-compose up', $true, $mg),
+@('P', '& "C:\Program Files\Py\python.exe" -m pytest t', $true, $mg), @('B', 'FOO=1 timeout 300 pytest -x', $true, $mg), @('B', 'nohup pytest &', $true, $mg),
+@('B', 'sudo docker run x', $true, $mg), @('B', 'docker --context ci image build .', $true, $mg), @('B', 'docker container run x', $true, $mg),
+@('B', 'grep -rn pytest requirements.txt; pytest --version; pytest -h; docker ps; docker compose logs api', $false, $mg),
+@('B', 'rg "foo|pytest" src; grep -E "(pytest|docker run)" a; git commit -m "fix; pytest runs"; echo x | grep -n "; docker build" f', $false, $mg),
+@('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''docker compose up -d''', $false, $mg),
+@('B', 'pwsh -File {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ".\mvnw.cmd -o -q test -pl a -am" 2>&1 | tail -25', $true, 'needs -Log'),
+@('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''yarn test'' -Log {KRTB}/work/agents/a/b.log', $false, 'needs -Log'), @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir D:/x/mvn-app -Cmd ''git status''', $false, 'needs -Log'),
+# whole-drive searches denied; scoped paths pass
+@('B', 'find / -ipath "*backend-test-reconciler*" 2>/dev/null', $true, $dr), @('B', 'find /c -name SKILL.md', $true, $dr), @('B', 'sudo find -L /d/ -type f | head', $true, $dr),
+@('B', 'find C:\ -name x', $true, $dr), @('B', 'grep -rn reconciler /', $true, $dr), @('B', 'rg -l -g "*.md" reconciler C:/', $true, $dr), @('B', 'ls -R /c | grep x', $true, $dr),
+@('B', 'bash -c "find / -name x"', $true, $dr), @('P', 'cmd /c dir /s C:\*.md', $true, $dr), @('P', 'Get-ChildItem -Recurse C:\ -Filter SKILL.md', $true, $dr),
+@('P', 'gci D:\ -r -Include *.md', $true, $dr), @('P', 'where.exe /r C:\ claude.exe', $true, $dr), @('P', 'rg --files D:\', $true, $dr), @('B', 'find //c/.. -name x', $true, $dr), @('B', 'rg --max-columns 5 x / src', $true, $dr), @('B', 'rg --max-columns 5 / src', $false, $dr),
+@('B', 'find . -name x; find ~/.claude/skills -name SKILL.md; find /d/work/repos -maxdepth 2 -name pom.xml; ls /; ls -la /c', $false, $dr),
+@('B', "grep -rn / src; rg -n `"/`" skills; grep -e x /etc/hosts; git commit -m `"never find / -name x`"; cat > n.md <<'EOF'`nfind / -name x`nEOF", $false, $dr),
+@('P', 'Get-ChildItem -Recurse D:\work\.claude\skills -Filter SKILL.md; Get-ChildItem C:\; where.exe git; rg -l x C:\Users\x\.claude', $false, $dr),
+@('B', 'cd / && find . -name x', $true, $dr), @('B', 'cd /c; grep -rn x', $true, $dr), @('P', 'Set-Location C:\; gci -Recurse -Filter x', $true, $dr), @('B', 'find . -name "*.md" -exec grep -rl x / \;', $true, $dr),
+@('B', 'cd / && ls; cd ~/src && find . -name x; find . -exec grep -l x {} +; cd /d/repo && rg x', $false, $dr), @('P', 'Set-Location C:\; where.exe git; Get-ChildItem', $false, $dr)
+)
+$gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
+if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
+$cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # tracked CRLF, tracked LF, untracked CRLF
+foreach ($cf in 'skills/crafty/crafty.ps1', 'n.ps1') { [IO.File]::WriteAllText("$cr/$cf", "a`r`n") }; [IO.File]::WriteAllText("$cr/lf.md", "a`n"); git -C $cr -c core.autocrlf=false add skills lf.md
+[IO.File]::WriteAllText("$cr/NOTICE", "text`n"); [IO.File]::WriteAllText("$cr/run", "#!/bin/sh`necho ok`n")   # an extensionless file a desktop app would open; a #! script
+$cases += @(@('B', 'git fetch -q origin merge-requests/12/head:mr12', $true, 'local branch from an MR'), @('P', 'gh pr checkout 7', $true, 'local branch from an MR'),
+  @('B', 'git fetch origin merge-requests/12/head && git diff origin/main...FETCH_HEAD; git fetch origin pull/3/head:refs/remotes/origin/pr3', $false, 'local branch from an MR'),
+  @('B', 'git -C x worktree remove --force y', $true, 'wt remove -Dir'), @('B', 'git worktree list; git worktree prune', $false, 'wt remove -Dir'))
+if ($mc = @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.checkout)" } | Where-Object { $_ -and (Test-Path -LiteralPath $_) })[0]) {   # a configured main checkout
+  $ef = @(Get-ChildItem -LiteralPath $mc -File | Select-Object -First 1).Name
+  $cases += @(@('B', "echo x > $mc/kit-scratch-$PID.txt", $true, 'shared main checkout'), @('B', "cd $mc && git status > kit-scratch-$PID.txt", $true, 'shared main checkout'), @('E', "$mc/kit-scratch-$PID.md", $true, 'shared main checkout'),
+    @('B', "git -C $mc status > $cr/s.txt; echo x >> $mc/$ef; echo x > $mc/sub/new.txt", $false, 'shared main checkout')) }
+$cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
+$bp = 'owner only'
+$cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp), @('B', "grep x y; pwsh -c ""setx $gbn 1""", $true, $bp), @('B', "sed -i 's/}/,""$gbn"":1}/;s/a/b/' settings.json", $true, $bp), @('B', "git commit -m ""`$(setx $gbn 1)""", $true, $bp))
+$nr = Join-Path (Get-KitPath agents) 'guard-selftest/neutral'; if (-not (Test-Path "$nr/.git")) { git init -q -b selftest $nr }   # cwd: a repo of its own on an unprotected branch, never the kit (K63s)
+$env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
+$live = Split-Path (git -C $cDir rev-parse --path-format=absolute --git-common-dir)
+$krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
+foreach ($c in $cases) {
+  $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit' }[$c[0]]
+  $v = $c[1].Replace('{KRTU}', ($krt -replace '[^/]+$', { $_.Value.ToUpper() })).Replace('{RTU}', '.RUNTIME').Replace('{KRTB}', ($krt -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KRT}', $krt).Replace('{WS}', (Split-Path $live)).Replace('{RT}', '.runtime').Replace('{KITB}', ((Split-Path (Split-Path $cDir)).Replace('\', '/') -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KIT}', (Split-Path (Split-Path $cDir))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
+  # cwd-independent results
+  $hookIn = @{ tool_name = $tool; cwd = $nr; tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
+  $json = $hookIn | ConvertTo-Json -Compress -Depth 4
+  $out = (& $D guard -Json $json) -join ''
+  $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
+  $rwTo = if ($out -match '"updatedInput"') { "$(($out | ConvertFrom-Json).hookSpecificOutput.updatedInput.command)" }
+  # 'rw': the command runs rewritten, containing $c[3]; a rewrite is no deny for an allow case
+  $ok = if ("$($c[2])" -eq 'rw') { $rwTo -and $rwTo.Contains($c[3].Replace('{CR}', $cr).Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $cDir)))) } elseif ($c[2]) { $denied } else { $out -notmatch '"permissionDecision":"deny"' }   # strict allow (K63s): a deny for any reason fails it
+  if (-not $ok) { $fail++ }
+  '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ("$($c[2])" -eq 'rw') { 'rewrite' } elseif ($c[2]) { 'deny' } else { 'allow' }), (($c[1] -replace "`n", ' \n ') + $(if (-not $ok -and $out -match '(?:Reason|reason)":"([^"]{1,160})') { " <- $($Matches[1])" }))
+}
+"$($cases.Count - $fail)/$($cases.Count) passed"
+'@ @($D) | Out-String; Remove-Item $kl
+Expect 'guard table (guard.layout block; strict: an allow case fails on any deny): every case, at least one' ($out -match '([1-9]\d*)/\1 passed')
 '/nested/' | Set-Content "$k/.gitignore"; git init -q "$k/nested/wt"; New-Item -ItemType Directory -Force "$k/nested/plain" | Out-Null
 $gn = Invoke-PsTest 'guard-nested' @'
 $d, $kd = $args; foreach ($x in "$kd/nested/wt", "$kd/skills", "$kd/nested/plain") { $j = @{ tool_name = 'Bash'; cwd = $x; tool_input = @{ command = 'git commit -m x' } } | ConvertTo-Json -Compress; "$((& $d guard -Json $j) -join '' -match 'the live kit runs')" }

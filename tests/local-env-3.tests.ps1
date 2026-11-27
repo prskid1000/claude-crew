@@ -101,24 +101,24 @@ $ph = (& { . $supBossy; $global:downs = @(); function Invoke-KitExe([string]$Exe
   [pscustomobject]@{ code = 0; out = '[{"env":"shop","services":[{"service":"api","state":"up"},{"service":"web","state":"up"},{"service":"db","state":"up"},{"service":"x","state":"up (external)"}],"leases":[{"agent":"P1","services":["api"],"graceLeft":8}],"holds":[{"who":"me","services":["db"],"graceLeft":null}]}]' } }
   Invoke-KitPauseLocalEnv; "downs=$($global:downs -join '|')" }) -join "`n"
 Expect 'pause hook: services only a paused agent''s lease (in grace) or nobody needs stop; a live hold and external ones stay' ($ph -match 'stopped api, web \(no live holder\)' -and $ph -match 'downs=api,web$')
-# guard rules (adapters/guard-localenv.ps1): localenv/ pushes and hand-started dev servers are denied; rows: tool, command, deny
+# guard rules lane-push and dev-server retired 2026-11-27 (0 hits in 30 d, owner yes): lane pushes and hand-started dev servers pass the guard; rows: tool, command, deny
 $gk = New-TestKit leguard; New-Item -ItemType Directory -Force (Join-Path $gk 'skills/crafty/adapters') | Out-Null
 # New-TestKit links it already (harness list): a copy over the link failed while another area held the shared file
 if (-not (Test-Path (Join-Path $gk 'skills/crafty/adapters/guard-localenv.ps1'))) { Copy-Item (Join-Path $(if ($Kit) { $Kit } else { $src }) 'skills/crafty/adapters/guard-localenv.ps1') (Join-Path $gk 'skills/crafty/adapters') }
 $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $bad = @()
-foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $true), @('B', 'git push -u origin lane/shop-kestrel', $true), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $true),
-    @('B', 'npx ng serve --port 4200', $true), @('P', '& D:/kit/skills/envy/envy.ps1 up -Env shop', $false), @('B', 'yarn start', $true), @('P', 'dotnet watch run', $true),
+foreach ($c in @(@('P', 'git -C x push origin localenv/shop', $false), @('B', 'git push -u origin lane/shop-kestrel', $false), @('P', 'git push -u origin f/CU-1-x', $false), @('P', 'cd api; .\mvnw.cmd spring-boot:run', $false),
+    @('B', 'npx ng serve --port 4200', $false), @('P', '& D:/kit/skills/envy/envy.ps1 up -Env shop', $false), @('B', 'yarn start', $false), @('P', 'dotnet watch run', $false),
     @('B', 'rg "ng serve" src', $false), @('B', 'git log -S bootRun --oneline', $false), @('P', 'git commit -m "fix: ng serve proxy"', $false), @('B', 'npm run dev:build', $false),
-    @('P', 'dotnet run -- migrate', $false), @('B', 'cd web && yarn start', $true), @('B', 'git push origin --delete localenv/shop', $false),
-    @('B', 'cd D:/w/web-ui && (yarn start --host 0.0.0.0 > D:/k/ui.log 2>&1 &) ; sleep 5', $true), @('B', 'PORT=4201 npm start', $true), @('P', 'Start-Process yarn -ArgumentList start', $true),
-    @('B', 'nohup yarn start &', $true), @('B', 'npx --yes ng serve', $true), @('B', 'yarn --cwd web start', $true), @('B', 'yarn workspace web start', $true),
+    @('P', 'dotnet run -- migrate', $false), @('B', 'cd web && yarn start', $false), @('B', 'git push origin --delete localenv/shop', $false),
+    @('B', 'PORT=4201 npm start', $false), @('P', 'Start-Process yarn -ArgumentList start', $false),
+    @('B', 'nohup yarn start &', $false), @('B', 'npx --yes ng serve', $false), @('B', 'yarn --cwd web start', $false), @('B', 'yarn workspace web start', $false),
     @('B', 'yarn lint --fix', $false), @('B', 'npm run dev:build -- --watch=false', $false))) {
   $json = @{ tool_name = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress
   $denied = (pwsh @np (Join-Path $gk 'skills/crafty/crafty.ps1') guard -Json $json | Out-String) -match '"permissionDecision":"deny"'
   if ($denied -ne $c[2]) { $bad += $c[1] }
 }
 Remove-Item Env:KIT_GUARD_SELFTEST_ACTIVE
-Expect "guard: localenv/ pushes and hand-started dev servers denied, the rest allowed ($($bad -join ' | '))" (-not $bad.Count)
+Expect "guard: lane pushes and hand-started dev servers pass (rules retired), the rest allowed ($($bad -join ' | '))" (-not $bad.Count)
 # a rebuilt layer edited an applied, unmerged changeSet: its MD5SUM is nulled (merged and unchanged ones untouched); restore.after runs with the release mark
 $ck = New-LocalEnvKit lecs; $ckL = Join-Path $ck 'skills/envy/envy.ps1'; $ckr = Join-Path $ck 'repo'; git init -q -b main $ckr; New-Item -ItemType Directory -Force (Join-Path $ck 'skills/crafty/adapters') | Out-Null; Copy-Item (Join-Path (Split-Path $PSScriptRoot) 'skills/crafty/adapters/liquibase.ps1') (Join-Path $ck 'skills/crafty/adapters')
 $ckx = { param($body) Set-Content (Join-Path $ckr 'changelog/c1.xml') "<databaseChangeLog>$body</databaseChangeLog>"; git -C $ckr add .; git -C $ckr -c user.name=t -c user.email=t@t commit -qm x; "$(git -C $ckr rev-parse HEAD)".Trim() }

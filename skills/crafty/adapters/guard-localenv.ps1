@@ -1,22 +1,9 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
-# guard rules (crafty.ps1 guard): local-env: a localenv/<env> branch is never pushed; dev servers start in the shared local env, not by
-# hand; deployed-env (K56): no hand change of a deployed env's config or runtime without an owner's decision; large-writes: no
-# synthetic bulk data, scratch schema on a shared DB, big import, full dump or copied dependency / data tree; secrets: no command reads targets.local.json.
-# Sections: L7 local-env · L20 deployed-env · L37 large-writes · L66 secrets
-# ---- local-env: lane branch pushes, hand-started dev servers
-Register-KitAdapter 'guard' 'local-env' @{ check = { param($a)
-    $cmd = $a.cmd
-    foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
-      if ($push.Value -match '(^|[\s:/])(localenv|lane)/' -and $push.Value -notmatch '\s--delete\b|\s-d\s|\s:(localenv|lane)/') { return 'lane/<lane> (old: localenv/<env>) is a local env branch (all agents'' layers merged): never push it. Push your branch; envy.ps1 deploy -Dir <worktree> takes it.' }
-    }
-    if (-not ($env:KIT_GUARD_SELFTEST_ACTIVE -eq '1' -or $a.config.localEnv) -or $cmd -match 'envy\.ps1') { return }
-    $server = '^(\.?[\\/])?(mvnw(\.cmd)?|mvn)\b.*\bspring-boot:run\b|^(\.?[\\/])?(gradlew(\.bat)?|gradle)\b.*\bbootRun\b|^(npx\s+(-\S+\s+)*)?ng\s+serve\b|^dotnet\s+(run|watch)\b(?!.*\s--\s)|^npx\s+(react-native|expo)\s+start\b|^(python\d?\s+)?manage\.py\s+runserver\b|^uvicorn\s|^flask\s+run\b|^(npm|yarn|pnpm|bun)\s+((--cwd|--prefix|--dir|-C)\s+\S+\s+|workspace\s+\S+\s+)?(run\s+)?(dev|start|serve)(\s|$)|^(npm|yarn|pnpm|bun)\s+(run\s+)?ng\s+serve\b|^Start-Process\b.*\b(npm|yarn|pnpm|bun|ng)(\.cmd)?\b.*\b(start|serve|dev)\b'
-    # a subshell, background or env-prefixed start counts too: (yarn start --host 0.0.0.0 > ui.log 2>&1 &)
-    foreach ($seg in @($cmd -split '\r?\n|;|&&|\|\||\|' | ForEach-Object { $_.Trim() -replace '^[\s(&]+', '' -replace '^((\w+=\S*|nohup|setsid|exec|time|sudo|env)\s+)+', '' } | Where-Object { $_ })) {
-      if ($seg -match $server) { return "Dev servers run in the shared local env as lane services (port, RAM and lease counted), not by hand: & $($KitCmd.local) restart -Env <lane> -Services web (start: up -Env <env>; list: envs; logs: logs -Env <env> -Service <s>)." }
-    }
-  } }
+# guard rules (crafty.ps1 guard): deployed-env (K56): no hand change of a deployed env's config or runtime without an owner's decision;
+# large-writes: no synthetic bulk data into a DB, scratch schema on a shared DB, big import, full dump or copied dependency / data tree;
+# secrets: no command reads the secret store (targets.local.json). Retired 2026-11-27 (0 hits in 30 d): lane branch pushes, hand-started dev servers.
+# Sections: L7 deployed-env · L24 large-writes · L55 secrets
 # ---- deployed-env: hand changes of a deployed env (K56)
 Register-KitAdapter 'guard' 'deployed-env' @{ check = { param($a)
   # a deployed env's config or runtime changed by hand restarts it under everyone (K56, 2026-11-17: a tester's env-option toggle restarted a
@@ -55,7 +42,9 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
   $lwGen = '(?i)\brange\s*\(\s*(?:\d[\d_]*\s*,\s*)?(\d[\d_]*)\s*[,)]|\bgenerate_series\s*\(\s*\d+\s*,\s*(\d+)|\bseq\s+(?:\d+\s+)*(\d+)\b|\bRECURSIVE\b[\s\S]*?\b\w+\s*<=?\s*(\d+)\b|\b\d+\.\.(\d[\d_]*)\b|\b10\s*\*\*\s*(\d)\b|(?<![\w.:/-])\d{1,4}e(\d)(?![\w.:/-])'
   $lwGenHit = @([regex]::Matches($lw, $lwGen) | Where-Object { $m = $_; @(1..7 | Where-Object { $m.Groups[$_].Success } | ForEach-Object {
       $v = [long]($m.Groups[$_].Value -replace '_'); if ($_ -ge 6) { [Math]::Pow(10, $v) } else { $v } } | Where-Object { $_ -gt $lwRows }).Count }).Count
-  $lwWhy = if ($lwGenHit) { "a row generator past data.maxRows ($lwRows)" }
+  # a generator counts only next to a DB or file write (audit 2026-11-27: a sha, a decision-id range and range/1e6 in a patch were no data)
+  $lwSink = '(?i)\binsert\b|executemany|\bdone\s*>|\.write\(|writelines|to_csv|open\([^)]*[''"][wa]|\bcopy\s+\w+\s+from\b|to_sql|bulk_?(insert|create|write)|\bload\s+data\b|\b(mysql|psql|sqlcmd|mariadb|sqlite3)\b|\.execute\('
+  $lwWhy = if ($lwGenHit -and $lw -match $lwSink) { "a row generator past data.maxRows ($lwRows) into a DB or file" }
     elseif ((($lw -match '(?i)\bCREATE\s+(DATABASE|SCHEMA)\b' -and $lwBare -match $lwClient) -or $lw -match '\bmysqladmin\b[^|;&\r\n]*\bcreate\b') -and (-not $lwPort -or $lwPort -in $lwShared)) { "a scratch schema on a shared DB server (port $(if ($lwPort) { $lwPort } else { 'default' }))" }
     elseif (($lw -match '(?i)\bLOAD\s+DATA\s+(?:LOCAL\s+)?INFILE\s+(\S+)' -or $lw -match '\b(?:mysql|psql)\b[^|;&<\r\n]*<\s*(\S+)') -and (& $lwBig $Matches[1])) { "a load or import of a file past data.maxMB ($lwMB MB)" }
     elseif ($lw -match '\bmysqldump\b[^|;&\r\n]*(--all-databases|\s-A\b)|\bpg_dumpall\b') { 'a full dump' }
@@ -68,7 +57,8 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
 function Test-KitLoginLiteral([string]$Path, [string]$Text) {
   # a browser's --user-data-dir is no login (retro tidy-6: a puppeteer launch was denied)
   if ("$Path" -notmatch '[\\/]work[\\/]agents[\\/]' -or ($Text -replace '(?i)\buser-data-dir\b', '') -notmatch '(?i)\b(login|user(name)?|email)\b' -or
-    $Text -notmatch '(?i)\b(pass(word)?|passwd|pwd|pw)\b["'']?\s*[:=]\s*["''](?![{<$])[^"''\s]{4,}["'']') { return '' }
+    # a key, not a quoted value (a PASS / FAIL ternary); a value that is a form word or verdict, not a secret (audit 2026-11-27)
+    $Text -notmatch '(?i)(?<!["''\w])(pass(word)?|passwd|pwd|pw)\b["'']?\s*[:=]\s*["''](?![{<$])(?!(pass(word)?|passwd|pwd|fail(ed)?|ok|skip(ped)?|text|hidden|string|secret|true|false|null)["''])[^"''\s]{4,}["'']') { return '' }
   "kit guard: $Path holds a password literal next to a login; test logins live only in the secret store ($(@(Get-KitSecretPaths) -join ', ')). New login: pokey.ps1 user create -Target <t> -Name <login> -Role <role>; use it: session({ target, as }) / pokey.ps1 api -As <login>; a script: targetOf('<t>').users['<login>'][1]"
 }
 Register-KitAdapter 'guard' 'secrets' @{ check = { param($a)

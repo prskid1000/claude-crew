@@ -124,8 +124,8 @@ $shipKeep = [IO.File]::ReadAllText((Join-Path $kc 'skills/crafty/ship.md')); Add
 $bjf = Join-Path $kc 'workflows/buildy.js'; $bjKeep = [IO.File]::ReadAllText($bjf); [IO.File]::WriteAllText($bjf, $bjKeep.Replace('PHASE local (', 'PHASE loop ('))   # PHASES vs PH
 Set-Content (Join-Path $kc 'tests/zz.tests.ps1') ('#' * 140000) -NoNewline; git -C $kc add tests/zz.tests.ps1 zz-orphan.md
 $l4 = & $py -X utf8 $KT2 lint --no-flow 2>&1 | Out-String
-Expect "budget: a start line per role + INFO totals; START-BUDGET over 12000; a test file over 9000 = BUDGET, no total cap; ORPHAN-DOC ($($b2.Trim()))" ($b2 -match '(?m)^rechy\s+start\s+\d+ of 12000' -and
-  $b2 -match 'INFO repo total \d+ tokens . tests \d+' -and $l4 -match 'START-BUDGET\s+agents/rechy\.md: rechy loads \d+ tokens at start' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 9000\)' -and
+Expect "budget: a start line per role + INFO totals; START-BUDGET over 12000; a test file over 16000 = BUDGET, no total cap; ORPHAN-DOC ($($b2.Trim()))" ($b2 -match '(?m)^rechy\s+start\s+\d+ of 12000' -and
+  $b2 -match 'INFO repo total \d+ tokens . tests \d+' -and $l4 -match 'START-BUDGET\s+agents/rechy\.md: rechy loads \d+ tokens at start' -and $l4 -match 'zz\.tests\.ps1: 35000 tokens \(cap 16000\)' -and
   $l4 -notmatch 'BUDGET-TESTS|BUDGET-CAP|kit total' -and $l4 -match 'ORPHAN-DOC\s+zz-orphan\.md' -and $l4 -match 'SCRIPT-READ\s+agents/rechy\.md:\d+')
 Expect "budget: a row per devy phase (code, local, ship); START-BUDGET per phase: a padded ship.md fails devy:ship only" (@([regex]::Matches($b2, '(?m)^devy:(code|local|ship)\s+start\s+\d+ of 12000')).Count -eq 3 -and $l4 -match 'START-BUDGET\s+agents/devy\.md: devy:ship loads' -and $l4 -notmatch 'devy(:code|:local)? loads' -and $l4 -match 'START-BUDGET\s+workflows/buildy\.js: devy:local: kitbag\.py PHASES' -and $l4 -notmatch 'buildy\.js: devy:(code|ship)')
 [IO.File]::WriteAllText((Join-Path $kc 'skills/crafty/ship.md'), $shipKeep); [IO.File]::WriteAllText($bjf, $bjKeep)

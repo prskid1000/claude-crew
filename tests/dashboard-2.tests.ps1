@@ -3,7 +3,8 @@
 dashboard-2.tests.ps1: the supervise page has no Parity panel (parity stays internal); the PARITY next batch ACT; the context
 info popover text (from context.tests.ps1); label case, role map, day heat groups (from runtimes.tests.ps1); the hour head;
 context ACTs count only agents after a fix; heatmap cell numbers (from dashboard.tests.ps1); group lines, today-only rows, status per
-past day, folds kept across a reload; board beat stamps stored UTC, shown local (TS-STORED, from naming.tests.ps1).
+past day, folds kept across a reload; board beat stamps stored UTC, shown local (TS-STORED, from naming.tests.ps1); Statistics
+tiles, grids, sentence case and the page's ui-check (from layout.tests.ps1).
 Usage: pwsh -NoProfile -File <kit>/tests/dashboard-2.tests.ps1 (or tests/kit-tests.ps1 -Area dashboard-2).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -151,5 +152,72 @@ $mt = & { . $O; $n = Get-Date; $ag = { param($nm, $st) [pscustomobject]@{ name =
   $ba = @(Get-KitBoardRunAgents @([pscustomobject]@{ live = $false; rows = @([pscustomobject]@{ run = 'solo-o'; agent = 'devy-o'; type = 'devy'; joined = $n.AddDays(-2).ToString('o'); beat = $n.AddDays(-2).ToString('o') }) }) @((& $ag 'devy-1 (devy)' 'ACTIVE')))
   "$($h -match "<b>2 / 8</b><span>Agents live</span>")|$($h -match "<b>1 / 2</b><span>Lane services up</span>" -and $h -match 'ln-a 1/2')|$($h -match "<b>40<small>%</small></b><span>CPU now &#183; 24 h peak 90%</span>")|$($h -match "<b>3.5<small> GB</small></b><span>Disk written today</span>" -and $h -match 'top writer mysqld 2.1 GB')|$($h -match "class='tl z'[^>]*><b>0</b><span>Builds queued")|$($h -match '@media\(min-width:1100px\)\{\.tls\{flex-wrap:nowrap\}')|$(@($ba).Count):$($ba[-1].name):$($ba[-1].state)" }
 Expect "tile strips: one row at desktop width, zero dimmed; machine tiles agents live, lane services up, CPU, disk written today; an older ended solo agent keeps its run row ($mt)" ("$mt" -eq 'True|True|True|True|True|True|2:devy-o (devy):FINISHED')
+# ---- from layout.tests.ps1: Statistics tiles, grids, sentence case, ui-check of the page
+# supervise page: sweep lines -> Statistics tiles (value, change vs the previous sample, 7 days); a silent board entry = its STUCK flag, no count lines
+$tilePage = (Invoke-PsTest tiles @'
+. $args[0]
+$sweepLines = @('workflow wf_a: 12 agents, 9 finished, 3 running', '  fix:W2T  idle 27 min', '  W1  idle 1 min', 'memory: 61% used, 24.7 GB available', 'gate: 1 running (tsc), 2 queued, longest wait 4 min', 'qa seats: 1 taken of 12',
+  'disk C: 649.08 GB free, +0 GB/h', 'disk D: 479.08 GB free, +1.71 GB/h, full in 30.2 h', 'disk E: 9 GB free, +0.5 GB/h, full in 90 h', 'slowest: wave reports 14.2 s, x 1.0 s', 'sweep: 34 s')
+$liveSamples = @([pscustomobject]@{ at = [datetime]'2026-01-02T09:30'; run = 5; mem = 70; secs = 40; br = 7; wt = 3; disks = @{ D = 480.5 } }, [pscustomobject]@{ at = '2026-01-02T10:00:00'; run = 3; mem = 61; secs = 34; br = 7; wt = 3; disks = @{ D = 479.08 } })
+$repoRows = @(@{ repo = 'a'; branches = 3; worktrees = 2; kept = 1 }, @{ repo = 'b' }, @{ repo = 'c'; branches = 5 }); $sweepHist = @(@{ fixed = 0; flags = @(@{ level = 'WATCH' }) }, @{ fixed = 1; flags = @(@{ level = 'ACT' }) })
+Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; history = $sweepHist; stats = [pscustomobject]@{ now = (Get-KitSuperviseNow $sweepLines 20); live = $liveSamples; repos = @{ at = '2026-01-02T08:30:00'; repos = $repoRows }; days = @(@{ day = '2026-01-01'; failed = 2 }) } })
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
+$tileWant = @("<span class=gn title='seconds per sweep, the day&#39;s average; 7 d: average &#183; slowest step now: wave reports 14.2 s'>Sweep time (s)<small>now 34 s</small></span>", "title='2026-01-02 (today) &#183; Sweep time (s): 37'>37</i>", "id=sec-dl-days open>", ">Disk D<small>479.1 GB free &#183; filling 1.7 GB/h &#183; full in 30.2 h</small>",
+  'steady (11 min) &#183; Writes GB: what it filled per hour', '>Disk E<small>9 GB free &#183; filling 0.5 GB/h</small>', '<b>1 / 12</b><span>QA seats</span>', '<b>1</b><span>Builds running</span>', '<b>2</b><span>Builds queued</span>', '<b>61<small>%</small></b><span>RAM used</span>',
+  "now: all branches 7 &#183; all worktrees 3 &#183; c 5/0 &#183; a 3/2</span>",   # owner 2026-11-25: rows with today only join the Repos line
+  "title='2026-01-01 &#183; agents failed: 2'>2</i>")
+$tileMissing = @($tileWant | Where-Object { -not $tilePage.Contains($_) })
+$staleBoard = Join-Path (TkPath $k board -Create) 'stale-s.json'; @{ session = 'stale-s'; agent = 'Y7'; run = 'r7'; status = 'working'; beat = (Get-Date).AddMinutes(-40).ToString('o'); joined = (Get-Date).AddMinutes(-50).ToString('o') } | ConvertTo-Json | Set-Content $staleBoard -Encoding utf8
+$superviseOut = pwsh @np (Join-Path $k 'skills/bossy/bossy.ps1') supervise -AutoFix -Json 2>$null | Out-String | ConvertFrom-Json
+$livePage = Get-Content ([IO.Path]::ChangeExtension((TkPath $k supervise-report), '.html')) -Raw
+Expect "supervise page: machine row (full-in under 72 h), Activity as one day heatmap, no delta text, no sweep log; a silent board entry = STUCK, no board / shells lines (missing: $($tileMissing -join ' | '))" (
+  -not $tileMissing.Count -and $tilePage -notmatch 'full in 90|Sweep log|<pre|rn>b<|class=.tr |Lessons|Workflow steps now|Sweep time</|Flags auto-FIXED' -and @($superviseOut.flags.what -match '^STUCK Y7 .*\(r7\): no progress for 40 min').Count -eq 1 -and -not @($superviseOut.summary -match '^(board|shells): ').Count -and $livePage -match '(?s)RAM used</span>.+Kit internals</h2>.+Trends</h3>.+>Sweep time \(s\)<' -and $livePage -notmatch 'Sweep log')
+# supervise page: short-item lists use the grid helper (.cg); a tile + ring per disk, a flagged one tinted and first
+$gridPage = (Invoke-PsTest grids @'
+. $args[0]
+Format-KitSuperviseHtml ('{"at":"2026-01-02T10:00:00","flags":[{"level":"WATCH","what":"disk D: x"},{"level":"INFO","what":"i"}],"agents":[{"name":"a (workflow)","run":"r1","state":"ACTIVE","task":"t · steps 1/4 · 2k tokens of 10k"}],"resources":[{"name":"seat","by":"W1","gb":1.5},{"name":"db","by":"","gb":2,"shared":true}],"mem":{"TotalGB":8,"AvailGB":2},"stats":{"settings":{"heartbeatMinutes":15},"live":[{"at":"2026-01-02T09:30:00","mem":60,"res":{"seat":{"gb":1,"by":"W2"}},"disks":{"D":290}},{"at":"2026-01-02T09:45:00","mem":80,"res":{"seat":{"gb":1.2,"by":""}},"disks":{"D":280}}],"disks":[{"drive":"C","free":40,"total":900},{"drive":"D","free":300,"total":500,"series":[3,2]}]}}' | ConvertFrom-Json)
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))) -join "`n"
+$gridWant = @(@() | Where-Object { $gridPage -notmatch "class='cg $_' style='--cmin:\d+px" })
+$gridOld = @('<section class=kpis>', '<div class=gauges>', '<div class=stats>', 'class=toks>', '<span class=tn>', '<table><thead><tr><th>Resource</th>','<th>Key</th><th>Value</th>', 'grid-template-columns:minmax(0,240px)' | Where-Object { $gridPage.Contains($_) })
+Expect "supervise page: lists on .cg (missing: $gridWant), no old pattern ($gridOld); disk, icons, meters, sparklines, timeline, agents" ($gridPage -match "<div[^>]* class='gk[^']*\bwarn'><span class=gn title='disk D &#183; 300 GB free &#183; 40% used &#183; steady[^']*'>disk D<small>300 GB free &#183; 40% used &#183; steady</small>" -and $gridPage -match '>disk C<small>40 GB free &#183; 96% used' -and $gridPage -notmatch 'class=k>Disks' -and $gridPage -notmatch 'class=gauge' -and $gridPage -match "<span class=gn title='db &#183; shared &#183; always on: CPU not sampled: [^']*RAM now 2 GB &#183; 24 h peak 2 GB'>db<small>shared &#183; always on</small></span>" -and
+  $gridPage -match "title='09:00 &#183; seat &#183; RAM 1.1 GB &#183; W2'><span class='t'></span><span class='u[^']*'>1.1</span></i><i class=nw style='--a:0%;--b:[\d.]+%' title='10:00 \(now\) &#183; seat &#183; RAM 1.5 GB &#183; W1'>" -and
+  $gridPage -match "<b>75<small>%</small></b><span>RAM used</span>.+used <b>6</b> GB" -and $gridPage -match ">D free</small>" -and $gridPage -match "<span class='gc fr lo' title='[^']*'>280</span>" -and $gridPage -match "rtg aria-expanded=false>r1</button>" -and
+  -not $gridWant.Count -and -not $gridOld.Count -and $gridPage -match 'No usage yet: bossy\.ps1 budget -Usage' -and $gridPage -match '\.cg\{display:flex;flex-wrap:wrap;[^}]*\}\.cg>\*\{flex:1 1 max\(min\(100%')
+# sentence case (owner 2026-11-21): every label (heading, column head, row name, chip, tile caption, legend key, button) starts upper
+# case; an id stays (crew, lane, repo, key, unit: a - . _ / | : @ # · or digit, camelCase; a translate=no row)
+$lblId = '^(?:[^\s,;:()]*[-._/|:@#\\·\d][^\s,;:()]*|[a-z]+[A-Z]\w*|devy|revy|checky|kitty|briefy|rechy|datay|opsy|watchy|vidy|coordinator|workflow|buildy|testy|tidy|min|h|s|d|ms)(?:[\s,;:()]|$)'
+$lblScan = { param([string]$pg) $tx = $pg -replace '(?s)<(script|style|code)\b.*?</\1>', ''
+  @(@([regex]::Matches($tx, '<(?<tag>th|button|summary|h[1-4]|li|span|div|p)(?<at>\s[^>]*)?>\s*(?<t>[a-z][^<]*)') | Where-Object { $_.Groups['tag'].Value -notin 'span', 'div', 'p' -or ($_.Groups['at'].Value -match "class=(?:'[^']*\b(?:gn0?|chip|hk|tgn|kleg|bdg)\b|(?:gn0?|chip|hk|tgn|kleg|bdg)\b)" -and $_.Groups['at'].Value -notmatch 'translate=no') } | ForEach-Object { $_.Groups['t'].Value.Trim() }) +
+    @([regex]::Matches($tx, '<i\b[^>]*></i>\s*(?<t>[a-z][^<]*)') | ForEach-Object { $_.Groups['t'].Value.Trim() }) | Where-Object { $_ -cnotmatch $lblId } | Select-Object -Unique) }
+$lblBad = @(& $lblScan $tilePage) + @(& $lblScan $gridPage)
+$lblCanary = (& $lblScan "<th>value</th><span class='chip x'>running</span><span class=gn translate=no>api</span><span class=gn>devy</span><i class=lgk></i>output") -join ','
+Expect "labels: sentence case on the page, ids kept (lower-case labels: $($lblBad -join ' | '); canary $lblCanary)" ($lblCanary -eq 'value,running,output' -and -not $lblBad.Count -and $tilePage.Contains('>Sweep time (s)<small>now 34 s</small>') -and $gridPage -cmatch "<span class='chip s-act'>Running</span>|class=gn0>Ended today<")
+# kitbag.py ui-check (headless, light + dark): cases below
+if (Use-BrowserKit) {
+  $uiKb = Join-Path $k 'skills/bossy/kitbag.py'; $uiBad = Join-Path (Kd) 'clip.html'
+  [IO.File]::WriteAllText($uiBad, '<!doctype html><body><div style="width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">browser app-staging·tenant1·admin</div><div style="width:90px;white-space:nowrap">test:W2P, test:W2U, test:W2R</div><table style="width:60px;table-layout:fixed"><tr><td style="width:20px;overflow-wrap:anywhere">abcdefghijklmnop</td><td>x</td></tr></table><p style="width:90px;height:16px;overflow:hidden">one two three four five six</p><p style="width:90px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1">clamped to one line of text</p><div style="display:grid;grid-template-columns:1fr 1fr"><div data-fit>a<br>b<br>c<br>d</div><div data-fit>stretched</div></div><section style="width:100px;overflow:hidden"><span style="display:inline-block;white-space:nowrap">a side panel line cut at the edge</span></section></body>')
+  $uiBadOut = @(& $py -X utf8 $uiKb ui-check $uiBad --widths 390 2>&1); $uiBadCode = $LASTEXITCODE
+  Expect "ui-check: ellipsis, overflow, hidden height, line-clamp, squeezed cell, text cut by a clipping box, stretched data-fit card fail, both themes (exit $uiBadCode)" ($uiBadCode -eq 1 -and -not @('fit: blank \d+ px below the content \(stretched\)', 'div: text-overflow: ellipsis', 'div: scrollWidth', 'td: squeezed', 'p: scrollHeight', 'p: line-clamp 1', 'clip: text cut \d+ px by section' | Where-Object { @($uiBadOut -match "CLIP $_").Count -ne 2 }).Count)
+  $uiRow = Join-Path (Kd) 'rows.html'   # 3 cards in 4 columns: an empty column; 3 in 3, one shifted by a margin: full
+  [IO.File]::WriteAllText($uiRow, '<style>div{display:grid;gap:8px}</style><div style="grid-template-columns:repeat(4,1fr)"><p data-fit>a<p data-fit>b<p data-fit>c</div><div style="grid-template-columns:repeat(3,1fr)"><p data-fit>a<details style="margin:8px"><summary>b</summary></details><p data-fit>c</div><div style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr))"><article>lone</article></div><section style="columns:3 300px"><article>col</article></section>')
+  $uiRowOut = @(& $py -X utf8 $uiKb ui-check $uiRow --widths 1366,900 2>&1)
+  Expect "ui-check: a card row 24+ px short of its box, a lone grid card, empty CSS columns fail at 1280+ px only ($($uiRowOut -match 'rows'))" (@($uiRowOut -match 'CLIP rows: a card row ends').Count -eq 2 -and @($uiRowOut -match 'CLIP rows: a lone card ends').Count -eq 2 -and @($uiRowOut -match 'CLIP rows: CSS columns end').Count -eq 2 -and @($uiRowOut -match '^900 px .* 0 clipped').Count -eq 2)
+  git init -q $k; git -C $k add skills/bossy; git -C $k commit -q -m base; $uiSr = Join-Path $k 'skills/bossy/adapters/supervise-resources.ps1'; Undo-TestKitLink $uiSr; Add-Content $uiSr '# touched'
+  $uiWarn = { & $py -X utf8 -c "import sys; sys.path.insert(0, sys.argv[1]); import kitbag; print([w for _, w, _ in kitbag.ui_check_warns(sys.argv[2])])" (Join-Path $k 'skills/bossy') $k }
+  $uiWarnBefore = & $uiWarn
+  $uiPage = Join-Path (Kd) 'dash.html'
+  Invoke-PsTest uipage @'
+. $args[0]
+$holders = (1..10 | ForEach-Object { "test:W2$([char](64 + $_))-checky-lane-$_" }) -join ', '
+$res = @(@{ name = 'browser app-staging·tenant1·admin'; by = $holders; gb = 2.4 }, @{ name = 'lock C:/work/.worktrees/f-TASK-1234-copy-orders-with-rerating-java/target'; by = 'devy-1; waiting: devy-2, devy-3'; gb = 0 })
+$sh = @(@{ pid = 123456; owner = 'W2R-checky-2026-11-10-app-staging-intest-verify'; age = 42; state = 'STUCK'; dir = 'C:/work/.worktrees/f-TASK-1234-copy-orders/app/api'; cmd = 'pwsh -NoProfile -File C:/work/.claude/skills/crafty/crafty.ps1 check -Dir C:/work/.worktrees/f-TASK-1234-copy-orders/app/api'; next = 'kill' })
+$ag = @(@{ name = 'wf_build_2026_11_10_super_long_workflow_identifier (workflow)'; run = '2026-11-10-app-staging-intest-and-a-long-run-name'; state = 'ACTIVE'; task = 'TASK-1234 Copy orders · steps 3/9 · 412k tokens of 967k'; since = '2026-01-02T09:10:00'; last = '2026-01-02T09:58:00'; doing = 'running crafty.ps1 check on C:/work/.worktrees/f-TASK-1234-copy-orders-with-rerating-java' }, @{ name = 'W2S (checky)'; run = 'r2'; state = 'ACTIVE'; since = '2026-01-02T10:00:00' })   # a bar at the timeline's end
+$st = @{ settings = @{ 'supervise.paceRules' = '{"busy":5,"some":"long-value-without-spaces-0123456789abcdefghijklmnopqrstuvwxyz"}' }; params = @(@{ key = 'supervise.heartbeatMinutes.withAVeryLongKeyName'; ctx = 'android-swarm|lane-3'; value = '15'; source = 'approved · kit.local.json'; learned = '12'; changed = '2026-01-02T09:00:00'; why = 'owner pinned it' }) }
+Format-KitSuperviseHtml ([pscustomobject]@{ at = '2026-01-02T10:00:00'; flags = @(@{ level = 'ACT'; what = 'STUCK W2R-checky-2026-11-10-app-staging-intest-verify-very-long-agent-name: no progress for 41 min'; action = 'stop it' }); agents = $ag; resources = $res; shells = $sh; mem = @{ TotalGB = 31.7; AvailGB = 9.4 }; stats = $st } | ConvertTo-Json -Depth 8 | ConvertFrom-Json) | Set-Content -LiteralPath $args[1] -Encoding utf8
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'), $uiPage) | Out-Null
+  $uiOut = @(& $py -X utf8 $uiKb ui-check $uiPage 2>&1); $uiCode = $LASTEXITCODE; $uiShots = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*.png' -ErrorAction SilentlyContinue | Where-Object Name -NotLike '*-open.png'); $uiOpen = @(Get-ChildItem (Join-Path (TkPath $k shots) 'ui-check') -Filter 'dash-*-open.png' -ErrorAction SilentlyContinue)
+  Expect "ui-check: dashboard unclipped at 4 widths x 2 themes, UI-CHECK nudge (exit $uiCode, $($uiShots.Count)+$($uiOpen.Count) shots, before $uiWarnBefore; $($uiOut | Where-Object { $_ -match 'CLIP' } | Select-Object -First 3))" (
+    $uiCode -eq 0 -and $uiShots.Count -eq 8 -and $uiOpen.Count -eq 8 -and [int](@($uiOut -match '^1366 px light loaded: .* (\d+) px tall')[0] -replace '^.* (\d+) px tall.*$', '$1') -le 2700 -and @($uiOut -match '· \d+ px tall as loaded ·').Count -eq 8 -and "$uiWarnBefore" -eq "['skills/bossy/adapters/supervise-resources.ps1']" -and "$(& $uiWarn)" -eq '[]')
+}
 Remove-TestKit $k
 Complete-Tests

@@ -154,6 +154,18 @@ $gd = '{"tool_name":"Bash","tool_input":{"command":"git checkout -b TK-9-x"}}' |
 Expect 'prior gate: wt new refused before prior / on a found branch (hints); -Override or found branch + MR pass; NONE, own, sibling pass; guard + devtools.py finish need prior' ($w0[-1] -eq 1 -and "$w0" -match 'run crafty.ps1 prior' -and $p7c -eq 1 -and $p7 -match 'FOUND branch .*TK-7-old' -and $w1[-1] -eq 1 -and "$w1" -match 'already exists: branch' -and ($w1n = "$w1" -replace '[\s|]+', ' ') -match 'reuse: crafty\.ps1 wt new .*-Branch TK-7-old' -and $w1n -match "7-new -Override '<why>'" -and $w2[-1] -eq 0 -and $w4[-1] -eq 0 -and $p8c -eq 0 -and $p8 -match '^NONE' -and $w3[-1] -eq 0 -and $p8r -eq 0 -and $p8s -match 'INFO branch .*8-sib' -and $gd -match '"deny"' -and $gd -match 'prior -Task 9' -and $fy -match 'prior -Task 9 first')
 Set-Content $lf "'[{""iid"":5,""state"":""opened"",""title"":""api"",""source_branch"":""TK-10-api""}]'"; $null = pwsh @np $D prior -Task 10 -Repo $gr; $f10 = & $py -X utf8 (Join-Path $k 'skills/crafty/devtools.py') finish 10 a b 2>&1 | Out-String; $m10 = & $py -X utf8 -c "import sys; sys.path[:0] = [sys.argv[1]]; import devtools as d; d.prior_gate('10', sys.argv[2], 'mr')" "$k/skills/crafty" $gr 2>&1 | Out-String; $w10 = & $w TK-10-web; $g10 = '{"tool_name":"Bash","tool_input":{"command":"git checkout -b TK-10-dup"}}' | pwsh @np $D guard | Out-String; Set-Content $lf "'[]'"
 Expect 'prior gate: a tagged MR of the task is its own (finish, mr in its repo: INFO, passes); wt new there and the guard (repo unknown) still stop' ($f10 -match 'INFO devtools.py finish 10: paired mr pr!5' -and $f10 -notmatch 'already exists' -and $m10 -match '^INFO mr: paired mr pr!5' -and $w10[-1] -eq 1 -and "$w10" -match 'already exists: mr pr!5' -and $g10 -match '"deny"' -and $g10 -match 'already exists')
+# audit 2026-11-27 (pick 3): in a wave (one launch, several areas: areaTasks) a sibling task and the task's own tagged branch are INFO,
+# alone the same hits still stop (devtools.py prior_gate passes tracked tasks and tagged work already)
+$wv = Invoke-PsTest wave-prior @'
+. $args[0]; $vu = (Get-Date).AddHours(2).ToString('o')
+$fd = @(@{ kind = 'task'; ref = 'W13'; title = 'twin' }, @{ kind = 'branch'; ref = 'TK-W12-b'; repo = 'pr'; tagged = $true })
+Write-KitState (Get-KitTaskFile W12) @{ task = 'W12'; prior = @{ at = (Get-Date).ToString('o'); validUntil = $vu; found = $fd } }
+$solo = try { Assert-KitPrior W12 pr 'wt x' '' ''; 'pass' } catch { 'stop' }
+@{ areaTasks = @{ a = 'W12'; b = 'W13' } } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath launches -Create) 'self-wave-x.json')
+$wave = try { Assert-KitPrior W12 pr 'wt x' '' '' 2>&1 | Out-Null; 'pass' } catch { 'stop' }
+"$solo $wave"
+'@ @((Join-Path $k 'skills/crafty/lib.ps1'))
+Expect "prior gate: a wave's sibling task and the task's own tagged branch pass (INFO), alone they stop ($(("$wv" -split "`n")[0].Trim()))" ("$wv" -match '(?m)^stop pass' -and "$wv" -match 'INFO wt x: a sibling task of its run W13')
 $gc = { git -C $gr -c user.name=t -c user.email=t@t @args }; & $gc checkout -q -b TK-11-a; & $gc commit -q --allow-empty -m 'TK-11 wip'; & $gc checkout -q main; & $gc commit -q --allow-empty -m 'TK-11 fix'
 Set-Content $lf "'[{""state"":""merged"",""target_branch"":""main"",""source_branch"":""TK-11-a""},{""iid"":7,""state"":""merged"",""target_branch"":""stg"",""source_branch"":""TK-11-b""}]'"; $p11 = pwsh @np $D prior -Task 11 -Repo $gr | Out-String; Set-Content $lf "'[]'"
 Expect 'prior gate: merged into target = fix round' ($p11 -match 'FOUND mr pr pr!7' -and $p11 -notmatch 'pr!6|TK-11-a|commit')

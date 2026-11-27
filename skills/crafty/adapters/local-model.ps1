@@ -179,7 +179,7 @@ param(
   [string]$Unit, [string]$JobFile, [string]$Fnv, [int]$DeadlineSec,   # resolve, run
   [string]$Model, [switch]$Unsafe, [switch]$Print, [switch]$Json, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session, [double]$WaitMinutes = -1,
-  [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [int]$TimeoutSec, [switch]$Force,   # bench
+  [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [Alias('TimeoutSeconds')][int]$TimeoutSec, [switch]$Force,   # bench
   [switch]$Add, [string]$Write, [switch]$WriteRunonEvidence, [int]$Min,   # bench build / runon / report / coverage
   [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )

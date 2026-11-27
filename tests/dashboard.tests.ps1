@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 dashboard.tests.ps1: the supervise page's history graphs (adapters/supervise-stats.ps1): lease waits per resource from the logs,
-test-run results per day, CPU per lane process and top other processes; their cards; tile rows of one height (ui-check).
+test-run results per day, CPU per lane process and top other processes; their cards; tile rows of one height (ui-check); section folds, the runs band and headline numbers once (from sessions).
 Usage: pwsh -NoProfile -File <kit>/tests/dashboard.tests.ps1 (or tests/kit-tests.ps1 -Area dashboard).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -163,5 +163,53 @@ if (Use-BrowserKit) {   # owner 2026-11-14: one tall tile (25 repos) beside shor
   $uiTileOut = @(& $py -X utf8 $uiKb ui-check $uiTile --widths 1366 2>&1 | Out-String) -split "`n"
   Expect "ui-check: row heights compared within one tile class only; an svg over a sibling tile fails, one its tile clips passes ($(@($uiTileOut -match 'CLIP').Count))" (@($uiTileOut -match 'CLIP rows: card heights in one row differ by 160 px').Count -eq 2 -and @($uiTileOut -match 'CLIP rows: card heights').Count -eq 2 -and @($uiTileOut -match 'CLIP svg: ').Count -eq 2 -and @($uiTileOut -match 'CLIP svg: svg 300x\d+ px in one tile draws over a sibling tile .*\(tg x tb\)').Count -eq 2)
 }
+# ---- from sessions.tests.ps1: section folds, runs band, headline numbers once
+# every section folds (owner 2026-11-19): open by default flags, runs, machine and resources, trends; shells with none and Kit internals closed;
+# '<title> (<count>)' in the summary, 0 = the summary only; internals hold kit tuning only (never leases, agents, usage)
+$folds = Invoke-PsTest folds @'
+. $args[0]
+$t0 = [datetime]'2026-01-02T10:00:00'; $d0 = $t0.ToString('o'); $d1 = $t0.AddDays(-1).ToString('o')
+$rn = { param($run, $id, $st, $at, $roles, $lb, $kind) [pscustomobject]@{ run = $run; id = $id; status = $st; at = $at; started = $at; roles = $roles; label = $lb; kind = $kind; done = 2; total = 2; tok = 1000; cost = 1; merged = 1; cap = 100; spent = 10; steps = @() } }
+$u = [pscustomobject]@{ days = @([pscustomobject]@{ day = '2026-01-02'; tok = 5 }); rates = [pscustomobject]@{ n = 0 }; merged = [pscustomobject]@{ source = 'workflows' }
+  runs = @((& $rn 'wave-brief-1' 'wf_a' 'running' $d0 'devy 2' 'Ask RM bug wave' 'build'), (& $rn 'wave-brief-1' 'wf_b' 'ended' $d0 'devy 2' 'Ask RM bug wave' 'build'), (& $rn 'wf_kit' 'wf_k' 'ended' $d0 'kitty 2' '' ''), (& $rn 'select-x' 'wf_c' 'ended' $d1 'checky 4' '' 'test')) }
+$fh = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; flags = @([pscustomobject]@{ level = 'ACT'; what = 'x' }); agents = @([pscustomobject]@{ name = 'devy-1 (devy)'; run = 'r1'; state = 'ACTIVE' }, [pscustomobject]@{ name = 'old (devy)'; run = 'r1'; state = 'FINISHED'; last = $d1 })
+  resources = @([pscustomobject]@{ name = 'browser t1'; by = 'devy-1'; gb = 0.2 }, [pscustomobject]@{ name = 'mysql'; by = ''; gb = 1 })
+  stats = [pscustomobject]@{ usage = $u; params = @([pscustomobject]@{ key = 'k1'; source = 'live' }, [pscustomobject]@{ key = 'k2' }); changes = @([pscustomobject]@{ key = 'k1' }); settings = [pscustomobject]@{ heartbeatMinutes = 15 } } })
+$st = foreach ($m in [regex]::Matches($fh, "<details class='sec (?<c>[^']*)' id=sec-(?<id>[\w-]+)(?<o> open)?><summary><h\d>(?<t>[^<]+)</h\d>(?:<span class=cnt>\((?<n>[^)]*)\)</span>)?(?:<span class=cnt>[^<]*</span>)?(?:<span class='chip[^']*'>[^<]*</span>)*(?:<svg.*?</svg>|<span class=sbh.*?</span>)?(?:<button[^>]*>[^<]*</button>)?</summary>(?<b><div class=bd>)?")) { "$($m.Groups['id'].Value)=$(if ($m.Groups['o'].Success) { 'open' } else { 'closed' })$(if ($m.Groups['n'].Success) { ":$((($m.Groups['n'].Value -replace "<svg[^>]*aria-label='([^']*)'.*?</svg>", '[$1]') -replace '<[^>]+>', ' ' -replace '\s+', ' ').Trim())" })$(if (-not $m.Groups['b'].Success) { ':nobody' })" }
+$sec = { param($id) [regex]::Match($fh, "(?s)id=sec-$id(?: open)?>.*?(?=<details class='sec top'|<footer)").Value }
+$int = & $sec internals; $runsH = & $sec runs
+"$($st -join ' ')"
+# tile groups (owner 2026-11-20): one closed Settings fold (keys · changed this week) around closed group folds (changed this week + source mix); copy as TSV right in the Tuning header
+$fhG = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ params = @(1..13 | ForEach-Object { [pscustomobject]@{ key = "g.p$_"; source = $(if ($_ -eq 1) { 'live' }); changed = $(if ($_ -eq 1) { $d0 }) } }) } })
+"internals:$(-not ($int -match 'id=sec-(resources|shells|agents|runs|usage)\b') -and $int -match 'id=sec-trends' -and $int -match "<button type=button class='tgb' id=tg-k1 aria-expanded=false aria-controls=tp-k1 aria-label='k1: 1 key, none changed this week, 1 learned'><span class=tgh><span class=tgn title='k1'>k1</span><small>1</small></span><span class=tgm></span><span class=tgx aria-hidden=true><i class=pl style='flex-grow:1'></i></span></button><section class='tgp f' id=tp-k1 data-t=tg-k1" -and $fhG -match "<button type=button class='tgb c7g' id=tg-g aria-expanded=false aria-controls=tp-g aria-label='g: 13 keys, 1 changed this week, 1 learned, 12 default'><span class=tgh><span class=tgn title='g'>g</span><small>13</small></span><span class=tgm><span class=bdg>1 changed</span></span><span class=tgx aria-hidden=true><i class=pl style='flex-grow:1'></i><i class=pd style='flex-grow:12'></i></span></button>" -and $fhG -match "<details class='sec sub' id=sec-settings><summary><h3>Settings</h3><span class=cnt>\(13 keys &#183; 1 changed this week\)</span></summary><div class=bd><div class=tgc><input id=tgq [^>]*>.*?</div><div class=tgs data-mk=params-now><button type=button class='tgb c7g'" -and $int -match "id=sec-tuning><summary><h3>Tuning</h3><span class=cnt>\(3\)</span><button type=button class='chip tsv' data-tsv=[^>]*>copy as TSV</button></summary>" -and $fh -match "b\.onclick=function\(x\)\{x\.preventDefault\(\);x\.stopPropagation\(\)" -and $int -notmatch 'sec-(top|kit-runs)')"
+$rxOrphan = "<div class='gk[^']* orphan'><span class=gn[^>]*>mysql<small>no live holder</small>"
+# runs (D9): the running one on top with its steps link, today's ended open, yesterday's folded; board agents under their run, a finished one marked
+"runs:$($runsH -match "<div class='rgg cl' data-g='rr-wf_a' data-oc='' data-fk='d2026-01-02'><div class='gk rgh rr f'><span class=gn[^>]*><button type=button class=rtg aria-expanded=false>Ask RM bug wave</button><span class='chip k-build'>build</span><span class='chip s-act'>running</span><a class=rk href='supervise-runs/wf_a.html'" -and $runsH -match "<div class='rgg rdg cl' data-g='rd-2026-01-01'" -and $runsH -match "data-g='rd-2026-01-02'[^>]*><div class='gk rgh'><button type=button class=rgb aria-expanded=true>" -and $fh -notmatch 'data-gall|sec-agents')"
+$pg = @{}; $null = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } }) $pg; $dayH = [regex]::Match($fh, "(?s)id=sec-dl-days open>.*?</details>").Value
+"pages:$((($pg.Keys | Sort-Object) -join ',') -eq 'wf_a,wf_b,wf_c' -and $pg['wf_b'] -match "(?s)<div class='sy rst'>.*<th>Step</th>.*bossy\.ps1 report -Run wave-brief-1 -Detail" -and $pg['wf_b'] -notmatch 'class=sa' -and $dayH -match "data-ft='#sec-runs' data-fv='d2026-01-02'[^>]*title='2026-01-02 \(today\) &#183; runs started: 2 run\(s\) started: Ask RM bug wave")"
+$u.runs = @(1..27 | ForEach-Object { & $rn "r$_" "wf_$_" 'ended' $d0 'devy 1' '' 'build' }); $fh2 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; stats = [pscustomobject]@{ usage = $u } })
+$fh3 = Format-KitSuperviseHtml ([pscustomobject]@{ at = $d0; shells = @(1..12 | ForEach-Object { [pscustomobject]@{ pid = $_; dir = 'maven|a/b' } }) })
+$uxRx = @("<tr class='f more'>", 'class=sa data-n=12>Show all \(12\)', '<nav class=jl', 'id=nm class=empty hidden', 'maven\|<wbr>a/<wbr>b', '\.tw \.lo\{display:none', 'function jp\(k,f\)\{try', 'fbl>details\[open\]', 'gk\{display:contents', "try\{L\.setItem\('kc-open'", "jp\('kc-tg',\{\}\)", "x\.key=='Escape'&&ts\.op", 'grid-auto-flow:row dense', 'if\(!r\.offsetParent\)return')   # a low column only inside tables (.st.lo tiles stay); stored state parsed safely
+$rawTone = '(?<![-\w])color:var\(--(act|watch|sage|slate|plum)\)'   # tone text mixed toward --fg: WCAG AA in the light theme
+"ux:$(([regex]::Matches($fh3, $uxRx[0])).Count -eq 2 -and -not @($uxRx | Where-Object { $fh3 -notmatch $_ }).Count -and $fh3 -notmatch $rawTone)"
+"cap:$(([regex]::Matches($fh2, "data-g='rr-")).Count -eq 27)"
+"agents:$($runsH -match '>devy-1<' -and $runsH -match ">devy-old<span class='chip s-fin'>finished</span>" -and $fh -match $rxOrphan)"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
+$fl = @($folds | ForEach-Object { "$_" -split "`r?`n" } | Where-Object { "$_".Trim() })
+$foldWant = 'flags=open', 'runs=open:1 running', 'machine=open', 'shells=closed:0:nobody', 'trends=open', 'dl-days=open', 'internals=closed', 'tuning=closed:3'
+$foldMiss = @($foldWant | Where-Object { " $($fl[0]) " -notmatch " $([regex]::Escape($_))[ :]" })
+Expect "supervise page: every section a <details> with '<title> (<count>)', the owner's default open states, an empty one summary only (missing: $foldMiss | $($fl[0]))" (-not $foldMiss.Count)
+Expect-Each @($fl | Select-Object -Skip 1) 'supervise page: # (internals: Trends + Tuning; runs: running first, a fold per day (today open, older folded), label, kind, steps link; agents: under their run, finished marked, orphan tinted; cap: every run of 7 days a row; ux: 10 rows + Show all (N), jump links, No match, keys break at | /, tone AA)' @('internals', 'runs', 'pages', 'agents', 'cap', 'ux') 6
+# each headline number renders once: 7-day tokens + cost (chart title), step outcomes (one bar), agents spawned (one tile; the Today list counted board rows)
+$once = Invoke-PsTest once @'
+$null = . $args[0] 6>$null; $t0 = [datetime]'2026-01-02T10:00:00'
+$u = [pscustomobject]@{ days = @(6..0 | ForEach-Object { [pscustomobject]@{ day = $t0.AddDays(-$_).ToString('yyyy-MM-dd'); tok = 971428571; cost = 249.57 } }); byRole = @([pscustomobject]@{ k = 'devy'; n = 3; sum = 5e9; cost = 900 })
+  rates = [pscustomobject]@{ n = 919; empty = 129; fail = 122; stopped = 119 }; merged = [pscustomobject]@{ source = 'workflows' } }
+$sd = @([pscustomobject]@{ day = '2026-01-02'; spawned = 46 }, [pscustomobject]@{ day = '2026-01-01'; spawned = 5 })
+$h = Format-KitSuperviseHtml ([pscustomobject]@{ at = $t0.ToString('o'); agents = @([pscustomobject]@{ name = 'a'; state = 'ACTIVE'; since = $t0.ToString('o') }); stats = [pscustomobject]@{ usage = $u; days = $sd } })
+$txt = $h -replace '(?s)<(style|script)>.*?</\1>' -replace '<[^>]+>', ' '
+"$(@('6.8B', '$1,747', '549', '129', '122', '119', '46') | ForEach-Object { ([regex]::Matches($txt, "(?<![\d.])$([regex]::Escape($_))(?![\d.])")).Count }) $($h -match 'sec-timeline')"
+'@ @((Join-Path $k 'skills/bossy/bossy.ps1'))
+Expect "supervise page: 7-day tokens and cost, each step outcome render once, agents spawned not repeated in Kit internals, no Today list ($once)" ("$once".Trim() -eq '1 1 1 1 1 1 0 False')
 Remove-TestKit $k
 Complete-Tests

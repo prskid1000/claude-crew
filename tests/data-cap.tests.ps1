@@ -39,11 +39,11 @@ $bad = @(foreach ($c in @(@('B', 'mysql -u root -e "CREATE DATABASE scratch_ie1"
     @('B', 'for i in $(seq 1 5); do curl -s --port 53118 x; done', $false), @('B', 'bossy.ps1 learn -Text "bench made 2100000 rows via generate_series"', $false),
     @('B', 'rg -n "CREATE DATABASE|mysql " skills', $false), @('B', 'cp -r docs/mysql-notes docs2/', $false), @('B', 'cp -r app/build.gradle bak/', $false),
     @('P', '& "C:\Program Files\MySQL\bin\mysql.exe" -u root -e "CREATE DATABASE scratch"', $true), @('B', 'envy.ps1 status; mysql -e "CREATE DATABASE x"', $true),
-    @('B', 'python -c "rows = range(10**6)"', $true), @('B', 'for i in {1..2000000}; do echo $i; done > ids.txt', $true), @('B', 'MYSQL_TCP_PORT=3317 mysql -e "CREATE DATABASE x"', $false),
+    @('B', 'python -c "rows = range(10**6)"', $false), @('B', 'python -c "import pymysql; c.executemany(q, [(i,) for i in range(10**6)])"', $true), @('B', 'for i in {1..2000000}; do echo $i; done > ids.txt', $true), @('B', 'MYSQL_TCP_PORT=3317 mysql -e "CREATE DATABASE x"', $false),
     @('B', 'git -C ../api archive abc123 | tar -x -C x', $true), @('P', 'git archive --format=zip -o r.zip HEAD', $true), @('B', 'git archive HEAD svc/tools.py | tar -x', $false), @('B', 'git archive --list', $false), @('B', 'git log --grep archive', $false), @('B', 'git --no-pager -c a=b archive HEAD > r.tar', $true),
-    @('B', 'python -c "for i in range(int(1e6)): pass"', $true), @('B', 'aws wafv2 get-web-acl --id 0b6a1c2d-1e2f-4a3b-93e6-5c4d3e2f1a0b; cat > d.json <<EOF
+    @('B', 'python -c "for i in range(int(1e6)): pass"', $false), @('B', "python - <<'EOF'`ns = s.replace('range/1e6', 'range/1e3')`nEOF", $false), @('B', 'echo "decisions dec-12..20000 merged"', $false), @('B', 'aws wafv2 get-web-acl --id 0b6a1c2d-1e2f-4a3b-93e6-5c4d3e2f1a0b; cat > d.json <<EOF
 {"Quantity":2,"PriceClass":"PriceClass_100","CallerReference":"x-$(date +%s)"}
-EOF', $false), @('B', 'bossy.ps1 board msg -Text "commit 031832e5 is pushed; range of work done"', $false))) {   # K98: a uuid group (93e6), a commit sha (031832e5) is no 10^k generator
+EOF', $false), @('B', 'bossy.ps1 board msg -Text "commit 031832e5 is pushed; range of work done"', $false))) {   # K98: a uuid group (93e6), a commit sha (031832e5) is no 10^k generator; audit 2026-11-27: a generator without a DB or file write is no data
   $json = @{ tool_name = @{ P = 'PowerShell'; B = 'Bash' }[$c[0]]; cwd = $gk; tool_input = @{ command = $c[1] } } | ConvertTo-Json -Compress   # cwd: a run from a drive root denies `> x` for its own reason
   $gOut = pwsh @np (Join-Path $gk 'skills/crafty/crafty.ps1') guard -Json $json | Out-String
   if (($gOut -match '"permissionDecision":"deny"' -and $gOut -match 'writes large data') -ne $c[2]) { $c[1] } })

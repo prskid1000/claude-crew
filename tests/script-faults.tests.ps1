@@ -26,15 +26,15 @@ $sfCases = @(
   @('P', "python -c `"import json`nprint(1)`"", '', 'py-shim-quote', 'C:/py/shims/python.bat'),
   @('B', 'echo "unclosed', '', 'sh-quote', '0'),
   @('B', "echo 'ok' && ls `"a b`" | head -2", '', '', '0'),
-  @('P', 'Get-Item (', '', 'ps-parse', '0'),
+  @('P', 'Get-Item (', '', '', '0'),   # retired 2026-11-27: the PowerShell tool reports its own parse error
   @('B', "pwsh -NoProfile -Command 'if (`$x -eq ''y'') { 1 '", '', 'ps-parse', '0'),
   @('B', 'pwsh -NoProfile -Command "`$a = 1; `$a"', '', 'ps-parse', '0'),
   @('B', 'P=x; pwsh -NoProfile -Command "\$env:A=''x''; $P go"', '', '', '0'),
-  @('B', 'node api.mjs GET /api/roles/54', '', 'msys-path', '0'),
+  @('B', 'node api.mjs GET /api/roles/54', '', 'rw', '0'),   # runs as MSYS_NO_PATHCONV=1 node ...
   @('B', 'MSYS_NO_PATHCONV=1 node api.mjs GET /api/roles/54; grep -rn /api/x src; node a.mjs /tmp/x', '', '', '0'),
-  @('B', 'cd sub && ./mvnw -v', '', 'wrapper-path', '0'),
+  @('B', 'cd sub && ./mvnw -v', '', '', '0'),   # wrapper-path retired 2026-11-27 (0 hits in 30 d)
   @('B', 'cd api && ./mvnw -v', '', '', '0'),
-  @('P', "& crafty.ps1 gate -Dir $sfHere -Cmd './mvnw -q test' -Log x.log", '', 'wrapper-path', '0'),
+  @('P', "& crafty.ps1 gate -Dir $sfHere -Cmd './mvnw -q test' -Log x.log", '', '', '0'),
   @('P', "& crafty.ps1 gate -Dir $sfHere/api -Cmd './mvnw -q test' -Log x.log", '', '', '0'),
   @('B', 'cd $REPO && ./mvnw -v; cd ~/p && ./mvnw -v', '', '', '0'),
   @('B', "pwsh -NoProfile -File $sfAgents/clash.ps1 -Path x", '', 'ps-case-clash', '0'),
@@ -42,13 +42,13 @@ $sfCases = @(
   @('W', "$sfAgents/param.ps1", "param([string]`$Path)`n`$path = Resolve-Path `$Path", '', '0'),
   @('W', "$sfAgents/new.ps1", "`$P = 'D:/x/a.ps1'`n`$p = 1", 'ps-case-clash', '0'),
   @('W', "$sfAgents/ok.ps1", "`$scriptPath = 'D:/x/a.ps1'`n`$scriptPath", '', '0'),
-  @('W', "$sfAgents/A.java", "class A { String r = `"\\d+`"; char c = '\n'; String t = `"`"`"`n  a \d`n  `"`"`"; } // \d", 'java-escape', '0'),
+  @('W', "$sfAgents/A.java", "class A { String r = `"\\d+`"; char c = '\n'; String t = `"`"`"`n  a \d`n  `"`"`"; } // \d", '', '0'),   # java-escape retired 2026-11-27 (javac names it)
   @('W', "$sfAgents/B.java", "class B { String r = `"\\d+\\s`"; /* \d */ char c = '\''; }", '', '0'),
   @('E', "$sfAgents/Old.java", 'class Old>>final class Old', '', '0'),
-  @('E', "$sfAgents/Old.java", 'String a>>String b = "\w"; String a', 'java-escape', '0'),
-  @('B', 'node read.mjs D:/k/.state/tracking.json', '', 'state-moved', '0'),
+  @('E', "$sfAgents/Old.java", 'String a>>String b = "\w"; String a', '', '0'),
+  @('B', 'node read.mjs D:/k/.state/tracking.json', '', '', '0'),   # state-moved retired 2026-11-27 (a one-off move)
   @('B', 'git log -S .state/tracking.json; node a.mjs D:/k/.state/tracking.json.migrated', '', '', '0'),
-  @('W', "$sfAgents/keyed.py", "d = open(r'D:/k/.state/tracking.json').read()", 'state-moved', '0'),
+  @('W', "$sfAgents/keyed.py", "d = open(r'D:/k/.state/tracking.json').read()", '', '0'),
   @('W', "$sfAgents/notes.md", 'old path: .state/tracking.json (moved)', '', '0'),
   @('B', 'timeout 300 pwsh -NoProfile -Command "& bossy.ps1 decide wait -Id d1"', '', 'decide-wait-timeout', '0'),
   @('B', 'pwsh -NoProfile -File bossy.ps1 decide wait -Id d1 -MaxMinutes 8', '', '', '0'),
@@ -64,12 +64,12 @@ foreach ($c in $rows) {
   $ti = switch ($c[0]) { 'W' { @{ file_path = $c[1]; content = $c[2] } } 'E' { $p = $c[2] -split '>>'; @{ file_path = $c[1]; old_string = $p[0]; new_string = $p[1] } } default { @{ command = $c[1] } } }
   $j = @{ tool_name = @{ B = 'Bash'; P = 'PowerShell'; W = 'Write'; E = 'Edit' }[$c[0]]; cwd = $here; tool_input = $ti } | ConvertTo-Json -Compress -Depth 4
   $o = (& $d guard -Json $j) -join ''
-  $got = if ($o -match '"permissionDecision":"deny"') { if ($o -match 'script-fault ([\w-]+)') { $Matches[1] } else { 'other: ' + ($o -replace '^.*Reason":"', '').Substring(0, 80) } } else { '' }
+  $got = if ($o -match '"updatedInput"') { 'rw' } elseif ($o -match '"permissionDecision":"deny"') { if ($o -match 'script-fault ([\w-]+)') { $Matches[1] } else { 'other: ' + ($o -replace '^.*Reason":"', '').Substring(0, 80) } } else { '' }
   "$(if ($got -eq $c[3]) { 'ok' } else { 'BAD' }) [$($c[0])] $($c[1] -replace '\s+', ' ') -> '$got' (want '$($c[3])')"
 }
 '@ @($D, $sfHere, ($sfCases | ConvertTo-Json -Compress -Depth 3))
 $sfBad = @($sfOut | Where-Object { $_ -notmatch '^ok ' })
-Expect "guard script-faults: $($sfCases.Count) rows (shim quotes, bash -n, PowerShell payloads, MSYS paths, wrapper folders, case clashes, Java escapes; allows) ($($sfBad -join ' | '))" ($sfOut.Count -eq $sfCases.Count -and -not $sfBad.Count)
+Expect "guard script-faults: $($sfCases.Count) rows (shim quotes, bash -n, PowerShell payloads, MSYS paths rewritten, case clashes; retired rules allow) ($($sfBad -join ' | '))" ($sfOut.Count -eq $sfCases.Count -and -not $sfBad.Count)
 # kitbag.py faults: one failure class seen by 3 agents across the 3 harnesses = due (secrets masked); a guarded class due only after its since day
 $tx = Join-Path (Kd) 'tx'; $ws = Split-Path $k; $day = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd'); $at = "${day}T01:02:03.000Z"
 $cl = Join-Path $tx 'claude/s1/subagents'; New-Item -ItemType Directory -Force $cl | Out-Null

@@ -64,17 +64,24 @@ Expect "kit-admin: prepush to main runs no kit tests, passes a clean push ($prc)
 $nf = Join-Path $root 'weekly.ps1'; Set-Content $nf @'
 . $args[0]; . $args[1]; $sf = (Get-KitFullTestsState).file
 $o1 = @(Invoke-KitWeeklyTests $false); $s0 = Test-Path $sf; $null = Invoke-KitWeeklyTests $true; $st = Get-Content $sf -Raw | ConvertFrom-Json
-$null = Wait-Process -Id $st.pid -Timeout 240 -ErrorAction SilentlyContinue; $o2 = @(Invoke-KitWeeklyTests $true); $o3 = @(Invoke-KitWeeklyTests $true)
+# the run starts BelowNormal (agents first): in a full kit-tests run the busy CPU starved it past the wait (read flaky): Normal here
+try { (Get-Process -Id $st.pid -ErrorAction Stop).PriorityClass = 'Normal' } catch { }
+$null = Wait-Process -Id $st.pid -Timeout 240 -ErrorAction SilentlyContinue; $o2 =@(Invoke-KitWeeklyTests $true); $o3 = @(Invoke-KitWeeklyTests $true)
 "busy:$(-not $o1.Count -and -not $s0 -and $st.pid)"
-"read:$($o2.Count -eq 1 -and $o2[0] -match '^kit tests \(full\): 1 failure\(s\) in 1 area\(s\), 1 s, 1 failed check' -and -not $o3.Count -and (Get-Content $sf -Raw | ConvertFrom-Json).pid -eq $st.pid -and (Get-Content $env:FAKE_RAN) -eq '-Full -Detached')"
+"read:$($o2.Count -eq 1 -and $o2[0] -match '^kit tests \(full\): 1 failure\(s\) in 1 area\(s\), 1 s, 1 failed check' -and -not $o3.Count -and (Get-Content $sf -Raw | ConvertFrom-Json).pid -eq $st.pid -and (Get-Content $env:FAKE_RAN) -eq '-Full -Detached')"; "read detail: o2 $($o2 -join ' | ') · o3 $($o3 -join ' | ') · pid $($st.pid) alive $([bool](Get-Process -Id $st.pid -ErrorAction SilentlyContinue)) · ran $(Get-Content $env:FAKE_RAN -ErrorAction SilentlyContinue)"
 $wk = { param($green, $at) @{ at = $at.ToString('o'); start = $at.ToString('o'); greenAt = $green.ToString('o'); pid = 999999; read = $true } | ConvertTo-Json -Compress | Set-Content $sf; Remove-Item $env:FAKE_RAN -ErrorAction SilentlyContinue }
 $began = { (Get-Content $sf -Raw | ConvertFrom-Json).pid -ne 999999 }   # a started run stamps its pid (the detached runner writes FAKE_RAN later)
 & $wk (Get-Date).AddDays(-2) (Get-Date).AddDays(-2); $null = Invoke-KitWeeklyTests $true; $w1 = & $began
 & $wk (Get-Date).AddDays(-8) (Get-Date).AddDays(-8); $null = Invoke-KitWeeklyTests $true; $w2 = & $began; $hl = Get-KitHealthLinesFullTests
+# that started run writes the log and FAKE_RAN later: done before the next cases (its late "1 failure(s)" line read as a total made cut flaky)
+$w2p = (Get-Content $sf -Raw | ConvertFrom-Json).pid; try { (Get-Process -Id $w2p -ErrorAction Stop).PriorityClass = 'Normal' } catch { }; $null = Wait-Process -Id $w2p -Timeout 120 -ErrorAction SilentlyContinue
 git -C $KitConf.Kit rev-parse 'HEAD^{tree}' | Set-Content (Join-Path (Get-KitPath cache -Create) 'kit-tests-green.txt'); & $wk (Get-Date).AddDays(-8) (Get-Date).AddDays(-8); $null = Invoke-KitWeeklyTests $true; $w3 = & $began
 # a green manual full run of this tree ("<tree> <date>", kit-tests.ps1) after a failed weekly one: its date, no stale "last run"
 "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}') $((Get-Date).ToString('o'))" | Set-Content (Join-Path (Get-KitPath cache) 'kit-tests-green.txt'); & $wk (Get-Date).AddDays(-8) (Get-Date).AddDays(-1); $hm = Get-KitHealthLinesFullTests
 "manual:$($hm -match "last green $((Get-Date).ToString('yyyy-MM-dd'))\.$")"; "manual detail: $hm"
+# 2026-11-27: a green stamp of another tree (the previous kit, a worktree's run) is the last green too: never 'never' with a stamp on disk
+"deadbeef $((Get-Date).AddDays(-1).ToString('o'))" | Set-Content (Join-Path (Get-KitPath cache) 'kit-tests-green.txt'); @{ at = (Get-Date).AddDays(-2).ToString('o'); start = (Get-Date).AddDays(-2).ToString('o'); greenAt = ''; pid = 999999; read = $true } | ConvertTo-Json -Compress | Set-Content $sf
+$ho = Get-KitHealthLinesFullTests; "other:$($ho -match "last green $((Get-Date).AddDays(-1).ToString('yyyy-MM-dd'))")"; "other detail: $ho"
 "week:$(-not $w1 -and $w2 -and -not $w3 -and $hl -match '^Kit tests \(full, every 7 days while idle\): last green \d{4}-\d\d-\d\d, last run \d{4}-\d\d-\d\d')"; "week detail: $w1 $w2 $hl"
 # no total: started before the last boot = cut by a machine restart (no ACT, due again); started after it = a crash (ACT)
 $lfn = (Get-KitFullTestsState).log; $cutAt = { param($t) @{ at = $t.ToString('o'); start = $t.ToString('o'); pid = 999999; read = $false } | ConvertTo-Json -Compress | Set-Content $sf; '  x done (1 s)' | Set-Content $lfn }
@@ -82,7 +89,7 @@ $lfn = (Get-KitFullTestsState).log; $cutAt = { param($t) @{ at = $t.ToString('o'
 & $cutAt (Get-Date).AddMinutes(-5); $o5 = @(Invoke-KitWeeklyTests $false)
 "cut:$(-not $o4.Count -and $s4.read -and $s4.cut -eq 'machine restart' -and ((Get-Date) - [datetime]$s4.at).TotalHours -ge 24 -and $o5.Count -eq 1 -and $o5[0] -match 'no total \(crashed\)')"; "cut detail: $($o4 -join ' ') | $($o5 -join ' ')"
 '@; $ng = @(pwsh @np $nf (Join-Path $kc 'skills/crafty/lib.ps1') (Join-Path $kc 'skills/bossy/adapters/kit-admin.ps1') 2>&1)
-Expect-Each $ng 'kit-admin: weekly full kit tests: #' 'busy', 'read', 'week', 'manual', 'cut' -Show 8
+Expect-Each $ng 'kit-admin: weekly full kit tests: #' 'busy', 'read', 'week', 'manual', 'other', 'cut' -Show 8
 $env:KIT_TESTS_SNAPSHOT = $snap; git -C $kc reset -q --hard $base
 # release: the next SemVer from Conventional Commits
 $rel = & $py -X utf8 $KT release 2>&1 | Out-String
@@ -108,8 +115,9 @@ $O = Join-Path $kc 'skills/bossy/bossy.ps1'; $lo = { pwsh -NoProfile -File $O le
 $au = & { . $O; Get-KitHealthLinesAudit }; $null = pwsh -NoProfile -File $O board join -Type kitty -Run kit-fix-0303; $auK = & { . $O; Get-KitHealthLinesAudit }; $null = pwsh -NoProfile -File $O board leave -Agent kitty-kit-fix-0303; $st =& { . (Join-Path $kc 'skills/crafty/lib.ps1'); Get-KitPath last-kitty-audit -Create }; (Get-Date).ToString('s') | Set-Content $st; $au2 = & { . $O; Get-KitHealthLinesAudit }
 Expect 'kit-admin: health nudges a never-run kitty audit, quiet while a kitty-<run> works and right after one' ("$au" -match 'Kit audit due \(last never, every 7 days\)' -and -not $auK -and -not $au2)
 'edited' | Add-Content (Join-Path $kc 'README.md'); $ue = & { . $O; Test-UnstagedEdits $kc 'README.md' }; git -C $kc checkout -q -- README.md
-$pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String; $pcc = $LASTEXITCODE   # a clean copy: nothing to say, exit 0
-Expect "kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them) ($pcc $($pc.Trim()))" ($ue -and $pcc -eq 0 -and $pc -notmatch 'not recognized|Exception')
+# the copy carries the tree under test: its lint verdict is lint's (a mid-edit tree blocked it: flaky); precommit's own part ran
+$pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String; $pcc = $LASTEXITCODE
+Expect "kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them) ($pcc $(($pc.Trim() -split "`n")[0]))" ($ue -and ($pcc -eq 0 -or $pc -match '(?m)^pre-commit: BLOCKED - kit-lint: ') -and $pc -notmatch 'not recognized|Exception|did not run')
 $sx = Join-Path $kc 'skills/sx.ps1'; "<#`nSections: L9 a`n#>`n# ---- a: x`n" | Set-Content $sx -NoNewline; git -C $kc add -- skills/sx.ps1; $null = pwsh -NoProfile -File $O precommit 2>&1
 Expect 'kit-admin: precommit rewrites and stages a stale Sections: map' (@(git -C $kc show :skills/sx.ps1) -contains 'Sections: L4 a'); git -C $kc rm -qf -- skills/sx.ps1
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE

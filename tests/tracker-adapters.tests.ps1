@@ -18,7 +18,7 @@ foreach ($c in 'clickup', 'gh', 'glab', 'mytr') { Set-Item "function:$c" { $i = 
 function Run($type, $fx, $id, $list, [scriptblock]$ok) {
  try {
   Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear()
-  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id 'in-test'; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }   # in-test: kebab alias of inTest
+  $r = @{ v = Get-TrackerTask $id; s = Set-TrackerStatus $id 'in-test' -Deployed deploy-intest; c = Add-TrackerComment $id 'two words'; n = New-TrackerTask -List $list -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent $id -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks $list inTest) }   # in-test: kebab alias of inTest
   $pass = [bool](& $ok $r ($global:log -join "`n"))
  } catch { $pass = $false; "  $type error: $_" }
  if (-not $pass) { $global:failed++ }
@@ -108,12 +108,12 @@ $v = foreach ($b in 'main', 'dev', 'release', 'locked', 'auth') { "$b=$(Invoke-H
 Check "branch.protect: ok, force allowed, set, no admin, auth failure ($($v -join ';'))" (($v -join ';') -match '^main=ok;dev=failed: protected but force push allowed.*;release=set;locked=skip: no admin rights on o/r;auth=failed: .*401' -and $global:post -match 'allow_force_push=false')
 $null = Invoke-HostVerb 'mr.update' @{ type = 'gitlab'; repo = 'o/r'; n = 5; title = 't'; body = 'b' } -NoMemo
 Check 'host: mr.update edits the open MR (PUT, devtools.py mr re-run)' ($global:calls[-1] -like 'glab api -X PUT projects/o%2Fr/merge_requests/5 *')
-# Sync-TrackerParent per adapter: child inTest, sibling done -> parent in test
+# Sync-TrackerParent per adapter: child inTest (after a deploy: -Deployed), sibling done -> parent in test
 function Psy($type, $kid, $par, $fx, $want) {
- try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $null = Set-TrackerStatus $kid inTest 6>$null; $pass = $global:log[-1] -match $want -and @($global:log -match [regex]::Escape($par)).Count -ge 2
+ try { Initialize-KitTracker -Type $type; $global:fx = $fx; $global:log.Clear(); $null = Set-TrackerStatus $kid inTest -Deployed deploy-intest 6>$null; $pass = $global:log[-1] -match $want -and @($global:log -match [regex]::Escape($par)).Count -ge 2
   # the same with the sibling still in progress: the parent is read, never set in test
   $global:fx = [ordered]@{}; foreach ($k in $fx.Keys) { $global:fx[$k] = $fx[$k] -replace '"(Done|closed)"\}', '"In Progress"}' }; $script:KitStatusSet = @{}; Clear-TrackerMemo $kid; $global:log.Clear()
-  $null = Set-TrackerStatus $kid inTest 6>$null; $pass = $pass -and -not ($global:log -match $want) -and @($global:log -match [regex]::Escape($par)).Count -ge 1 } catch { $pass = $false; "  $type parent sync error: $_" }
+  $null = Set-TrackerStatus $kid inTest -Deployed deploy-intest 6>$null; $pass = $pass -and -not ($global:log -match $want) -and @($global:log -match [regex]::Escape($par)).Count -ge 1 } catch { $pass = $false; "  $type parent sync error: $_" }
  if (-not $pass) { $global:failed++; "  log: $($global:log -join ' | ')" }; "$(if ($pass) { 'PASS' } else { 'FAIL' }) tracker ${type}: parent sync (a child in test: its sibling done -> the parent read, then set in test; its sibling open -> left)"
 }
 Psy jira P-5 P-4 ([ordered]@{ 'GET .*/issue/P-5\?' = '{"key":"P-5","fields":{"summary":"K","status":{"name":"In Progress"},"parent":{"key":"P-4"}}}'
@@ -144,7 +144,7 @@ $global:fx = [ordered]@{ 'task view C1' = '{"id":"C1","name":"Bug","status":{"st
   '(?s)task create --list-id L9 .*--assignee 7 --parent C1' = '{"id":"C5"}'; 'task create --list-id L9 --name x .*--parent C1' = '{"id":"C6"}'; 'task list --list-id L9 --status in test --page 0' = '[{"id":"C3","name":"A","assignees":[{"id":7,"username":"ann"}]}]' }
 try {
   Initialize-KitTracker -Type clickup
-  $r = @{ v = Get-TrackerTask C1; s = Set-TrackerStatus C1 inTest; c = Add-TrackerComment C1 'two words'; n = New-TrackerTask -List L9 -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent C1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks L9 inTest); p = __TrA 'create' @{ name = 'x'; description = 'd'; parent = 'C1' } }
+  $r = @{ v = Get-TrackerTask C1; s = Set-TrackerStatus C1 inTest -Deployed deploy-intest; c = Add-TrackerComment C1 'two words'; n = New-TrackerTask -List L9 -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent C1 -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks L9 inTest); p = __TrA 'create' @{ name = 'x'; description = 'd'; parent = 'C1' } }
   $pass = $r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'C5' -and $r.p.id -eq 'C6' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 7 -and ($global:log -join "`n") -match '--priority 2'
 } catch { $pass = $false; "  clickup error: $_" }
 if (-not $pass) { $global:failed++ }

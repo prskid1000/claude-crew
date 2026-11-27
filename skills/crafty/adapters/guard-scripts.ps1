@@ -1,12 +1,14 @@
 #Requires -Version 7
 # Usage: dot-sourced by lib.ps1 from adapters/. Exit codes: none here (its verbs exit through lib.ps1).
 # guard rule script-faults (owner 2026-11-25; the classes of kitbag.py faults): agents' own commands and scripts that fail the same way
-# again and again: python -c through a .bat shim, a Bash command bash -n cannot parse, a PowerShell payload that does not parse, a Git
-# Bash "/x" argument to a Windows program (MSYS path conversion), ./mvnw or ./gradlew from a folder without it, a work/agents .ps1 whose
-# variables differ only by case; .state/tracking.json (moved), decide wait under a shell timeout, Git Bash /tmp to a Windows python
-# or node, python -c inside pwsh -Command, sed -i with backslashes on a .py. Test-KitScriptEdit (crafty.ps1 guard, file edits): the .ps1 case check and illegal Java string escapes.
-# Each deny names the fix and its class (script-fault <class>). Rule file-dumps: a whole-file cat / type / Get-Content over the Read caps.
-# Sections: L10 helpers · L91 edits · L112 commands · L170 reads
+# again and again: python -c through a .bat shim, a Bash command bash -n cannot parse, a PowerShell payload (pwsh -Command from Bash)
+# that does not parse, a Git Bash "/x" argument to a Windows program (rewritten with MSYS_NO_PATHCONV=1), a work/agents .ps1 whose
+# variables differ only by case; decide wait under a shell timeout, Git Bash /tmp to a Windows python or node, python -c inside
+# pwsh -Command, sed -i with backslashes on a .py. Test-KitScriptEdit (crafty.ps1 guard, file edits): the .ps1 case check.
+# Retired 2026-11-27 (0 hits in 30 d, the tool says it): a PowerShell tool command that does not parse, a missing mvnw / gradlew,
+# .state/tracking.json, illegal Java escapes. Each deny names the fix and its class (script-fault <class>). Rule file-dumps: a
+# whole-file cat / type / Get-Content over the Read caps.
+# Sections: L12 helpers · L77 edits · L89 commands · L139 reads
 # ---- helpers: bash words, the python shim, Git Bash, parsers
 function Get-KitBashWord([string]$Text, [int]$At) {   # the bash word at $At, quotes removed ($vars kept): @(value, next index); $null = an open quote
   $sb = [Text.StringBuilder]::new(); $i = $At
@@ -72,44 +74,19 @@ function Find-KitPsCaseClash([string]$Text) {   # one variable assigned under tw
   foreach ($scopeVars in $byScope.Values) { foreach ($forms in $scopeVars.Values) {
       $sets = @($forms | Where-Object { $_.set }); if ($sets.Count -gt 1) { "`$$($sets[0].name) (line $($sets[0].line)) / `$$($sets[1].name) (line $($sets[1].line))" } } }
 }
-function Find-KitJavaBadEscape([string]$Text) {   # illegal backslash escapes inside Java string, char and text-block literals: 'line <n>: \x'
-  $state = 'code'; $line = 1; $i = 0
-  while ($i -lt $Text.Length) {
-    $ch = $Text[$i]; $nx = if ($i + 1 -lt $Text.Length) { $Text[$i + 1] } else { [char]0 }
-    if ($ch -eq "`n") { $line++; if ($state -eq 'line') { $state = 'code' } }
-    switch ($state) {
-      'code' { if ($ch -eq '/' -and $nx -eq '/') { $state = 'line'; $i++ } elseif ($ch -eq '/' -and $nx -eq '*') { $state = 'block'; $i++ } elseif ($ch -eq '"' -and [string]::CompareOrdinal($Text, $i, '"""', 0, 3) -eq 0) { $state = 'text'; $i += 2 } elseif ($ch -eq '"') { $state = 'str' } elseif ($ch -eq "'") { $state = 'chr' } }
-      'block' { if ($ch -eq '*' -and $nx -eq '/') { $state = 'code'; $i++ } }
-      { $_ -in 'str', 'chr', 'text' } {
-        if ($ch -eq '\') { if ('btnfrs"''\u01234567'.IndexOf($nx) -lt 0 -and -not ($state -eq 'text' -and "`r`n".IndexOf($nx) -ge 0)) { "line ${line}: \$nx" }; $i++ }
-        elseif ($state -eq 'text' -and $ch -eq '"' -and [string]::CompareOrdinal($Text, $i, '"""', 0, 3) -eq 0) { $state = 'code'; $i += 2 }
-        elseif (($state -eq 'str' -and $ch -eq '"') -or ($state -eq 'chr' -and $ch -eq "'") -or ($state -ne 'text' -and $ch -eq "`n")) { $state = 'code' } }
-    }
-    $i++
-  }
-}
-# ---- edits: Write / Edit / MultiEdit content of a work/agents .ps1 (case clash) or a .java file (illegal escapes); only new problems count
-$script:KitStateMoved = '[\\/]\.state[\\/]+tracking\.json(?![.\w])'
-$script:KitStateMovedWhy = '.state/tracking.json is gone: each task is .state/tasks/<id>.json (+ automerge.json); read them with bossy.ps1 track show [-Task <id>] (script-fault state-moved)'
+# ---- edits: Write / Edit / MultiEdit content of a work/agents .ps1 (case clash); only new problems count
 function Test-KitScriptEdit([string]$Path, $ToolInput) {
-  if ($Path -and ($Path -replace '\\', '/') -match '/work/agents/.*\.(py|ps1|mjs|js|sh)$' -and "$($ToolInput.content)$($ToolInput.new_string)$(@($ToolInput.edits.new_string) -join '')" -match $script:KitStateMoved) { return "kit guard: $Path`: $script:KitStateMovedWhy." }
-  if (-not $Path -or $Path -notmatch '\.(ps1|java)$') { return }
+  if (-not $Path -or $Path -notmatch '\.ps1$' -or ($Path -replace '\\', '/') -notmatch '/work/agents/') { return }
   $old = if (Test-Path -LiteralPath $Path -PathType Leaf) { [IO.File]::ReadAllText($Path) } else { '' }
   $new = if ($null -ne $ToolInput.content) { [string]$ToolInput.content } else { $old }
   foreach ($ed in @($(if ($null -ne $ToolInput.old_string) { $ToolInput } else { @($ToolInput.edits) })) | Where-Object { $_ -and $null -ne $_.old_string }) {
     $at = $new.IndexOf([string]$ed.old_string); if ($at -lt 0) { return }   # the tool itself refuses a missing old_string
     $new = if ($ed.replace_all) { $new.Replace([string]$ed.old_string, [string]$ed.new_string) } else { $new.Substring(0, $at) + $ed.new_string + $new.Substring($at + ([string]$ed.old_string).Length) }
   }
-  if ($Path -match '\.ps1$' -and ($Path -replace '\\', '/') -match '/work/agents/') {
-    $was = @(Find-KitPsCaseClash $old); $hit = @(Find-KitPsCaseClash $new | Where-Object { $_ -notin $was })
-    if ($hit) { return "kit guard: $Path`: $($hit[0]) are ONE variable (PowerShell names are case-insensitive: the second overwrites the first): rename one to a full word (`$appPath, `$argList) (script-fault ps-case-clash)" }
-  }
-  if ($Path -match '\.java$' -and $new -match '\\[^btnfrs"''\\u0-7\r\n]') {   # no suspect escape: no scan
-    $was = @(Find-KitJavaBadEscape $old).Count; $hit = @(Find-KitJavaBadEscape $new)
-    if ($hit.Count -gt $was) { return "kit guard: $Path $($hit[0]) is an illegal escape in a Java string (javac: illegal escape character): double every backslash of a regex in Java source (\\d, \\s, \\.) (script-fault java-escape)" }
-  }
+  $was = @(Find-KitPsCaseClash $old); $hit = @(Find-KitPsCaseClash $new | Where-Object { $_ -notin $was })
+  if ($hit) { return "kit guard: $Path`: $($hit[0]) are ONE variable (PowerShell names are case-insensitive: the second overwrites the first): rename one to a full word (`$appPath, `$argList) (script-fault ps-case-clash)" }
 }
-# ---- commands: shim quotes, bash -n, PowerShell payloads, MSYS path conversion, wrapper folders, case-clashing agent scripts
+# ---- commands: shim quotes, bash -n, PowerShell payloads, MSYS path conversion, case-clashing agent scripts
 Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
     $raw = "$($a.raw)"; $hook = $a.hook; $tool = "$($hook.tool_name)"; $cwd = if ($hook.cwd) { "$($hook.cwd)" } else { (Get-Location).Path }; $cwd0 = $cwd   # $cwd follows cd; $null after a cd to an unknown place
     $isBash = $tool -eq 'Bash'
@@ -124,8 +101,6 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
       # cmd.exe ends the call at a newline, toggles on \" and splits an unquoted (space-free) argument at & | < > ^
       if (@($codes | Where-Object { $_ -match '[\r\n"]' -or ($_ -notmatch '\s' -and $_ -match '[&|<>^()%]') }).Count) { return "kit guard: python here is $shim (a .bat shim: cmd.exe re-reads python -c code, so quotes, | & < > ^ ( ) % and newlines break it: '|| goto :error'). Write the program to a .py file (Write tool; $fix x.py) and run python -X utf8 <file> (script-fault py-shim-quote)." }
     }
-    # a command that does not parse fails the same way at run time, with a worse message
-    if ($tool -eq 'PowerShell' -and ($pe = Get-KitPsParseError $raw)) { return "kit guard: this PowerShell does not parse ($pe): write it to a .ps1 (Write tool; $fix x.ps1) and run pwsh -NoProfile -File <file> (script-fault ps-parse)." }
     if ($isBash -and $raw -match '[''"`(]|<<' -and ($be = Test-KitBashParse $raw)) { return "kit guard: Bash cannot parse this command (bash -n: $be): an unbalanced quote or heredoc marker. Put the program in a file (Write tool; $fix x.sh / x.py / x.ps1) and run it; keep shell quoting one level deep (script-fault sh-quote)." }
     foreach ($seg in $segs) {
       $words = @(Get-KitBashWords $seg); if (-not $words.Count) { continue }
@@ -141,24 +116,18 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
       }
       # sed -i with an escaped backslash on a .py: Bash and sed each eat one level of the escapes (SyntaxError at the next run)
       if ($leaf -eq 'sed' -and @($words | Where-Object { $_ -cmatch '^-[a-zA-Z]*i' }).Count -and @($words | Where-Object { $_ -match '\.py$' }).Count -and $seg -match '\\\\') { return "kit guard: sed -i with escaped backslashes on a .py file loses a level of escaping (SyntaxError: unexpected character after line continuation character): change it with the Edit tool (script-fault py-shell-source)." }
-      # Git Bash turns a /x argument into C:/Program Files/Git/x for a Windows program (/d/x: the Git Bash path rule; /tmp, /dev: mounts)
+      # Git Bash turns a /x argument into C:/Program Files/Git/x for a Windows program (/d/x: the Git Bash path rule; /tmp, /dev: mounts):
+      # the segment runs with MSYS_NO_PATHCONV=1 (rewrite), unless it also passes a mount path that needs the conversion
       if ($isBash -and $raw -notmatch 'MSYS_NO_PATHCONV=1|MSYS2_ARG_CONV_EXCL' -and $leaf -match '^(node|python[\d.]*|py|pwsh|powershell|java|javac|mvnw?|mvnd|gradlew?|npx|npm|yarn|pnpm|adb|dotnet|glab|gh|aws|docker|kubectl|curl|ffmpeg)$' -and $raw -notmatch 'pokey\.ps1') {   # pokey.ps1 api turns C:/Program Files/Git/x back into /x
-        $bad = @($words | Select-Object -Skip ($wi + 1) | Where-Object { $_ -match '^(--?[\w-]+=)?/(?![/\s]|(tmp|dev|proc|usr|bin|etc|[A-Za-z])(/|$))[\w.@~+-]' -and $_ -notmatch '\s|\*' })
-        if ($bad) { return "kit guard: Git Bash rewrites the argument $($bad[0]) for $leaf (a Windows program) into C:/Program Files/Git$($bad[0] -replace '^--?[\w-]+=', '') (MSYS path conversion). Prefix the command with MSYS_NO_PATHCONV=1 (or export MSYS_NO_PATHCONV=1 first), or run it from the PowerShell tool (script-fault msys-path)." }
-      }
-      if ($leaf -match '^(cd|pushd)$' -and $words.Count -gt $wi + 1) { $to = $words[$wi + 1] -replace '^/([A-Za-z])(?=/|$)', '$1:'; if (-not $cwd -or (Get-KitBashExpansion @(Get-KitBashWords $seg -Source)[$wi + 1]) -or $to -match '^[~-]') { $cwd = $null; continue }; $cwd = if ([IO.Path]::IsPathRooted($to)) { $to } else { Join-Path $cwd $to }; continue }
-      if ($cwd -and $leaf -match '^(mvnw|gradlew)$' -and $words[$wi] -match '[\\/]') {
-        $wrapper = $words[$wi] -replace '^/([A-Za-z])(?=/)', '$1:'; $full = if ([IO.Path]::IsPathRooted($wrapper)) { $wrapper } else { Join-Path $cwd $wrapper }
-        if (-not (Test-Path -LiteralPath $full) -and -not (Test-Path -LiteralPath "$full.cmd") -and -not (Test-Path -LiteralPath "$full.bat")) { return "kit guard: $(Split-Path $full) has no $leaf (the wrapper sits in the module root): cd to the folder that holds it, or run & $($KitCmd.dev) check -Dir <module> (script-fault wrapper-path)." }
+        $argsAfter = @($words | Select-Object -Skip ($wi + 1))
+        $bad = @($argsAfter | Where-Object { $_ -match '^(--?[\w-]+=)?/(?![/\s]|(tmp|dev|proc|usr|bin|etc|[A-Za-z])(/|$))[\w.@~+-]' -and $_ -notmatch '\s|\*' })
+        if ($bad) {
+          $segAt = "$($a.rw)".IndexOf($seg.Trim()); $mount = @($argsAfter | Where-Object { $_ -match '^(--?[\w-]+=)?/(tmp|dev|proc|usr|bin|etc)(/|$)' }).Count
+          if ($seg.Trim() -and $segAt -ge 0 -and -not $mount) { return @{ rewrite = $a.rw.Substring(0, $segAt) + 'MSYS_NO_PATHCONV=1 ' + $a.rw.Substring($segAt); why = "Git Bash would turn $($bad[0]) for $leaf into C:/Program Files/Git$($bad[0] -replace '^--?[\w-]+=', ''): MSYS_NO_PATHCONV=1 keeps it (rule msys-path)" } }
+          return "kit guard: Git Bash rewrites the argument $($bad[0]) for $leaf (a Windows program) into C:/Program Files/Git$($bad[0] -replace '^--?[\w-]+=', '') (MSYS path conversion). Prefix the command with MSYS_NO_PATHCONV=1 (or export MSYS_NO_PATHCONV=1 first), or run it from the PowerShell tool (rule msys-path)." }
       }
     }
-    # crafty.ps1 gate -Dir <d> -Cmd './mvnw ...': the wrapper must sit in <d> (the gate runs the command there)
-    if ($raw -match '\bgate\b.*?\s-Dir\s+(?<d>"[^"]+"|''[^'']+''|\S+).*?\s-Cmd\s+["'']?(?<w>(\.[\\/])?(mvnw|gradlew))(\.cmd|\.bat)?\b') {
-      $gd = $Matches.d.Trim('''"') -replace '^/([A-Za-z])(?=/)', '$1:'; $gd = if ([IO.Path]::IsPathRooted($gd)) { $gd } else { Join-Path $cwd0 $gd }; $gw = $Matches.w -replace '^\.[\\/]', ''
-      if ((Test-Path -LiteralPath $gd -PathType Container) -and -not @(Get-ChildItem -LiteralPath $gd -Filter "$gw*" -File -ErrorAction SilentlyContinue).Count) { return "kit guard: $gd has no $gw (the gate runs -Cmd in -Dir): pass the module root that holds it as -Dir, or run & $($KitCmd.dev) check -Dir <module> (script-fault wrapper-path)." }
-    }
-    # moved state, killed waits, Git Bash /tmp (faults: tracking.json, decide wait under timeout, /tmp read by a Windows python)
-    if ($raw -match $script:KitStateMoved -and $raw -notmatch '\b(git|learn|grep|rg|Select-String)\b') { return "kit guard: $script:KitStateMovedWhy." }
+    # killed waits, Git Bash /tmp (faults: decide wait under timeout, /tmp read by a Windows python)
     if ($isBash -and $raw -match '\bdecide\s+wait\b' -and $raw -match '(^|[;&|(]\s*)timeout\s+\S+\s' -and $raw -notmatch '-MaxMinutes') { return "kit guard: a shell timeout kills decide wait mid-poll and drops its answer: run decide wait -Id <id> -MaxMinutes <m> (PENDING + exit 1 at the limit; default 4, inside the 5 min prompt cache) (script-fault decide-wait-timeout)." }
     if ($isBash -and $raw -match '(^|[\s;&|(])(python[\d.]*|py|node)(\.exe)?\s' -and $raw -match '[(=,\[]\s*r?[''"]/tmp/') { return "kit guard: a /tmp path inside python or node code opens <drive>:\tmp, not Git Bash's /tmp (only a bare argument is converted): put the file under $fix <file> (script-fault posix-path)." }   # arch-ok: matches agents' /tmp, writes none
     # a work/agents .ps1 about to run with $a / $A in one scope (the second spelling overwrites the first)

@@ -12,15 +12,15 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
  pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch> [-Sha <commit>]  wait for MR pipelines, or a branch's newest one (of that commit; -MaxMinutes deploy.pipelineWaitMinutes) (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
- guard [-SelfTest]  PreToolUse hook (tool call JSON on stdin)
+ guard [-Json <in>] PreToolUse hook (tool call JSON on stdin): deny, rewrite (updatedInput) or a note
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
  checkpoint -Agent <id> [-Run <run>] -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (bossy.ps1 pause / resume)
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
  local claude|desktop|code|status [-Model] [-Print]  a client on the local model server
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L2025 dir · L2035 checkpoint ·
-  L2075 prior · L2114 tracker · L2136 task spec · L2341 scope · L2389 host
+Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L1782 dir · L1792 checkpoint ·
+  L1832 prior · L1871 tracker · L1893 task spec · L2098 scope · L2146 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1103,255 +1103,9 @@ if ($busy) { [Console]::Error.WriteLine("pipes: still $($busy.status) after $Max
 
 # ---- guard: PreToolUse hook: a deny or nothing
 function Invoke-Guard {
-param([switch]$SelfTest, [string]$Json)   # -Json: hook input without stdin (in-process self-test)
+param([string]$Json)   # -Json: hook input without stdin (tests)
 $ErrorActionPreference = 'SilentlyContinue'; $script:layoutNote = $null   # guard_server.ps1 keeps this runspace: no note carries over
 $gbn = 'KIT_GUARD_BY' + 'PASS'   # client crash switch; split: SBLOG
-if ($SelfTest) {
-  $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'Run it through its interpreter'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
-  $cases = @(
-  @('P', 'git stash', $true),
-  @('P', '& "C:\Program Files\Git\bin\git.exe" stash list', $false),
-  @('P', 'git stash push -m x', $true),
-  @('P', '$s = $(git stash list); $s', $false),
-  @('P', 'pwsh -NoProfile -Command "git stash"', $true),
-  @('B', 'cd repo && git -C x stash pop', $true),
-  @('B', 'FOO=1 git --no-pager stash show', $false),
-  @('B', 'git -C x stash push -m x', $true),
-  @('B', "bash -c 'git stash'", $true),
-  @('P', 'git commit -m "fix: never git stash here"', $false),
-  @('P', "`$m = @'`nnever run git stash`n'@`ngit commit -m `$m", $false),
-  @('B', "git commit -m `"`$(cat <<'EOF'`nfix: never git stash in worktrees`nEOF`n)`"", $false),
-  @('B', 'git checkout fix/stash-list', $false),
-  @('B', 'echo done # not git stash', $false),
-  @('B', 'aws elasticbeanstalk update-environment --environment-name e1 --option-settings Namespace=aws:elasticbeanstalk:application:environment,OptionName=A,Value=true', $true, 'changes a deployed env'),
-  @('B', 'aws --region eu-west-1 elasticbeanstalk restart-app-server --environment-name e1', $true, 'changes a deployed env'),
-  @('P', 'aws ecs update-service --cluster c --service s --force-new-deployment', $true, 'changes a deployed env'),
-  @('B', 'cd x && kubectl -n qa rollout restart deploy/api', $true, 'changes a deployed env'),
-  @('B', 'KIT_DECISION=d-none aws lambda update-function-configuration --function-name f', $true, 'changes a deployed env'),
-  @('B', 'aws elasticbeanstalk describe-configuration-settings --environment-name e1', $false),
-  @('B', 'git commit -m "test: never aws elasticbeanstalk update-environment"', $false),
-  @('B', 'kubectl get pods -n qa | grep edit', $false),
-  @('B', 'kubectl get deploy && npm run scale', $false),
-  @('B', "git commit -m `"x`naws ecs update-service --cluster c`"", $false),
-  @('B', 'echo "after web restart"', $false),
-  @('P', '& "C:\Program Files\Amazon\AWSCLIV2\aws.exe" elasticbeanstalk restart-app-server --environment-name e1', $true, 'changes a deployed env'),
-  @('B', 'sudo aws ecs update-service --cluster c --service s', $true, 'changes a deployed env'),
-  @('B', 'bash -c "aws elasticbeanstalk update-environment --environment-name e1"', $true, 'changes a deployed env'),
-  @('P', 'pwsh -Command "aws ssm put-parameter --name x --value y"', $true, 'changes a deployed env'),
-  @('P', '& D:\kit\skills\crafty\LESSONS.md', $true, $da),
-  @('P', 'Invoke-Item .\report.html', $true, $da),
-  @('P', 'Start-Process https://example.com', $true, $da),
-  @('B', 'xdg-open out/report.html', $true, $da),
-  @('B', 'cmd /c start "" report.pdf', $true, $da),
-  @('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden', $false, ''),
-  @('P', 'Start-Process pwsh -ArgumentList x.ps1 -PassThru -RedirectStandardOutput o.txt', $false, $da),
-  @('P', 'Start-Process -FilePath .\r.html', $true, $da),
-  @('P', 'Start-Process -Wait .\r.html', $true, $da),
-  @('P', 'cd x; ii "out.pdf"', $true, $da),
-  @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "resumed agent; . templates.md "Resume brief" was read (see notes.md); & LESSONS.md"', $false, $da),
-  @('P', '& .\tracker.ps1 comment 42 "see guide.md and & x.txt"', $false, $da),
-  @('P', '. .\kitpaths.ps1; Get-Content LESSONS.md', $false, $da),
-  @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "agent said \"done\"; . notes.md was read" -Source workflow', $false, $da),
-  @('P', "& D:/kit/learn.ps1 -Skill crafty -Kind win -Text `"ok`" -Ref B-1`n& D:/kit/skills/crafty/LESSONS.md | Out-Null", $true, $da),
-  @('P', '& D:\kit\skills\crafty\devtools.py merge 12', $true, $sx),
-  @('P', "& 'D:\kit\skills\crafty\devtools.py' merge", $true, $sx),
-  @('P', '& "$k/skills/pokey/browser.mjs" shot', $true, $sx),
-  @('P', '.\x.py --flag', $true, $sx),
-  @('P', 'tool.ts run', $true, $sx),
-  @('P', 'Start-Process x.py', $true, $sx),
-  @('P', 'cmd /c x.js', $true, $sx),
-  @('B', './skills/crafty/devtools.py merge 12', $true, $sx),
-  @('B', 'cd x && FOO=1 tool.mjs a', $true, $sx),
-  @('B', 'start x.py', $true, $sx),
-  @('P', 'python -X utf8 skills/crafty/devtools.py merge 12', $false, ''),
-  @('P', 'node skills/pokey/browser.mjs shot; npx tsx a.ts', $false, ''),
-  @('P', 'pwsh -File x.ps1; & D:/kit/x.ps1 -A b.py', $false, ''),
-  @('P', 'Get-Content x.json; Select-String foo x.md', $false, ''),
-  @('B', 'python -X utf8 skills/crafty/devtools.py merge 12; node a.mjs', $false, ''),
-  @('B', 'cat devtools.py; grep -n foo x.md; ls *.json > out.txt', $false, ''),
-  @('B', 'cd ../MR3/scripts; E=../evidence; ls ../ev/MR3-T2A_0*; cp ../ev/MR3-T2A_02_vin-photo.jpg $E/MR3-T2_00_vin-input.jpg; for i in 1 2 3; do node t2a/run-app-vin.cjs $E/MR3-T2_00_vin-input.jpg $E/MR3-T2_0${i}_run$i.json 1; done', $false, $da),
-  @('B', 'E=../evidence; cat ../ev/MR3-T2A_02_vin-photo.jpg > $E/MR3-T2_00_vin-input.jpg; for i in 1 2 3; do node t2a/run-app-vin.cjs $E/in.jpg $E/MR3-T2_0${i}_run$i.json 1; done', $false, $da),
-  @('B', 'LN=D:/x/{RT}/work/lead-notes.md; for i in $(seq 1 30); do m=$(curl -s https://x/ | grep -o ''"mode":"[a-z]*"''); a=$(grep -E "^- .*MR4:" $LN | grep -v "REQUEST"); echo "$m ${a:0:200}"; done', $false, $da),
-  @('B', 'E=D:/x/{RT}/work/MR4/evidence; F=$E/MR4-T2_retry_03_history.log; { echo "== NRQL"; echo x; } > $F', $false, $da),
-  @('P', '$x = ''notes.md''; Get-Content $x', $false, $da),
-  @('B', 'x=$(cat a.md); a=(x.md y.md)', $false, $da),
-  @('B', 'x.md', $true, $da),
-  @('B', 'cd x; for f in a; do r.pdf; done', $true, $da),
-  @('B', 'X=1 r.html', $true, $da),
-  @('B', 'start x.html', $true, $da),
-  @('P', 'ii x.pdf', $true, $da),
-  @('P', '& x.py', $true, $sx),
-  @('P', '& .\notes.md', $true, $da),
-  @('P', 'ii .', $true, $da),
-  @('P', 'explorer.exe D:\x', $true, $da),
-  @('P', 'code skills/crafty/devtools.py', $true, $da),
-  @('P', 'notepad a.txt', $true, $da),
-  @('P', 'mmc; control', $true, $da),
-  @('P', 'rundll32 url.dll,FileProtocolHandler https://x', $true, $da),
-  @('P', 'Start-Process report.docx', $true, $da),
-  @('P', 'cmd /c start https://x', $true, $da),
-  @('B', 'start https://example.com', $true, $da),
-  @('B', 'explorer .', $true, $da),
-  @('B', 'cmd //c start "" a.xlsx', $true, $da),
-  @('B', 'code .', $true, $da),
-  @('P', 'Start-Process pwsh -ArgumentList x.ps1 -WindowStyle Hidden; Start-Process -FilePath node.exe -WindowStyle Hidden', $false, ''),
-  @('B', 'cd D:/x/src/code-review; echo code', $false, ''),
-  @('P', 'glab mr view 12 --web', $true, $wb),
-  @('B', 'gh pr view 3 -w', $true, $wb),
-  @('B', 'gh browse', $true, $wb),
-  @('P', 'glab mr view 12 -R g/web; gh pr view 3 --json title', $false, ''),
-  @('B', 'gh run list -w ci.yml; gh workflow run -w x; gh browse -n 12', $false, ''),
-  @('P', 'code --version; code --list-extensions', $false, ''),
-  @('B', 'code --version', $false, ''),
-  @('P', 'Start-Process -FilePath notepad.exe -WindowStyle Hidden', $false, ''),
-  @('P', 'powershell -c "ii ."', $true, $da),
-  @('B', 'pwsh -c ". a.py"', $true, $sx),
-  @('P', 'cmd.exe /k a.js', $true, $sx),
-  @('B', 'mshta x.hta', $true, $da),
-  @('B', "cd {KRT} && mkdir -p work/agents/g5 && glab mr view 12 -R group/repo 2>&1 | tail -n +2 > work/agents/g5/body.md; cat >> work/agents/g5/body.md <<'EOF'`n## Review follow-up`n- Plain check: the del flag and rd step are prose here`nEOF`nglab mr update 12 --description `"`$(cat work/agents/g5/body.md)`"", $false, $rp),
-  @('P', '& D:/kit/learn.ps1 -Skill crafty -Text "never rm the {RT}/work folder" -Source workflow', $false, $rp),
-  @('B', 'rm -rf {KRTB}/work', $true, $rp),
-  @('P', 'Remove-Item -Recurse -Force "{KRT}\work"', $true, $rp),
-  @('B', "python -c `"import shutil; shutil.rmtree('{KRT}/work')`"", $true, $rp),
-  @('B', 'cd {KRTB} && rm -rf work', $true, $rp), @('B', 'cd {KIT}; rm -rf {RT}/work', $true, $rp), @('B', 'rm -rf $K/{RT}/work', $true, $rp),
-  @('B', 'rm -rf /d/x/{RT}/work', $false, $rp), @('P', 'Remove-Item -Recurse "D:\x\{RT}\work"', $false, $rp), @('B', 'cd /d/x/{RT} && rm -rf work', $false, $rp),
-  @('B', 'cd {WS}; rmdir {RT}/work/agents/a {RT}/work {RT}', $false, $rp), @('B', 'cd {WS}; mkdir -p {RT}/work/agents/a', $true, 'outside the kit'),
-  @('E', '{WS}/{RT}/work/a.md', $true, 'outside the kit'), @('B', 'mkdir -p {KRT}/work/agents/a; echo x > {KRTB}/../x/y/{RT}/a.txt', $false, 'outside the kit'),
-  @('B', 'rm -rf {KRTU}/work', $true, $rp), @('B', 'cd {WS}; mkdir -p {RTU}/w', $true, 'outside the kit'), @('B', 'mv {WS}/{RT}/work/x {KRT}/work/agents/x; cat {WS}/{RT}/a.md > {KRT}/work/agents/x/b.md', $false, 'outside the kit'),
-  @('B', 'cd {WS}; echo "{RT}/" >> .gitignore; ls {RT} 2>&1', $false, 'outside the kit'), @('B', 'cd {WS}; mkdir -p a/b/c/{RT}', $false, 'outside the kit'),
-  @('P', 'Remove-Item D:\x\.claude\tracking.local.json', $true, 'durable local kit state'),
-  @('P', 'Remove-Item -Force "{KRT}\work\a.json"', $false, $rp), @('B', 'rm -r {KRTB}/work/a.d', $true, $rp),
-  @('B', "cd repo; python3 - <<'E'`np='a.ts'`ns=open(p).read()  # never git stash here`nE`nnode x.mjs", $false),
-  @('B', "cd repo; python3 - <<'E'`np='a.ts'`nE`ngit stash list >/dev/null; cp a.ts /tmp/a.bak", $false),
-  @('B', 'glab mr update 5 --description "$(cat /tmp/mr-body.md)"', $true, 'shared temp root'),
-  @('P', 'Set-Content $env:TEMP\desc-8543.md $d', $true, 'shared temp root'),
-  @('B', 'cp body.md /tmp/w1-run/body.md; cat /tmp/out.log', $false, 'shared temp root'),
-  @('B', 'git push origin +HEAD:main', $true, 'force-push'),
-  @('P', 'git -C x push origin +f/CU-1-x', $true, 'force-push'),
-  @('B', 'git push origin HEAD:main', $true, 'refused: a protected branch'),
-  @('B', 'git push -u origin HEAD; git push origin HEAD:f/CU-1-x --force-with-lease', $false, 'force-push'),
-  @('B', 'git push -fu origin main', $true, 'force-push'),
-  @('P', 'git -C "{KIT}" push origin ":main"', $true, $pb),
-  @('B', 'cd "{KIT}" && git push origin --delete "main"', $true, $pb),
-  @('P', 'Set-Location -Path "{KIT}"; git push -d origin main', $true, $pb),
-  @('P', 'Push-Location "{KIT}"; git push --mirror origin', $true, $pb),
-  @('B', 'git -C "{KIT}" branch -D main', $true, $pb),
-  @('B', 'git -C "{KIT}" branch -f main HEAD~1', $true, $pb),
-  @('P', 'git -C "{KIT}" branch -dr origin/main', $true, $pb),
-  @('P', 'git -C "{KIT}" update-ref -d refs/remotes/origin/main', $true, $pb),
-  @('B', 'git -C "{KIT}" push -u origin HEAD:main; git -C "{KIT}" branch --show-current', $false, $pb),
-  @('B', 'git -C "{KIT}" push origin --delete kit/build-x; git -C "{KIT}" branch -D kit/main-x', $false, $pb),
-  @('B', 'git -C /nowhere/repo push origin --delete f/x; git -C /nowhere/repo branch -D develop', $false, $pb),
-  @('B', 'git -C /nowhere/repo push origin --delete main; git push origin main --tags', $true, 'refused: a protected branch'),
-  @('B', 'git push --all origin', $true, 'refused: a protected branch'),
-  @('B', 'git -C /nowhere/repo push origin --force-with-lease HEAD:release', $false, $pb),
-  @('P', 'git commit -m "never git push origin --delete main"', $false, $pb),
-  @('B', 'git commit -n -m "x"', $true, $hk),
-  @('B', 'git -c core.hooksPath=/dev/null commit -m x', $true, $hk),
-  @('B', 'git commit --no-edit --amend', $false, $hk),
-  @('P', 'git commit -m "use -n for a dry run"', $false, $hk),
-  @('B', 'git log -n 3; git commit -m x', $false, $hk),
-  @('E', '{LIVE}/skills/crafty/crafty.ps1', $true, $lk),
-  @('E', '{LIVE}/{RT}/work/agents/x/x.md', $false, $lk),
-  @('E', '{LIVE}/.git/info/exclude', $false, $lk),
-  @('E', '{LIVE}/../wt/skills/crafty/crafty.ps1', $false, $lk),
-  @('P', 'Set-Content {LIVE}/AGENTS.md x', $true, $lk),
-  @('B', 'sed -i s/a/b/ {LIVE}/README.md', $true, $lk),
-  @('B', 'git -C "{LIVE}" commit -m x', $true, $lk),
-  @('P', 'cd {LIVE}; git pull; git log -1; Get-Content AGENTS.md > {RT}/work/agents/x/a.txt; cp AGENTS.md ../a.md', $false, $lk),
-  @('B', 'cd {LIVE}; grep -c ">" README.md; git clean -n', $false, $lk),
-  @('B', 'KIT_LIVE_EDIT=1 git -C "{LIVE}" commit -m x', $false, $lk),
-  @('B', 'node shot.mjs --out /d/x/{RT}/work/evidence/t1/a.png', $true, 'Use D:/x/'),
-  @('B', "python -c `"open('/d/x/a.txt', 'w')`"", $true, $gb),
-  @('B', "cd /d/x; python3 - <<'E'`nopen('/c/Users/x/a.json')`nE", $true, 'Use C:/Users/x/a.json'),
-  @('B', 'OUT=/d/x/a.png node shot.mjs', $true, $gb),
-  @('B', 'cd /d/x && node shot.mjs ''{"out":"/d/x/a.png"}''', $true, $gb),
-  @('B', 'bash -c "java -jar a.jar /d/x/in.txt"', $true, $gb),
-  @('B', 'curl -s -o /d/x/a.json https://h.io/api; x=$(npx tsx a.ts --dir=/e/y)', $true, $gb),
-  @('P', 'node shot.mjs /d/x/a.png; adb.exe pull /sdcard/a.png /d/x/', $true, $gb),
-  @('B', 'command node a.mjs /d/x; { sudo python a.py /d/y; }', $true, $gb),
-  @('B', 'curl -sSo /d/x/a.json https://h.io/api', $true, 'Use D:/x/a.json'),
-  @('B', 'curl -d @/d/x/body.json https://h.io/api', $true, $gb),
-  @('B', 'curl --output=/d/x/a.zip https://h.io/a; curl -T /d/x/a.zip https://h.io/u', $true, $gb),
-  @('B', 'curl -K /d/x/c.txt; curl -F file=@/d/x/a.png https://h.io', $true, $gb),
-  @('B', 'curl -s -d ''{"route":"/c/orders"}'' https://h.io/api; curl --json ''{"p":"/d/x"}'' "https://h.io/api?path=/d/x"', $false, $gb),
-  @('B', 'curl --data-raw /c/orders -H "X-Path: /v/1" https://h.io; curl -X POST --data /d/x https://h.io', $false, $gb),
-  @('B', 'node a.mjs D:/x > {KRTB}/work/agents/a/out.log 2>{KRTB}/work/agents/a/err.log; python a.py < /d/x/in.txt', $false, $gb),
-  @('B', 'curl -s https://h.io/d/files/a.json -o D:/x/a.json; node a.mjs abc/c/def x/d/y ${R}/c/z', $false, $gb),
-  @('B', "python a.py D:/x # was /d/x`n# node b.mjs /d/y", $false, $gb),
-  @('B', 'python a.py x#y /d/z', $true, $gb),
-  @('B', 'ls /d/x; cat /d/x/a.md; grep -rn foo /d/x; git -C /d/x status; cd /d/x && node shot.mjs D:/x/a.png', $false, $gb),
-  @('B', "git commit -m `"fix: node got /d/x paths`"; cat <<'EOF' > /d/x/a.md`npython /d/x/a.py`nEOF", $false, $gb),
-  @('P', 'python -X utf8 D:\x\a.py --out D:/x/a.png; adb shell ls /sdcard/DCIM', $false, $gb),
-  @('B', 'cd web && npx cypress run', $true, 'e2e runs go through'), @('P', 'yarn e2e:ci; npx playwright test x.spec.ts', $true, 'e2e runs go through'),
-  @('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
-  @('B', 'cat cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through'),
-  # a file path as the command
-  @('B', '"{KIT}/skills/bossy/SKILL.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
-  @('B', 'start {CR}/NOTICE', $true, $rt), @('B', '& "{CR}\NOTICE"', $true, $rt), @('B', 'cd x; "./tool.ps1" -A', $true, $rt),
-  @('B', 'cd "{CR}" && ./run; bash .githooks/pre-push; cat "{KIT}/README.md"; echo "a; ./x.md"; ls {KIT}', $false, $rt),
-  @('B', 'f=$(ls -d */wf_1)/journal.jsonl; grep -c x $f', $false, $rt), @('B', '(ls){ ./NOTICE.md; }', $true, $rt),
-  @('P', '& "{CR}/NOTICE"', $true, $rt), @('P', '& "{KIT}"', $true, $rt), @('P', 'Set-Location "{CR}"; .\NOTICE', $true, $rt),
-  @('P', '$g = Join-Path "{KIT}" ''skills/bossy/SKILL.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
-  @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
-  @('B', "git log \`n  -- docs/readme.md; git diff \`n  skills/crafty/crafty.ps1", $false, $rt),
-  @('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt),
-  # pytest / docker runs go through the gate
-  @('B', 'cd api && pytest tests/test_a.py -q', $true, $mg), @('P', '& "C:\v\python.exe" -X utf8 -m pytest t', $true, $mg), @('B', 'uv run pytest', $true, $mg),
-  @('B', 'docker compose -f a.yml -f b.yml up -d --wait', $true, $mg), @('P', 'docker build -t x .', $true, $mg), @('B', 'docker-compose up', $true, $mg),
-  @('P', '& "C:\Program Files\Py\python.exe" -m pytest t', $true, $mg), @('B', 'FOO=1 timeout 300 pytest -x', $true, $mg), @('B', 'nohup pytest &', $true, $mg),
-  @('B', 'sudo docker run x', $true, $mg), @('B', 'docker --context ci image build .', $true, $mg), @('B', 'docker container run x', $true, $mg),
-  @('B', 'grep -rn pytest requirements.txt; pytest --version; pytest -h; docker ps; docker compose logs api', $false, $mg),
-  @('B', 'rg "foo|pytest" src; grep -E "(pytest|docker run)" a; git commit -m "fix; pytest runs"; echo x | grep -n "; docker build" f', $false, $mg),
-  @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''docker compose up -d''', $false, $mg),
-  @('B', 'pwsh -File {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ".\mvnw.cmd -o -q test -pl a -am" 2>&1 | tail -25', $true, 'needs -Log'),
-  @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir x -Cmd ''yarn test'' -Log {KRTB}/work/agents/a/b.log', $false, 'needs -Log'), @('P', '& {KIT}/skills/crafty/crafty.ps1 gate -Dir D:/x/mvn-app -Cmd ''git status''', $false, 'needs -Log'),
-  # whole-drive searches denied; scoped paths pass
-  @('B', 'find / -ipath "*backend-test-reconciler*" 2>/dev/null', $true, $dr), @('B', 'find /c -name SKILL.md', $true, $dr), @('B', 'sudo find -L /d/ -type f | head', $true, $dr),
-  @('B', 'find C:\ -name x', $true, $dr), @('B', 'grep -rn reconciler /', $true, $dr), @('B', 'rg -l -g "*.md" reconciler C:/', $true, $dr), @('B', 'ls -R /c | grep x', $true, $dr),
-  @('B', 'bash -c "find / -name x"', $true, $dr), @('P', 'cmd /c dir /s C:\*.md', $true, $dr), @('P', 'Get-ChildItem -Recurse C:\ -Filter SKILL.md', $true, $dr),
-  @('P', 'gci D:\ -r -Include *.md', $true, $dr), @('P', 'where.exe /r C:\ claude.exe', $true, $dr), @('P', 'rg --files D:\', $true, $dr), @('B', 'find //c/.. -name x', $true, $dr), @('B', 'rg --max-columns 5 x / src', $true, $dr), @('B', 'rg --max-columns 5 / src', $false, $dr),
-  @('B', 'find . -name x; find ~/.claude/skills -name SKILL.md; find /d/work/repos -maxdepth 2 -name pom.xml; ls /; ls -la /c', $false, $dr),
-  @('B', "grep -rn / src; rg -n `"/`" skills; grep -e x /etc/hosts; git commit -m `"never find / -name x`"; cat > n.md <<'EOF'`nfind / -name x`nEOF", $false, $dr),
-  @('P', 'Get-ChildItem -Recurse D:\work\.claude\skills -Filter SKILL.md; Get-ChildItem C:\; where.exe git; rg -l x C:\Users\x\.claude', $false, $dr),
-  @('B', 'cd / && find . -name x', $true, $dr), @('B', 'cd /c; grep -rn x', $true, $dr), @('P', 'Set-Location C:\; gci -Recurse -Filter x', $true, $dr), @('B', 'find . -name "*.md" -exec grep -rl x / \;', $true, $dr),
-  @('B', 'cd / && ls; cd ~/src && find . -name x; find . -exec grep -l x {} +; cd /d/repo && rg x', $false, $dr), @('P', 'Set-Location C:\; where.exe git; Get-ChildItem', $false, $dr)
-  )
-  $cases += @(@('B', 'gws --format x drive files delete', $true, 'gws: add'), @('P', 'gws files export -o D:/w/a; gws drive files get', $false, 'gws: add'))
-  $gh = 'browser on Windows'   # Git for Windows help is HTML; elsewhere a man page
-  if ($IsWindows) { $cases += @(@('B', 'git cherry-pick --help', $true, $gh), @('P', 'git -C x help rebase', $true, $gh), @('B', 'git cherry-pick -h; git help -a; git commit -m "see --help"', $false, $gh)) }
-  $cr = Join-Path (Get-KitPath agents -Create) 'guard-selftest/crlf'; New-Item -ItemType Directory -Force "$cr/skills/crafty" | Out-Null; git init -q $cr   # tracked CRLF, tracked LF, untracked CRLF
-  foreach ($cf in 'skills/crafty/crafty.ps1', 'n.ps1') { [IO.File]::WriteAllText("$cr/$cf", "a`r`n") }; [IO.File]::WriteAllText("$cr/lf.md", "a`n"); git -C $cr -c core.autocrlf=false add skills lf.md
-  [IO.File]::WriteAllText("$cr/NOTICE", "text`n"); [IO.File]::WriteAllText("$cr/run", "#!/bin/sh`necho ok`n")   # an extensionless file a desktop app would open; a #! script
-  $cases += @(@('B', 'git fetch -q origin merge-requests/12/head:mr12', $true, 'local branch from an MR'), @('P', 'gh pr checkout 7', $true, 'local branch from an MR'),
-    @('B', 'git fetch origin merge-requests/12/head && git diff origin/main...FETCH_HEAD; git fetch origin pull/3/head:refs/remotes/origin/pr3', $false, 'local branch from an MR'),
-    @('B', 'git -C x worktree remove --force y', $true, 'wt remove -Dir'), @('B', 'git worktree list; git worktree prune', $false, 'wt remove -Dir'))
-  if ($mc = @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.checkout)" } | Where-Object { $_ -and (Test-Path -LiteralPath $_) })[0]) {   # a configured main checkout
-    $ef = @(Get-ChildItem -LiteralPath $mc -File | Select-Object -First 1).Name
-    $cases += @(@('B', "echo x > $mc/kit-scratch-$PID.txt", $true, 'shared main checkout'), @('B', "cd $mc && git status > kit-scratch-$PID.txt", $true, 'shared main checkout'), @('E', "$mc/kit-scratch-$PID.md", $true, 'shared main checkout'),
-      @('B', "git -C $mc status > $cr/s.txt; echo x >> $mc/$ef; echo x > $mc/sub/new.txt", $false, 'shared main checkout')) }
-  $cases += @(@('B', "sed -Ei.b s/a/b/ $cr/skills/crafty/crafty.ps1", $true, 'use the Edit tool'), @('B', "sed -i s/a/b/ $cr/lf.md $cr/n.ps1; sed -n 1p $cr/skills/crafty/crafty.ps1; sed 's/ -i / /' $cr/skills/crafty/crafty.ps1", $false, 'use the Edit tool'))
-  $bp = 'owner only'
-  $cases += @(@('B', "setx $gbn 1", $true, $bp), @('B', "echo '{""env"":{""$gbn"":""1""}}' > $cr/settings.local.json", $true, $bp), @('B', "$gbn=1 node x.mjs; grep $gbn $cr/settings.json; git commit -m 'setx $gbn > settings.json'", $false, $bp), @('P', "Set-ItemProperty -Path x -Name $gbn -Value 1", $true, $bp), @('B', "grep x y; pwsh -c ""setx $gbn 1""", $true, $bp), @('B', "sed -i 's/}/,""$gbn"":1}/;s/a/b/' settings.json", $true, $bp), @('B', "git commit -m ""`$(setx $gbn 1)""", $true, $bp))
-  $nr = Join-Path (Get-KitPath agents) 'guard-selftest/neutral'; if (-not (Test-Path "$nr/.git")) { git init -q -b selftest $nr }   # cwd: a repo of its own on an unprotected branch, never the kit (K63s)
-  $env:KIT_GUARD_SELFTEST_ACTIVE = '1'; $env:KIT_LIVE_EDIT = $null
-  $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
-  $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
-  foreach ($c in $cases) {
-    $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit' }[$c[0]]
-    $v = $c[1].Replace('{KRTU}', ($krt -replace '[^/]+$', { $_.Value.ToUpper() })).Replace('{RTU}', '.RUNTIME').Replace('{KRTB}', ($krt -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KRT}', $krt).Replace('{WS}', (Split-Path $live)).Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
-    # cwd-independent results
-    $hookIn = @{ tool_name = $tool; cwd = $nr; tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
-    $json = $hookIn | ConvertTo-Json -Compress -Depth 4
-    $out = (& $PSCommandPath guard -Json $json) -join ''
-    $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
-    $ok = if ($c[2]) { $denied } else { $out -notmatch '"permissionDecision":"deny"' }   # strict allow (K63s): a deny for any reason fails it
-    if (-not $ok) { $fail++ }
-    '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), (($c[1] -replace "`n", ' \n ') + $(if (-not $ok -and $out -match '(?:Reason|reason)":"([^"]{1,160})') { " <- $($Matches[1])" }))
-  }
-  "$($cases.Count - $fail)/$($cases.Count) passed"
-  exit [int]($fail -gt 0)
-}
 $stdin = if ($Json) { $Json } elseif ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }
 if (-not "$stdin".Trim()) { exit 0 }
 try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
@@ -1360,7 +1114,7 @@ try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
   @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged: bossy.ps1 audit); retry' } } | ConvertTo-Json -Compress -Depth 4
   exit 0
 }
-$cmd = if ($in.tool_input.command) { [string]$in.tool_input.command } else { '' }
+$cmd = if ($in.tool_input.command) { [string]$in.tool_input.command } else { '' }; $cmdIn = $cmd   # as sent: rewrites start from it
 $K = $PSScriptRoot
 try { $kc = Read-KitText (Join-Path $K 'kit.local.json') | ConvertFrom-Json } catch {}
 $protectedRx = Get-KitProtectedBranches -Rx -Any '\S+'
@@ -1372,6 +1126,18 @@ function Deny($why) {
     Write-KitLog guard deny @{ session = "$($in.session_id)"; agentId = "$($in.agent_id)"; tool = "$($in.tool_name)"; why = $why; cmd = $one }
   }
   @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
+  exit 0
+}
+# a fix the guard knows exactly (an interpreter, a Windows path): the command runs rewritten (updatedInput), later rules still check
+# the original; the answer is written at the end (Send-GuardRewrite). Owner 2026-11-27: rewrite, never deny, what the guard can fix.
+$script:rwCmd = $null; $script:rwWhy = @()
+function Set-GuardRewrite([string]$To, [string]$Why) { if ($To -and $To -ne $(if ($null -ne $script:rwCmd) { $script:rwCmd } else { $cmdIn })) { $script:rwCmd = $To; $script:rwWhy += $Why } }
+function Send-GuardRewrite($Notes) {
+  if ($null -eq $script:rwCmd) { return }
+  $why = "kit guard rewrote your command ($(@($script:rwWhy | Select-Object -Unique) -join '; ')); it ran as: $($script:rwCmd)"
+  if ($in.session_id) { Write-KitLog guard rewrite @{ session = "$($in.session_id)"; agentId = "$($in.agent_id)"; tool = "$($in.tool_name)"; why = $why; cmd = ($cmdIn -replace "[\r\n\t]+", ' // ') } }
+  $ti = $in.tool_input | ConvertTo-Json -Depth 6 -Compress | ConvertFrom-Json -AsHashtable; $ti.command = $script:rwCmd   # its other fields (description, timeout) kept
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'allow'; permissionDecisionReason = $why; updatedInput = $ti; additionalContext = (@(@($why) + @($Notes) | Where-Object { $_ }) -join "`n") } } | ConvertTo-Json -Compress -Depth 6
   exit 0
 }
 function GitCommon([string]$d) {
@@ -1444,24 +1210,21 @@ foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$(
 $bpw = '(?i)\bsetx\b|SetEnvironmentVariable|\breg(\.exe)?\s+add\b|(New|Set)-ItemProperty|(>|\btee\b|\bsed\s+-i|Set-Content|Add-Content|Out-File).*(settings[\w.-]*\.json|\.bashrc|\$PROFILE)'
 if ("$cmd $($in.tool_input.content) $($in.tool_input.new_string) $($in.tool_input.edits.new_string)" -match $gbn -and (($edits -match 'settings[\w.-]*\.json$') -or @([regex]::Matches(($cmd -replace '\\\r?\n|`\r?\n', ' '), '(?:"(?:[^"\\]|\\.)*"|''[^'']*''|[^;&|\r\n])+').Value | Where-Object { $_ -match $bpw -and -not ($_ -match '^\s*(git\b.*\b(commit|tag)\b|grep|rg|Select-String)\b' -and $_ -notmatch '\$\(|`|<\(') }).Count)) {
   $raw = "$($in.tool_name) $($edits -join ' ') $cmd"; Deny "kit guard: $gbn (lets guard crashes through) is set by the owner only" }
-$strayWhy = "a $rtLeaf outside the kit (a relative path from the wrong folder): agent files go under & $($KitCmd.dev) dir -Agent <id> (<kit>/$rtLeaf/work/agents/<id>/)"
-foreach ($e in $edits) { if ((RuntimeKinds " $e" $here) -contains 'stray') { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e is $strayWhy" } }
-# scratch at a shared main checkout's top (repos[].checkout) outlives its agent
+# rule write-place (was runtime-stray, main-scratch, temp-root, stray-write, layout): an agent's file outlives it, or another agent
+# takes it, anywhere but its kit place; one fix text for all (Get-WritePlaceWhy: '' = a fine place)
+$placeFix = "agent files go under & $($KitCmd.dev) dir -Agent <id> [-Item <task>] [-Name <file>] (work/agents/<id>/), evidence under dir -Kind evidence -Item <task>; an owner-asked place: guard.writeRoots (rule write-place)"
+# scratch at a shared main checkout's top (repos[].checkout)
 $mainRoots = @(@(Get-KitValue 'repos' @()) | ForEach-Object { "$($_.checkout)" } | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
-$scratchWhy = "is a new file at the top of a shared main checkout: write scratch under & $($KitCmd.dev) dir -Agent <id> -Name <file>"
 function MainScratch([string]$p, [string]$base) {
   if (-not $p -or -not $mainRoots.Count -or $p -match '[$*?<>|`]') { return $false }
   $p = $p -replace '^/([A-Za-z])/', '$1:/'
   if (-not [IO.Path]::IsPathRooted($p)) { if (-not $base) { return $false }; $p = Join-Path $base $p }
   $full = [IO.Path]::GetFullPath($p); (Split-Path $full) -in $mainRoots -and -not (Test-Path -LiteralPath $full)
 }
-foreach ($e in $edits) { if (MainScratch $e $here) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $scratchWhy" } }
 # shared temp body / desc files got swapped between agents
 $tmpRoots = @('/tmp', $env:TEMP, $env:TMP, [IO.Path]::GetTempPath()) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') } | Select-Object -Unique   # arch-ok: guard deny list
 $tmpRx = '(?i)(?:^|[\s''"=<>(,@])(?:' + ((@($tmpRoots | ForEach-Object { [regex]::Escape($_) }) + '\$env:(?:TEMP|TMP)', '%(?:TEMP|TMP)%', '\$\{?TMPDIR\}?') -join '|') + ')[\\/](?<f>[^\s''"\\/;|&)]*(?:body|desc|comment|summary|message|msg)[^\s''"\\/;|&)]*)(?=$|[\s''";|&)])'
-$tmpHit = @(@($edits | Where-Object { $_ } | ForEach-Object { " $_" }) + $(if ($cmd) { $cmd }) | ForEach-Object { if ($_ -match $tmpRx) { $Matches.f } })
-if ($tmpHit) { $raw = "$($in.tool_name) $($tmpHit[0])"; Deny "kit guard: $($tmpHit[0]) is in the shared temp root (other agents use the same names): write it under & $($KitCmd.dev) dir -Agent <id> -Name $($tmpHit[0])" }
-# files at a drive root or outside every root outlive their agent
+# files at a drive root or outside every root
 $uh = [Environment]::GetFolderPath('UserProfile')
 $writeRoots = @(@($wsRoot, $script:KitRoot, (Get-KitRuntime), (Split-Path (Get-KitPath tracking)), $KitConf.ReposRoot) + @($KitConf.WorktreeRoots) + $mainRoots + @($tmpRoots) +
   @(@(Get-KitSetting 'guard.writeRoots' @()) | ForEach-Object { "$_" -replace '^~(?=[\\/]|$)', $uh }) + "$uh/.claude" + "$uh/Downloads" |
@@ -1479,19 +1242,14 @@ function StrayWrite([string]$p, [string]$base) {
   if (-not $par -or $par -eq $r0) { return 'writes at a drive root' }
   if (-not (Test-Path -LiteralPath $f) -and -not (GitCommon $par)) { 'is a new file outside the workspace and every repo' }
 }
-$rootWhy = "agent files go under & $($KitCmd.dev) dir -Agent <id> -Name <file>; an owner-asked place: guard.writeRoots"
-foreach ($e in $edits) { if (($sk = StrayWrite $e $here)) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $sk ($rootWhy)" } }
-# tester evidence written from a kit folder (2026-11-21: skills/shots/) belongs to the run
-$shotsWhy = "is tester evidence inside the kit's skills/: write it under the run's output folder (<outDir>/shots|evidence) or & $($KitCmd.dev) dir -Kind evidence -Item <task>"
-function KitEvidenceWrite([string]$p, [string]$base) {
-  if (-not ($f = FullOf $p $base)) { return $false }
-  foreach ($kr in @($script:KitRoot, $live) | Where-Object { $_ }) {
-    $sk = Join-Path $kr 'skills'; if (-not (Under $f $sk)) { continue }
-    if (@([IO.Path]::GetRelativePath($sk, $f) -split '[\\/]' | Select-Object -SkipLast 1) -match '^(shots|screenshots|evidence)$') { return $true }
-  }
-  $false
+function Get-WritePlaceWhy([string]$p, [string]$base, [switch]$Bare) {   # -Bare: a shell's bare word (no / or .): no drive-root check
+  if ((RuntimeKinds " $p" $base) -contains 'stray') { return "is a $rtLeaf outside the kit (a relative path from the wrong folder)" }
+  if (MainScratch $p $base) { return 'is a new file at the top of a shared main checkout' }
+  if (-not $Bare) { StrayWrite $p $base }
 }
-foreach ($e in $edits) { if (KitEvidenceWrite $e $here) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $shotsWhy" } }
+foreach ($e in $edits) { if (($pw = Get-WritePlaceWhy $e $here)) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $pw`: $placeFix" } }
+$tmpHit = @(@($edits | Where-Object { $_ } | ForEach-Object { " $_" }) + $(if ($cmd) { $cmd }) | ForEach-Object { if ($_ -match $tmpRx) { $Matches.f } })
+if ($tmpHit) { $raw = "$($in.tool_name) $($tmpHit[0])"; Deny "kit guard: $($tmpHit[0]) is in the shared temp root (other agents use the same names): $placeFix" }
 # runtime / state writes need a _paths name (guard.layout)
 $layout = @(@((Get-KitRuntime), 'runtime'), @((Split-Path (Get-KitPath tracking)), 'durable'))
 function OffLayout([string]$p, [string]$base) {
@@ -1506,7 +1264,7 @@ function OffLayout([string]$p, [string]$base) {
 # Deny here, outside captured output
 function LayoutCheck {
   if (-not $off) { return }
-  $lw = "kit layout: $(@($off | Select-Object -Unique) -join ', ') is no kit place: agent files go under & $($KitCmd.dev) dir -Agent <id> [-Item <task>] (work/agents/<id>/) or dir -Kind evidence -Item <task> (work/evidence/<task>/)"
+  $lw = "kit layout: $(@($off | Select-Object -Unique) -join ', ') is no kit place: $placeFix"
   if ($kc.guard.layout -eq 'block') { $raw = "$($in.tool_name) $($off -join ' ')"; Deny $lw }
   if ($in.session_id) { Write-KitLog guard warn @{ session = "$($in.session_id)"; tool = "$($in.tool_name)"; why = $lw } }; $script:layoutNote = $lw
 }
@@ -1624,10 +1382,7 @@ foreach ($seg in DeleteSegments $raw) {
   $gitDest = @(); if ($seg -match '(^|[\s(`])git(\.exe)?\s+(-c\s+\S+\s+)*(?<v>init|clone)\s+(?<a>.*)$' -and $seg -cnotmatch '\s-C\s') {
     $gitVerb = $Matches.v; $gitPos = @(); $gitSkip = $false; foreach ($gt in @($Matches.a -split '\s+' | Where-Object { $_ })) { if ($gitSkip) { $gitSkip = $false } elseif ($gt -match '^(-[bocju]|--(branch|origin|depth|reference|template|config|separate-git-dir|jobs|filter|upload-pack|object-format|shallow-since)|\d*>{1,2}|&>)$') { $gitSkip = $true } elseif ($gt -notmatch '^-|^\d*>|^&>') { $gitPos += $gt } }
     if ($gitPos.Count -and ($gitVerb -eq 'init' -or $gitPos.Count -ge 2) -and $gitPos[-1] -notmatch '://|^[\w.-]+@[\w.-]+:') { $gitDest = @($gitPos[-1]); $wrote += $gitDest } }
-  if (@($wrote | ForEach-Object { RuntimeKinds " $($_.Trim('''"'))" $segBase }) -contains 'stray') { Deny "kit guard: that writes $strayWhy" }
-  foreach ($x in $wrote) { if (MainScratch $x.Trim('''"') $segBase) { Deny "kit guard: $x $scratchWhy" } }
-  foreach ($x in @(@($wrote -match '[\\/.]') + $gitDest | Select-Object -Unique)) { if (($sk = StrayWrite $x.Trim('''"') $segBase)) { Deny "kit guard: $x $sk ($rootWhy)" } }
-  foreach ($x in $wrote -match '[\\/]') { if (KitEvidenceWrite $x.Trim('''"') $segBase) { Deny "kit guard: $x $shotsWhy" } }
+  foreach ($x in @($wrote | Select-Object -Unique)) { if (($pw = Get-WritePlaceWhy $x.Trim('''"') $segBase -Bare:($x -notmatch '[\\/.]' -and $x -notin $gitDest))) { Deny "kit guard: $x $pw`: $placeFix" } }
 }
 # a bare remove leaves junction skeletons no repo lists, and the branch
 if ($raw -match '(?m)(^|[;&|(\n])\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+("[^"]*"|\S+)\s+)*worktree\s+remove\b') { Deny "kit guard: use & $($KitCmd.dev) wt remove -Dir <worktree>: it unlinks shared folders first, prunes and deletes the branch once nothing is lost (a bare git worktree remove leaves junctions behind)" }
@@ -1682,11 +1437,14 @@ function Split-CommandSegments([string]$text, [string]$tool) {
   $segs.Add($sb.ToString())
   , $segs
 }
-if (($mp = Find-MsysPath $raw $tn)) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code." }
+# rule msys-path: the command runs with D:/x for each Git Bash /d/x a Windows program would read as \d\x (a stray tree); unfixable -> deny
+if (($mp = Find-MsysPath $raw $tn)) {
+  $msTo = if ($null -ne $script:rwCmd) { $script:rwCmd } else { $cmdIn }; $msN = 0
+  while ($mp -and $msN++ -lt 8) { $msTo = [regex]::Replace($msTo, '(?<![\w.:/~\\})\]])' + [regex]::Escape($mp[1]) + '(?![^\s''"`;|&<>(){}\[\],])', $mp[2].Replace('$', '$$')); $mp = Find-MsysPath $msTo $tn }
+  if ($mp) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code (rule msys-path)." }
+  Set-GuardRewrite $msTo 'Git Bash /x/... paths for a Windows program became X:/... (rule msys-path)' }
 # Git for Windows opens help in the owner's browser
 if ($IsWindows -and $cmd -match '(?m)(^|[;&|({\n]|\$\()\s*(\S*[\\/])?git(\.exe)?\s+((-C|-c)\s+\S+\s+)*(help\s+(?!-[ag]\b)\S|[\w-]+\s+([^|;&\r\n]*\s)?--help\b)') { Deny "git help <cmd> / git <cmd> --help opens the manual in the owner's browser on Windows: use git <cmd> -h (usage in the terminal)" }
-# retro tidy-3: download.<ext> in the kit root
-if ($cmd -match '\bgws\b[^|;&\r\n]*\bfiles\s+(export|delete)\b' -and $cmd -notmatch '\s(-o|--output)[\s=]') { Deny "gws: add --output <& $($KitCmd.dev) dir -Agent <id> -Name <file>> (else download.<ext> lands in the cwd)" }
 if ($cmd -match '\badb(\.exe)?\b[^|;&]*\bkill-server\b') { Deny 'Never adb kill-server: it drops every lane other agents test on. Reconnect your phone only (adb -s <serial> ...) or ask the lead (phoney.ps1 avd reset).' }
 # a whole-drive search outlives its agent at full CPU (an orphaned find starved local-env starts)
 function Find-DriveRootSearch([string]$text, [string]$tool, [int]$depth = 0) {
@@ -1839,23 +1597,22 @@ function Test-OpenDoc([string]$text, [string]$tool) {
       $t -match "$sep(Start-Process|start|saps)\s+(-\w+\s+)*([^\s;|&<>]+\.($de)|https?://\S+|\.{1,2}[\\/]?)$fe") { return 'doc' }
   $null
 }
-function Get-KitScriptRewrite([string]$text) {   # the first script in command position, via its interpreter
-  if ($text -notmatch '(?m)(?:^|[;&|(]\s*)(?:[&.]\s+)?([''"]?)(?<s>[^\s''";|&<>]+\.(?<x>ps1|py|m?js))\1(?<r>(?:''[^'']*''|"(?:[^"\\]|\\.)*"|\d?>&\d|[^\r\n;|&''"]|[''"])*)') { return '' }   # 2>&1 stays: a cut "2>" rewrite fails again
-  $hit = $Matches; $pre = $text.Substring(0, [Math]::Max(0, $text.IndexOf($hit.s)))
-  # Bash: an env var set before it (export X=v, $env:X='v') carries over as a prefix
-  $envSet = @(@(if ($tn -eq 'Bash') { [regex]::Matches($pre, '(?:\bexport\s+|\$env:)(?<n>\w+)\s*=\s*(?<v>''[^'']*''|"[^"]*"|[^\s;]+)') }) | ForEach-Object { "$($_.Groups['n'].Value)=$($_.Groups['v'].Value) " }) -join ''
-  " Rewrite: $envSet$(@{ ps1 = 'pwsh -NoProfile -File'; py = 'python -X utf8' }[$hit.x] ?? 'node') $($hit.s)$($hit.r.TrimEnd())"
+function Get-KitScriptRewrite([string]$text) {   # each script in command position run through its interpreter ('' = none); the rest of the line stays
+  $rwRx = '(?m)(?<lead>(?:^|&&|\|\||[;&|(])\s*(?:\w+=[^\s;&|]*\s+)*)(?:[&.]\s+)?(?<q>[''"]?)(?<s>[^\s''";|&<>()]+\.(?<x>ps1|py|m?js))\k<q>(?=[\s;|&)]|$)'
+  $rwOut = [regex]::Replace($text, $rwRx, { param($m)
+      $ext = $m.Groups['x'].Value.ToLower(); if ($ext -eq 'ps1' -and $tn -ne 'Bash') { return $m.Value }   # PowerShell runs a .ps1 in place
+      $interp = if ($ext -eq 'ps1') { 'pwsh -NoProfile -File' } elseif ($ext -eq 'py') { 'python -X utf8' } else { 'node' }
+      "$($m.Groups['lead'].Value)$interp $($m.Groups['q'].Value)$($m.Groups['s'].Value)$($m.Groups['q'].Value)" })
+  if ($rwOut -eq $text) { return '' }
+  if ($tn -eq 'Bash') { $rwOut = [regex]::Replace($rwOut, '(?m)(^|[;&|(]\s*)\$env:(\w+)\s*=', '${1}export $2=') }   # PowerShell's $env:X= in Bash sets nothing
+  $rwOut
 }
 # a heredoc fed to pwsh -Command - is PowerShell, where & x.ps1 runs in place (50+ false blocks of & pokey.ps1)
 $script:psBodies = @(); $bashText = $raw
 if ($tn -eq 'Bash') { foreach ($hd in @([regex]::Matches($raw, '(?ms)^(?<open>[^\r\n]*(?<!<)<<(?!<)-?\s*(?<q>[''"]?)(?<tag>\w+)\k<q>[^\r\n]*)\r?\n(?<body>.*?)\r?\n[ \t]*\k<tag>[ \t]*(?=\r?\n|$)'))) {
   if ($hd.Groups['open'].Value -match '\b(pwsh|powershell)(\.exe)?\s.*-(c|Command)\s+-(\s|$)') { $script:psBodies += $hd.Groups['body'].Value; $bashText = $bashText.Replace($hd.Value, $hd.Groups['open'].Value) } } }
 $od = Test-OpenDoc $bashText $tn; foreach ($pb in $script:psBodies) { if (-not $od) { $od = Test-OpenDoc $pb 'PowerShell' } }
-if ($od -eq 'script') {
-  $fix = Get-KitScriptRewrite $raw
-  Deny "$(if ($fix) { "$($fix.Trim()) -> " })That runs a script file directly: Windows opens it in an editor. Run it through its interpreter (python -X utf8, node, pwsh -File). $hl" }
 $readIt = "use the Read tool (offset / limit; Get-Content or cat in a script); run a script through its interpreter (python -X utf8, node, pwsh -File). $hl"
-if ($od) { Deny "That opens the file in its default desktop app instead of reading it: $readIt" }
 # a file path in command position (quoted, any extension, an existing file or folder) opens its associated app
 $docRx = '\.(md|txt|jsonl?|html?|log|csv|xml|ya?ml|ini|toml|cfg|conf|sql|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|svg)$'
 function Get-GuardPath([string]$word, [string]$base) {
@@ -1916,34 +1673,45 @@ function Find-RunsFile([string]$text, [string]$tool, [string]$base) {
   }
   $null
 }
-$rf = Find-RunsFile $bashText $tn $here; foreach ($pb in $script:psBodies) { if (-not $rf) { $rf = Find-RunsFile $pb 'PowerShell' $here } }
-if ($rf) { $rw = if ($rf -match '\.(ps1|py|mjs|cjs|js)$') { Get-KitScriptRewrite $raw }   # the ready command first (agents missed it at the end)
-  Deny "kit guard:$(if ($rw) { "$rw ->" }) $rf in command position opens it in its default desktop app (a window on the owner's screen), not your terminal: $readIt" }
+$rf = $null; if (-not $od) { $rf = Find-RunsFile $bashText $tn $here; foreach ($pb in $script:psBodies) { if (-not $rf) { $rf = Find-RunsFile $pb 'PowerShell' $here } } }
+# rule open-file (was script-direct, open-doc, cmd-position): a file opened by its association starts a desktop app, not the terminal;
+# a script in command position runs rewritten through its interpreter when nothing else on the line opens a file
+if (($od -eq 'script' -or "$rf" -match '\.(ps1|py|mjs|cjs|js)$') -and -not $script:psBodies.Count -and ($fix = Get-KitScriptRewrite $raw) -and -not (Test-OpenDoc $fix $tn) -and -not (Find-RunsFile $fix $tn $here)) {
+  Set-GuardRewrite $fix 'a script file runs through its interpreter, not its desktop app (rule open-file)'; $od = $null; $rf = $null }
+if ($od -or $rf) { Deny "kit guard: $(if ($rf) { $rf } else { 'that' }) opens by file association: Windows starts its default desktop app (a window on the owner's screen), not your terminal: $readIt (rule open-file)" }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or
     $cmd -match '\bgit\b[^|;&\r\n]*\bcommit\b[^|;&\r\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)') { Deny "Hooks must run: commit with $($KitCmd.dev) wt commit; fix what the hook reports." }
-foreach ($push in [regex]::Matches($cmd, '\bgit\b[^|;&]*\bpush\b[^|;&]*')) {
-  $p = $push.Value
-  if ($p -match '(--force(?![-\w])|\s-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)|\s\+[^\s+])' -or ($p -match '--force' -and $protectedRx -and $p -match ('\b(origin\s+)?(' + $protectedRx + ')\b(?!-)'))) {
-    Deny 'Never force-push a shared branch; on yours: --force-with-lease after crafty.ps1 wt sync.'
-  }
-}
-# deploy branches (repos[].deploys) change only via a deploy MR; protected ones of a product repo via a merged MR (kit: "kit main")
+# rule push (was force-push, deploy-branch-push, protected-push, kit-main-ff): per git push / branch / update-ref, in the folder it runs
+# in (-C, else the last cd before it, Git Bash /d/x too, else the hook's cwd): never forced on a shared branch; deploy branches
+# (repos[].deploys) only through a deploy MR; protected product branches through merged MRs; kit main (kitBranch) fast-forward only
 $deployBr = @(@($kc.repos) | ForEach-Object { $repoTarget = $_.target; @($_.deploys).branch | Where-Object { $_ -and $_ -ne $repoTarget } } | Sort-Object -Unique)
-if ($cmd -match '\bgit\b[^|;&]*\bpush\b') {
+if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b') {
   $pushText = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs or dirs; other quoted text is data
   $kitGit = GitCommon (Split-Path (Split-Path $K))
-  foreach ($push in [regex]::Matches($pushText, '\bgit\b[^|;&\r\n]*?\spush(?=\s|$)[^|;&\r\n]*')) {   # push as a word, not a path part
-    $pushTk = @(-split (($push.Value -replace '^.*?\spush(?=\s|$)', '') -replace '\s(-o|--push-option|--repo)\s+\S+', ' ') | Where-Object { $_ -notmatch '^-' } | ForEach-Object { $_ -replace '[''"]' })
-    $dst = @($pushTk | Select-Object -Skip 1 | ForEach-Object { ($_ -split ':')[-1] -replace '^\+' -replace '^refs/heads/' })
-    $wide = $push.Value -match '\s--(all|mirror)(?=\s|$)'; if (-not $dst.Count -and $push.Value -match '\s--tags(?=\s|$)') { continue }
-    $cdTo = @([regex]::Matches($pushText.Substring(0, $push.Index), '\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location)\s+(?:-(?:Literal)?Path\s+)?([^\s;|&]+)'))
-    $pushDir = if ($push.Value -match '\s-C\s+("[^"]+"|''[^'']+''|\S+)') { $Matches[1].Trim('"', "'") } elseif ($cdTo.Count) { $cdTo[-1].Groups[1].Value } else { $here }
-    if (-not [IO.Path]::IsPathRooted($pushDir)) { $pushDir = Join-Path $here $pushDir }
-    if (-not $wide -and (-not $dst.Count -or $dst -contains 'HEAD')) { $dst += "$(git -C $pushDir branch --show-current 2>$null)".Trim() }   # no refspec or HEAD: the checked-out branch
-    if (($deployHit = @($dst | Where-Object { $_ -in $deployBr })[0])) { Deny "$deployHit is a deploy branch (kit.local.json repos[].deploys): it changes only through a deploy MR, never a push: bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr." }
-    if ($protectedRx -and -not ($kitGit -and (GitCommon $pushDir) -eq $kitGit) -and ($protHit = $(if ($wide) { '--all / --mirror' } else { @($dst | Where-Object { $_ -match "^($protectedRx)$" })[0] }))) {
-      Deny "push to $protHit refused: a protected branch (protectedBranchesBase): merged MRs only; push your branch, open an MR."
+  $kitMain = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(' + [regex]::Escape($(if ($kc.kitBranch) { "$($kc.kitBranch)" } else { 'main' })) + ')$'
+  foreach ($gm in [regex]::Matches($pushText, '\bgit\b[^|;&\r\n]*?\s(?<v>push|branch|update-ref)(?=\s|$)[^|;&\r\n]*')) {   # the verb as a word, not a path part
+    $gv = $gm.Value; $verb = $gm.Groups['v'].Value
+    $cdTo = @([regex]::Matches($pushText.Substring(0, $gm.Index), '\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location)\s+(?:-(?:Literal)?Path\s+)?([^\s;|&]+)'))
+    $gitDir = if ($gv -match '\s-C\s+("[^"]+"|''[^'']+''|\S+)') { $Matches[1].Trim('"', "'") } elseif ($cdTo.Count) { $cdTo[-1].Groups[1].Value } else { $here }
+    $gitDir = $gitDir -replace '^/([A-Za-z])(?=/|$)', '$1:'; if (-not [IO.Path]::IsPathRooted($gitDir)) { $gitDir = Join-Path $here $gitDir }
+    $inKit = $kitGit -and (GitCommon $gitDir) -eq $kitGit
+    $gTk = @(-split $gv); $mainHit = @($gTk | ForEach-Object { if ($_ -match $kitMain) { $Matches[1] } })[0]
+    $pushWhy = $null
+    if ($verb -ne 'push') { if ($inKit -and (($verb -eq 'branch' -and $mainHit -and $gv -match '\s(-[a-zA-Z]*[dDfMm][a-zA-Z]*|--delete|--force|--move)(?=\s|$)') -or ($verb -eq 'update-ref' -and $mainHit))) { $pushWhy = "${mainHit}: a protected kit branch: fast-forward pushes only (rebase on origin first); never force-push, delete or move it" } }
+    else {
+      $force = $gv -match '(--force(?![-\w])|\s-[a-zA-Z]*f[a-zA-Z]*(?=\s|$)|\s\+[^\s+])'
+      $pushTk = @(-split (($gv -replace '^.*?\spush(?=\s|$)', '') -replace '\s(-o|--push-option|--repo)\s+\S+', ' ') | Where-Object { $_ -notmatch '^-' } | ForEach-Object { $_ -replace '[''"]' })
+      $dst = @($pushTk | Select-Object -Skip 1 | ForEach-Object { ($_ -split ':')[-1] -replace '^\+' -replace '^refs/heads/' })
+      $wide = $gv -match '\s--(all|mirror)(?=\s|$)'
+      if (-not $wide -and (-not $dst.Count -or $dst -contains 'HEAD') -and -not ($gv -match '\s--tags(?=\s|$)' -and -not $dst.Count)) { $dst += "$(git -C $gitDir branch --show-current 2>$null)".Trim() }   # no refspec or HEAD: the checked-out branch
+      $protHit = if ($wide) { '--all / --mirror' } elseif ($protectedRx) { @($dst | Where-Object { $_ -match "^($protectedRx)$" })[0] }
+      if ($inKit -and ($gv -match '--mirror|--prune' -or ($mainHit -and ($gv -match '--force|--delete|\s-[a-zA-Z]*[fd][a-zA-Z]*(?=\s|$)' -or @($gTk | Where-Object { $_ -match '^[+:]' -and $_ -match $kitMain }).Count)))) {
+        $pushWhy = "$(if ($mainHit) { $mainHit } else { 'main' }): a protected kit branch: fast-forward pushes only (rebase on origin first); never force-push, delete or move it" }
+      elseif ($force -or ($gv -match '--force' -and $protHit)) { $pushWhy = 'never force-push a shared branch; on yours: --force-with-lease after crafty.ps1 wt sync' }
+      elseif (($deployHit = @($dst | Where-Object { $_ -in $deployBr })[0])) { $pushWhy = "$deployHit is a deploy branch (kit.local.json repos[].deploys): it changes only through a deploy MR, never a push: bossy.ps1 deploy merge -Repo <checkout> -To <env> -Mr" }
+      elseif (-not $inKit -and $protHit) { $pushWhy = "a protected branch ($protHit; protectedBranchesBase): merged MRs only; push your branch, open an MR" }
     }
+    if ($pushWhy) { Deny "kit guard: push refused: $pushWhy (rule push)." }
   }
 }
 # shell writes into the live clone or off the layout
@@ -1968,22 +1736,6 @@ if ($cmd) {
     elseif ($w -match '^(Set-Content|sc|Add-Content|ac|Out-File|Clear-Content|clc|Remove-Item|ri|rm|del|erase|rmdir|rd|Move-Item|mi|mv|move|Rename-Item|rni|ren|New-Item|ni|tee|Tee-Object|touch)$' -or ($w -eq 'sed' -and $seg -match '\s(-i|--in-place)')) { $hits += @($pa | Select-Object -Skip ([int]($w -eq 'sed'))) }
     foreach ($h in $hits) { if ($h -match '[\\/]|\.\w{1,8}$') { if (-not $liveOk -and (LiveFile $h $cur)) { Deny $liveWhy }; if ($w -notmatch '^(Remove-Item|ri|rm|del|erase|rmdir|rd)$') { $off += @(OffLayout $h $cur) } } }
     if ($w -match '(^|[\\/])sed(\.exe)?$' -and @($tk | Where-Object { $_ -match '^(-[a-zA-Z]*i\S*|--in-place\S*)$' }).Count) { foreach ($h in $pa) { if (($cf = CrlfKitFile $h $cur)) { Deny "sed -i rewrites $cf (a tracked CRLF kit file) to LF: use the Edit tool" } } }
-  }
-}
-# kit main: never forced, deleted or moved
-if ($cmd -match '\bgit\b[^|;&]*\b(push|branch|update-ref)\b' -and ($kg = GitCommon (Split-Path (Split-Path $K)))) {
-  $dirs = @([regex]::Matches($raw, '(?:\s-C|\b(?:cd|chdir|sl|Set-Location|pushd|Push-Location))\s+(?:-(?:Literal)?Path\s+)?(?:"([^"]+)"|''([^'']+)''|([^\s;|&]+))') | ForEach-Object { $x = $_.Groups[1].Value + $_.Groups[2].Value + $_.Groups[3].Value; if ([IO.Path]::IsPathRooted($x)) { $x } else { Join-Path $here $x } })
-  if (@(@($(if ($dirs) { $dirs } else { $here })) | Where-Object { (GitCommon $_) -eq $kg }).Count) {
-    $u = StripData ([regex]::Replace((StripDocs $raw), '"([^"\s;|&]*)"|''([^''\s;|&]*)''', '$1$2'))   # one-word quotes are refs
-    $pr = '^\+?(?:[^:\s]*:)?(?:refs/(?:heads|remotes/[^/\s]+)/|origin/)?(' + [regex]::Escape($(if ($kc.kitBranch) { "$($kc.kitBranch)" } else { 'main' })) + ')$'
-    foreach ($m in [regex]::Matches($u, '\bgit\b[^|;&]*\b(push\b|branch\b|update-ref\b)[^|;&]*')) {
-      $p = $m.Value; $tk = -split $p; $hit = @($tk | ForEach-Object { if ($_ -match $pr) { $Matches[1] } })[0]
-      $bad = switch ($m.Groups[1].Value) {
-        'push' { $p -match '--mirror|--prune' -or ($hit -and ($p -match '--force|--delete|\s-[a-zA-Z]*[fd][a-zA-Z]*(?=\s|$)' -or @($tk | Where-Object { $_ -match '^[+:]' -and $_ -match $pr }).Count)) }
-        'branch' { $hit -and $p -match '\s(-[a-zA-Z]*[dDfMm][a-zA-Z]*|--delete|--force|--move)(?=\s|$)' }
-        default { [bool]$hit } }
-      if ($bad) { Deny "$(if ($hit) { $hit } else { 'main' }): a protected kit branch: fast-forward pushes only (rebase on origin first); never force-push, delete or move it." }
-    }
   }
 }
 $gated = $cmd -match 'crafty\.ps1["'']?\s+(gate|check)\b|phoney\.ps1["'']?\s+build\b|gate\.ps1|check\.ps1|app-build\.ps1'
@@ -2016,8 +1768,13 @@ $bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {
     $(if ($raw -match '\bpython\d*(\.exe)?\s+-(\s|$)' -and $raw -notmatch '\bpython\d*(\.exe)?\s+-\s*<|\|\s*python') { 'python - reads its script from stdin' }) | Where-Object { $_ })
   if ($bgWhy) { $bgNote = @("kit guard: this background shell may never end ($($bgWhy -join '; ')): bound it (timeout <s> <cmd>, a loop counter), no stdin reads; supervise flags hung shells (Shells table)") } }
 # adapter rules last (script-faults after bans): notes only follow commands that run
-$notes = foreach ($rule in @($KitAdapters.guard.Keys | Sort-Object { $_ -eq 'script-faults' } | ForEach-Object { $KitAdapters.guard[$_] })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
+# an answer: a deny text, @{ note }, or @{ rewrite = <its fix of the command so far>; why }; after a rewrite the adapters check what runs
+$adRaw = if ($null -ne $script:rwCmd) { $script:rwCmd } else { $raw }; $adCmd = if ($null -ne $script:rwCmd) { StripData $script:rwCmd } else { $cmd }
+$notes = foreach ($rule in @($KitAdapters.guard.Keys | Sort-Object { $_ -eq 'script-faults' } | ForEach-Object { $KitAdapters.guard[$_] })) {
+  $why = & $rule.check @{ cmd = $adCmd; raw = $adRaw; config = $kc; hook = $in; rw = $(if ($null -ne $script:rwCmd) { $script:rwCmd } else { $cmdIn }) }
+  if ($why.note) { $why.note } elseif ($why.rewrite) { Set-GuardRewrite $why.rewrite $why.why } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
 LayoutCheck; $notes = @(@($notes) + $script:layoutNote + $bgNote | Where-Object { $_ })
+Send-GuardRewrite $notes
 if ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = (@($notes) -join "`n") } } | ConvertTo-Json -Compress -Depth 4 }
 exit 0
 }

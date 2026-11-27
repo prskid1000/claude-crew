@@ -3280,15 +3280,15 @@ def render_cmd(a):
     return 0
 
 
-# ---- plugins: skills/crafty/adapters/*.py
+# ---- plugins: adapters/*.py
 def load_plugins(folder=os.path.join(KIT, 'adapters')):
-    """Each skills/crafty/adapters/*.py (a plugin) gets this module in register(dt) and adds adapters or verbs."""
+    """adapters/*.py with register(dt) get this module, add adapters or verbs; others are scripts."""
     this = sys.modules[__name__]
     for path in sorted(glob.glob(os.path.join(folder, '*.py'))):
         spec = importlib.util.spec_from_file_location('kit_plugin_' + os.path.splitext(os.path.basename(path))[0], path)
         plugin = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(plugin)
-        plugin.register(this)
+        getattr(plugin, 'register', lambda dt: None)(this)
 
 
 load_plugins()

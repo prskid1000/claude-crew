@@ -6,7 +6,7 @@ kit-admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L159 health · L168 browser policy · L212 prepush · L275 weekly tests · L311 state lint · L320 precommit
+Sections: L13 learn · L159 health · L168 browser policy · L212 prepush · L275 weekly tests · L316 state lint · L325 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -276,6 +276,13 @@ exit 0
 # old (a missed week: the next idle beat); one try a day; its FAILs returned once; health names the last full run
 # kit-tests-green.txt lines "<tree> [<date>]" (tests/kit-tests.ps1): the tree's stamp date ('-' = no date), '' = not stamped
 function Get-KitGreenTreeDate([string]$Tree) { $gl = @(Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue | Where-Object { ($_ -split ' ')[0] -eq $Tree })[-1]; if ($gl) { $gd = ($gl -split ' ', 2)[1]; if ($gd) { $gd } else { '-' } } else { '' } }
+# the last green full run: the weekly run's greenAt or the newest dated kit-tests-green.txt stamp of any tree (a worktree's green run
+# before the pull; 2026-11-27: health said 'never' while a stamp of the previous tree was a day old); `$null = none
+function Get-KitLastGreen($S) {
+  $ds = @(@(Get-Content -LiteralPath (Join-Path (Get-KitPath cache) 'kit-tests-green.txt') -ErrorAction SilentlyContinue | ForEach-Object { ($_ -split ' ', 2)[1] }) + "$($S.greenAt)" |
+    Where-Object { $_ } | ForEach-Object { try { [datetimeoffset]$_ } catch { } })
+  @($ds | Sort-Object -Descending)[0]
+}
 function Get-KitFullTestsState { $sf = Join-Path (Get-KitPath cache -Create) 'kit-tests-full.json'; [pscustomobject]@{ file = $sf; log = (Join-Path (Get-KitPath logs -Create) 'kit-tests-full.txt'); s = $(try { Get-Content -LiteralPath $sf -Raw | ConvertFrom-Json } catch { $null }) } }
 function Invoke-KitWeeklyTests([bool]$Idle) {
   $kt = Join-Path $KitConf.Kit 'tests/kit-tests.ps1'; if ($env:KIT_TESTS_SNAPSHOT -or -not (Test-Path -LiteralPath $kt)) { return }   # inside a test run: never
@@ -289,7 +296,7 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
     Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
   }
   $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0 -or -not $Idle -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
-  if ($s.greenAt -and ((Get-Date) - [datetime]$s.greenAt).TotalDays -lt $days) { return }   # green within the week
+  if (($lg = Get-KitLastGreen $s) -and ((Get-Date) - $lg.LocalDateTime).TotalDays -lt $days) { return }   # green within the week
   $tree = "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}' 2>$null)".Trim()   # owner: an unchanged kit (its tree green-stamped by kit-tests.ps1) never reruns, whatever the age
   if ($tree -and (Get-KitGreenTreeDate $tree)) { return }
   if ($s.at -and ((Get-Date) - [datetime]$s.at).TotalHours -lt (Get-KitParam 'kitTests.retryHours')) { return }   # one try a day until green
@@ -302,9 +309,7 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
 # health: the last full run (green or not) and when the next is due
 function Get-KitHealthLinesFullTests {
   $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0) { return }
-  $s = (Get-KitFullTestsState).s; $g = if ($s.greenAt) { [datetimeoffset]$s.greenAt }
-  # a green full run of this kit's tree (a worktree's, before the pull) counts too
-  $td = Get-KitGreenTreeDate "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}' 2>$null)".Trim(); if ($td -and $td -ne '-') { try { $tdo = [datetimeoffset]$td; if (-not $g -or $tdo -gt $g) { $g = $tdo } } catch {} }
+  $s = (Get-KitFullTestsState).s; $g = Get-KitLastGreen $s
   "Kit tests (full, every $days days while idle): last green $(if ($g) { $g.LocalDateTime.ToString('yyyy-MM-dd') } else { 'never' })$(if ($s.start -and (-not $g -or [datetimeoffset]$s.start -gt $g)) { ", last run $(([datetime]$s.start).ToString('yyyy-MM-dd'))$(if (Test-KitPid $s.pid $s.start) { ' (running)' } elseif ($s.read) { ' (not green: log kit-tests-full.txt)' })" })."
 }
 

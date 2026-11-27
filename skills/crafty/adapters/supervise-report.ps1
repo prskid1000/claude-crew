@@ -396,8 +396,9 @@ function Get-KitStatusRows([datetime]$Now = (Get-Date), [string]$Session) {
   # a running step of the same name is that agent now
   $trk = (Read-KitTracking).tasks; $txCache = @{}; $byTx = @{}
   # Agent-tool subagent: transcript = the one with its join line "(pass -Session <id> to beat" (a bare id is also quoted), kept; a left one: one scan
+  # after it left, even inside the retry window of a miss before (a sweep that scanned mid-run made the runtimes status cases flaky)
   $txLeftMin = Get-KitParam 'supervise.transcriptLeftMinutes'; $txRetryMin = Get-KitParam 'supervise.transcriptRetryMinutes'
-  $txOf = { param($e) if ($e.transcript -or -not $e.session -or ($e.status -eq 'left' -and (($e.txTry -and [datetime]$e.txTry -ge [datetime]$e.beat) -or ($Now - [datetime]$(if ($e.beat) { $e.beat } else { $e.joined })).TotalMinutes -gt $txLeftMin)) -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt $txRetryMin)) { return "$($e.transcript)" }
+  $txOf = { param($e) if ($e.transcript -or -not $e.session -or ($e.status -eq 'left' -and (($e.txTry -and [datetime]$e.txTry -ge [datetime]$e.beat) -or ($Now - [datetime]$(if ($e.beat) { $e.beat } else { $e.joined })).TotalMinutes -gt $txLeftMin)) -or ($e.txTry -and ($Now - [datetime]$e.txTry).TotalMinutes -lt $txRetryMin -and -not ($e.status -eq 'left' -and [datetime]$e.txTry -lt [datetime]$e.beat))) { return "$($e.transcript)" }
     $k = Get-KitTranscriptKind $e.tool; if (-not $txCache.ContainsKey($k)) { $txCache[$k] = @(Get-KitLiveTranscripts $Now 360 $k) }
     $hit = @($txCache[$k] | Where-Object { $_.LastWriteTime -ge [datetime]$e.joined -and (Test-KitTranscriptMarker $_.FullName "(pass -Session $($e.session) to beat") })[0]
     # a workflow agent that joined by hand (revy-18 under review:<area>): its step transcript

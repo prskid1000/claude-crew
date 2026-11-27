@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L90 warm · L115 context · L173 idle
+// Sections: L25 crash · L56 plain · L96 warm · L121 context · L190 idle
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
@@ -23,6 +23,18 @@ const input = readFileSync(0, 'utf8')
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(CLAUDE|KIT)_|^(TEMP|TMP)$/i.test(k)))
 
 // ---- crash: block (exit 2, the reason to the agent) or, under KIT_GUARD_BYPASS=1, allow; both logged for supervise
+// guard.jsonl in Write-KitLog's line shape (pwsh is broken, absent or not asked here); a write error never blocks
+function guardLog() {
+  const map = JSON.parse(readFileSync(join(here, 'kit.example.json'), 'utf8'))._paths, d = new Date(), p = (n) => `${n}`.padStart(2, '0')
+  return join(kit, map.stateDir, map.durable.audit, `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, 'guard.jsonl')
+}
+function logLine(fields) {
+  try {
+    const d = new Date(), p = (n) => `${n}`.padStart(2, '0'), off = -d.getTimezoneOffset(), file = guardLog()
+    const at = new Date(d.getTime() + off * 60000).toISOString().slice(0, -1) + (off < 0 ? '-' : '+') + p(Math.floor(Math.abs(off) / 60)) + ':' + p(Math.abs(off) % 60)   // local, as Write-KitLog
+    mkdirSync(dirname(file), { recursive: true }); appendFileSync(file, JSON.stringify({ at, run: process.env.KIT_RUN || '', agent: process.env.KIT_AGENT || '', script: 'guard_client.mjs', verb: 'guard', ...fields }) + '\n')
+  } catch { }
+}
 function crashed(rc, err, event = 'crash') {
   if (dying) process.exit(2); dying = true   // an error in here: still blocked, never a loop
   let inp = ''; try { inp = `${input}` } catch { }   // unset when stdin itself failed
@@ -32,14 +44,8 @@ function crashed(rc, err, event = 'crash') {
     .replace(/(bearer|basic|token|passw\w*|secret|api[-_]?key|authoriz\w*|cookie)[^\s=:]*(?:\s*[=:]\s*|\s+)(?:(?:bearer|basic)\s+)?[^\s;]+(?:;\s*[^\s;]+)*;?/gi, '$1 [redacted]').slice(0, 160)   // Write-KitLog masks; this line skips it
   let tool = '', session = '', bypass = process.env.KIT_GUARD_BYPASS === '1' || event === 'timeout'
   try { const j = JSON.parse(inp); tool = `${j.tool_name || ''}`; session = `${j.session_id || ''}` } catch { }
-  try {
-    const map = JSON.parse(readFileSync(join(here, 'kit.example.json'), 'utf8'))._paths, d = new Date(), p = (n) => `${n}`.padStart(2, '0'), off = -d.getTimezoneOffset()
-    const dir = join(kit, map.stateDir, map.durable.audit, `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`)
-    const at = new Date(d.getTime() + off * 60000).toISOString().slice(0, -1) + (off < 0 ? '-' : '+') + p(Math.floor(Math.abs(off) / 60)) + ':' + p(Math.abs(off) % 60)   // local, as Write-KitLog
-    mkdirSync(dir, { recursive: true }); const file = join(dir, 'guard.jsonl')   // Write-KitLog's line shape: pwsh is broken or absent here
-    if (event === 'timeout') { let seen = ''; try { seen = readFileSync(file, 'utf8') } catch { }; if (seen.includes(`"in":"${h}"`)) { event = 'crash'; bypass = process.env.KIT_GUARD_BYPASS === '1' } }   // the same input slow again: a hang, not load
-    appendFileSync(file, JSON.stringify({ at, run: process.env.KIT_RUN || '', agent: process.env.KIT_AGENT || '', script: 'guard_client.mjs', verb: 'guard', event, session, tool, in: h, rc, letThrough: bypass, why }) + '\n')
-  } catch { }
+  if (event === 'timeout') { let seen = ''; try { seen = readFileSync(guardLog(), 'utf8') } catch { }; if (seen.includes(`"in":"${h}"`)) { event = 'crash'; bypass = process.env.KIT_GUARD_BYPASS === '1' } }   // the same input slow again: a hang, not load
+  logLine({ event, session, tool, in: h, rc, letThrough: bypass, why })
   const what = `kit guard crashed (rc ${rc}${why ? `: ${why}` : ''})`
   if (event === 'timeout') process.exit(0)
   if (bypass) { process.stdout.write(JSON.stringify({ systemMessage: `${what}; KIT_GUARD_BYPASS=1 let this call through unguarded` }) + '\n'); process.exit(0) }
@@ -113,14 +119,19 @@ function ask(tries) {
 }
 
 // ---- context: Read and SQL calls answered here, never by pwsh (owner 2026-11-22: big whole-file Reads and wide SQL results filled
-// agents' context): a Read (whole file or one offset / limit range) of a text file over guard.readMaxLines lines or guard.readMaxKB; a SELECT * or a row
-// SELECT without LIMIT <= guard.sqlMaxRows (aggregates, SHOW, DESCRIBE, EXPLAIN pass). Pins: kit.local.json guard.<key>
+// agents' context): a Read (whole file or one offset / limit range) of a text file over guard.readMaxLines lines or guard.readMaxKB; a SELECT * over 10 rows or a row
+// SELECT without LIMIT <= guard.sqlMaxRows (aggregates, SHOW, DESCRIBE, EXPLAIN pass). Pins: kit.local.json guard.<key>. Denies go to guard.jsonl.
 function param(key) {
   let v; try { v = key.split('.').reduce((o, k) => o?.[k], JSON.parse(readFileSync(join(here, 'kit.local.json'), 'utf8'))) } catch { }
   if (typeof v === 'number') return v
   try { return Number(/default=([\d.]+)/.exec(JSON.parse(readFileSync(join(kit, 'skills', 'bossy', 'params.registry.json'), 'utf8')).params[key])[1]) } catch { return 0 }
 }
-function deny(why) { process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
+// a deny here is logged like crafty.ps1 guard's (bossy.ps1 audit, supervise WATCH); test runs (no session_id) are not
+let hookIn = null
+function deny(why) {
+  const ti = hookIn?.tool_input || {}, cmd = `${ti.file_path ?? ti.query ?? ti.sql ?? ti.statement ?? ti.command ?? (ti.timeout_ms != null ? `timeout_ms ${ti.timeout_ms}` : '')}`.replace(/[\r\n\t]+/g, ' // ').slice(0, 2000)
+  if (hookIn?.session_id) logLine({ event: 'deny', session: `${hookIn.session_id}`, agentId: `${hookIn.agent_id || ''}`, tool: `${hookIn.tool_name || ''}`, why, cmd })
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
 // a screenshot costs ~2k tokens per read (owner 2026-11-27: 14 per test session, 1.3 of them re-reads): its browser.viewScale copy
 // first, never the same unchanged image twice in one agent's session; Read limit: 1 = the full image on purpose (small text, after a compaction)
 function imageRule(f, who) {
@@ -135,10 +146,12 @@ function imageRule(f, who) {
   if (seen.split('\n').includes(key)) deny(`kit guard: you already read ${f} in this session (unchanged; its image is in your context): use what you saw or noted; to look again (after a compaction, a detail): Read it with limit: 1`)
   try { mkdirSync(dirname(log), { recursive: true }); appendFileSync(log, key + '\n') } catch { }
 }
+// rule secrets: the same text as adapters/guard-localenv.ps1 (a command that reads the store)
+const SECRET_WAYS = "Instead: names + tenants: pokey.ps1 user list -Target <t> · a call: pokey.ps1 api -Target <t> -As <login> -Method GET -Path '/...' · a browser: session({ target, as }) · an app: pokey.ps1 ui login -Target <t> -As <login> · none fits: pokey.ps1 user create -Target <t> -Name <login> -Role <role> · keys: kitbag.py audit config"
 function readRule(ti, who = '') {
   const f = `${ti.file_path || ''}`
   // the test logins: Claude Code's settings.json deny covers its Read; this one covers every CLI's own file view (README "Install")
-  if (/(^|[\\/])skills[\\/]pokey[\\/]targets\.local\.json$/i.test(f)) deny('kit guard: skills/pokey/targets.local.json holds test logins: never read it; names + tenants: pokey.ps1 user list -Target <t>; a call as a user: pokey.ps1 api -Target <t> -As <user>')
+  if (/(^|[\\/])skills[\\/]pokey[\\/]targets\.local\.json$/i.test(f)) deny(`kit guard: ${f} holds test logins and secrets (secrets.store): never read or print it. ${SECRET_WAYS}`)
   if (f && /\.(png|jpe?g|webp)$/i.test(f) && ti.limit == null) imageRule(f, who)
   if (!f || ti.pages || /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i.test(f)) return
   const maxL = param('guard.readMaxLines'), maxKB = param('guard.readMaxKB'); let kb = 0, lines = 0
@@ -158,18 +171,22 @@ function sqlRule(ti) {
   const q0 = `${ti.query || ti.sql || ti.statement || ''}`; if (!q0.trim()) return
   const q1 = q0.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`[^`]*`/g, 'x').replace(/--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\//g, ' ').trim()
   if (!/^\(?\s*(select|with)\b/i.test(q1)) return
-  // the top level only: subqueries, CTE bodies and EXISTS (SELECT * ...) return no rows to the agent
-  let depth = 0, q = ''; for (const ch of q1) { if (ch === ')') depth--; if (depth <= 0) q += ch; if (ch === '(') depth++ }
-  q = q.replace(/^\(\)\s*/, '')
-  if (!q.trim()) q = q1.replace(/^\(\s*|\s*\)\s*;?\s*$/g, '')   // the whole query in parens
-  if (/\bselect\s+(?:distinct\s+)?(?:[\w]+\.)?\*/i.test(q)) deny('kit guard: SELECT * pulls every column into your context: name the columns you need (DESCRIBE <table> or information_schema.columns ... LIMIT first)')
-  const max = param('guard.sqlMaxRows'), lim = /\blimit\s+(?:\d+\s*,\s*)?(\d+)\s*(?:offset\s+\d+\s*)?(?:for\s+update\s*|lock\s+in\s+share\s+mode\s*)?;?\s*$/i.exec(q)
+  // the top level only (subqueries, CTE bodies and EXISTS (SELECT * ...) return no rows to the agent): m = the query, paren bodies blanked (same length)
+  const blank = (t) => { let d = 0, o = ''; for (const ch of t) { if (ch === ')') d--; o += d > 0 ? ' ' : ch; if (ch === '(') d++ } return o }
+  let base = q1, m = blank(base); if (!m.replace(/[()\s;]/g, '')) { base = q1.replace(/^\(\s*|\s*\)\s*;?\s*$/g, ''); m = blank(base) }   // the whole query in parens
+  const q = m.replace(/\(\s*\)/g, '()'), max = param('guard.sqlMaxRows')
+  const lim = /\blimit\s+(?:\d+\s*,\s*)?(\d+)\s*(?:offset\s+\d+\s*)?(?:for\s+update\s*|lock\s+in\s+share\s+mode\s*)?;?\s*$/i.exec(q)
+  // a look at a few whole rows is fine (audit 2026-11-27: SELECT * ... LIMIT 5 was denied)
+  if (/\bselect\s+(?:distinct\s+)?(?:[\w]+\.)?\*/i.test(q) && !(lim && Number(lim[1]) <= SQL_STAR_ROWS)) deny(`kit guard: SELECT * pulls every column into your context: name the columns you need (DESCRIBE <table> first), or look at a few rows with LIMIT <= ${SQL_STAR_ROWS}`)
   if (lim) { if (max && Number(lim[1]) > max) deny(`kit guard: LIMIT ${lim[1]} is over ${max} rows (guard.sqlMaxRows): aggregate (COUNT, GROUP BY) or page with a smaller LIMIT`); return }
-  const sel = [...q.matchAll(/\bselect\s+([\s\S]*?)\bfrom\b/gi)].pop(); if (!sel) return   // no FROM: one row
-  const agg = sel[1].split(',').every((x) => /^\s*(?:distinct\s+)?(count|sum|min|max|avg|group_concat|bit_and|bit_or|std\w*|var\w*)\s*\(\)/i.test(x))
-  if (agg && !/\bgroup\s+by\b/i.test(q)) return
+  const sel = [...m.matchAll(/\bselect\s+(?:distinct\s+)?([\s\S]*?)\bfrom\b/dgi)].pop(); if (!sel) return   // no FROM: one row
+  // every item an aggregate, wrapped or aliased (COUNT(*) c, DATE(MIN(x)) d1), and no GROUP BY: one row
+  const [s0, s1] = sel.indices[1], items = []; let at = s0
+  for (let i = s0; i <= s1; i++) if (i === s1 || m[i] === ',') { items.push(base.slice(at, i)); at = i + 1 }
+  if (items.every((x) => /\b(count|sum|min|max|avg|group_concat|bit_and|bit_or|std\w*|var\w*)\s*\(/i.test(x)) && !/\bgroup\s+by\b/i.test(q)) return
   deny(`kit guard: a row query without LIMIT can fill your context: add LIMIT <= ${max} (guard.sqlMaxRows), or aggregate (COUNT, GROUP BY ... LIMIT)`)
 }
+const SQL_STAR_ROWS = 10
 // ---- idle: an idle wait over the 5 min prompt-cache life re-writes the whole context on the next call (owner 2026-11-27: 1,049
 // misses, 224M tokens in 4 days); a Monitor expiry or a short sleep wakes the agent inside it
 function warmRule(tn, ti, sub) {   // subagents only: the main session writes its cache with a 1 h life
@@ -185,7 +202,7 @@ function warmRule(tn, ti, sub) {   // subagents only: the main session writes it
 
 if (!input.trim()) process.exit(0)
 { let j = null; try { j = JSON.parse(input) } catch { }
-  const tn = `${j?.tool_name || ''}`
+  hookIn = j; const tn = `${j?.tool_name || ''}`
   if (tn === 'Read') { readRule(j.tool_input || {}, j.session_id ? `${j.session_id}-${j.agent_id || 'main'}` : ''); process.exit(0) }
   warmRule(tn, j?.tool_input || {}, j?.agent_id); if (tn === 'Monitor') process.exit(0)
   if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) } }

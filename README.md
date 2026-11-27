@@ -356,7 +356,7 @@ adapter x verb (native, config, fallback, gap); lint PARITY fails a verb with ne
 | device | `devices.type` | dump tap tapid tapxy type clear key swipe openurl shot shotmark wait photo log mic | android, ios, none |  | gap: clear (1), dump (1), key (1), log (1), mic (2), openurl (1), photo (2), shot (1), shotmark (1), swipe (1), tap (1), tapid (1), tapxy (1), type (1), wait (1) | `skills/pokey/adapters/ui-android.ps1` |
 | browser-engine | `browser.engine` | session context; caps: reuse | chrome, chromium, firefox, webkit |  |  | `skills/pokey/adapters/engine-playwright.mjs` |
 | scheduler | `supervise.osTimer` | install uninstall status | windows, cron, launchd, none |  |  | `skills/bossy/adapters/os-timer.ps1` |
-| guard | `built-in guard rules` | check | local-env, deployed-env, large-writes, secrets, runtimes, script-faults, file-dumps |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
+| guard | `built-in guard rules` | check | deployed-env, large-writes, secrets, runtimes, script-faults, file-dumps |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
 | stack | `repos[] stack detection` | detect | core, presets |  |  | `skills/crafty/adapters/stack-presets.ps1` |
 <!-- kit-graph:end -->
 
@@ -378,12 +378,21 @@ adapter x verb (native, config, fallback, gap); lint PARITY fails a verb with ne
   and worktree-root folders no repo lists (links unlinked, never followed; files only when all are in git) (`-WorktreesOnly`;
   `-Detail`: each item and what stays, why; counts per repo: health line, dashboard); Claude session temp: reported only.
   `crafty.ps1 wt remove` prunes and deletes its branch by the same rule.
-- The PreToolUse guard blocks `git stash`, `--no-verify`, force-pushes to shared branches, pushes to a deploy branch (`repos[].deploys[].branch`: a deploy MR only, `bossy.ps1 deploy merge -Mr`), ungated builds, hand-started dev
-  servers, `adb kill-server`, whole-drive searches (`find /`, `grep -r C:/`: scope them), a file or folder path as the command or opened by `start` / `ii` / `code` (the Read tool instead), Git Bash `/d/...` paths and `/x` args handed to Windows programs, script faults (rule `script-faults`), new files at a drive root or outside the workspace, kit, repo, worktree, temp, `~/.claude`, `~/Downloads` and `guard.writeRoots` roots (any write, the Write tool too: `crafty.ps1 dir` instead) and edits
-  to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live edit: `KIT_LIVE_EDIT=1`),
-  a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw `glab mr merge` / `gh pr merge` of an MR no
-  task tracks (no task: `KIT_NO_TASK=<reason>`, logged). Deploys start only from a person's word. Never production. One
-  machine (a local memory gate).
+- The PreToolUse guard (one deny or rewrite per call, each named `(rule <id>)`, logged to the audit `guard.jsonl`: `bossy.ps1 audit`,
+  supervise WATCH) rewrites what it can fix exactly and runs the corrected command (Claude Code `updatedInput`, the reason in
+  context): a script file in command position through its interpreter (`python -X utf8`, `node`, `pwsh -NoProfile -File`; rule
+  `open-file`), Git Bash `/d/...` paths for Windows programs as `D:/...` and `/x` args with `MSYS_NO_PATHCONV=1` (rule `msys-path`).
+  It blocks `git stash`, `--no-verify`, ungated builds, `adb kill-server`, whole-drive searches (`find /`, `grep -r C:/`: scope
+  them), a doc or folder opened by its association (`start` / `ii` / `code`, a path as the command: the Read tool instead), script
+  faults (rule `script-faults`), the push rule (`push`: force on a shared branch, a deploy branch `repos[].deploys[].branch`: a
+  deploy MR only, `bossy.ps1 deploy merge -Mr`; a protected product branch; kit main: fast-forward only), the write-place rule
+  (`write-place`: a stray `.runtime`, scratch at a main checkout's top, shared temp names, a drive root or outside the workspace,
+  kit, repo, worktree, temp, `~/.claude`, `~/Downloads` and `guard.writeRoots`: `crafty.ps1 dir` instead), the secret store
+  (`secrets`: a command or a Read), edits to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live
+  edit: `KIT_LIVE_EDIT=1`), and a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw
+  `glab mr merge` / `gh pr merge` of an MR no task tracks (no task: `KIT_NO_TASK=<reason>`, logged). The hook client answers
+  Read size, SQL (`SELECT *` over 10 rows, rows without `LIMIT`; aggregates pass), screenshot re-reads and long idle waits
+  itself, logged the same way. Deploys start only from a person's word. Never production. One machine (a local memory gate).
 ## Extending (change the kit)
 The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` changes it in a kit worktree while runs execute the
 live clone, keeps it generic, gets a `revy` review and pushes main (`main` is protected:
@@ -396,7 +405,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16800 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 11000 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
+always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16800 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 11000 · tests 16000 · start per role 12000 · files:33 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: in `tests/`, shared setup in `tests/harness.ps1`; a case name

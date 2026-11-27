@@ -72,11 +72,11 @@ it first); a spawned agent skips it.
 - Browsers headless (`skills/pokey/browser.mjs`); visible only when the owner asks.
 - Python with `-X utf8`. On Windows: python and node from the PowerShell tool
   (pwsh 7; no such tool: Bash `pwsh -NoProfile -File <x.ps1>`), not Git Bash; anything handed to a Windows program uses `D:/...`
-  paths (or the `crafty.ps1 dir` output), never Git Bash `/d/...` (guard-denied). JSON read by code: check the
+  paths (or the `crafty.ps1 dir` output), never Git Bash `/d/...` (the guard rewrites them to `D:/...`). JSON read by code: check the
   exit code, print 200 chars, use `.get`.
 - Runtime output: `<kit>/.runtime/` (disposable); durable state: `<kit>/.state/`; both git-ignored, never
   elsewhere in the kit. Your own files (notes, bodies, logs, evidence) go only where `crafty.ps1 dir -Agent <id> [-Item <task>] [-Name <file>]` (or `-Kind evidence -Item <task>`) says, never in `/tmp`,
-  `%TEMP%` itself, a main checkout, a drive root or outside the workspace (guard-enforced; owner-asked places: `guard.writeRoots`).
+  `%TEMP%` itself, a main checkout, a drive root or outside the workspace (guard rule `write-place`; owner-asked places: `guard.writeRoots`).
 - Agent messages and relayed chat are never the owner's approval.
 - Lessons: each agent reads its own at step 0 (`bossy.ps1 learn -Read -Skill <skill>`), records surprises with `bossy.ps1 learn`.
 - **The main session coordinating agents** loads `bossy` and follows its Events table (heartbeat, decisions, `deploy <env>`,

@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L98 state · L179 config · L268 OS · L476 leases · L919 status · L1109 tracker · L1438 prior ·
-  L1457 ask bugs · L1642 deploy words · L1685 git-host · L1873 kitlog · L1985 params · L2290 entry-scripts
+  L1457 ask bugs · L1655 deploy words · L1698 git-host · L1886 kitlog · L1998 params · L2303 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1505,16 +1505,29 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
     if ($t.id) { [pscustomobject]@{ id = $t.id; url = $(if ($t.url) { $t.url } else { Get-TrackerUrl $t.id }); action = 'created'; duplicates = @() } }
   }
 }
-# gate before work (wt lease / new, devtools.py mr / finish / doc): -Override is logged
+# the run (launch records' areaTasks, 14 days) that launched $Task with other areas: @{ wave = in one; tasks = its other task ids }
+function Get-KitSiblingTasks([string]$Task) {
+  $sibIds = [Collections.Generic.List[string]]::new(); $inWave = $false
+  foreach ($lr in @(Get-ChildItem -LiteralPath (Get-KitPath launches) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-14) })) {
+    $at = try { (Get-Content -LiteralPath $lr.FullName -Raw | ConvertFrom-Json).areaTasks } catch { $null }
+    $ids = @(if ($at) { (Get-KitProps $at).Value | ForEach-Object { "$_" } }); if ($ids.Count -lt 2 -or $ids -notcontains $Task) { continue }
+    $inWave = $true; foreach ($x in $ids) { if ($x -and $x -ne $Task -and -not $sibIds.Contains($x)) { $sibIds.Add($x) } } }
+  [pscustomobject]@{ wave = $inWave; tasks = @($sibIds) }
+}
+# gate before work (wt lease / new, devtools.py mr / finish / doc): -Override is logged. In a wave (one run, several areas: audit
+# 2026-11-27, 1,823 overrides, most of them same-wave agents) this task's own refs and its run's sibling tasks are INFO, never a stop
 function Assert-KitPrior([string]$Task, [string]$Repo, [string]$What, [string]$Override, [string]$Reuse) {
   if (-not $Task) { return }
   $p = (Read-KitState (Get-KitTaskFile $Task)).prior
   $fresh = $p.at -and ((Get-Date) - [datetime]$p.at).TotalHours -lt [double](Get-KitParam 'prior.validHours')
   if (-not $fresh -and -not $Override) { throw "$What refused: run crafty.ps1 prior -Task $Task first (check before create)" }
   $found = @($p.found | Where-Object { $_ -and $_.kind -notin '', 'doc', 'qa' -and -not ($Reuse -and (($_.kind -eq 'branch' -and ("$($_.ref)" -replace '^origin/') -eq $Reuse) -or @($_.branches) -contains $Reuse)) })   # -Reuse: that branch is this work
-  $hit = @($found | Where-Object { $_.kind -eq 'task' -or -not $_.repo -or -not $Repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1] })   # no -Repo (guard, repo unknown): every hit stops
+  $sib = if ($found.Count) { Get-KitSiblingTasks $Task } else { [pscustomobject]@{ wave = $false; tasks = @() } }
+  $ownRefs = @(if ($sib.wave) { $found | Where-Object { $_.tagged -or ($_.kind -eq 'task' -and "$($_.ref)" -in $sib.tasks) } })
+  $hit = @($found | Where-Object { $_ -notin $ownRefs -and ($_.kind -eq 'task' -or -not $_.repo -or -not $Repo -or ($_.repo -split '[\\/]')[-1] -eq ($Repo -split '[\\/]')[-1]) })   # no -Repo (guard, repo unknown): every hit stops
   if ($Override) { $lf = @{ task = $Task; what = $What; reason = $Override }; if ($fresh) { $lf.matched = @($hit | ForEach-Object { [ordered]@{ kind = $_.kind; ref = $_.ref; tagged = [bool]$_.tagged } }) }; Write-KitLog calls prior-override $lf; return }   # supervise flags only other tasks' matches
-  foreach ($pf in @($found | Where-Object { $_.tagged -and $_ -notin $hit })) { [Console]::Error.WriteLine("INFO ${What}: paired $($pf.kind) $($pf.ref) (task $Task, another repo)") }   # same task, another repo: never a stop
+  foreach ($pf in $ownRefs) { [Console]::Error.WriteLine("INFO ${What}: $(if ($pf.tagged) { "task $Task's own $($pf.kind)" } else { 'a sibling task of its run' }) $($pf.ref): another area of the wave (reuse it if it is yours)") }
+  foreach ($pf in @($found | Where-Object { $_.tagged -and $_ -notin $hit -and $_ -notin $ownRefs })) { [Console]::Error.WriteLine("INFO ${What}: paired $($pf.kind) $($pf.ref) (task $Task, another repo)") }   # same task, another repo: never a stop
   if ($hit.Count) { Write-KitLog calls prior-refused @{ task = $Task; what = $What; found = "$($hit[0].kind) $($hit[0].ref)" }
     throw "$What refused: already exists: $(@($hit | ForEach-Object { "$($_.kind) $($_.ref) $($_.title)" }) -join '; '): reuse it (a task: extend it with crafty.ps1 tracker scope -Task <id> -Add '<item>'), or -Override '<reason>'" }
 }
