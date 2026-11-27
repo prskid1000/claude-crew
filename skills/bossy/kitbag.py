@@ -25,7 +25,7 @@ a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L998 lint ·
   L1420 README graph · L1538 lint command · L1851 audit · L1999 registry · L2060 tools · L2148 parity · L2754 arch lint ·
-  L3073 prose · L3328 sections · L3460 budget · L3478 migrate · L3626 plugins · L3683 state lint · L3871 main
+  L3073 prose · L3328 sections · L3460 budget · L3478 migrate · L3629 plugins · L3686 state lint · L3874 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -3549,7 +3549,7 @@ def cmd_migrate(a):
 # Changed defaults: a kit.local.json older than a version gets, once, the value that reproduced the old default for each key it
 # does not set; a new one (setup -WriteLocal: kit.example.json) starts at CONFIG_VERSION. Only kit-shaped rows ship here; an org's
 # own old values (hosts, branch names, stack, tracker patterns) go in the git-ignored LEGACY_LOCAL next to kit.local.json.
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 # legacy-defaults:start
 LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README "Configuration" has today's)
     2: {
@@ -3565,6 +3565,9 @@ LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README
     3: {
         'tests.fallbackRunner': 'spec',
         'build.mavenOffline': True,
+    },
+    4: {
+        'budget.agentCap.devy': 0,
     },
 }
 # legacy-defaults:end

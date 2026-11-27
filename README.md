@@ -329,7 +329,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `api`, `auth` |  | api.defaultUser (unset: a target's only user), api.tokenFields (login answer token fields, [] = none); targets: auth.tokenField / auth.preset oauth2 / oidc; userAuth.&lt;user&gt; = that login's auth fields (path, body, tokenField, ...) over auth + its tenant; profiles.&lt;name&gt; {login, secret, auth, fields (tenant, {placeholders})} |
 | `secrets` |  | store: file (default: targets.local.json) / env (KIT_SECRET_&lt;NAME&gt;) / keychain / command (secrets.command.&lt;verb&gt;); &lt;store&gt;.paths: guard-denied; secret:&lt;name&gt; values resolve through it |
 | `masking`, `migrations` |  | masking.rules {table.column glob: kind}, logins, names {first, last, streets}; migrations.tool (none), lbcheck.*, historyTables (envy db.md) |
-| `configVersion` | 3 | below 3: migrate adds old defaults |
+| `configVersion` | 4 | below 4: migrate adds old defaults |
 | `gitHostApi` | {"commands": {}} | commands: host verb -&gt; command; hostCli: more MR CLIs [{exe, noun, type, allow (setup -Allow entries), source, target, title, valued}] |
 | `ci` | {"type": "host"} |  |
 | `naming` | {"products": {}} | products / areas {CODE: name}, digits (3): &lt;PRODUCT&gt;-&lt;AREA&gt;-&lt;nnn&gt; keys in the description's kit table, plain titles (dec-60); tags.&lt;group&gt;: [values] / false (kitbag.py naming tags); tags.areaMap: {AREA code: broad tag} (wide modules, default the area name); titleStrip: [regex] old codes tracker retag cuts (old title kept in the description) |

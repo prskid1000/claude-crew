@@ -30,7 +30,7 @@ Expect 'retro + lead notes: tidy renders the retro (devtools.py render retro), c
 # retro lessons go through a worktree commit: the live clone stays clean (a dirty LESSONS.md blocked the pull, 2026-11-23)
 Expect 'tidy retro: learn, forget and lint run on the worktree W, which is committed and pushed; no learn on the live kit' ($tj -match 'wt new -Repo' -and $tj -match '& W/skills/bossy/bossy\.ps1 learn' -and $tj -match 'git -C W push origin HEAD:main' -and $tj -notmatch '\$\{C\}/skills/bossy/bossy\.ps1 learn' -and $tj -notmatch '\$\{C\}/skills/bossy/kitbag\.py (forget|lint)')
 # K60b: kitty kinds fix (owner 2026-11-27) / docs / env / retro run on sonnet (tidy apply step, bossy K1); the rest keep the agent default
-Expect 'kitty model per kind: tidy apply on sonnet, bossy K1 names fix / docs / env / retro -> sonnet' ($tj -match "label: 'apply'[^\n]*agentType: 'kitty', model: A\.model \|\| 'sonnet'" -and
+Expect 'kitty model per kind: tidy apply, bossy K1 fix / docs / env / retro -> sonnet' ($tj -match "label: 'apply'[^\n]*agentType: 'kitty', model: A\.model \|\| 'sonnet'" -and
   (Get-Content (Join-Path $src 'skills/bossy/SKILL.md') -Raw) -match "fix / docs / env / retro pass ``model: 'sonnet'``" -and (Get-Content (Join-Path $src 'agents/kitty.md') -Raw) -match '(?m)^model: opus')
 "Hi, I hope this is basically fine, merged successfully`n## Changes`n- a`n- b`n- c`n- d" | Set-Content $pf
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
@@ -155,14 +155,14 @@ $mgf = Join-Path $kc 'skills/crafty/kit.local.json'; $mgn = Join-Path (Split-Pat
 $mg4 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String; $mc4 = Get-Content $mgf -Raw | ConvertFrom-Json; $mg5 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String
 & $J @{ localOnly = @('notes') } $mgf; $null = & $py -X utf8 $KT2 migrate 2>&1; $mc6 = Get-Content $mgf -Raw | ConvertFrom-Json
 & $J @{ configVersion = 2; localOnly = @('notes') } $mgf; $null = & $py -X utf8 $KT2 migrate 2>&1; $mc7 = Get-Content $mgf -Raw | ConvertFrom-Json
-& $J @{ configVersion = 3; localOnly = @('notes') } $mgf; $mg8 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String
+& $J @{ configVersion = 4; localOnly = @('notes') } $mgf; $mg8 = & $py -X utf8 $KT2 migrate 2>&1 | Out-String
 # an org's own old values: the git-ignored migrate.legacy.local.json beside kit.local.json, merged per version
 & $J @{ localOnly = @('notes') } $mgf; & $J @{ '2' = @{ 'qa.newDefectIdRx' = '^Z\d' } } (Join-Path (Split-Path $mgf) 'migrate.legacy.local.json'); $null = & $py -X utf8 $KT2 migrate 2>&1; $mc9 = Get-Content $mgf -Raw | ConvertFrom-Json
 Remove-Item (Join-Path (Split-Path $mgf) 'migrate.legacy.local.json')
 $mgOrg = @('gitHost', 'gitHostType', 'protectedBranchesBase', 'tracker', 'qa', 'devices', 'storage', 'migrations', 'masking', 'localEnv', 'reports', 'cleanup') | Where-Object { $mc6.PSObject.Properties[$_] }
-Expect "kitbag migrate: an old config gets only kit-shaped old defaults per version (own values kept), once; an empty one nothing org-shaped ($($mgOrg -join ','))" ($mc4.configVersion -eq 3 -and
+Expect "kitbag migrate: an old config gets only kit-shaped old defaults per version (own values kept), once; an empty one nothing org-shaped ($($mgOrg -join ','))" ($mc4.configVersion -eq 4 -and
   $mc4.process.gates.merge -eq 'builtin:testingDocs' -and $mc4.deploy.productionPattern -eq '(?i)live' -and $mc4.deploy.ssh.manager -eq 'systemd' -and -not $mc4.localEnv.defaults.tenants.model -and $mc4.localEnv.defaults.tenants.schema -eq 'adm' -and "$($mc4.localEnv.defaults.tenants.idColumns)" -eq 'org' -and -not $mc4.gitHostType -and
-  $mg4 -match '"process\.gates" set to the pre-3 default' -and -not $mg5.Trim() -and -not $mgOrg -and $mc6.tests.fallbackRunner -eq 'spec' -and
+  $mg4 -match '"process\.gates" set to the pre-4 default' -and $mc7.budget.agentCap.devy -eq 0 -and -not $mg5.Trim() -and -not $mgOrg -and $mc6.tests.fallbackRunner -eq 'spec' -and
   -not $mc7.process -and $mc7.tests.fallbackRunner -eq 'spec' -and $mc7.build.mavenOffline -eq $true -and -not $mg8.Trim() -and $mc9.qa.newDefectIdRx -eq '^Z\d' -and -not $mc9.qa.lanes)
 Remove-Item (Split-Path $kc) -Recurse -Force -ErrorAction SilentlyContinue
 # section maps: lint SECTION-MAP / SECTION-UNMAPPED, audit SECTION-BIG, sections --fix

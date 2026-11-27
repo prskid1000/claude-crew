@@ -14,7 +14,7 @@ export const meta = {
 }
 
 // Sections: L18 args · L154 record-args · L172 budget · L187 build-prompt · L272 ship-prompt · L292 plan · L310 spike ·
-//   L322 local-loop · L404 stages · L559 ship · L595 debate · L708 deploy · L722 learn
+//   L322 local-loop · L403 stages · L558 ship · L594 debate · L707 deploy · L721 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -27,7 +27,7 @@ const A0 = args || {}   // as given (resume); A = this run's batch
 const cnt = (x) => (x || []).length, ltOf = (r) => r.localTest || {}, ls = (x) => [].concat(x || []), say = (a, s) => log(`${a.id}: ${s}`), halt = (x) => ({ ...x, budgetStopped: true }), urls = (l, s = ', ') => l.map((m) => m.url).join(s)
 const BATCH = A0.batch > 0 && Array.isArray(A0.agents) && A0.agents.length > A0.batch ? A0.batch : 0
 const IN = BATCH ? A0.agents.slice(0, BATCH) : A0.agents || []
-// producers outside a run's list ship in another run
+// producers outside the run's list ship in another
 const own = (gs) => gs.map((a) => ({ ...a, dependsOn: ls(a.dependsOn).filter((p) => gs.some((b) => b.id === p)) }))
 const A = BATCH ? { ...A0, agents: own(IN) } : A0
 const KIT = (A.kitDir || '.claude').replace(/[\\/]+$/, '')
@@ -117,7 +117,7 @@ const REVIEW_SCHEMA = obj({ findings: arr(obj({ mr: S, file: S, line: N, severit
 const mustFix = (f) => f.severity === 'blocking'   // should-fix -> MR Follow-ups (owner 2026-11-26)
 const CI_SCHEMA = obj({ done: B, mrs: arr(obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status'])) })
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
-// no result: one retry after a wait, <label>@redo; edit steps check state first
+// no result: one retry after a wait (<label>@redo); edits check state
 const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|merge-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
 // usage limit: next tier (<label>@up); steppy unknown (older session): kitty
 const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
@@ -368,21 +368,20 @@ async function noneWordOk(a, r, id) {
  return /^WORD /.test(out)
 }
 const mergeHeld = async (lt, a, r) => holdsMerge(lt, a, r) || (noneGated(lt, a, r) && !(await noneWordOk(a, r, lt.decisionId)))
-// each handoff records the previous devy's signals first
 const LEARN_NOW = LEARN === false ? '' : ` First record its notable events (failures, rounds, blockers, decisions) as signals: & ${ORCH} learn -Skill <skill> -Kind <kind> -Text "<what + fix>" -Ref ${RUN} -Source workflow.`
-// a code handoff before a passing loop resumes with it
 const LOOPED = new Set(), loopFirst = (a, x) => (['doc', 'spike', 'repro'].includes(a.kind) || LOOPED.has(a.id) || ltOf(x).status === 'PASS' ? '' : 'LOOP FIRST: finish the open code, then the local test loop (step 5). ')
+const HANDOFFS = 8, spent = (a, x) => (say(a, 'handoffs used up'), halt(x))
 async function localLoop(a, r, retries, stage) {
- for (let h = 0; r && r.handoff && h < 3; h++) {
+ for (let h = 0; r && r.handoff && !r.budgetStopped && h < HANDOFFS; h++) {
   say(a, `HANDOFF at its budget (${r.handoff}): a fresh devy continues`)
   const r2 = await agent(continuePrompt(a, r, `${loopFirst(a, r)}HANDOFF: read the previous devy's resume brief ${r.handoff} first, continue.${LEARN_NOW}`), dvo(a, 'handoff', stage))
   r = mergeReports({ ...r, handoff: '' }, r2, 'Handoff')
  }
+ if (r && r.handoff) return spent(a, r)
  r = normLocal(r)
  if (cnt(r.needsEnvFix)) return r
  const go = async (s, why, l, note, more) => { say(a, s); const r2 = await agent(continuePrompt(a, r, why), { ...dvo(a, l, stage), ...more }); if (r2 && Array.isArray(r2.mrs)) r = normLocal(mergeReports(r, r2, note)) }
  const failing = () => ltOf(r).status === 'FAIL' && holdsMerge(r.localTest)
- // done with no local loop: one local round before review
  if (retries && cnt(r.mrs) && (r.localTest || { status: 'NONE' }).status === 'NONE' && await mergeHeld({ status: 'NONE', ...r.localTest }, a, r)) {
   if (!(await gate(stage))) return halt(r)
   await go('reported done with no local loop - local round before review', 'You reported done without the local test loop (localTest NONE). Run it now on the local env: every goal, then report localTest.', 'local', 'Local loop round')
@@ -422,7 +421,7 @@ const results = await pipeline(
   if (!r) return { id: a.id, error: 'agent returned nothing (twice)' }
   // a HANDOFF stays in its phase; no report after a redo: the phase before stands
   const asRep = (x) => (x && Array.isArray(x.mrs) ? x : null)
-  const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < 3; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `${text === PH.code ? '' : loopFirst(a, x)}HANDOFF: read your resume brief ${x.handoff} first, continue.${LEARN_NOW} ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return x }
+  const goOnIn = async (x, text) => { for (let h = 0; ph && x.handoff && h < HANDOFFS; h++) x = mergeReports({ ...x, handoff: '' }, asRep(await agent(continuePrompt(a, x, `${text === PH.code ? '' : loopFirst(a, x)}HANDOFF: read your resume brief ${x.handoff} first, continue.${LEARN_NOW} ${text}`), dvo(a, 'handoff', 'Build'))), 'Handoff'); return ph && x.handoff ? spent(a, x) : x }
   const phase = async (x, text, l, more) => ((await gate('Build')) ? goOnIn(mergeReports(x, asRep(await agent(continuePrompt(a, x, text), { ...dvo(a, l, 'Build'), ...more })), `Phase ${l}`), text) : halt(x))
   const phaseNext = (x) => ph && !x.budgetStopped && !cnt(x.mrs) && !cnt(x.needsDecision) && !cnt(x.needsEnvFix)
   r = await goOnIn(r, PH.code)

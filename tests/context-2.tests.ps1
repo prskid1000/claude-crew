@@ -74,6 +74,7 @@ Expect "wt new root: the kit -> <workspace>/.kit-worktrees, a product repo -> th
 Remove-Item $wrCfg
 # owner 2026-11-27: devy alone runs a 1-hour prompt cache (Claude Code agent front matter experimental.cacheTtl); lint SCHEMA takes only 5m / 1h
 $ttlAgents = @(Get-ChildItem (Join-Path $src 'agents') -Filter *.md | Where-Object { (Get-Content $_.FullName -Raw) -match '(?m)^experimental:\r?\n  cacheTtl: 1h\r?$' } | ForEach-Object BaseName)
-Expect "prompt cache 1h: devy only ($($ttlAgents -join ',')); schema pattern 5m|1h" ("$ttlAgents" -eq 'devy' -and (Get-Content (Join-Path $src 'skills/bossy/kitbag.py') -Raw) -match "'experimental': \{'type': 'string', 'pattern': r'\^cacheTtl: \(5m\|1h\)\$'\}")
+$ttlPy = "$(python -X utf8 -c "import sys; sys.path.insert(0, r'$(Join-Path $src 'skills/bossy')'); import kitbag as k; fm = k.frontmatter(open(r'$(Join-Path $src 'agents/devy.md')', encoding='utf-8').read().replace(chr(13), '')); s = k.SCHEMAS['agent']; print(fm.get('experimental'), len(k.schema_errors(fm, s)), len(k.schema_errors(dict(fm, experimental='cacheTtl: 2h'), s)))")"
+Expect "prompt cache 1h: devy only ($($ttlAgents -join ',')); lint SCHEMA passes it, refuses 2h ($ttlPy)" ("$ttlAgents" -eq 'devy' -and $ttlPy -eq 'cacheTtl: 1h 0 1')
 Remove-TestKit $k
 Complete-Tests

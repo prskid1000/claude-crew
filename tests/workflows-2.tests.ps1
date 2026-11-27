@@ -47,6 +47,19 @@ const seenAt = [], noStep = await run({ brief: 'C:/b/g.md', ..._kl, agents: [{ i
 const okNoStep = !/steppy/.test(noStep) && seenAt.includes('record-args=kitty') && seenAt.includes('release-G1=kitty'); console.log(`no-steppy:${okNoStep}`); if (!okNoStep) console.log(`  ${noStep.slice(0, 80)} | ${seenAt.join(' ').slice(0, 300)}`)
 '@
 Expect-Each (Invoke-Js w2-buildy $jsb $wfd) 'buildy: #' 'limit-up', 'limit-same-tier', 'other-error', 'resume-tiers', 'track-script', 'config-reworded', 'budget-reworded', 'no-steppy' -Show 6
+# a devy that hands off forever (a 200k agentCap.devy, owner 2026-11-27): HANDOFFS 8, then the item halts, never reviewed half-done
+$jsh = @'
+const hoCalls = []
+const hoAgent = async (p, o) => { hoCalls.push(o.label)
+  if (/^record-args/.test(o.label)) return { ok: true, output: 'RECORDED x\nBUDGET {"cap":10000000,"estimate":100000,"stopAt":0.8}\nCONFIG {}' }
+  if (o.label === 'budget') return { ok: true, output: JSON.stringify({ spent: 1 }) }
+  if (/^(build|handoff):/.test(o.label)) return _rep({ status: 'PASS', env: 'e', rounds: 1, failing: [], goalsDoc: 'g' }, { mrs: [], handoff: 'C:/b/h.md' })
+  return { ..._ok('[]'), json: '' } }
+await run({ brief: 'C:/b/w.md', agents: [{ id: 'X1', items: 'A1' }], mandate: ['m'], ..._kl }, hoAgent, _n, _n, pipeline)
+const hoN = hoCalls.filter((l) => l === 'handoff:X1').length
+console.log(`cap:${hoN === 8 && !hoCalls.some((l) => /^(review|ship|fix|docs):/.test(l))}`); console.log(`${hoN} handoffs: ${hoCalls.join(' ')}`)
+'@
+Expect-Each (Invoke-Js w2-handoff $jsh $wfd) 'buildy handoffs: # (8, then the item halts: no review / ship / fix)' 'cap' -Show 3
 # owner 2026-11-26: a pending decision on A2 never holds the review of A1's MR (mrs[].items); a changed head is reviewed again
 $jse = @'
 const mA = { url: 'https://h/g/api/-/merge_requests/1', repo: 'api', merged: false, items: ['A1'], head: 'h1' }, mB = { ...mA, url: 'https://h/g/api/-/merge_requests/2', items: ['A2'], head: 'h2' }
