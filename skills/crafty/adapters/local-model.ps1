@@ -14,7 +14,7 @@ local-model.ps1: Claude Code, Claude Desktop or VS Code on a local model server 
   & <kit>/skills/crafty/crafty.ps1 local run -JobFile <f> [-Fnv <hash>] [-DeadlineSec 540]   one workflow step locally: the job { unit, agentType,
       schema, prompt } through local claude (every check below); prints the step's JSON on one line, or exits 3 with
       "FALLBACK cloud[ (started)]: <why>" (not local, refused, no seat; started: client error, deadline, no JSON), logged
-  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff|coverage|runon [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Add] [-Write <f>] [-WriteRunonEvidence] ...
+  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff|coverage|runon [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Add] [-Degrade <set>] [-Write <f>] [-WriteRunonEvidence] ...
       recorded real steps replayed on the local model, scored per role; run units and their bench coverage (localbench.py header)
 Checks before a start, in order: forbidden model ids (models.local.forbiddenModels, wildcards: -Model, ANTHROPIC_*MODEL,
 --model / -m in the client args), free RAM (Get-GateAvailGB - models.local.needGB >= Get-KitKeepFreeGB; skipped while the requested model is resident: GET /v1/models/active), the server

@@ -17,6 +17,10 @@ Claude Code reads this file through `CLAUDE.md` (`@AGENTS.md`); edit only here.
 - Cut greetings, preamble, recaps, hedges, praise, filler, closing summaries. A longer-than-needed text is a defect.
 - Chat to owner: dense text only; no Mermaid, SVG gauges or box art. Visuals live in dashboard (supervise-report.html) and report artifacts:
   text wraps, never truncates; a changed page ships after `kitbag.py ui-check <page>` passes, shots read.
+- **Final answer** (every agent, any model): a step or report with a JSON schema ends with ONE `StructuredOutput` call (no schema: the agent's
+  `templates.md` "Final reports" JSON as the whole last message); every required key present, empty as `[]` / `""`; ids, URLs, counts, status
+  words and file paths copied from tool output, never invented; a list item uses the keys the schema or the cloud example shows; a
+  tool call written as text, a fence round it or prose after it fails the step.
 - **Corrections:** a correction applies to its whole group: when the owner corrects one output, format or behaviour, fix every
   sibling the same way (all adapters, templates, docs that produce or describe it), a test each; list what changed.
 - **Understand first** (owner 2026-11-25): before instructing an agent, proposing or changing anything, read the logic, data and

@@ -2,13 +2,17 @@
   build  [-Set s] [-Roles r1,r2] [-N 4] [-Since yyyy-mm-dd] [-Transcripts dir] [-Force | -Add]   replay set from recorded steps, per
          role; an existing set: -Force empties it (results of a changed task are never reused: meta.promptSha), -Add tops each
          run unit up to -N with transcripts the set lacks (a unit with none: "no history")
+         -Degrade <set> -Set <new> [-N 3]: a bad-prompt set: per role -N tasks of <set> with their prompt degraded mechanically (modes
+         vague: steps cut to 400 chars · noformat: no schema block, no JSON-only line · noisy: numbered steps dropped, log noise added);
+         cloud.json / schema.json kept; the answer shape reaches the model only through the run's system contract
   coverage [-Set s,s2] [-Min 3] [-Json]   bench tasks per models.runOn unit and set; a unit under -Min: gap
   runon  [-Write <kit.local.json | kit.example.json>] [-Json]   every run unit (kitbag.py runon_units), its setting and source;
          -Write: missing units added as cloud, models.local.use folded in (its units local) and dropped, unknown units listed
   report ... -WriteRunonEvidence   + each unit's accept rate on this set into kit.local.json models.runOn.<unit>.evidence.<set>
          (never flips its cloud | local)
   run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-TimeoutSec 600] [-Force]   resumable: skips ids that
-         ran (rc 0) on the same prompt; -Ids re-runs them; claude --tools= (none)
+         ran (rc 0) on the same prompt + contract; -Ids re-runs them; claude --tools= (none); every run appends the kit's final-answer
+         contract (AGENTS.md "Final answer" + the answer's shape, as StructuredOutput's schema is in production) as a system prompt file
   score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (fields, list items, text facts)
   report -Model m [-Set s] [-Json]   accept rate over the ids that ran, infra fails apart, median / p90 s per role, cloud tier
   diff   -Model m -Against m2 [-Set s] [-Json]   per role delta and the ids that flip
@@ -18,7 +22,7 @@ derived from the answer the cloud run returned (cloud.json). Nothing runs tools:
 writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<set>/tasks/<id>/ (set) and
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (the transcript adapter's root, */subagents/**). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L37 store · L71 runon · L206 reply parsing · L251 outcome · L364 build · L515 run
+Sections: L41 store · L75 runon · L210 reply parsing · L255 outcome · L368 build · L519 contract · L601 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
@@ -512,6 +516,88 @@ def tasks_of(a):
     return td, ids
 
 
+# ---- contract: what a production agent already has as system text (AGENTS.md "Final answer", StructuredOutput's schema)
+def final_rule():
+    try:
+        with open(osp.join(KIT_DIR, 'AGENTS.md'), encoding='utf-8') as fh:
+            m = re.search(r'^- \*\*Final answer\*\*.*?(?=^- \*\*|^## |\Z)', fh.read(), re.S | re.M)
+    except OSError:
+        m = None
+    return re.sub(r'\s+', ' ', m.group(0)).strip() if m else 'End with ONE StructuredOutput call: every required key, values copied from the tool outputs.'
+
+
+def deep_schema(v):
+    """The answer's shape with the keys of list items and nested objects (the production schema names them; a type-only one hides them)."""
+    names = {bool: 'boolean', int: 'number', float: 'number', str: 'string'}
+    if isinstance(v, dict):
+        return {'type': 'object', 'properties': {k: deep_schema(x) for k, x in v.items()}, 'required': list(v)}
+    if isinstance(v, list):
+        d = next((x for x in v if isinstance(x, dict)), None)
+        return {'type': 'array', 'items': deep_schema(d)} if d else {'type': 'array'}
+    return {'type': names[type(v)]} if type(v) in names else {}
+
+
+def contract_of(td, tid):
+    cloud = rjson(osp.join(td, tid, 'cloud.json'), {}) or {}
+    return ('SYSTEM CONTRACT. ' + final_rule() + '\nStructuredOutput schema of this answer (reply with exactly this JSON object, nothing else; no prose, no code fence):\n'
+            + json.dumps(deep_schema(cloud), ensure_ascii=False) + '\n')
+
+
+MODES = ('vague', 'noformat', 'noisy')
+NOISE = ['2026-01-01T00:00:00Z INFO heartbeat ok', 'WARN retry 1/3 after timeout (ignored)', 'DEBUG cache hit ratio 0.93', 'INFO gc pause 12ms']
+STEPS_AT, CALLS_AT, SCHEMA_AT = '=== STEP INSTRUCTIONS (already carried out) ===\n', '\n\n=== TOOL CALLS ALREADY RUN (in order) ===\n', '\n\n=== JSON SCHEMA OF THE ANSWER'
+
+
+def degrade(body, mode):
+    """A real task prompt made worse on purpose, mechanically: the same tool outputs; scoring keeps schema.json and cloud.json."""
+    pre, rest = body.split(STEPS_AT, 1)
+    steps, rest = rest.split(CALLS_AT, 1)
+    calls, _, schema = rest.partition(SCHEMA_AT)
+    pre = pre.replace('as ONE JSON object matching the schema at the end. Reply with the JSON object only: no prose, no code fence.', 'as JSON.')
+    if mode == 'vague':
+        steps = steps[:400]
+    elif mode == 'noisy':
+        steps = '\n'.join(ln for ln in steps.splitlines() if not re.match(r'\s*(\d+[.)]|[-*]) ', ln))
+        calls = '\n'.join(NOISE) + '\n' + calls + '\n' + '\n'.join(reversed(NOISE))
+    out = pre + STEPS_AT + steps + CALLS_AT + calls + '\n'
+    return out if mode == 'noformat' else out + SCHEMA_AT + schema
+
+
+def cmd_degrade(a):
+    src, dst = osp.join(bench_dir(a.degrade), 'tasks'), osp.join(bench_dir(a.set, create=True), 'tasks')
+    if not osp.isdir(src):
+        print(f'build: no set {a.degrade} to degrade'); return 1
+    if a.set == a.degrade:
+        print('build: -Set must name a new set, not the source'); return 2
+    if osp.isdir(dst) and os.listdir(dst) and not a.force:
+        print(f'build: set {a.set} has tasks: -Force rebuilds it'); return 1
+    shutil.rmtree(dst, ignore_errors=True)
+    per, made = {}, 0
+    for tid in sorted(os.listdir(src)):
+        m = rjson(osp.join(src, tid, 'meta.json'), {}) or {}
+        role = m.get('role') or tid
+        if (a.roles and role not in a.roles) or per.get(role, 0) >= min(a.n, 3):
+            continue
+        try:
+            with open(osp.join(src, tid, 'prompt.md'), encoding='utf-8') as fh:
+                text = fh.read()
+            mode = MODES[per.get(role, 0) % 3]
+            body = degrade(text, mode)
+        except (OSError, ValueError):
+            continue
+        per[role] = per.get(role, 0) + 1
+        nid = f'{tid}-{mode}'
+        os.makedirs(osp.join(dst, nid), exist_ok=True)
+        with open(osp.join(dst, nid, 'prompt.md'), 'w', encoding='utf-8') as fh:
+            fh.write(body)
+        for f in ('schema.json', 'cloud.json'):
+            shutil.copy(osp.join(src, tid, f), osp.join(dst, nid, f))
+        wjson(osp.join(dst, nid, 'meta.json'), dict(m, id=nid, degrade=mode, source=f'{a.degrade}/{tid}', promptSha=sha(body)))
+        made += 1
+    print(f"build {a.set}: {made} degraded task(s) from {a.degrade}: " + ', '.join(f'{k} {v}' for k, v in per.items()))
+    return 0 if made else 1
+
+
 # ---- run: each task through crafty.ps1 local claude (the launcher's checks, seat and env), no tools, one id at a time
 def cmd_run(a):
     td, ids = tasks_of(a)
@@ -531,10 +617,16 @@ def cmd_run(a):
     pwsh = 'pwsh'
     for tid in ids:
         psha = (rjson(osp.join(td, tid, 'meta.json'), {}) or {}).get('promptSha')
-        if not a.force and (res.get(tid) or {}).get('rc') == '0' and res[tid].get('promptSha') == psha:
+        con = contract_of(td, tid)
+        csha = sha(con)
+        if not a.force and (res.get(tid) or {}).get('rc') == '0' and res[tid].get('promptSha') == psha and res[tid].get('contract') == csha:
             continue   # ran on this prompt; a launcher refusal or a timeout runs again
         # --tools= (not --tools ''): a .cmd shim drops an empty argument
-        rest = ['--', '--tools=', '--strict-mcp-config', '--no-session-persistence']
+        os.makedirs(osp.join(md, 'runs'), exist_ok=True)
+        cp = osp.join(md, 'runs', tid + '.system.md')
+        with open(cp, 'w', encoding='utf-8') as fh:
+            fh.write(con)
+        rest = ['--', '--tools=', '--strict-mcp-config', '--no-session-persistence', '--append-system-prompt-file', cp]
         argv = [pwsh, '-NoProfile', '-File', crafty, 'local', 'claude', '-Model', a.model, '-Agent', a.agent, '-WaitMinutes', '0', '-PromptFile', osp.join(td, tid, 'prompt.md')] + rest
         t0 = time.time()
         pr = subprocess.Popen(argv, cwd=osp.join(td, tid), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=os.name != 'nt')
@@ -556,7 +648,7 @@ def cmd_run(a):
             fh.write(out or b'')
         with open(osp.join(md, 'runs', tid + '.err'), 'wb') as fh:
             fh.write(err or b'')
-        res[tid] = {'id': tid, 'rc': str(rc), 'sec': round(time.time() - t0, 1), 'at': datetime.datetime.now().isoformat(timespec='seconds'), 'client': 'claude', 'promptSha': psha}
+        res[tid] = {'id': tid, 'rc': str(rc), 'sec': round(time.time() - t0, 1), 'at': datetime.datetime.now().isoformat(timespec='seconds'), 'client': 'claude', 'promptSha': psha, 'contract': csha}
         wjson(res_p, res)
         print(f"run {tid}: rc {rc}, {res[tid]['sec']} s", flush=True)
     return 0
@@ -698,6 +790,7 @@ def main(argv):
     ap.add_argument('-Transcripts', '--transcripts', dest='transcripts', default='')
     ap.add_argument('-Agent', '--agent', dest='agent', default=os.environ.get('CLAUDE_AGENT') or 'main')
     ap.add_argument('-TimeoutSec', '--timeoutsec', dest='timeoutsec', type=int, default=600)
+    ap.add_argument('-Degrade', '--degrade', dest='degrade', default='')
     ap.add_argument('-Force', '--force', dest='force', action='store_true')
     ap.add_argument('-Json', '--json', dest='json', action='store_true')
     a = ap.parse_args(argv)
@@ -712,6 +805,8 @@ def main(argv):
         print('diff: -Against <model>'); return 2
     if a.ids and a.verb == 'run':
         a.force = True   # named ids: a repro re-runs them
+    if a.verb == 'build' and a.degrade:
+        return cmd_degrade(a)
     return {'build': cmd_build, 'run': cmd_run, 'score': cmd_score, 'report': cmd_report, 'diff': cmd_diff, 'coverage': cmd_coverage, 'runon': cmd_runon}[a.verb](a)
 
 

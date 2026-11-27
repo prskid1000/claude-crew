@@ -1,5 +1,5 @@
 """Outcome rules of localbench.py on hand-made answers (tests/local-bench.tests.ps1 runs it): prints FAIL lines. Usage: python tests/local_bench_cases.py <skills/crafty/adapters dir>. Exit codes: 0 pass, 1 a check failed."""
-import sys
+import json, sys
 sys.path.insert(0, sys.argv[1])
 import localbench as b  # noqa: E402
 
@@ -35,5 +35,18 @@ for want, role, exp in [('kitty@', 'kitty:ship', False), ('kitty@', 'kitty@fix',
     if b.wanted(want, role) != exp:
         bad += 1
         print(f'FAIL wanted({want}, {role}): want {exp}')
-print(f'{len(cases) + 8 - bad} ok, {bad} failed')
+body = (b.PREFIX + 'Do:\n1. read\n2. answer\n' + 'x' * 500 + b.CALLS_AT + '[1] Bash: ls\noutput:\nfile.txt\n' + b.SCHEMA_AT + ' (reply with the JSON object only) ===\n{"type": "object"}\n')
+extra = [
+    ('noformat drops the schema block', 'JSON SCHEMA' not in b.degrade(body, 'noformat') and 'file.txt' in b.degrade(body, 'noformat')),
+    ('noformat drops the JSON-only line', 'Reply with the JSON object only: no prose' not in b.degrade(body, 'noformat')),
+    ('vague cuts the steps', len(b.degrade(body, 'vague')) < len(body) - 90 and 'JSON SCHEMA' in b.degrade(body, 'vague')),
+    ('noisy drops numbered steps, adds noise', '1. read' not in b.degrade(body, 'noisy') and 'heartbeat ok' in b.degrade(body, 'noisy')),
+    ('deep schema names list item keys', b.deep_schema({'mrs': [{'url': 'u', 'merged': False}], 'n': 1})['properties']['mrs']['items']['properties']['merged'] == {'type': 'boolean'}),
+    ('the final rule is read from AGENTS.md', 'StructuredOutput' in b.final_rule()),
+]
+for name, ok in extra:
+    if not ok:
+        bad += 1
+        print(f'FAIL {name}')
+print(f'{len(cases) + 8 + len(extra) - bad} ok, {bad} failed')
 sys.exit(1 if bad else 0)
