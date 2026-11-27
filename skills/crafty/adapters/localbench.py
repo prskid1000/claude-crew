@@ -1,8 +1,10 @@
 """localbench.py: replay recorded real agent steps against a local model and score them (crafty.ps1 local bench).
-  build  [-Set s] [-Roles r1,r2] [-N 4] [-Since yyyy-mm-dd] [-Transcripts dir]   replay set from recorded steps, per role
-  run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-Client claude|codex] [-TimeoutSec 600] [-Force]   resumable; skips done ids
-  score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id
-  report -Model m [-Set s] [-Json]   accept rate, median / p90 seconds per role, the role's cloud tier
+  build  [-Set s] [-Roles r1,r2] [-N 4] [-Since yyyy-mm-dd] [-Transcripts dir] [-Force]   replay set from recorded steps, per
+         role; an existing set: -Force empties it (results of a changed task are never reused: meta.promptSha)
+  run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-Runner claude|codex] [-TimeoutSec 600] [-Force]   resumable: skips ids that
+         ran (rc 0) on the same prompt; -Ids re-runs them; claude: --tools= (none), codex: --sandbox read-only
+  score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (none comparable: unscored)
+  report -Model m [-Set s] [-Json]   accept rate over the ids that ran, infra fails apart, median / p90 s per role, cloud tier
   diff   -Model m -Against m2 [-Set s] [-Json]   per role delta and the ids that flip
 A role: <agentType>:<step label> (workflow steps, e.g. checky:close, kitty:learn) or <agentType> (ad hoc agents, e.g. watchy).
 A task: the step's prompt, every tool call it made with its output (cut), then "answer from these outputs" + the JSON schema
@@ -11,8 +13,9 @@ writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<se
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (~/.claude/projects/<workspace>/*/subagents/**); Codex / Antigravity sessions:
 no reader (README parity row). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
+Sections: L32 store · L66 reply parsing · L111 outcome · L151 build · L267 run
 """
-import argparse, json, os, re, statistics, subprocess, sys, time, datetime
+import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
 sys.path.insert(0, osp.join(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))), 'bossy'))   # <kit>/skills/bossy
 from kitbag import kit_path, local_config, KIT_DIR  # noqa: E402
@@ -26,6 +29,7 @@ PREFIX = ('SHADOW TASK. No tools exist in this session: never call a tool, never
           'matching the schema at the end. Reply with the JSON object only: no prose, no code fence.\n\n=== STEP INSTRUCTIONS (already carried out) ===\n')
 
 
+# ---- store: models.local config, <state>/local-bench paths, JSON files
 def cfg():
     return ((local_config(KIT_DIR, 'kit.local.json').get('models') or {}).get('local') or {})
 
@@ -45,6 +49,10 @@ def rjson(p, default=None):
             return json.load(fh)
     except (OSError, ValueError):
         return default
+
+
+def sha(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
 
 
 def wjson(p, v):
@@ -70,7 +78,8 @@ def json_object(t):
 
 def parse_reply(t):
     t = (t or '').strip()
-    out = {'strict': None, 'repairable': None, 'lenient': None, 'toolText': bool(re.search(r'<tool_call>|<function=|"name"\s*:\s*"(Bash|Read|ToolSearch)"', t))}
+    tool_rx = r'<tool_call>|<function=|"tool_calls"|"name"\s*:\s*"(Bash|PowerShell|Read|Grep|Glob|Edit|Write|ToolSearch|shell)"'
+    out = {'strict': None, 'repairable': None, 'lenient': None, 'toolText': bool(re.search(tool_rx, t))}
     try:
         out['strict'] = json.loads(t)
     except ValueError:
@@ -96,7 +105,7 @@ def valid(v, s):
 
 def derive_schema(v):
     names = {bool: 'boolean', int: 'number', float: 'number', str: 'string', list: 'array', dict: 'object'}
-    return {'type': 'object', 'properties': {k: {'type': names.get(type(x), 'string')} for k, x in v.items()}, 'required': list(v)}
+    return {'type': 'object', 'properties': {k: ({'type': names[type(x)]} if type(x) in names else {}) for k, x in v.items()}, 'required': list(v)}   # null: any type
 
 
 # ---- outcome: the same decision as the cloud answer, by the answer's shape
@@ -125,14 +134,18 @@ def outcome(loc, cloud):
             return False, f"ok {loc.get('ok')} vs {cloud.get('ok')}"
         cf = facts(cloud.get('output', ''))
         hit = {f for f in cf if f in str(loc.get('output', ''))}
-        return (not cf or len(hit) / len(cf) >= 0.8), f'facts {len(hit)}/{len(cf)}' + (f' missing {sorted(cf - hit)[:4]}' if cf - hit else '')
+        if not cf:
+            return None, 'unscored: no URL, count or status word to compare'
+        return len(hit) / len(cf) >= 0.8, f'facts {len(hit)}/{len(cf)}' + (f' missing {sorted(cf - hit)[:4]}' if cf - hit else '')
     if 'reclassify' in cloud and 'newDefects' in cloud:   # a note audit: the same defect / notExercised ids, the same new defect count
         ids = lambda o, k: sorted(str(x.get('id')) for x in o.get('reclassify') or [] if isinstance(x, dict) and x.get(k))
         same = ids(loc, 'defect') == ids(cloud, 'defect') and ids(loc, 'notExercised') == ids(cloud, 'notExercised') and len(loc.get('newDefects') or []) == len(cloud.get('newDefects') or [])
         return same, f"defect {ids(loc, 'defect')} vs {ids(cloud, 'defect')}; newDefects {len(loc.get('newDefects') or [])} vs {len(cloud.get('newDefects') or [])}"
     cf, lf = short_fields(cloud), short_fields(loc)   # any other answer: >= 80% of its short fields (flags, statuses, counts, list sizes) equal
     same = [k for k in cf if lf.get(k) == cf[k]]
-    return (not cf or len(same) / len(cf) >= 0.8), f'fields {len(same)}/{len(cf)}' + (f" diff {sorted(set(cf) - set(same))[:4]}" if len(same) < len(cf) else '')
+    if not cf:
+        return None, 'unscored: no short field to compare'
+    return len(same) / len(cf) >= 0.8, f'fields {len(same)}/{len(cf)}' + (f" diff {sorted(set(cf) - set(same))[:4]}" if len(same) < len(cf) else '')
 
 
 # ---- build: recorded subagent transcripts -> tasks
@@ -201,6 +214,11 @@ def cmd_build(a):
     want = [r for r in (a.roles or DEFAULT_ROLES)]
     since = datetime.datetime.strptime(a.since, '%Y-%m-%d').timestamp() if a.since else time.time() - 14 * 86400
     sd, made, seen = bench_dir(a.set, create=True), {}, set()
+    old = osp.join(sd, 'tasks')
+    if osp.isdir(old) and os.listdir(old):
+        if not a.force:
+            print(f'build: set {a.set} has tasks ({old}): -Force rebuilds it, or name a new -Set'); return 1
+        shutil.rmtree(old)   # results of a changed id never match again: run compares meta.promptSha
     metas = []
     for dp, _, fs in os.walk(root):
         for f in fs:
@@ -230,7 +248,7 @@ def cmd_build(a):
             fh.write(body)
         wjson(osp.join(td, 'schema.json'), sch)
         wjson(osp.join(td, 'cloud.json'), final)
-        wjson(osp.join(td, 'meta.json'), {'id': tid, 'role': hit, 'tier': model, 'label': m.get('description'), 'transcript': js, 'calls': len(seq)})
+        wjson(osp.join(td, 'meta.json'), {'id': tid, 'role': hit, 'tier': model, 'label': m.get('description'), 'transcript': js, 'calls': len(seq), 'promptSha': sha(body)})
     missing = [w for w in want if not made.get(w)]
     print(f"build {a.set}: {sum(made.values())} task(s) in {sd}: " + ', '.join(f'{k} {v}' for k, v in made.items()) + (f' · no samples: {", ".join(missing)}' if missing else ''))
     return 0 if made else 1
@@ -264,28 +282,33 @@ def cmd_run(a):
     crafty = osp.join(KIT_DIR, 'skills', 'crafty', 'crafty.ps1')
     pwsh = 'pwsh'
     for tid in ids:
-        if tid in res and not a.force:
-            continue
-        rest = ['--', '--tools', '', '--strict-mcp-config', '--no-session-persistence'] if a.client == 'claude' else []
-        argv = [pwsh, '-NoProfile', '-File', crafty, 'local', a.client, '-Model', a.model, '-Agent', a.agent, '-PromptFile', osp.join(td, tid, 'prompt.md')] + rest
+        psha = (rjson(osp.join(td, tid, 'meta.json'), {}) or {}).get('promptSha')
+        if not a.force and (res.get(tid) or {}).get('rc') == '0' and res[tid].get('promptSha') == psha:
+            continue   # ran on this prompt; a launcher refusal or a timeout runs again
+        # --tools= (not --tools ''): a .cmd shim drops an empty argument; codex: no writes
+        rest = ['--', '--tools=', '--strict-mcp-config', '--no-session-persistence'] if a.client == 'claude' else ['--', '--sandbox', 'read-only']
+        argv = [pwsh, '-NoProfile', '-File', crafty, 'local', a.client, '-Model', a.model, '-Agent', a.agent, '-WaitMinutes', '0', '-PromptFile', osp.join(td, tid, 'prompt.md')] + rest
         t0 = time.time()
+        pr = subprocess.Popen(argv, cwd=osp.join(td, tid), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=os.name != 'nt')
         try:
-            pr = subprocess.Popen(argv, cwd=osp.join(td, tid), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             out, err = pr.communicate(timeout=a.timeoutsec)
             rc = pr.returncode
         except subprocess.TimeoutExpired:
             if os.name == 'nt':   # the client is a grandchild: end the whole tree
                 subprocess.run(['taskkill', '/T', '/F', '/PID', str(pr.pid)], capture_output=True)
             else:
-                pr.kill()
-            out, err = pr.communicate()
+                os.killpg(pr.pid, signal.SIGKILL)
+            try:
+                out, err = pr.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                out, err = b'', b''
             rc = 'timeout'
         os.makedirs(osp.join(md, 'runs'), exist_ok=True)
         with open(osp.join(md, 'runs', tid + '.json'), 'wb') as fh:
             fh.write(out or b'')
         with open(osp.join(md, 'runs', tid + '.err'), 'wb') as fh:
             fh.write(err or b'')
-        res[tid] = {'id': tid, 'rc': str(rc), 'sec': round(time.time() - t0, 1), 'at': datetime.datetime.now().isoformat(timespec='seconds'), 'client': a.client}
+        res[tid] = {'id': tid, 'rc': str(rc), 'sec': round(time.time() - t0, 1), 'at': datetime.datetime.now().isoformat(timespec='seconds'), 'client': a.client, 'promptSha': psha}
         wjson(res_p, res)
         print(f"run {tid}: rc {rc}, {res[tid]['sec']} s", flush=True)
     return 0
@@ -308,16 +331,19 @@ def cmd_score(a):
     md = bench_dir(a.set, a.model)
     res = rjson(osp.join(md, 'results.json'), {}) or {}
     sc_p = osp.join(md, 'score.json')
-    sc = rjson(sc_p, {}) or {}
+    sc = {k: v for k, v in (rjson(sc_p, {}) or {}).items() if osp.isdir(osp.join(td, k))}   # ids of a rebuilt set drop out
     for tid in ids:
         r = res.get(tid)
-        if not r:
+        if not r or r.get('promptSha') != (rjson(osp.join(td, tid, 'meta.json'), {}) or {}).get('promptSha'):
+            sc.pop(tid, None)   # never run, or run on an older prompt
             continue
         meta, schema, cloud = (rjson(osp.join(td, tid, f), {}) for f in ('meta.json', 'schema.json', 'cloud.json'))
         rp = parse_reply(reply_of(osp.join(md, 'runs', tid + '.json')))
         best = next((rp[k] for k in ('strict', 'repairable', 'lenient') if isinstance(rp[k], dict)), None)
         sv = best is not None and valid(best, schema)
         oc, why = outcome(best, cloud) if sv else (False, 'tool-call-text' if rp['toolText'] else 'no schema-valid JSON')
+        if r['rc'] not in ('0', 'timeout'):
+            oc, why = None, f"infra: rc {r['rc']} (launcher refusal or client error; {open(osp.join(md, 'runs', tid + '.err'), encoding='utf-8', errors='replace').read()[-160:].strip() if osp.exists(osp.join(md, 'runs', tid + '.err')) else ''})"
         sc[tid] = {'id': tid, 'role': meta.get('role'), 'tier': meta.get('tier'), 'rc': r['rc'], 'sec': r['sec'], 'strict': isinstance(rp['strict'], dict),
                    'repairable': isinstance(rp['repairable'], dict), 'lenient': isinstance(rp['lenient'], dict), 'toolText': rp['toolText'],
                    'schema': sv, 'outcome': oc, 'accepted': bool(isinstance(rp['strict'], dict) and sv and oc), 'why': why}
@@ -333,8 +359,12 @@ def summary(sc):
     rows = []
     for role, ss in sorted(roles.items()):
         secs = sorted(s['sec'] for s in ss if s['rc'] == '0')
+        infra = sum(s['rc'] not in ('0', 'timeout') for s in ss)
+        unscored = sum(s['outcome'] is None and s['rc'] in ('0', 'timeout') for s in ss)
+        rated = len(ss) - infra - unscored   # the rate counts only ids the model answered and a rule could judge
         rows.append({'role': role, 'tier': '/'.join(sorted({s.get('tier') or '?' for s in ss})), 'n': len(ss), 'accepted': sum(s['accepted'] for s in ss),
-                     'rate': round(100 * sum(s['accepted'] for s in ss) / len(ss)), 'badJson': sum(not s['strict'] for s in ss),
+                     'rate': round(100 * sum(s['accepted'] for s in ss) / rated) if rated else None, 'infra': infra, 'unscored': unscored,
+                     'badJson': sum(not s['strict'] for s in ss if s['rc'] == '0'),
                      'repairable': sum(s['repairable'] and not s['strict'] for s in ss), 'toolText': sum(s['toolText'] for s in ss),
                      'timeouts': sum(s['rc'] == 'timeout' for s in ss), 'p50': statistics.median(secs) if secs else None,
                      'p90': secs[min(len(secs) - 1, round(0.9 * (len(secs) - 1)))] if secs else None})
@@ -349,9 +379,9 @@ def cmd_report(a):
     if a.json:
         print(json.dumps(rows)); return 0
     print(f'{a.set} on {a.model}: {sum(r["accepted"] for r in rows)}/{sum(r["n"] for r in rows)} accepted')
-    print(f'{"role":22} {"tier":10} {"n":>3} {"accept":>7} {"p50 s":>7} {"p90 s":>7} {"badJSON":>8} {"repair":>7} {"toolTxt":>8} {"timeout":>8}')
+    print(f'{"role":22} {"tier":10} {"n":>3} {"accept":>7} {"p50 s":>7} {"p90 s":>7} {"badJSON":>8} {"repair":>7} {"toolTxt":>8} {"timeout":>8} {"infra":>6} {"unscored":>9}')
     for r in rows:
-        print(f'{r["role"]:22} {r["tier"]:10} {r["n"]:3} {str(r["rate"]) + "%":>7} {str(r["p50"]):>7} {str(r["p90"]):>7} {r["badJson"]:8} {r["repairable"]:7} {r["toolText"]:8} {r["timeouts"]:8}')
+        print(f'{r["role"]:22} {r["tier"]:10} {r["n"]:3} {str(r["rate"]) + "%":>7} {str(r["p50"]):>7} {str(r["p90"]):>7} {r["badJson"]:8} {r["repairable"]:7} {r["toolText"]:8} {r["timeouts"]:8} {r["infra"]:6} {r["unscored"]:9}')
     return 0
 
 
@@ -385,7 +415,7 @@ def main(argv):
     ap.add_argument('-N', '--n', dest='n', type=int, default=4)
     ap.add_argument('-Since', '--since', dest='since', default='')
     ap.add_argument('-Transcripts', '--transcripts', dest='transcripts', default='')
-    ap.add_argument('-Client', '--client', dest='client', choices=['claude', 'codex'], default='claude')
+    ap.add_argument('-Runner', '-Client', '--client', dest='client', choices=['claude', 'codex'], default='claude')
     ap.add_argument('-Agent', '--agent', dest='agent', default=os.environ.get('CLAUDE_AGENT') or 'main')
     ap.add_argument('-TimeoutSec', '--timeoutsec', dest='timeoutsec', type=int, default=600)
     ap.add_argument('-Force', '--force', dest='force', action='store_true')
