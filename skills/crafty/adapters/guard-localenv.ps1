@@ -43,7 +43,7 @@ Register-KitAdapter 'guard' 'large-writes' @{ check = { param($a)
   $lwGenHit = @([regex]::Matches($lw, $lwGen) | Where-Object { $m = $_; @(1..7 | Where-Object { $m.Groups[$_].Success } | ForEach-Object {
       $v = [long]($m.Groups[$_].Value -replace '_'); if ($_ -ge 6) { [Math]::Pow(10, $v) } else { $v } } | Where-Object { $_ -gt $lwRows }).Count }).Count
   # a generator counts only next to a DB or file write (audit 2026-11-27: a sha, a decision-id range and range/1e6 in a patch were no data)
-  $lwSink = '(?i)\binsert\b|executemany|\bdone\s*>|\.write\(|writelines|to_csv|open\([^)]*[''"][wa]|\bcopy\s+\w+\s+from\b|to_sql|bulk_?(insert|create|write)|\bload\s+data\b|\b(mysql|psql|sqlcmd|mariadb|sqlite3)\b|\.execute\('
+  $lwSink = '(?i)\binsert\b|executemany|(?<![\d&>-])>{1,2}(?!&)\s*[^\s&|]|\b(tee|Out-File|Set-Content|Add-Content)\b|\.write\(|writelines|to_csv|open\([^)]*[''"][wa]|\bcopy\s+\w+\s+from\b|to_sql|bulk_?(insert|create|write)|\bload\s+data\b|\b(mysql|psql|sqlcmd|mariadb|sqlite3)\b|\.execute\('
   $lwWhy = if ($lwGenHit -and $lw -match $lwSink) { "a row generator past data.maxRows ($lwRows) into a DB or file" }
     elseif ((($lw -match '(?i)\bCREATE\s+(DATABASE|SCHEMA)\b' -and $lwBare -match $lwClient) -or $lw -match '\bmysqladmin\b[^|;&\r\n]*\bcreate\b') -and (-not $lwPort -or $lwPort -in $lwShared)) { "a scratch schema on a shared DB server (port $(if ($lwPort) { $lwPort } else { 'default' }))" }
     elseif (($lw -match '(?i)\bLOAD\s+DATA\s+(?:LOCAL\s+)?INFILE\s+(\S+)' -or $lw -match '\b(?:mysql|psql)\b[^|;&<\r\n]*<\s*(\S+)') -and (& $lwBig $Matches[1])) { "a load or import of a file past data.maxMB ($lwMB MB)" }
@@ -58,7 +58,7 @@ function Test-KitLoginLiteral([string]$Path, [string]$Text) {
   # a browser's --user-data-dir is no login (retro tidy-6: a puppeteer launch was denied)
   if ("$Path" -notmatch '[\\/]work[\\/]agents[\\/]' -or ($Text -replace '(?i)\buser-data-dir\b', '') -notmatch '(?i)\b(login|user(name)?|email)\b' -or
     # a key, not a quoted value (a PASS / FAIL ternary); a value that is a form word or verdict, not a secret (audit 2026-11-27)
-    $Text -notmatch '(?i)(?<!["''\w])(pass(word)?|passwd|pwd|pw)\b["'']?\s*[:=]\s*["''](?![{<$])(?!(pass(word)?|passwd|pwd|fail(ed)?|ok|skip(ped)?|text|hidden|string|secret|true|false|null)["''])[^"''\s]{4,}["'']') { return '' }
+    $Text -notmatch '(?i)(?:(?<=[{,]\s*["''])|(?<!["''\w]))(pass(word)?|passwd|pwd|pw)\b["'']?\s*[:=]\s*["''](?![{<$])(?!(pass(word)?|passwd|pwd|fail(ed)?|ok|skip(ped)?|text|hidden|string|secret|true|false|null)["''])[^"''\s]{4,}["'']') { return '' }
   "kit guard: $Path holds a password literal next to a login; test logins live only in the secret store ($(@(Get-KitSecretPaths) -join ', ')). New login: pokey.ps1 user create -Target <t> -Name <login> -Role <role>; use it: session({ target, as }) / pokey.ps1 api -As <login>; a script: targetOf('<t>').users['<login>'][1]"
 }
 Register-KitAdapter 'guard' 'secrets' @{ check = { param($a)

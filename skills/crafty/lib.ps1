@@ -2,7 +2,7 @@
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
 Sections: L12 paths · L98 state · L179 config · L268 OS · L476 leases · L919 status · L1109 tracker · L1438 prior ·
-  L1457 ask bugs · L1655 deploy words · L1698 git-host · L1886 kitlog · L1998 params · L2303 entry-scripts
+  L1457 ask bugs · L1656 deploy words · L1699 git-host · L1887 kitlog · L1999 params · L2304 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -1509,7 +1509,8 @@ function Add-KitAskBug([string]$Ask, [string]$Key, [string]$Name, [string]$Head,
 function Get-KitSiblingTasks([string]$Task) {
   $sibIds = [Collections.Generic.List[string]]::new(); $inWave = $false
   foreach ($lr in @(Get-ChildItem -LiteralPath (Get-KitPath launches) -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-14) })) {
-    $at = try { (Get-Content -LiteralPath $lr.FullName -Raw | ConvertFrom-Json).areaTasks } catch { $null }
+    $rec = try { Get-Content -LiteralPath $lr.FullName -Raw | ConvertFrom-Json } catch { $null }; if ($env:KIT_RUN -and "$($rec.run)" -ne $env:KIT_RUN) { continue }   # the caller's own run only
+    $at = $rec.areaTasks
     $ids = @(if ($at) { (Get-KitProps $at).Value | ForEach-Object { "$_" } }); if ($ids.Count -lt 2 -or $ids -notcontains $Task) { continue }
     $inWave = $true; foreach ($x in $ids) { if ($x -and $x -ne $Task -and -not $sibIds.Contains($x)) { $sibIds.Add($x) } } }
   [pscustomobject]@{ wave = $inWave; tasks = @($sibIds) }

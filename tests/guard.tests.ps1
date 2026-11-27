@@ -10,6 +10,7 @@ $kl = "$k/skills/crafty/kit.local.json";'{"guard":{"layout":"block"}}' | Set-Con
 # the guard table (was crafty.ps1 guard -SelfTest): tool, command, deny ($true / $false / 'rw' = runs rewritten), the text its answer holds
 $out = Invoke-PsTest guard-table @'
 $D = $args[0]; $cDir = Split-Path $D; . (Join-Path $cDir 'lib.ps1'); $gbn = 'KIT_GUARD_BY' + 'PASS'
+$wtrT = ([IO.Path]::GetFullPath(@($KitConf.WorktreeRoots)[0])).Replace('\', '/'); $null = New-Item -ItemType Directory -Force "$wtrT/wt-ok"; if (-not (Test-Path "$wtrT/wt-ok/.git")) { 'gitdir: x' | Set-Content "$wtrT/wt-ok/.git" }   # a worktree's .git file
 $da = 'default desktop app'; $mg = 'the memory gate';$sx = 'through its interpreter'; $wb = "open the owner's browser"; $rp = 'holds runs in progress'; $hk = 'Hooks must run'; $pb = 'a protected kit branch'; $lk = 'the live kit runs'; $gb = 'Git Bash path'; $rt = 'use the Read tool'; $dr = 'searches a whole drive'
 $cases = @(
 @('P', 'git stash', $true),
@@ -143,6 +144,14 @@ $cases = @(
 @('P', 'git -C "{KIT}" branch -dr origin/main', $true, $pb),
 @('P', 'git -C "{KIT}" update-ref -d refs/remotes/origin/main', $true, $pb),
 @('B', 'git -C "{KIT}" push -u origin HEAD:main; git -C "{KIT}" branch --show-current', $false, $pb),
+# review f11ca9f1: a rewrite builds on an earlier one; every bad segment gets MSYS_NO_PATHCONV=1; quoted text is data; a path in a message: deny
+@('B', 'node a.mjs /d/x/o.png; ./skills/crafty/devtools.py m', 'rw', 'node a.mjs D:/x/o.png; python -X utf8 ./skills/crafty/devtools.py m'),
+@('B', 'node a.mjs /api/x; node b.mjs /api/y', 'rw', 'MSYS_NO_PATHCONV=1 node a.mjs /api/x; MSYS_NO_PATHCONV=1 node b.mjs /api/y'),
+@('B', 'echo "node a.mjs /api/x"; node a.mjs /api/x', 'rw', 'echo "node a.mjs /api/x"; MSYS_NO_PATHCONV=1 node a.mjs /api/x'),
+@('B', './skills/crafty/devtools.py a; git commit -m "fix: call (b.py) here"', 'rw', 'python -X utf8 ./skills/crafty/devtools.py a; git commit -m "fix: call (b.py) here"'),
+@('B', 'git commit -m "note: was /d/x/a.png"; node a.mjs /d/x/a.png', $true, 'Git Bash path'),
+# only worktrees live in a worktree root (2026-11-27): a loose file or a folder that is no worktree is denied; a worktree's own file passes
+@('E', '{WTR}/kitty-x-dbg1.ps1', $true, 'only worktrees live there'), @('B', 'echo x > {WTR}/stray-rt/cache/a.txt', $true, 'that is no worktree'), @('E', '{WTR}/wt-ok/notes.md', $false, 'worktree root'),
 @('B', 'cd {KITB} && git push origin HEAD:main', $false, 'push refused'), @('B', 'cd {KITB} && git push --force origin HEAD:main', $true, $pb),   # Git Bash /d/... cd: the kit, not a product repo (audit pick 7)
 @('B', 'git -C "{KIT}" push origin --delete kit/build-x; git -C "{KIT}" branch -D kit/main-x', $false, $pb),
 @('B', 'git -C /nowhere/repo push origin --delete f/x; git -C /nowhere/repo branch -D develop', $false, $pb),
@@ -242,7 +251,7 @@ $live = Split-Path (git -C $cDir rev-parse --path-format=absolute --git-common-d
 $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
 foreach ($c in $cases) {
   $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit' }[$c[0]]
-  $v = $c[1].Replace('{KRTU}', ($krt -replace '[^/]+$', { $_.Value.ToUpper() })).Replace('{RTU}', '.RUNTIME').Replace('{KRTB}', ($krt -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KRT}', $krt).Replace('{WS}', (Split-Path $live)).Replace('{RT}', '.runtime').Replace('{KITB}', ((Split-Path (Split-Path $cDir)).Replace('\', '/') -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KIT}', (Split-Path (Split-Path $cDir))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
+  $v = $c[1].Replace('{KRTU}', ($krt -replace '[^/]+$', { $_.Value.ToUpper() })).Replace('{RTU}', '.RUNTIME').Replace('{KRTB}', ($krt -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KRT}', $krt).Replace('{WS}', (Split-Path $live)).Replace('{RT}', '.runtime').Replace('{WTR}', $wtrT).Replace('{KITB}', ((Split-Path (Split-Path $cDir)).Replace('\', '/') -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KIT}', (Split-Path (Split-Path $cDir))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
   # cwd-independent results
   $hookIn = @{ tool_name = $tool; cwd = $nr; tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
   $json = $hookIn | ConvertTo-Json -Compress -Depth 4

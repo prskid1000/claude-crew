@@ -849,8 +849,10 @@ function Get-KitLeftoverVerdict([string]$Dir, [string[]]$RepoDirs) {
   $leaf = Split-Path $Dir -Leaf; $repo = @($RepoDirs | Where-Object { $leaf -like "*-$(Split-Path $_ -Leaf)" -or $leaf -eq (Split-Path $_ -Leaf) } | Select-Object -First 1)[0]
   $files = @(Get-ChildItem -LiteralPath $Dir -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.LinkType })   # links are never followed
   if ($files.Count -gt 500) { return [pscustomobject]@{ delete = $false; why = "$($files.Count) files: check by hand" } }
-  $rtl = "$(Split-Path (Get-KitRuntime) -Leaf)/"
-  $left = @(foreach ($f in $files) { $rel = [IO.Path]::GetRelativePath($Dir, $f.FullName).Replace('\', '/'); if ($rel.StartsWith($rtl)) { continue }
+  # a worktree's own runtime and state folders are its runs' (the live clone keeps the real state; 2026-11-27: a removed kit worktree
+  # stayed for its .state/*.local.* files)
+  $rtl = "$(Split-Path (Get-KitRuntime) -Leaf)/"; $stl = "$($script:KitPathMap.stateDir.Trim('/\'))/"
+  $left = @(foreach ($f in $files) { $rel = [IO.Path]::GetRelativePath($Dir, $f.FullName).Replace('\', '/'); if ($rel.StartsWith($rtl) -or $rel.StartsWith($stl)) { continue }
       if ($repo -and $f.Name -notlike '*.local.*') {
         git -C $repo check-ignore -q --no-index -- $rel 2>$null; if ($LASTEXITCODE -eq 0) { continue }
         $h = "$(git -C $repo hash-object --path=$rel -- $f.FullName 2>$null)".Trim(); if ($h) { git -C $repo cat-file -e "$h^{blob}" 2>$null; if ($LASTEXITCODE -eq 0) { continue } } }
@@ -875,6 +877,12 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
   $ctx = [ordered]@{}; $reg = @{}
   $addRepo = { param($rp) if ($rp -and -not $ctx.Contains($rp)) { $ctx[$rp] = @{}; foreach ($x in @(Get-KitWorktrees $rp)) { $reg[$x.path.ToLower()] = $rp } } }
   foreach ($rp in @(Get-KitRepoDirs)) { & $addRepo $rp }
+  # a loose file in a root is an agent's scratch (2026-11-27: 30 dbg / edit scripts in .kit-worktrees): gone once idle
+  foreach ($lf in @(foreach ($root in $Roots) { Get-ChildItem -LiteralPath $root -File -Force -ErrorAction SilentlyContinue })) {
+    $idleF = ($now - $lf.LastWriteTime).TotalHours
+    if ($idleF -lt $IdleHours) { & $keep $lf.FullName "loose file in a worktree root, changed $([int]($idleF * 60)) min ago"; continue }
+    & $act $lf.Length 'loose file in a worktree root (only worktrees live there)' $lf.FullName
+    if (-not $DryRun) { try { Remove-Item -LiteralPath $lf.FullName -Force -ErrorAction Stop } catch { & $act 0 'FAILED loose file' "$($lf.FullName): $($_.Exception.Message)" } } }
   foreach ($w in @(foreach ($root in $Roots) { Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue })) {
     $d = $w.FullName; $key = $d.Replace('\', '/').ToLower()
     if (Test-KitSlotDir $d) { continue }   # pool slots stay (wt release frees them; supervise reaps their leases)
@@ -885,7 +893,7 @@ function Invoke-KitSweep([string[]]$Roots, [double]$IdleHours = 2, [switch]$DryR
     if (-not ($rp = $reg[$key])) {   # no repo lists it: a remove git half did (junctions + files)
       if ($idleH -lt $IdleHours) { & $keep $d "no repo lists it, changed $([int]($idleH * 60)) min ago"; continue }
       $lv = Get-KitLeftoverVerdict $d @($ctx.Keys)
-      if (-not $lv.delete) { & $keep $d "no repo lists it; $($lv.why)"; if ($old) { $notes += "folder $d`: no repo lists it, $($lv.why): kept (move what you need, then delete it)" }; continue }
+      if (-not $lv.delete) { & $keep $d "no repo lists it; $($lv.why)"; $notes += "folder $d`: no worktree or slot, $($lv.why): kept (move what you need, then delete it)"; continue }
       & $act (& $size $d) 'leftover folder no repo lists (links unlinked, never followed)' "$d ($($lv.why))"
       if (-not $DryRun) { try { Remove-KitLeftover $d } catch { & $act 0 'FAILED leftover folder' "$d`: $($_.Exception.Message)" } }
       continue

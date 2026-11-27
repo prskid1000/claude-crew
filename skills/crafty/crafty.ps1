@@ -19,8 +19,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  local claude|desktop|code|status [-Model] [-Print]  a client on the local model server
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L1782 dir · L1792 checkpoint ·
-  L1832 prior · L1871 tracker · L1893 task spec · L2098 scope · L2146 host
+Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L1791 dir · L1801 checkpoint ·
+  L1841 prior · L1880 tracker · L1902 task spec · L2107 scope · L2155 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1137,7 +1137,7 @@ function Send-GuardRewrite($Notes) {
   $why = "kit guard rewrote your command ($(@($script:rwWhy | Select-Object -Unique) -join '; ')); it ran as: $($script:rwCmd)"
   if ($in.session_id) { Write-KitLog guard rewrite @{ session = "$($in.session_id)"; agentId = "$($in.agent_id)"; tool = "$($in.tool_name)"; why = $why; cmd = ($cmdIn -replace "[\r\n\t]+", ' // ') } }
   $ti = $in.tool_input | ConvertTo-Json -Depth 6 -Compress | ConvertFrom-Json -AsHashtable; $ti.command = $script:rwCmd   # its other fields (description, timeout) kept
-  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'allow'; permissionDecisionReason = $why; updatedInput = $ti; additionalContext = (@(@($why) + @($Notes) | Where-Object { $_ }) -join "`n") } } | ConvertTo-Json -Compress -Depth 6
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = $(if ("$($in.permission_mode)" -eq ('by' + 'passPermissions')) { 'allow' } else { 'ask' }); permissionDecisionReason = $why; updatedInput = $ti; additionalContext = (@(@($why) + @($Notes) | Where-Object { $_ }) -join "`n") } } | ConvertTo-Json -Compress -Depth 6
   exit 0
 }
 function GitCommon([string]$d) {
@@ -1245,8 +1245,14 @@ function StrayWrite([string]$p, [string]$base) {
 function Get-WritePlaceWhy([string]$p, [string]$base, [switch]$Bare) {   # -Bare: a shell's bare word (no / or .): no drive-root check
   if ((RuntimeKinds " $p" $base) -contains 'stray') { return "is a $rtLeaf outside the kit (a relative path from the wrong folder)" }
   if (MainScratch $p $base) { return 'is a new file at the top of a shared main checkout' }
+  # only worktrees and slots live in a worktree root (2026-11-27: ~30 scratch scripts and 3 stray folders in .kit-worktrees)
+  if (($wf = FullOf $p $base)) { foreach ($wr in $wtRootsFull) { if (-not (Under $wf $wr) -or $wf -eq $wr) { continue }
+      $top = Join-Path $wr ([IO.Path]::GetRelativePath($wr, $wf) -split '[\\/]')[0]
+      if ($top -eq $wf -and -not (Test-Path -LiteralPath $wf -PathType Container)) { return "is a loose file in the worktree root $wr (only worktrees live there)" }
+      if ($top -ne $wf -and -not (Test-Path -LiteralPath (Join-Path $top '.git'))) { return "is in $top, a folder of the worktree root that is no worktree" } } }
   if (-not $Bare) { StrayWrite $p $base }
 }
+$wtRootsFull = @(@($KitConf.WorktreeRoots) | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath("$_").TrimEnd('\', '/') })
 foreach ($e in $edits) { if (($pw = Get-WritePlaceWhy $e $here)) { $raw = "$($in.tool_name) $e"; Deny "kit guard: $e $pw`: $placeFix" } }
 $tmpHit = @(@($edits | Where-Object { $_ } | ForEach-Object { " $_" }) + $(if ($cmd) { $cmd }) | ForEach-Object { if ($_ -match $tmpRx) { $Matches.f } })
 if ($tmpHit) { $raw = "$($in.tool_name) $($tmpHit[0])"; Deny "kit guard: $($tmpHit[0]) is in the shared temp root (other agents use the same names): $placeFix" }
@@ -1440,7 +1446,8 @@ function Split-CommandSegments([string]$text, [string]$tool) {
 # rule msys-path: the command runs with D:/x for each Git Bash /d/x a Windows program would read as \d\x (a stray tree); unfixable -> deny
 if (($mp = Find-MsysPath $raw $tn)) {
   $msTo = if ($null -ne $script:rwCmd) { $script:rwCmd } else { $cmdIn }; $msN = 0
-  while ($mp -and $msN++ -lt 8) { $msTo = [regex]::Replace($msTo, '(?<![\w.:/~\\})\]])' + [regex]::Escape($mp[1]) + '(?![^\s''"`;|&<>(){}\[\],])', $mp[2].Replace('$', '$$')); $mp = Find-MsysPath $msTo $tn }
+  # the same path in a message or echo text (data) would change too: then the deny with the fix, never a silent edit of the text
+  while ($mp -and $msN++ -lt 8) { if ($msTo -match ('(?:-m|--message|-Message|\becho|\bprintf|Write-(?:Output|Host))\s+(?:"[^"]*|''[^'']*)' + [regex]::Escape($mp[1]))) { break }; $msTo = [regex]::Replace($msTo, '(?<![\w.:/~\\})\]])' + [regex]::Escape($mp[1]) + '(?![^\s''"`;|&<>(){}\[\],])', $mp[2].Replace('$', '$$')); $mp = Find-MsysPath $msTo $tn }
   if ($mp) { Deny "kit guard: $($mp[0]) gets the Git Bash path $($mp[1]), which a Windows program reads as $($mp[1] -replace '/', '\') on the current drive (a stray tree). Use $($mp[2]): Windows paths (D:/... or D:\..., or the crafty.ps1 dir output) in arguments, JSON, env vars and code (rule msys-path)." }
   Set-GuardRewrite $msTo 'Git Bash /x/... paths for a Windows program became X:/... (rule msys-path)' }
 # Git for Windows opens help in the owner's browser
@@ -1599,7 +1606,9 @@ function Test-OpenDoc([string]$text, [string]$tool) {
 }
 function Get-KitScriptRewrite([string]$text) {   # each script in command position run through its interpreter ('' = none); the rest of the line stays
   $rwRx = '(?m)(?<lead>(?:^|&&|\|\||[;&|(])\s*(?:\w+=[^\s;&|]*\s+)*)(?:[&.]\s+)?(?<q>[''"]?)(?<s>[^\s''";|&<>()]+\.(?<x>ps1|py|m?js))\k<q>(?=[\s;|&)]|$)'
+  $rwQs = @([regex]::Matches($text, '"(?:[^"\\]|\\.)*"|''[^'']*'''))
   $rwOut = [regex]::Replace($text, $rwRx, { param($m)
+      $si = $m.Groups['s'].Index; if (@($rwQs | Where-Object { $si -gt $_.Index -and $si -lt $_.Index + $_.Length -and $_.Value -ne ($m.Groups['q'].Value + $m.Groups['s'].Value + $m.Groups['q'].Value) }).Count) { return $m.Value }   # inside quoted text: data
       $ext = $m.Groups['x'].Value.ToLower(); if ($ext -eq 'ps1' -and $tn -ne 'Bash') { return $m.Value }   # PowerShell runs a .ps1 in place
       $interp = if ($ext -eq 'ps1') { 'pwsh -NoProfile -File' } elseif ($ext -eq 'py') { 'python -X utf8' } else { 'node' }
       "$($m.Groups['lead'].Value)$interp $($m.Groups['q'].Value)$($m.Groups['s'].Value)$($m.Groups['q'].Value)" })
@@ -1676,7 +1685,7 @@ function Find-RunsFile([string]$text, [string]$tool, [string]$base) {
 $rf = $null; if (-not $od) { $rf = Find-RunsFile $bashText $tn $here; foreach ($pb in $script:psBodies) { if (-not $rf) { $rf = Find-RunsFile $pb 'PowerShell' $here } } }
 # rule open-file (was script-direct, open-doc, cmd-position): a file opened by its association starts a desktop app, not the terminal;
 # a script in command position runs rewritten through its interpreter when nothing else on the line opens a file
-if (($od -eq 'script' -or "$rf" -match '\.(ps1|py|mjs|cjs|js)$') -and -not $script:psBodies.Count -and ($fix = Get-KitScriptRewrite $raw) -and -not (Test-OpenDoc $fix $tn) -and -not (Find-RunsFile $fix $tn $here)) {
+if (($od -eq 'script' -or "$rf" -match '\.(ps1|py|mjs|cjs|js)$') -and -not $script:psBodies.Count -and ($fix = Get-KitScriptRewrite $(if ($null -ne $script:rwCmd) { $script:rwCmd } else { $raw })) -and -not (Test-OpenDoc $fix $tn) -and -not (Find-RunsFile $fix $tn $here)) {
   Set-GuardRewrite $fix 'a script file runs through its interpreter, not its desktop app (rule open-file)'; $od = $null; $rf = $null }
 if ($od -or $rf) { Deny "kit guard: $(if ($rf) { $rf } else { 'that' }) opens by file association: Windows starts its default desktop app (a window on the owner's screen), not your terminal: $readIt (rule open-file)" }
 if ($cmd -match '--no-verify|core\.hooksPath=(/dev/null|nul\b|\s|$)|HUSKY=0|SKIP_HOOKS' -or

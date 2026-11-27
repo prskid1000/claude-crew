@@ -22,9 +22,9 @@ audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK
 Exit codes: 0 ok · 1 problems found (lint, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L493 load · L996 lint ·
-  L1418 README graph · L1534 lint command · L1847 audit · L1995 registry · L2056 runOn · L2110 tools · L2198 parity ·
-  L2729 arch lint · L3048 prose · L3303 sections · L3435 budget · L3453 migrate · L3639 plugins · L3696 state lint · L3884 main
+Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L493 load · L1003 lint ·
+  L1425 README graph · L1541 lint command · L1854 audit · L2002 registry · L2063 runOn · L2117 tools · L2205 parity ·
+  L2736 arch lint · L3055 prose · L3310 sections · L3442 budget · L3460 migrate · L3646 plugins · L3703 state lint · L3891 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -723,6 +723,13 @@ def stray_live(d, minutes=60, cap=2000):
                     return True
             if n >= cap:
                 return False
+    # a process still sits in it (Windows: its cwd; 2026-11-27 an agent shell held a removed worktree's runtime): live too
+    probe = d.rstrip('\\/') + '.held-probe'
+    try:
+        os.rename(d, probe)
+    except OSError:
+        return os.name == 'nt'
+    os.rename(probe, d)
     return False
 
 

@@ -183,7 +183,7 @@ function sqlRule(ti) {
   // every item an aggregate, wrapped or aliased (COUNT(*) c, DATE(MIN(x)) d1), and no GROUP BY: one row
   const [s0, s1] = sel.indices[1], items = []; let at = s0
   for (let i = s0; i <= s1; i++) if (i === s1 || m[i] === ',') { items.push(base.slice(at, i)); at = i + 1 }
-  if (items.every((x) => /\b(count|sum|min|max|avg|group_concat|bit_and|bit_or|std\w*|var\w*)\s*\(/i.test(x)) && !/\bgroup\s+by\b/i.test(q)) return
+  if (items.every((x) => !/\bselect\b/i.test(x) && /\b(count|sum|min|max|avg|group_concat|bit_and|bit_or|std|stddev\w*|variance|var_(pop|samp))\s*\(/i.test(x)) && !/\bgroup\s+by\b/i.test(q)) return
   deny(`kit guard: a row query without LIMIT can fill your context: add LIMIT <= ${max} (guard.sqlMaxRows), or aggregate (COUNT, GROUP BY ... LIMIT)`)
 }
 const SQL_STAR_ROWS = 10

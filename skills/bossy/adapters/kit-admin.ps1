@@ -296,7 +296,7 @@ function Invoke-KitWeeklyTests([bool]$Idle) {
     Write-KitAtomic $sf ($s | ConvertTo-Json -Compress)
   }
   $days = [double](Get-KitParam 'kitTests.fullEveryDays'); if ($days -le 0 -or -not $Idle -or ($s -and (Test-KitPid $s.pid $s.start))) { return }
-  if (($lg = Get-KitLastGreen $s) -and ((Get-Date) - $lg.LocalDateTime).TotalDays -lt $days) { return }   # green within the week
+  if ($s.greenAt -and ((Get-Date) - [datetime]$s.greenAt).TotalDays -lt $days) { return }   # the HEAD tree's stamp below; another tree's green run (health's last green) never skips this one   # green within the week
   $tree = "$(git -C $KitConf.Kit rev-parse 'HEAD^{tree}' 2>$null)".Trim()   # owner: an unchanged kit (its tree green-stamped by kit-tests.ps1) never reruns, whatever the age
   if ($tree -and (Get-KitGreenTreeDate $tree)) { return }
   if ($s.at -and ((Get-Date) - [datetime]$s.at).TotalHours -lt (Get-KitParam 'kitTests.retryHours')) { return }   # one try a day until green

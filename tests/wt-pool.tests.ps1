@@ -179,6 +179,14 @@ Expect "lane names: ids shown as <product>·<Bird> (paths, branches, other words
 $loRt = & { . (Lib); Split-Path (Get-KitRuntime) -Leaf }; $lo = "$base/wt/lo-left"; New-Item -ItemType Directory -Force "$lo/$loRt/t" | Out-Null; 'x' | Set-Content "$lo/$loRt/t/k.local.json"
 $loOut = pwsh @np $D wt remove -Dir $lo -Root "$base/wt" 2>&1 | Out-String
 Expect "wt remove: a leftover with only runtime scratch (a *.local.* file too) is removed ($($loOut.Trim()))" (-not (Test-Path $lo))
+# 2026-11-27: a removed kit worktree stayed for its .state/*.local.* files; the sweep left loose scratch files in the root
+$loSt = & { . (Lib); $script:KitPathMap.stateDir.Trim('/\') }; $lo2 = "$base/wt/lo-state"; New-Item -ItemType Directory -Force "$lo2/$loSt" | Out-Null; 'x' | Set-Content "$lo2/$loSt/learning.local.jsonl"
+$lo2Out = pwsh @np $D wt remove -Dir $lo2 -Root "$base/wt" 2>&1 | Out-String
+Expect "wt remove: a leftover with only its state folder (a *.local.* file) is removed, never left behind ($($lo2Out.Trim()))" (-not (Test-Path $lo2))
+$loF = "$base/wt/kitty-x-dbg1.ps1"; 'x' | Set-Content $loF; (Get-Item $loF).LastWriteTime = (Get-Date).AddHours(-5); $loN = "$base/wt/fresh.py"; 'x' | Set-Content $loN
+$swOut = pwsh @np $D wt sweep -Root "$base/wt" -IdleHours 2 2>&1 | Out-String
+Expect "wt sweep: an idle loose file in a worktree root goes, a fresh one stays and is listed ($(($swOut -split "`n" | Select-String 'loose') -join ' | '))" (-not (Test-Path $loF) -and (Test-Path $loN) -and $swOut -match 'loose file in a worktree root')
+Remove-Item $loN -ErrorAction SilentlyContinue
 # a kit worktree's leftover (<name>-.claude): its files are in the kit's own history
 Save-GitRepo $k kit; $kl = "$base/wt/kt-$(Split-Path $k -Leaf)"; New-Item -ItemType Directory -Force "$kl/skills/crafty" | Out-Null; Copy-Item "$k/skills/crafty/lib.ps1" "$kl/skills/crafty/"
 $kl1 = pwsh @np $D wt remove -Dir $kl -Root "$base/wt" 2>&1 | Out-String; $kl0 = Test-Path $kl

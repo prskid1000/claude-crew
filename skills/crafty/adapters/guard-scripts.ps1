@@ -8,7 +8,7 @@
 # Retired 2026-11-27 (0 hits in 30 d, the tool says it): a PowerShell tool command that does not parse, a missing mvnw / gradlew,
 # .state/tracking.json, illegal Java escapes. Each deny names the fix and its class (script-fault <class>). Rule file-dumps: a
 # whole-file cat / type / Get-Content over the Read caps.
-# Sections: L12 helpers · L77 edits · L89 commands · L139 reads
+# Sections: L12 helpers · L77 edits · L89 commands · L142 reads
 # ---- helpers: bash words, the python shim, Git Bash, parsers
 function Get-KitBashWord([string]$Text, [int]$At) {   # the bash word at $At, quotes removed ($vars kept): @(value, next index); $null = an open quote
   $sb = [Text.StringBuilder]::new(); $i = $At
@@ -102,7 +102,9 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
       if (@($codes | Where-Object { $_ -match '[\r\n"]' -or ($_ -notmatch '\s' -and $_ -match '[&|<>^()%]') }).Count) { return "kit guard: python here is $shim (a .bat shim: cmd.exe re-reads python -c code, so quotes, | & < > ^ ( ) % and newlines break it: '|| goto :error'). Write the program to a .py file (Write tool; $fix x.py) and run python -X utf8 <file> (script-fault py-shim-quote)." }
     }
     if ($isBash -and $raw -match '[''"`(]|<<' -and ($be = Test-KitBashParse $raw)) { return "kit guard: Bash cannot parse this command (bash -n: $be): an unbalanced quote or heredoc marker. Put the program in a file (Write tool; $fix x.sh / x.py / x.ps1) and run it; keep shell quoting one level deep (script-fault sh-quote)." }
+    $msIns = [Collections.Generic.List[int]]::new(); $msFrom = 0; $msWhy = $null   # msys rewrite: each bad segment's place in the command (in order)
     foreach ($seg in $segs) {
+      $st = $seg.Trim(); $sAt = if ($st) { "$($a.rw)".IndexOf($st, $msFrom) } else { -1 }; if ($sAt -ge 0) { $msFrom = $sAt + $st.Length }
       $words = @(Get-KitBashWords $seg); if (-not $words.Count) { continue }
       $wi = 0; while ($wi -lt $words.Count -and $words[$wi] -match '^\w+=|^(env|command|exec|nohup|timeout|sudo|time|\d+[smh]?)$') { $wi++ }; if ($wi -ge $words.Count) { continue }
       $leaf = ($words[$wi] -replace '^.*[\\/]', '').ToLower() -replace '\.(exe|cmd|bat)$', ''
@@ -122,8 +124,8 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
         $argsAfter = @($words | Select-Object -Skip ($wi + 1))
         $bad = @($argsAfter | Where-Object { $_ -match '^(--?[\w-]+=)?/(?![/\s]|(tmp|dev|proc|usr|bin|etc|[A-Za-z])(/|$))[\w.@~+-]' -and $_ -notmatch '\s|\*' })
         if ($bad) {
-          $segAt = "$($a.rw)".IndexOf($seg.Trim()); $mount = @($argsAfter | Where-Object { $_ -match '^(--?[\w-]+=)?/(tmp|dev|proc|usr|bin|etc)(/|$)' }).Count
-          if ($seg.Trim() -and $segAt -ge 0 -and -not $mount) { return @{ rewrite = $a.rw.Substring(0, $segAt) + 'MSYS_NO_PATHCONV=1 ' + $a.rw.Substring($segAt); why = "Git Bash would turn $($bad[0]) for $leaf into C:/Program Files/Git$($bad[0] -replace '^--?[\w-]+=', ''): MSYS_NO_PATHCONV=1 keeps it (rule msys-path)" } }
+          $mount = @($argsAfter | Where-Object { $_ -match '^(--?[\w-]+=)?/(tmp|dev|proc|usr|bin|etc)(/|$)' }).Count
+          if ($sAt -ge 0 -and -not $mount) { $msIns.Add($sAt); if (-not $msWhy) { $msWhy = "Git Bash would turn $($bad[0]) for $leaf into C:/Program Files/Git$($bad[0] -replace '^--?[\w-]+=', ''): MSYS_NO_PATHCONV=1 keeps it (rule msys-path)" }; continue }
           return "kit guard: Git Bash rewrites the argument $($bad[0]) for $leaf (a Windows program) into C:/Program Files/Git$($bad[0] -replace '^--?[\w-]+=', '') (MSYS path conversion). Prefix the command with MSYS_NO_PATHCONV=1 (or export MSYS_NO_PATHCONV=1 first), or run it from the PowerShell tool (rule msys-path)." }
       }
     }
@@ -135,6 +137,7 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
       $sp = $m.Groups['p'].Value -replace '^/([A-Za-z])(?=/)', '$1:'; $sp = if ([IO.Path]::IsPathRooted($sp)) { $sp } else { Join-Path $cwd0 $sp }
       if ((Test-Path -LiteralPath $sp -PathType Leaf) -and ($cc = @(Find-KitPsCaseClash ([IO.File]::ReadAllText($sp))))) { return "kit guard: $($m.Groups['p'].Value): $($cc[0]) are ONE variable (PowerShell names are case-insensitive: the second overwrites the first): rename one to a full word, then run it (script-fault ps-case-clash)." }
     }
+    if ($msIns.Count) { $msOut = "$($a.rw)"; foreach ($i in @($msIns | Sort-Object -Descending)) { $msOut = $msOut.Insert($i, 'MSYS_NO_PATHCONV=1 ') }; return @{ rewrite = $msOut; why = $msWhy } }   # every bad segment, last first
   } }
 # ---- reads: cat / type / Get-Content of a whole file skips the Read caps (owner 2026-11-27: SKILL.md, lead notes, briefs, results
 # and product files dumped whole); a pipe to a limiter, a redirect or a ranged Get-Content passes

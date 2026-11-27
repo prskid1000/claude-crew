@@ -117,7 +117,8 @@ Expect 'kit-admin: health nudges a never-run kitty audit, quiet while a kitty-<r
 'edited' | Add-Content (Join-Path $kc 'README.md'); $ue = & { . $O; Test-UnstagedEdits $kc 'README.md' }; git -C $kc checkout -q -- README.md
 # the copy carries the tree under test: its lint verdict is lint's (a mid-edit tree blocked it: flaky); precommit's own part ran
 $pc = pwsh -NoProfile -File $O precommit 2>&1 | Out-String; $pcc = $LASTEXITCODE
-Expect "kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them) ($pcc $(($pc.Trim() -split "`n")[0]))" ($ue -and ($pcc -eq 0 -or $pc -match '(?m)^pre-commit: BLOCKED - kit-lint: ') -and $pc -notmatch 'not recognized|Exception|did not run')
+$pcJ = Join-Path $root 'pc-lint.json'; $null = & $py -X utf8 $KT lint $kc --no-flow --json $pcJ 2>&1; $pcLint = @(if (Test-Path $pcJ) { Get-Content $pcJ -Raw | ConvertFrom-Json }).Count   # precommit's verdict = lint's on the same tree
+Expect "kit-admin: precommit runs from the adapter and sees unstaged README edits (it never stages them) ($pcc $(($pc.Trim() -split "`n")[0]))" ($ue -and ($pcc -eq 0) -eq (-not $pcLint) -and ($pcc -eq 0 -or $pc -match '(?m)^pre-commit: BLOCKED - kit-lint: ') -and $pc -notmatch 'not recognized|Exception|did not run')
 $sx = Join-Path $kc 'skills/sx.ps1'; "<#`nSections: L9 a`n#>`n# ---- a: x`n" | Set-Content $sx -NoNewline; git -C $kc add -- skills/sx.ps1; $null = pwsh -NoProfile -File $O precommit 2>&1
 Expect 'kit-admin: precommit rewrites and stages a stale Sections: map' (@(git -C $kc show :skills/sx.ps1) -contains 'Sections: L4 a'); git -C $kc rm -qf -- skills/sx.ps1
 $null = & $lo -Skill revy -Bump 'no such lesson words'; $bc = $LASTEXITCODE

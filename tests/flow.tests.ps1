@@ -161,8 +161,8 @@ $wv = Invoke-PsTest wave-prior @'
 $fd = @(@{ kind = 'task'; ref = 'W13'; title = 'twin' }, @{ kind = 'branch'; ref = 'TK-W12-b'; repo = 'pr'; tagged = $true })
 Write-KitState (Get-KitTaskFile W12) @{ task = 'W12'; prior = @{ at = (Get-Date).ToString('o'); validUntil = $vu; found = $fd } }
 $solo = try { Assert-KitPrior W12 pr 'wt x' '' ''; 'pass' } catch { 'stop' }
-@{ areaTasks = @{ a = 'W12'; b = 'W13' } } | ConvertTo-Json | Set-Content (Join-Path (Get-KitPath launches -Create) 'self-wave-x.json')
-$wave = try { Assert-KitPrior W12 pr 'wt x' '' '' 2>&1 | Out-Null; 'pass' } catch { 'stop' }
+@{ areaTasks = @{ a = 'W12'; b = 'W13' } } | ConvertTo-Json | Set-Content ($wvRec = Join-Path (Get-KitPath launches -Create) 'wave-test-x.json')
+$wave = try { Assert-KitPrior W12 pr 'wt x' '' '' 2>&1 | Out-Null; 'pass' } catch { 'stop' }; Remove-Item $wvRec   # later cases read the launch records
 "$solo $wave"
 '@ @((Join-Path $k 'skills/crafty/lib.ps1'))
 Expect "prior gate: a wave's sibling task and the task's own tagged branch pass (INFO), alone they stop ($(("$wv" -split "`n")[0].Trim()))" ("$wv" -match '(?m)^stop pass' -and "$wv" -match 'INFO wt x: a sibling task of its run W13')

@@ -375,18 +375,19 @@ adapter x verb (native, config, fallback, gap); lint PARITY fails a verb with ne
   after 3 d, `work/` 14 d, `cache/`, `logs/` 30 d; durable ones listed only), and, in every repo (`repos[].checkout`, git
   checkouts under `reposRoot`, the kit), local branches (merged, MR merged at the tip, upstream gone or a local copy, its tip on the host;
   never protected, checked out or unpushed), clean idle worktrees no board agent or process holds, records of missing folders
-  and worktree-root folders no repo lists (links unlinked, never followed; files only when all are in git) (`-WorktreesOnly`;
+  and worktree-root folders no repo lists (links unlinked, never followed; files only when all are in git, runtime or state; kept ones listed), loose files in a root once idle (`-WorktreesOnly`;
   `-Detail`: each item and what stays, why; counts per repo: health line, dashboard); Claude session temp: reported only.
   `crafty.ps1 wt remove` prunes and deletes its branch by the same rule.
 - The PreToolUse guard (one deny or rewrite per call, each named `(rule <id>)`, logged to the audit `guard.jsonl`: `bossy.ps1 audit`,
-  supervise WATCH) rewrites what it can fix exactly and runs the corrected command (Claude Code `updatedInput`, the reason in
+  supervise WATCH) rewrites what it can fix exactly and runs the corrected command (Claude Code `updatedInput`; asked first outside bypassPermissions; the reason in
   context): a script file in command position through its interpreter (`python -X utf8`, `node`, `pwsh -NoProfile -File`; rule
   `open-file`), Git Bash `/d/...` paths for Windows programs as `D:/...` and `/x` args with `MSYS_NO_PATHCONV=1` (rule `msys-path`).
   It blocks `git stash`, `--no-verify`, ungated builds, `adb kill-server`, whole-drive searches (`find /`, `grep -r C:/`: scope
   them), a doc or folder opened by its association (`start` / `ii` / `code`, a path as the command: the Read tool instead), script
   faults (rule `script-faults`), the push rule (`push`: force on a shared branch, a deploy branch `repos[].deploys[].branch`: a
   deploy MR only, `bossy.ps1 deploy merge -Mr`; a protected product branch; kit main: fast-forward only), the write-place rule
-  (`write-place`: a stray `.runtime`, scratch at a main checkout's top, shared temp names, a drive root or outside the workspace,
+  (`write-place`: a stray `.runtime`, scratch at a main checkout's top, a loose file or a non-worktree folder in a worktree root,
+  shared temp names, a drive root or outside the workspace,
   kit, repo, worktree, temp, `~/.claude`, `~/Downloads` and `guard.writeRoots`: `crafty.ps1 dir` instead), the secret store
   (`secrets`: a command or a Read), edits to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live
   edit: `KIT_LIVE_EDIT=1`), and a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw
