@@ -235,7 +235,7 @@
    "supervise-state": "cache/supervise-state.json", "live-steps": "cache/live-steps.json", "supervise-report": "logs/supervise-report.md", "supervise-digest": "logs/supervise-digest.md", "mem-samples": "cache/mem-samples.txt",
    "last-cleanup": "cache/last-cleanup.txt", "repo-sweep": "cache/repo-sweep.json", "net-budget": "cache/net-budget.json", "transcript-dirs": "cache/transcript-dirs.json", "transcript-tails": "cache/transcript-tails.json", "usage-cache": "cache/usage.json", "background": "cache/background/",
    "agents": "work/agents/", "node-spec": "cache/node-spec/", "apks": "cache/android-swarm/apk/",
-   "retros": "logs/retros/", "local-fallbacks": "logs/local-fallbacks.jsonl","kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
+   "retros": "logs/retros/", "local-fallbacks": "logs/local-fallbacks.jsonl", "kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
    "localenv-logs": "logs/localenv/",
    "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt", "tracker-statuses": "cache/tracker-statuses/",
    "tmp": "tmp/", "build-gate": "work/build-gate/", "tools": "tools/"

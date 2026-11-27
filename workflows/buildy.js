@@ -13,8 +13,8 @@ export const meta = {
  ],
 }
 
-// Sections: L18 args · L160 record-args · L178 budget · L193 build-prompt · L278 ship-prompt · L298 plan · L316 spike ·
-//   L328 local-loop · L409 stages · L564 ship · L600 debate · L713 deploy · L727 learn
+// Sections: L18 args · L161 record-args · L179 budget · L194 build-prompt · L279 ship-prompt · L299 plan · L317 spike ·
+//   L329 local-loop · L410 stages · L565 ship · L601 debate · L714 deploy · L728 learn
 // ---- args: the run's input, checked
 /* args = { brief: '<abs>/wave-brief.md' (required; templates.md "Wave" / "Bug-fix" / "Resume brief"), task: '<tracker id>' (2+ areas: AREA TASK subtasks),
  agents: [{ id, items, area, task, paths: [globs], note, kind, branch(es), complex, model, effort, dependsOn: [ids merged first],
@@ -117,16 +117,17 @@ const REVIEW_SCHEMA = obj({ findings: arr(obj({ mr: S, file: S, line: N, severit
 const mustFix = (f) => f.severity === 'blocking'   // should-fix -> MR Follow-ups (owner 2026-11-26)
 const CI_SCHEMA = obj({ done: B, mrs: arr(obj({ mr: S, status: S, job: S, error: S }, ['mr', 'status'])) })
 const OK_SCHEMA = obj({ ok: B, output: S }), LEARN_SCHEMA = obj({ signals: N })
-// models.runOn: a unit in CONFIG runOn.units runs through crafty.ps1 local run (its STEP text); refused or no JSON: the cloud, logged
+// models.runOn: a CONFIG runOn unit runs as one local STEP; refused: the cloud step; started, then failed: it first checks what is done
 let RUNON = { units: [] }
 const onLocal = async (p, o) => { const u = `${o.agentType}:${String(o.label).split(/[:@~]/)[0].replace(/-retry$/, '')}`; if (!RUNON.units.some((x) => x === u || x === '*')) return
- const r = await agent1(RUNON.step.replace(/\{name\}/g, String(o.label).replace(/[^\w.-]/g, '_')).replace('{job}', () => JSON.stringify({ unit: u, agentType: o.agentType, schema: o.schema, prompt: p })), { label: `${o.label}@local`, phase: o.phase, schema: OK_SCHEMA, agentType: 'steppy', model: MODELS.step, effort: 'low' }).catch(() => null)
+ const j = JSON.stringify({ unit: u, agentType: o.agentType, schema: o.schema, prompt: p })
+ const r = await agent1(RUNON.step.replace(/\{name\}/g, `${RUN}-${o.label}`.replace(/[^\w.-]/g, '_')).replace('{fnv}', fnv(j)).replace('{job}', () => j), { label: `${o.label}@local`, phase: o.phase, schema: OK_SCHEMA, agentType: 'steppy', model: MODELS.step, effort: 'low' }).catch(() => null)
  try { if (r && r.ok) return JSON.parse(r.output) } catch { }
- log(`${o.label}: ${u} on the cloud (local: ${String((r && r.output) || 'no answer').slice(0, 160)})`) }
+ log(`${o.label}: ${u} on the cloud (local: ${String((r && r.output) || 'no answer').slice(0, 160)})`); return !/^FALLBACK cloud: /.test(r && r.output) && RUNON.redo }
 // no result: one retry after a wait (<label>@redo); edits check state
 const agent1 = agent, REDO = /^(review|migration-review|dispute|none-word|budget|producer-wait|merge-wait|ci|followups)(?=:|$)/, EDIT = /^(build|ship|track|handoff|local|local-strong|fix|resume|envfix-resume|postmerge|loop|docs):/
 // usage limit: next tier (<label>@up); steppy unknown (older session): kitty
-const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const lr = await onLocal(p, o); if (lr) return lr; const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
+const LIMIT = /\b(weekly|usage|session|daily) limit\b|usage_limit_reached/i, agentUp = async (p, o) => { const lr = await onLocal(p, o); if (lr && typeof lr === 'object') return lr; if (lr) p = p.replace(/^(STEP: )?/, `$1${lr}\n`); const t = [TIERS.fast, TIERS.balanced, TIERS.strong], up = t.slice(t.indexOf(o.model) + 1 || 3).find((m) => m && m !== o.model)
  try { return await agent1(p, o) } catch (e) { const em = String(e.message || e); if (o.agentType === 'steppy' && /steppy/.test(em)) return agent1(p, { ...o, agentType: 'kitty' }); if (!up || !LIMIT.test(em)) throw e; log(`${o.label}: ${o.model} usage limit: once on ${up}`); return agent1(p, { ...o, model: up, label: `${o.label}@up` }) } }
 try { agent = async (p, o = {}) => { const r = await agentUp(p, o), ed = EDIT.test(o.label); if (r || !(ed || REDO.test(o.label))) return r
  log(`${o.label}: redo`); if (typeof setTimeout === 'function') await new Promise((ok) => setTimeout(ok, 20000))

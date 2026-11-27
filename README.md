@@ -396,7 +396,7 @@ The rules, part shapes, lint codes and pre-push checks: `skills/bossy/kit-admin.
 lessons; lint START-BUDGET), per file (lint BUDGET), docs reached only through a SKILL.md pointer (lint ORPHAN-DOC); scripts are
 run, never named as files to read. `kitbag.py budget` prints each role's start and the repo / tests totals (INFO, no cap):
 <!-- kit-graph:start table-caps -->
-always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16750 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 11000 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
+always 3500 · skill 3000 · agent 2400 · rule 900 · template 2600 · templates 4000 · doc 7000 · lessons 30000 · workflow 16800 · ps1 58000 · py 77000 · mjs 8000 · json 7000 · config 11000 · tests 9000 · start per role 12000 · files:33 content + 9 plumbing
 <!-- kit-graph:end -->
 
 One behaviour, one test case: in `tests/`, shared setup in `tests/harness.ps1`; a case name

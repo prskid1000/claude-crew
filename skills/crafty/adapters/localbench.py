@@ -18,7 +18,7 @@ derived from the answer the cloud run returned (cloud.json). Nothing runs tools:
 writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<set>/tasks/<id>/ (set) and
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (the transcript adapter's root, */subagents/**). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L37 store · L71 runon · L202 reply parsing · L247 outcome · L360 build · L511 run
+Sections: L37 store · L71 runon · L206 reply parsing · L251 outcome · L364 build · L515 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
@@ -97,7 +97,7 @@ def members(text, start):
         out[k], i = (i, vs, ve), ve
 
 
-def runon_text(ro, ind):
+def runon_text(ro, ind, nl):
     parts, line, out = [f'{json.dumps(u)}: {json.dumps(v, ensure_ascii=False, separators=(", ", ": "))}' for u, v in ro.items()], '', []
     for p in parts:
         if line and len(line) + len(p) > 150:
@@ -105,15 +105,19 @@ def runon_text(ro, ind):
             line = ''
         line += p + ', '
     out.append(line.rstrip(', '))
-    return '"runOn": {\n' + ',\n'.join(ind + x for x in out) + ' }'
+    return '"runOn": {' + nl + (',' + nl).join(ind + x for x in out) + ' }'
 
 
 def write_runon(path, ro, drop_use=False):
     """Replace (or add) models.runOn in a config file; drop_use: remove models.local.use. The rest of the file is untouched."""
-    text = open(path, encoding='utf-8').read()
+    with open(path, 'rb') as fh:
+        bom = fh.read(3) == b'\xef\xbb\xbf'
+    with open(path, encoding='utf-8-sig', newline='') as fh:
+        text = fh.read()
+    nl = '\r\n' if '\r\n' in text else '\n'   # the file's own line ends and BOM are kept
     top = lambda: members(text, text.index('{'))
     if 'models' not in top():
-        text = text[:text.rindex('}')].rstrip() + ',\n "models": {} }\n'
+        text = text[:text.rindex('}')].rstrip() + f',{nl} "models": {{}} }}{nl}'
     mo = top()['models'][1]
     if drop_use:
         lm = members(text, mo).get('local')
@@ -123,7 +127,7 @@ def write_runon(path, ro, drop_use=False):
             text = text[:us[0]] + text[after.end():] if after else re.sub(r',\s*$', '', text[:us[0]]) + text[us[2]:]
     mm = members(text, mo)
     ks = top()['models'][0]
-    new = runon_text(ro, ' ' * (len(text[:ks]) - len(text[:ks].rstrip(' ')) + 2))
+    new = runon_text(ro, ' ' * (len(text[:ks]) - len(text[:ks].rstrip(' ')) + 2), nl)
     if 'runOn' in mm:
         text = text[:mm['runOn'][0]] + new + text[mm['runOn'][2]:]
     elif 'mode' in mm:   # next to the override that wins over it
@@ -133,7 +137,7 @@ def write_runon(path, ro, drop_use=False):
     json.loads(text)   # never leave a broken config
     tmp = path + '.tmp'
     with open(tmp, 'w', encoding='utf-8', newline='') as fh:
-        fh.write(text)
+        fh.write(('\ufeff' if bom else '') + text)
     os.replace(tmp, path)
 
 
@@ -438,7 +442,7 @@ def cmd_build(a):
     root = transcript_root(a.transcripts)
     if not osp.isdir(root):
         print(f'build: no transcripts at {root} (-Transcripts <dir>)'); return 1
-    want = [r for r in (a.roles or DEFAULT_ROLES)]
+    want = list(a.roles or ([u for u, e in runon_units().items() if not e['boot'] and ('@' in u or ':' in u)] if a.add else DEFAULT_ROLES))   # -Add: every run unit
     since = datetime.datetime.strptime(a.since, '%Y-%m-%d').timestamp() if a.since else time.time() - 14 * 86400
     sd, made, seen = bench_dir(a.set, create=True), {}, set()
     old = osp.join(sd, 'tasks')

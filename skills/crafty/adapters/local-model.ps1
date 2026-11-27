@@ -11,9 +11,9 @@ local-model.ps1: Claude Code, Claude Desktop or VS Code on a local model server 
   & <kit>/skills/crafty/crafty.ps1 local status [-Json]   mode, runOn counts + fallbacks in 24 h, server models, seats, RAM, token set or not
   & <kit>/skills/crafty/crafty.ps1 local resolve -Unit <unit> [-Json]   cloud | local for one run unit (models.mode wins over
       models.runOn) + how a local one starts; the coordinator asks it before each spawn, launch -Self puts the local units in CONFIG
-  & <kit>/skills/crafty/crafty.ps1 local run -JobFile <f>   one workflow step on the local model: the job { unit, agentType,
+  & <kit>/skills/crafty/crafty.ps1 local run -JobFile <f> [-Fnv <hash>] [-DeadlineSec 540]   one workflow step locally: the job { unit, agentType,
       schema, prompt } through local claude (every check below); prints the step's JSON on one line, or exits 3 with
-      "FALLBACK cloud: <why>" (unit not local, refused, no seat, no JSON), logged to local-fallbacks
+      "FALLBACK cloud[ (started)]: <why>" (not local, refused, no seat; started: client error, deadline, no JSON), logged
   & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff|coverage|runon [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Add] [-Write <f>] [-WriteRunonEvidence] ...
       recorded real steps replayed on the local model, scored per role; run units and their bench coverage (localbench.py header)
 Checks before a start, in order: forbidden model ids (models.local.forbiddenModels, wildcards: -Model, ANTHROPIC_*MODEL,
@@ -26,8 +26,8 @@ here gets local), models.runOn { <unit>: cloud | local | { on, evidence } } (uni
 token (env:<VAR> | secret:<name>; never printed), defaultModel, forbiddenModels, commands, env (name: value, null drops a
 default), overflow, maxConcurrent, needGB, probeSec, queueMinutes }
 (README "Configuration"). Lease state: video.ps1 Get-KitLocalAiState local-model. Outputs: text, JSON with -Json.
-Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat, run: fall back to the cloud · else the client's (its 1-3 as 11-13).
-Sections: L33 config · L143 checks · L173 verb
+Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat, run: fall back to the cloud · 4 run: MISMATCH (job file differs from -Fnv) · else the client's (its 1-3 as 11-13).
+Sections: L33 config · L145 checks · L175 verb
 #>
 #Requires -Version 7
 # ---- config: models.mode, models.local, the token, each client's env and arguments
@@ -51,11 +51,12 @@ function Get-KitRunOnConfig {
   $units = if ($mo -eq 'local') { @('*') } elseif ($mo -eq 'mixed') { @($map.Keys | Where-Object { $map[$_] -eq 'local' }) } else { @() }
   if (-not $units.Count) { return $null }
   $dir = "$((Get-KitPath 'agents' -Create) -replace '\\', '/')/local-runs"   # agent scratch: the STEP's Write tool makes the folder
-  [ordered]@{ units = $units; step = "STEP: run one workflow step on the local model, nothing else:`n1. Write the line between the markers to $dir/{name}.json with the Write tool, byte for byte (one line of JSON; no markers, nothing added):`n<<<JOB`n{job}`nJOB>>>`n2. Run in PowerShell (pwsh 7; tool timeout 600000): & $($KitLibDir -replace '\\', '/')/crafty.ps1 local run -JobFile '$dir/{name}.json'`nReturn ok=true when it exits 0 (else ok=false); output = its last output line, verbatim." }
+  [ordered]@{ units = $units; step = "STEP: run one workflow step on the local model, nothing else:`n1. Write the line between the markers to $dir/{name}.json with the Write tool, byte for byte (one line of JSON; no markers, nothing added):`n<<<JOB`n{job}`nJOB>>>`n2. Run in PowerShell (pwsh 7; tool timeout 600000): & $($KitLibDir -replace '\\', '/')/crafty.ps1 local run -JobFile '$dir/{name}.json' -Fnv {fnv}`nReturn ok=true when it exits 0 (else ok=false); output = its last output line, verbatim (MISMATCH: write the file again once, re-run)."; redo = 'A local run of this step stopped part way: first find what is done (wt status, git log, the board, MR and tracker state), never apply a change twice; then finish it.' }
 }
 function Add-KitRunOnFallback([string]$Unit, [string]$Why) {
   $lf = Get-KitPath 'local-fallbacks' -Create; $ln = [ordered]@{ at = (Get-Date).ToString('s'); unit = $Unit; why = "$Why".Trim() -replace '\s+', ' ' } | ConvertTo-Json -Compress
   Add-Content -LiteralPath $lf -Value $ln -Encoding utf8
+  if ((Get-Item -LiteralPath $lf).Length -gt 1MB) { $keep = @(Get-Content -LiteralPath $lf -Tail 2000); Set-Content -LiteralPath $lf -Value $keep -Encoding utf8 }   # last 2000 lines
 }
 function Get-KitRunOnFallbacks([double]$Hours = 24) {
   $lf = Get-KitPath 'local-fallbacks'; if (-not (Test-Path -LiteralPath $lf)) { return @() }
@@ -64,8 +65,9 @@ function Get-KitRunOnFallbacks([double]$Hours = 24) {
 }
 # status and the dashboard Machine row: $null without models.runOn
 function Get-KitRunOnCounts {
-  $map = Get-KitRunOnMap; if (-not $map.Count) { return $null }
-  $mo = Get-KitModelMode; $nl = if ($mo -eq 'local') { $map.Count } elseif ($mo -eq 'cloud') { 0 } else { @($map.Values | Where-Object { $_ -eq 'local' }).Count }
+  $map = Get-KitRunOnMap; $mo = Get-KitModelMode; if (-not $map.Count -and $mo -ne 'local') { return $null }
+  if (-not $map.Count) { return [pscustomobject]@{ mode = $mo; local = 'all'; cloud = 0; fallbacks = @(Get-KitRunOnFallbacks).Count; last = '' } }
+  $nl = if ($mo -eq 'local') { $map.Count } elseif ($mo -eq 'cloud') { 0 } else { @($map.Values | Where-Object { $_ -eq 'local' }).Count }
   $fb = @(Get-KitRunOnFallbacks)
   [pscustomobject]@{ mode = $mo; local = $nl; cloud = $map.Count - $nl; fallbacks = $fb.Count; last = $(if ($fb.Count) { "$($fb[-1].unit): $($fb[-1].why)" }) }
 }
@@ -174,7 +176,7 @@ function Format-KitLocalEnv($EnvMap, [string]$Token) {
 function Invoke-Local {
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('claude', 'desktop', 'code', 'status', 'bench', 'resolve', 'run')][string]$Client,
-  [string]$Unit, [string]$JobFile,   # resolve, run
+  [string]$Unit, [string]$JobFile, [string]$Fnv, [int]$DeadlineSec,   # resolve, run
   [string]$Model, [switch]$Unsafe, [switch]$Print, [switch]$Json, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session, [double]$WaitMinutes = -1,
   [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [int]$TimeoutSec, [switch]$Force,   # bench
@@ -195,20 +197,29 @@ if ($Client -eq 'resolve') {   # one run unit: cloud | local and how a local one
   if ($Json) { return ($rs | ConvertTo-Json -Compress) }
   "$($rs.on)   $Unit ($($rs.why))"; if ($rs.launch) { "launch: $($rs.launch); refused or exit 3: spawn it on the cloud and say so (Add-KitRunOnFallback logs a workflow step's)" }; return
 }
-if ($Client -eq 'run') {   # one workflow step (a job file a STEP wrote) on the local model; any refusal: exit 3, the workflow runs it on the cloud
-  $job = try { Get-Content -LiteralPath $JobFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch { Stop-KitVerb "local run: -JobFile <job json { unit, agentType, schema, prompt }>: $($_.Exception.Message)" }
-  $fall = { param($why) Add-KitRunOnFallback "$($job.unit)" $why; Stop-KitVerb "FALLBACK cloud: $($job.unit) $why" 3 }
+if ($Client -eq 'run') {   # one workflow step (a job file a STEP wrote) on the local model; any failure: exit 3, the workflow runs it on the cloud
+  $raw = try { [IO.File]::ReadAllText((Resolve-Path -LiteralPath $JobFile).Path).TrimStart([char]0xFEFF).TrimEnd("`r", "`n") } catch { Stop-KitVerb "local run: -JobFile <job json { unit, agentType, schema, prompt }>: $($_.Exception.Message)" }
+  if ($Fnv -and (Get-KitFnv $raw) -ne $Fnv.Trim().ToLower()) { Stop-KitVerb "MISMATCH: the job file hashes to $(Get-KitFnv $raw), not ${Fnv}: write it again, byte for byte" 4 }   # a re-typed prompt never runs changed
+  $job = try { $raw | ConvertFrom-Json -ErrorAction Stop } catch { Stop-KitVerb "local run: the job file is no JSON: $($_.Exception.Message)" }
+  # before the client starts: "FALLBACK cloud:"; after: "FALLBACK cloud (started):" (the cloud step first checks what is done)
+  $fall = { param($why, [switch]$Started) Add-KitRunOnFallback "$($job.unit)" "$(if ($Started) { 'started: ' })$why"; Stop-KitVerb "FALLBACK cloud$(if ($Started) { ' (started)' }): $($job.unit) $why" 3 }
   $rs = Resolve-KitRunOn "$($job.unit)"; if ($rs.on -ne 'local') { & $fall "is cloud ($($rs.why))" }
   $stem = $JobFile -replace '\.json$', ''; $pf = "$stem.prompt.md"; Set-Content -LiteralPath $pf -Value "$($job.prompt)" -Encoding utf8 -NoNewline
   $la = @('-NoProfile', '-File', (Join-Path $KitLibDir 'crafty.ps1'), 'local', 'claude', '-PromptFile', $pf, '-AgentType', "$($job.agentType)", '-Agent', $Agent)
-  if ($job.schema) { $sf = "$stem.schema.json"; Set-Content -LiteralPath $sf -Value ($job.schema | ConvertTo-Json -Depth 30 -Compress) -Encoding utf8; $la += '-SchemaFile', $sf }
-  $out = @(& (Get-Process -Id $PID).Path @la 2>&1 | ForEach-Object { "$_" }); $rc = $LASTEXITCODE
-  if ($rc) { & $fall "launcher exit ${rc}: $((@($out | Where-Object { $_ -match 'REFUSED|OVERFLOW|QUEUED' })[0], $out[-1] | Where-Object { $_ } | Select-Object -First 1))" }
+  if ($job.schema) { $sf = "$stem.schema.json"; Set-Content -LiteralPath $sf -Value (ConvertTo-Json -InputObject $job.schema -Depth 30 -Compress) -Encoding utf8; $la += '-SchemaFile', $sf }
+  $psi = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path); foreach ($lx in $la) { $psi.ArgumentList.Add("$lx") }
+  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false
+  $child = [Diagnostics.Process]::Start($psi); $so = $child.StandardOutput.ReadToEndAsync(); $se = $child.StandardError.ReadToEndAsync()
+  # the STEP's tool times out at 600 s: past the deadline the client tree is ended, never left running next to the cloud step
+  if (-not $child.WaitForExit([int](1000 * $(if ($DeadlineSec -gt 0) { $DeadlineSec } else { 540 })))) { try { $child.Kill($true) } catch { }; & $fall "no answer in $(if ($DeadlineSec -gt 0) { $DeadlineSec } else { 540 }) s (client ended)" -Started }
+  $child.WaitForExit(); $rc = $child.ExitCode; $out = @("$($so.Result)$($se.Result)" -split "\r?\n" | Where-Object { $_ })
+  if ($rc -in 1, 2, 3) { & $fall "launcher exit ${rc}: $((@($out | Where-Object { $_ -match 'REFUSED|OVERFLOW|QUEUED' })[0], $out[-1] | Where-Object { $_ } | Select-Object -First 1))" }
+  if ($rc) { & $fall "client exit ${rc}: $($out[-1])" -Started }
   $res = $null   # claude -p --output-format json: the last JSON line with result / structured_output
-  foreach ($ol in @($out)[($out.Count - 1)..0]) { $oj = try { $ol | ConvertFrom-Json -ErrorAction Stop } catch { $null }; if ($oj -and @((Get-KitProps $oj).Name | Where-Object { $_ -in 'result', 'structured_output' }).Count) { $res = $oj; break } }
-  $val = if ($res.structured_output) { $res.structured_output } elseif ($res.result) { try { "$($res.result)".Trim() -replace '^```(json)?\s*|\s*```$', '' | ConvertFrom-Json -ErrorAction Stop } catch { $null } }
-  if ($null -eq $val -or $val -is [string]) { & $fall "no JSON answer ($("$($res.result)$(if (-not $res) { $out[-1] })".Trim() -replace '\s+', ' ' | ForEach-Object { $_.Substring(0, [math]::Min(160, $_.Length)) }))" }
-  return ($val | ConvertTo-Json -Depth 30 -Compress)
+  foreach ($ol in [object[]]@($out)[($out.Count - 1)..0]) { $oj = try { $ol | ConvertFrom-Json -ErrorAction Stop } catch { $null }; if ($oj -and @((Get-KitProps $oj).Name | Where-Object { $_ -in 'result', 'structured_output' }).Count) { $res = $oj; break } }
+  $val = if ($null -ne $res.structured_output) { $res.structured_output } elseif ($res.result) { try { "$($res.result)".Trim() -replace '^```(json)?\s*|\s*```$', '' | ConvertFrom-Json -NoEnumerate -ErrorAction Stop } catch { $null } }
+  if ($null -eq $val -or $val -is [string]) { & $fall "no JSON answer ($("$($res.result)$(if (-not $res) { $out[-1] })".Trim() -replace '\s+', ' ' | ForEach-Object { $_.Substring(0, [math]::Min(160, $_.Length)) }))" -Started }
+  return (ConvertTo-Json -InputObject $val -Depth 30 -Compress)
 }
 $cfg = Get-KitLocalModelConfig; $tok = Get-KitLocalModelToken $cfg.token
 if ($Client -eq 'status') {

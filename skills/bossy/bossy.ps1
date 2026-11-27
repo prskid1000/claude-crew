@@ -32,9 +32,9 @@ bossy.ps1: the coordinator + kit commands (bossy SKILL.md). pwsh 7: & <kit>/skil
   heartbeat [install|uninstall|status|tick] · health · setup [-Exclude] [-WriteLocal] [-Allow] [-BrowserPolicy [-Undo|-Clean]] · guard-sendmessage · prepush · precommit   hooks and install
 Adapters: skills/bossy/adapters/*.ps1, loaded below; their hooks: Invoke-KitHooks.
 Exit codes: 0 ok · 1 problem / not answered / blocked · 2 usage · 3 board beat: unknown session (join first).
-Sections: L40 init · L51 board · L260 budget · L290 launch · L523 recover · L612 pause · L623 resume · L690 program · L718 param ·
-  L724 track · L1117 supervise · L1470 report · L1550 audit · L1610 storage · L1613 bugbrief · L1615 cleanup · L1702 learn ·
-  L1731 decide · L1905 debate · L1949 health · L2022 setup
+Sections: L40 init · L51 board · L260 budget · L290 launch · L522 recover · L611 pause · L622 resume · L689 program · L717 param ·
+  L723 track · L1116 supervise · L1469 report · L1549 audit · L1609 storage · L1612 bugbrief · L1614 cleanup · L1701 learn ·
+  L1730 decide · L1904 debate · L1948 health · L2021 setup
 #>
 #Requires -Version 7
 # ---- init: arguments, lib.ps1, adapters, helpers
@@ -288,7 +288,6 @@ if ($Plan) { "plan cap $($b.cap), estimate $($b.estimate): new items stop at $([
 }
 
 # ---- launch: records for resume after a restart
-function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 function Invoke-Launch {
 param(
   [string]$RunId, [string]$Script, [string]$ArgsJson, [string]$ArgsFile, [string]$RunDir, [string]$Session,
@@ -2007,7 +2006,7 @@ $od = @(Get-KitBeatOverdue); $msgs += $od   # after a compaction too
 if (-not $od.Count -and ($stopped.Count -or @(Read-KitJsonFiles (Get-KitPath board) | Where-Object status -NotIn 'left', 'crashed').Count)) { $msgs += "heartbeat: $(Get-KitBeatArmLine)" }
 $msgs += @(Invoke-KitHooks Get-KitOsBeatHealth)   # adapters/os-timer.ps1
 # runOn spawn rule
-if ((Get-Command Get-KitRunOnCounts -ErrorAction SilentlyContinue) -and ($roc = Get-KitRunOnCounts) -and $roc.local) { $msgs += "local model: $($roc.local) unit(s) local, $($roc.fallbacks) fallback(s) 24 h: per spawn & '$($KitCmd.dev)' local resolve -Unit <type>@<kind>; local -> its launch line (refused: cloud, say so)" }
+if ((Get-Command Get-KitRunOnCounts -ErrorAction SilentlyContinue) -and ($roc = Get-KitRunOnCounts) -and ($roc.local -or $roc.mode -eq 'local')) { $msgs += "local model: $($roc.local) unit(s) local, $($roc.fallbacks) fallback(s) 24 h: per spawn & '$($KitCmd.dev)' local resolve -Unit <type>@<kind>; local -> its launch line (refused: cloud, say so)" }
 if ($rs = Get-KitRepoSweep) { $msgs += "repos ($(([datetime]$rs.at).ToString('MM-dd HH:mm')) sweep): $(@($rs.repos | ForEach-Object { "$($_.repo) $($_.branches) branches · $($_.worktrees) worktrees$(if ($_.removable) { " · $($_.removable) to clean" })$(if ($_.kept) { " · $($_.kept) kept" })" }) -join '; ') (kept = unpushed, open or dirty: bossy.ps1 cleanup -DryRun -Detail)" }
 if ($due = Get-KitRetroDue) { $msgs += "Kit learning: $due. Run /tidy to turn them into lessons and rule updates." }
 $msgs += @(Invoke-KitHooks Get-KitHealthLines)   # adapters/kit-admin.ps1: weekly audit nudge

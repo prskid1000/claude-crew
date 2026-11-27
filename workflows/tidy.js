@@ -31,14 +31,14 @@ const PATHS = (/^([A-Za-z]:|[\\/])/.test(C) ? '' : '\nKit paths below are relati
 const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } return h.toString(16).padStart(8, '0') }
 const AJ = JSON.stringify(A), AF = `${rp('launches')}/args-tidy-tidy.json`
 const STEP = { type: 'object', properties: { ok: { type: 'boolean' }, record: { type: 'string' }, prep: { type: 'string' }, run: { type: 'string' } }, required: ['ok', 'record', 'prep', 'run'] }
-// models.runOn: a unit in CONFIG runOn.units runs through crafty.ps1 local run (its STEP text); refused or no JSON: the cloud, logged
+// models.runOn: a CONFIG runOn unit runs as one local STEP; refused: the cloud step; started, then failed: it first checks what is done
 let RUNON = { units: [] }
 const onLocal = async (p, o) => { const u = `${o.agentType}:${String(o.label).split(/[:@~]/)[0].replace(/-retry$/, '')}`; if (!RUNON.units.some((x) => x === u || x === '*')) return
- const sp = RUNON.step.replace(/\{name\}/g, String(o.label).replace(/[^\w.-]/g, '_')).replace('{job}', () => JSON.stringify({ unit: u, agentType: o.agentType, schema: o.schema, prompt: p }))
- const r = await agent(sp, { label: `${o.label}@local`, phase: o.phase, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'steppy', model: A.model || 'haiku', effort: 'low' }).catch(() => null)
+ const j = JSON.stringify({ unit: u, agentType: o.agentType, schema: o.schema, prompt: p })
+ const r = await agent(RUNON.step.replace(/\{name\}/g, `${RUN}-${o.label}`.replace(/[^\w.-]/g, '_')).replace('{fnv}', fnv(j)).replace('{job}', () => j), { label: `${o.label}@local`, phase: o.phase, schema: { type: 'object', properties: { ok: { type: 'boolean' }, output: { type: 'string' } }, required: ['ok', 'output'] }, agentType: 'steppy', model: A.model || 'haiku', effort: 'low' }).catch(() => null)
  try { if (r && r.ok) return JSON.parse(r.output) } catch { }
- log(`${o.label}: ${u} on the cloud (local: ${String((r && r.output) || 'no answer').slice(0, 160)})`) }
-const agentOn = async (p, o) => (await onLocal(p, o)) || agent(p, o)
+ log(`${o.label}: ${u} on the cloud (local: ${String((r && r.output) || 'no answer').slice(0, 160)})`); return !/^FALLBACK cloud: /.test(r && r.output) && RUNON.redo }
+const agentOn = async (p, o) => { const lr = await onLocal(p, o); return lr && typeof lr === 'object' ? lr : agent(lr ? `${lr}\n${p}` : p, o) }
 phase('Prep')
 let P = null, RUN = 'tidy'   // N3 run id from the prep step (legacy: 'tidy')
 for (const [label, model] of [['prep', A.model || 'haiku'], ['prep-retry', A.model || 'sonnet']]) {

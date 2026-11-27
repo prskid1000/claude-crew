@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L266 OS · L474 leases · L917 status · L1107 tracker · L1436 prior ·
-  L1455 ask bugs · L1640 deploy words · L1683 git-host · L1871 kitlog · L1983 params · L2288 entry-scripts
+Sections: L12 paths · L98 state · L179 config · L268 OS · L476 leases · L919 status · L1109 tracker · L1438 prior ·
+  L1457 ask bugs · L1642 deploy words · L1685 git-host · L1873 kitlog · L1985 params · L2290 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -28,6 +28,8 @@ function Get-KitMember($InputObject, [string]$Name) {   # = $InputObject.$Name (
 function Set-KitMember($InputObject, [string]$Name, $Value) {   # = $InputObject.$Name = $Value
   if ($InputObject -is [System.Collections.IDictionary]) { $InputObject[$Name] = $Value } else { $InputObject.PSObject.Members[$Name].Value = $Value }
 }
+# FNV-1a of the UTF-16 chars: the workflows' fnv() (launch -Self args, local run jobs)
+function Get-KitFnv([string]$s) { [uint64]$h = 2166136261; foreach ($c in $s.ToCharArray()) { $h = (($h -bxor [uint64][int]$c) * 16777619) % 4294967296 }; ([uint32]$h).ToString('x8') }
 function Get-KitHash([string]$Text, [ValidateSet('MD5', 'SHA1', 'SHA256')][string]$Algorithm = 'SHA256') { & (Join-Path $script:KitLibDir 'flagged.ps1') hash -Text $Text -Algorithm $Algorithm }   # upper hex of the UTF-8 bytes
 $script:KitLibDir = $PSScriptRoot
 # a relative CLAUDE_RUNTIME is kit-relative; one that starts with the kit's own folder name is workspace-relative (it made <kit>/.claude/.runtime, retro 1549)
