@@ -71,7 +71,7 @@ $go = Fin $bg G1 -Check; $gc = $LASTEXITCODE; $so = Fin $sm S1 -Check
 Expect "finalize -Check: 44 checks, 36-word notes, 300- and 30-word verify, 30 links pass prose:900w ($gc); a small one padded over 900 words fails" ($gc -eq 0 -and $go -match 'EXIT=0' -and $LASTEXITCODE -eq 1 -and $so -match '\(prose\): \d+ words \(max 900\)')
 $null = Fin $bg 'G1'; $vm = Get-Content "$bg/G1/report.md" -Raw
 Expect 'finalize: verify status in the cell, a long text in a linked file' ((Read-Text "$bg/G1/evidence/G1-C1_verify_retest.txt") -match ' 300' -and $vm -match 'FAIL\*\* \(re-test: confirmed · 1 2 3 [^|]*…\)' -and $vm -match 'text: \[G1-C1_verify' -and $vm -notmatch ' 300')
-# -FixNames: a reference in another case is rewritten; a results.json written again with the old name still resolves (rename log)
+# -FixNames: other cases' references rewritten; an old name written again resolves (rename log)
 $rn = New-Run 'RN' @(@{ code = 'R1'; task = 'TR'; checks = , @('C1', 'PASS') }); New-TestDir "$rn/R1/shots"
 [IO.File]::WriteAllBytes("$rn/R1/shots/shotone.png", [byte[]](1, 2, 3)); $rj = Read-Json "$rn/R1/results.json"; $rj.checks[0].evidence = @('ShotOne.PNG'); $rj.checks[0].what_was_done = 'Opened it, see ShotOne.PNG.'; & $J $rj "$rn/R1/results.json"
 $fxo = Fin $rn R1 -Check -FixNames | Out-String; $f1 = Read-Text "$rn/R1/results.json"; $new = @(Get-ChildItem "$rn/R1/shots").Name; $p0 = Test-Path "$rn/R1/finalize.json"
@@ -127,7 +127,7 @@ Expect 'shared task waits for its sibling, then failedTesting' ($w.waitingFor -c
 # run with & after -Check's exit 0: a crashing publish must still exit 1
 $rc = Invoke-PsTest 'fin-crash' "pwsh -NoProfile -Command 'exit 0'; & `$args[0] finalize -RunDir `$args[1] -Code NOPE 2>`$null; `"rc=`$LASTEXITCODE`"; & `$args[0] finalize -RunDir `$args[1] -Code H1 | Select-Object -Last 1; `"rc=`$LASTEXITCODE`"" @($Q, $h)
 Expect "finalize publish ends EXIT=<its exit>: a crash 1, a publish 0 ($rc)" ("$rc" -match '(?s)EXIT=1.*rc=1.*EXIT=0.*rc=0')
-# finalize, fake uploader: devtools.py evidence runs $Evidence (python, 4-space body; a = argv, here = its folder), the rest real
+# finalize, fake uploader: devtools.py evidence runs $Evidence (python body; a = argv, here = its folder), the rest real
 $dt = Join-Path $k 'skills/crafty'
 function Use-FakeUploader([string]$Evidence, [scriptblock]$Run, [string]$Verbs = "'evidence'") {
   Move-Item "$dt/devtools.py" "$dt/devtools_real.py"
@@ -211,10 +211,10 @@ $klBase | Set-Content $kl
 $qk = "$k/skills/pokey"
 if (Use-BrowserKit) {
   $env:KIT_BROWSER_PORT_BASE = 30000
-  $res = NodeT base "const u = [], pg = (web) => ({ __qa: { t: { web } }, goto: async (x) => u.push(x), on() {}, off() {}, waitForNetworkIdle: async () => {} })`nawait m.go(pg('a'), '/x'); await m.go(pg('b'), '/y'); console.log(u + '' === 'a/x,b/y', (await m.sessionPort('pb', 't', 'a')) >= 30000)"
+  $res = NodeT base "const u = [], pg = (web) => ({ __qa: { t: { web } }, goto: async (x) => u.push(x), on() {}, off() {}, waitForNetworkIdle: async () => {}, evaluate: async () => true })`nawait m.go(pg('a'), '/x'); await m.go(pg('b'), '/y'); console.log(u + '' === 'a/x,b/y', (await m.sessionPort('pb', 't', 'a')) >= 30000)"
   Remove-Item Env:KIT_BROWSER_PORT_BASE
   Expect 'browser.mjs: each tab uses its own target; browser.portBase' ("$res" -eq 'true true')
-  # tab cap: 9 concurrent openers -> 8 tabs, the 9th waits; a full browser fails clearly; dead / left holders are swept
+  # tab cap: 9 openers -> 8 tabs, the 9th waits; a full browser fails; dead / left holders swept
   $res = NodeT tabs @'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 const { openTab, closeTab, kitPath, sweepAll } = m
@@ -242,7 +242,7 @@ await sweepAll(); console.log('sweep:' + (existsSync(f) && existsSync(`${S}/tabs
   Expect-Each $res 'browser.mjs tabs: #' 'waits', 'ninth', 'fails', 'orphans', 'sweep'
   Expect 'browser.mjs: never logs out' ((Read-Text "$qk/browser.mjs") -notmatch '(?i)localStorage\.clear|sessionStorage\.clear|logout|8 \* 3600')
   # fixture app: form login, relogin (Chrome); firefox without Playwright: its install line
-  $null = mkdir -Force "$qk/adapters"; cp "$src/skills/pokey/adapters/engine-playwright.mjs" "$qk/adapters"
+  $null = mkdir -Force "$qk/adapters"; cp "$src/skills/pokey/adapters/engine-playwright.mjs", "$src/skills/pokey/adapters/web-login.mjs" "$qk/adapters"
   $res = NodeT auth ($LoginApp + @'
 const [TF, SLOW] = process.argv.slice(2), F = { '#u': '{user}', '#c': '123456' }, steps = [{ goto: '/sso-app' }, { fill: F }, { click: 'button', waitUrl: '/$' }]
 writeFileSync(TF, JSON.stringify({ default: 'form', targets: { form: { web, webLogin: { path: '/login', fields: F, submit: 'button' }, users: U },
