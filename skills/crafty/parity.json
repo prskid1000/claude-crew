@@ -234,6 +234,14 @@
       }
     },
     "features": {
+      "idle-wait guard (Monitor timeout_ms, foreground sleep over guard.warmSeconds; subagents only)": {
+        "codex": "fallback: kit waits return within guard.warmSeconds (decide wait 4 min, envy wait 4.5 min / 270 s); AGENTS.md Waits",
+        "antigravity": "fallback: kit waits return within guard.warmSeconds; AGENTS.md Waits"
+      },
+      "screenshot view copy and re-read deny": {
+        "codex": "gap: Codex reads images outside the hooks; the view copy is written, AGENTS.md points to it",
+        "antigravity": "port: guard_client.mjs redirects view_file of a shot to its view copy; re-read deny gap (no session id in the hook input)"
+      },
       "guard on file reads and MCP SQL": {
         "codex": "port: PreToolUse guard_client.mjs on Bash|apply_patch|mcp__*(sql|query)* (Codex reads files through its shell; hook input tool_name / tool_input as Claude Code)",
         "antigravity": "port: PreToolUse guard_client.mjs on view_file|call_mcp_tool|mcp_.* (https://antigravity.google/docs/hooks/: Read caps, the logins file, SQL row caps; answered { decision, reason })"

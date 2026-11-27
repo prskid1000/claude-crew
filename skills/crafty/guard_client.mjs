@@ -5,10 +5,10 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L90 warm · L115 context · L173 idle
+// Sections: L25 crash · L50 plain · L90 warm · L115 context · L174 idle
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import net from 'node:net'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -127,11 +127,12 @@ function deny(why) { process.stdout.write(JSON.stringify(gravity ? { decision: '
 function imageRule(f, who) {
   let cache; try { const map = JSON.parse(readFileSync(join(here, 'kit.example.json'), 'utf8'))._paths; cache = join(kit, map.runtimeDir, map.runtime.cache) } catch { return }
   let mt; try { mt = statSync(f).mtimeMs } catch { return }
-  const view = join(cache, 'shot-view', f.replace(/^.*[\\/]/, '').replace(/\.\w+$/, '') + '.jpg')
+  const view = join(cache, 'shot-view', `${createHash('sha1').update(resolve(f).toLowerCase()).digest('hex').slice(0, 10)}-${f.replace(/^.*[\\/]/, '').replace(/\.\w+$/, '')}.jpg`)   // ui-checks.mjs viewCopy: same key
   if (resolve(f).toLowerCase() !== view.toLowerCase()) { try { if (statSync(view).mtimeMs >= mt - 5000) deny(`kit guard: read the smaller copy ${view} (same screen at browser.viewScale, ~40% fewer image tokens); the full image (small text): Read ${f} with limit: 1`) } catch { } }
   if (!who) return
   const log = join(cache, 'guard-reads', `${who.replace(/[^\w.-]/g, '_')}.txt`), key = `${resolve(f).toLowerCase()}|${Math.round(mt)}`
   let seen = ''; try { seen = readFileSync(log, 'utf8') } catch { }
+  if (!seen) for (const d of ['guard-reads', 'shot-view']) try { for (const x of readdirSync(join(cache, d))) { const fx = join(cache, d, x); if (statSync(fx).mtimeMs < Date.now() - 172800000) unlinkSync(fx) } } catch { }   // a new session prunes both: 48 h
   if (seen.split('\n').includes(key)) deny(`kit guard: you already read ${f} in this session (unchanged; its image is in your context): use what you saw or noted; to look again (after a compaction, a detail): Read it with limit: 1`)
   try { mkdirSync(dirname(log), { recursive: true }); appendFileSync(log, key + '\n') } catch { }
 }
@@ -172,12 +173,14 @@ function sqlRule(ti) {
 }
 // ---- idle: an idle wait over the 5 min prompt-cache life re-writes the whole context on the next call (owner 2026-11-27: 1,049
 // misses, 224M tokens in 4 days); a Monitor expiry or a short sleep wakes the agent inside it
-function warmRule(tn, ti) {
-  const w = param('guard.warmSeconds'); if (!w) return
+function warmRule(tn, ti, sub) {   // subagents only: the main session writes its cache with a 1 h life
+  const w = param('guard.warmSeconds'); if (!w || !sub) return
   const how = `wait in slices of <= ${w} s (guard.warmSeconds): a Monitor with timeout_ms <= ${w * 1000}, re-armed on expiry; a long command: run_in_background, then that Monitor; kit waits (decide wait, envy wait) return within it, rerun them`
   if (tn === 'Monitor' && Number(ti.timeout_ms ?? 300000) > w * 1000) deny(`kit guard: a Monitor over ${w} s lets your prompt cache expire (5 min) while you idle: the next call re-writes your whole context. ${how}`)
   if ((tn === 'Bash' || tn === 'PowerShell') && ti.run_in_background !== true) {
-    const s = Math.max(0, ...[...`${ti.command || ''}`.matchAll(/(?:^|[\s;&|(])(?:sleep\s+(\d+)([mh]?)\b|Start-Sleep\s+(?:-s(?:econds)?\s+)?(\d+)\b)/gi)].map((m) => m[3] ? Number(m[3]) : Number(m[1]) * ({ m: 60, h: 3600 }[m[2].toLowerCase()] || 1)))
+    const code = `${ti.command || ''}`.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?^\s*\2\s*$/gm, '').replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, '""')   // heredocs and quoted text are data
+    const s = Math.max(0, ...[...code.matchAll(/(?:^|[\s;&|(])(?:sleep\s+(\d+(?:\.\d+)?)([smh]?)(?![\w.])|Start-Sleep\s+(?:-s\w*\s+)?(\d+)\b|Start-Sleep\s+-m\w*\s+(\d+))/gi)]
+      .map((m) => m[4] ? Number(m[4]) / 1000 : m[3] ? Number(m[3]) : Number(m[1]) * ({ m: 60, h: 3600 }[m[2].toLowerCase()] || 1)))
     if (s > w) deny(`kit guard: sleep ${s} in the foreground lets your prompt cache expire (5 min): the next call re-writes your whole context. ${how}`) }
 }
 
@@ -185,7 +188,7 @@ if (!input.trim()) process.exit(0)
 { let j = null; try { j = JSON.parse(input) } catch { }
   const tn = `${j?.tool_name || ''}`
   if (tn === 'Read') { readRule(j.tool_input || {}, j.session_id ? `${j.session_id}-${j.agent_id || 'main'}` : ''); process.exit(0) }
-  warmRule(tn, j?.tool_input || {}); if (tn === 'Monitor') process.exit(0)
+  warmRule(tn, j?.tool_input || {}, j?.agent_id); if (tn === 'Monitor') process.exit(0)
   if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) }
   // Antigravity (https://antigravity.google/docs/hooks/): view_file { AbsolutePath, StartLine, EndLine }; MCP through call_mcp_tool
   // { ServerName, ToolName, Arguments } or an eager server's mcp_<server>_<tool>; arg values may come JSON-encoded

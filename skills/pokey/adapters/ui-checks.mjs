@@ -193,8 +193,9 @@ export async function sheet(s, files, out, { cols = 2, width = 1600 } = {}) {
 // the copy agents read (the guard points a Read of the shot there): the viewport at scale (browser.viewScale), ~40% fewer image
 // tokens (owner 2026-11-27: 14 shots, 1.6M tokens a test session); the shot stays the evidence
 export async function viewCopy(page, file, scale = 0.75) {
-  if (!(scale > 0 && scale < 1)) return
+  if (!(scale > 0 && scale < 1) || page.__pw) return   // Playwright ignores clip.scale: no copy, the guard then lets the shot through
   try { const fs = await import('node:fs'), path = await import('node:path'), b = await import('../browser.mjs'), v = page.viewport() || {}, [x, y] = await page.evaluate(() => [scrollX, scrollY])
-    const out = path.join(b.kitPath('cache', { create: true }), 'shot-view', path.basename(file).replace(/[.]\w+$/, '.jpg'))
+    const h = (await import('node:crypto')).createHash('sha1').update(path.resolve(file).toLowerCase()).digest('hex').slice(0, 10)   // the guard's key: one view per shot path
+    const out = path.join(b.kitPath('cache', { create: true }), 'shot-view', `${h}-${path.basename(file).replace(/[.]\w+$/, '.jpg')}`)
     fs.mkdirSync(path.dirname(out), { recursive: true }); await page.screenshot({ path: out, type: 'jpeg', quality: 75, clip: { x, y, width: v.width || 1600, height: v.height || 1000, scale } }) } catch { }
 }

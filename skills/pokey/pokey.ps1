@@ -1552,11 +1552,14 @@ function Invoke-LeadNotes {
 param([Parameter(Position = 0)][ValidateSet('add', 'show')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Alias('Item')][string]$Code, [string]$Text, [int]$Last = 5)
 $nf = Join-Path $RunDir 'lead-notes.md'; if (-not (Test-Path -LiteralPath $nf)) { throw "no lead-notes.md in $RunDir (pokey.ps1 prepare writes it)" }
 if ($Action -eq 'show') {   # what a tester needs before a check, not the whole file: result line, its prerequisite rows, the newest answers
-  $ln = @(Get-Content -LiteralPath $nf -Encoding utf8); $sec = ''; $ans = @()
+  $ln = @(Get-Content -LiteralPath $nf -Encoding utf8); $sec = ''; $ans = @(); $fix = @(); $cx = if ($Code) { "\b$([regex]::Escape($Code))\b" } else { '.' }
   foreach ($l in $ln) { if ($l -match '^## (.+)') { $sec = $Matches[1]; continue }
     if ($l -match '^\*\*Result:\*\*') { $l }
     elseif ($sec -like 'Prerequisites*' -and $l -match '^\|' -and ($l -match '^\|\s*(Item|---)' -or -not $Code -or $l -match "^\|\s*$([regex]::Escape($Code))\s*\|")) { $l }
-    elseif ($sec -notlike 'Prerequisites*' -and $sec -notlike 'Left out*' -and $l -match '^- ' -and (-not $Code -or $l -match "\b$([regex]::Escape($Code))\b")) { $ans += $l } }
+    elseif ($sec -notlike 'Prerequisites*' -and $sec -notlike 'Left out*' -and $l -match '^- ') { if ($l -match '^- \S+ (ALL|\*):') { $fix += $l } elseif ($l -match $cx) { $ans += $l } }   # add appends at the end, under any block
+    elseif ($l -match '^DECISION \S+ ') { $fix += $l }   # every env fix and decision: never capped
+    elseif ($sec -like 'ENV-FIX*' -and $sec -match $cx -and $l.Trim()) { $fix += "$sec | $l" } }
+  if ($fix.Count) { '## Env fixes, decisions, run-wide rules'; $fix }
   if ($ans.Count) { "## Answers (newest $([math]::Min($Last, $ans.Count)) of $($ans.Count))"; $ans | Select-Object -Last $Last }
   return }
 if (-not ($Code -and $Text)) { throw 'lead-notes add needs -Code <code> -Text <text>' }
