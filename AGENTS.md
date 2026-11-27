@@ -58,6 +58,9 @@ it first); a spawned agent skips it.
   them); parallel work in worktrees (`crafty.ps1 wt`), commits with `crafty.ps1 wt commit`; never install packages into linked
   `node_modules` / `.venv`. The guard hook blocks `git stash`, `--no-verify` and ungated builds. Rebase (`wt sync`) before
   editing, pushing and merging; merge only on a green pipeline, producers before consumers.
+- **Waits** (the prompt cache lives 5 min; a longer idle re-writes your whole context): one call idles <= 270 s
+  (`guard.warmSeconds`): a long command runs in the background, watched by a Monitor of `timeout_ms` <= 270000, re-armed
+  (no Monitor: poll it); kit waits (`decide wait`, `envy.ps1 wait`, `use`, `deploy`) return within it: rerun them.
 - Phones only through `skills/phoney/phoney.ps1 acquire`. Every kit resource (env service,
   browser tab, phone, build) has a holder: lease only what your item declares, release when done; no live holder for
   `idle.graceMinutes` -> released (README "Leases").

@@ -380,7 +380,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 | device | `devices.type` | dump tap tapid tapxy type clear key swipe openurl shot shotmark wait photo log mic | android, ios, none |  | gap: clear (1), dump (1), key (1), log (1), mic (2), openurl (1), photo (2), shot (1), shotmark (1), swipe (1), tap (1), tapid (1), tapxy (1), type (1), wait (1) | `skills/pokey/adapters/ui-android.ps1` |
 | browser-engine | `browser.engine` | session context; caps: reuse | chrome, chromium, firefox, webkit |  |  | `skills/pokey/adapters/engine-playwright.mjs` |
 | scheduler | `supervise.osTimer` | install uninstall status | windows, cron, launchd, none |  |  | `skills/bossy/adapters/os-timer.ps1` |
-| guard | `built-in guard rules` | check | local-env, deployed-env, large-writes, secrets, runtimes, script-faults |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
+| guard | `built-in guard rules` | check | local-env, deployed-env, large-writes, secrets, runtimes, script-faults, file-dumps |  |  | `skills/crafty/adapters/guard-localenv.ps1` |
 | stack | `repos[] stack detection` | detect | core, presets |  |  | `skills/crafty/adapters/stack-presets.ps1` |
 <!-- kit-graph:end -->
 

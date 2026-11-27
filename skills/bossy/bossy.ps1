@@ -1732,7 +1732,7 @@ function Invoke-Learn {
 function Invoke-Decide {
   param([Parameter(Position = 0)][ValidateSet('ask', 'list', 'answer', 'wait', 'watch', 'record', 'check', 'publish', 'rules')][string]$Action = 'list',
     [string]$Run, [string]$Agent, [string]$Item, [string]$Question, [string[]]$Options = @(), [string]$Recommend, [string]$Contracts,
-    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 8, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
+    [string]$Id, [string]$Answer, [string]$By = 'owner', [int]$MaxMinutes = 4, [switch]$Pending, [switch]$Json, [switch]$Fyi, [switch]$Ask, [int]$Max = 4,
     [ValidateSet('decision', 'envfix')][string]$Kind = 'decision',
     [string]$Task, [Alias('Mr')][string[]]$Mrs = @(), [string]$Commit, [string]$ParentId, [string]$Rationale,
     [string]$Gate = '',   # record: one of $kitGates; check -Id: a non-gate word is ignored

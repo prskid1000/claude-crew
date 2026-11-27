@@ -5,8 +5,8 @@
 # Bash "/x" argument to a Windows program (MSYS path conversion), ./mvnw or ./gradlew from a folder without it, a work/agents .ps1 whose
 # variables differ only by case; .state/tracking.json (moved), decide wait under a shell timeout, Git Bash /tmp to a Windows python
 # or node, python -c inside pwsh -Command, sed -i with backslashes on a .py. Test-KitScriptEdit (crafty.ps1 guard, file edits): the .ps1 case check and illegal Java string escapes.
-# Each deny names the fix and its class (script-fault <class>).
-# Sections: L10 helpers · L91 edits · L112 commands
+# Each deny names the fix and its class (script-fault <class>). Rule file-dumps: a whole-file cat / type / Get-Content over the Read caps.
+# Sections: L10 helpers · L91 edits · L112 commands · L170 reads
 # ---- helpers: bash words, the python shim, Git Bash, parsers
 function Get-KitBashWord([string]$Text, [int]$At) {   # the bash word at $At, quotes removed ($vars kept): @(value, next index); $null = an open quote
   $sb = [Text.StringBuilder]::new(); $i = $At
@@ -159,7 +159,7 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
     }
     # moved state, killed waits, Git Bash /tmp (faults: tracking.json, decide wait under timeout, /tmp read by a Windows python)
     if ($raw -match $script:KitStateMoved -and $raw -notmatch '\b(git|learn|grep|rg|Select-String)\b') { return "kit guard: $script:KitStateMovedWhy." }
-    if ($isBash -and $raw -match '\bdecide\s+wait\b' -and $raw -match '(^|[;&|(]\s*)timeout\s+\S+\s' -and $raw -notmatch '-MaxMinutes') { return "kit guard: a shell timeout kills decide wait mid-poll and drops its answer: run decide wait -Id <id> -MaxMinutes <m> (PENDING + exit 1 at the limit; default 8, under the 10 min tool cap) (script-fault decide-wait-timeout)." }
+    if ($isBash -and $raw -match '\bdecide\s+wait\b' -and $raw -match '(^|[;&|(]\s*)timeout\s+\S+\s' -and $raw -notmatch '-MaxMinutes') { return "kit guard: a shell timeout kills decide wait mid-poll and drops its answer: run decide wait -Id <id> -MaxMinutes <m> (PENDING + exit 1 at the limit; default 4, inside the 5 min prompt cache) (script-fault decide-wait-timeout)." }
     if ($isBash -and $raw -match '(^|[\s;&|(])(python[\d.]*|py|node)(\.exe)?\s' -and $raw -match '[(=,\[]\s*r?[''"]/tmp/') { return "kit guard: a /tmp path inside python or node code opens <drive>:\tmp, not Git Bash's /tmp (only a bare argument is converted): put the file under $fix <file> (script-fault posix-path)." }   # arch-ok: matches agents' /tmp, writes none
     # a work/agents .ps1 about to run with $a / $A in one scope (the second spelling overwrites the first)
     foreach ($m in [regex]::Matches($raw, '(?:-File\s+|(?:^|[;|&(\n]\s*)(?:[&.]\s+)?)[''"]?(?<p>[^\s''"`;|&(){}]+[\\/]work[\\/]agents[\\/][^\s''"`;|&(){}]+\.ps1)\b')) {
@@ -167,3 +167,23 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
       if ((Test-Path -LiteralPath $sp -PathType Leaf) -and ($cc = @(Find-KitPsCaseClash ([IO.File]::ReadAllText($sp))))) { return "kit guard: $($m.Groups['p'].Value): $($cc[0]) are ONE variable (PowerShell names are case-insensitive: the second overwrites the first): rename one to a full word, then run it (script-fault ps-case-clash)." }
     }
   } }
+# ---- reads: cat / type / Get-Content of a whole file skips the Read caps (owner 2026-11-27: SKILL.md, lead notes, briefs, results
+# and product files dumped whole); a pipe to a limiter, a redirect or a ranged Get-Content passes
+Register-KitAdapter 'guard' 'file-dumps' @{ check = { param($a)
+    $hook = $a.hook; $cwd = if ($hook.cwd) { "$($hook.cwd)" } else { (Get-Location).Path }
+    $body = [regex]::Replace("$($a.raw)", '(?ms)<<-?\s*([''"]?)(\w+)\1([^\n]*)\n.*?^\s*\2\s*$', '<<doc$3')
+    $kit = "$script:KitRoot" -replace '\\', '/'; $kitCap = [int](Get-KitParam 'guard.kitReadLines'); $anyCap = [int](Get-KitParam 'guard.readMaxLines')
+    $limiter = '^(head|tail|grep|egrep|rg|sed|awk|wc|jq|cut|sort|uniq|Select-Object|select|Select-String|sls|findstr|Measure-Object|ConvertFrom-Json|Out-Null|Set-Content|Out-File|tee)$'
+    foreach ($m in [regex]::Matches($body, '(?im)(?:^|[;&(\n]|\|\|)\s*(?:cat|type|Get-Content|gc)\s+(?<a>[^;&|\n<>()]+?)\s*(?<n>$|[;&\n)]|\|\s*(?<p>[\w-]+)|>)')) {
+      if ($m.Groups['n'].Value -eq '>' -or ($m.Groups['p'].Success -and $m.Groups['p'].Value -match $limiter) -or $m.Groups['a'].Value -match '(^|\s)-(TotalCount|Head|Tail|First|Last)\b') { continue }
+      $dir = $cwd; $cds = [regex]::Matches($body.Substring(0, $m.Index), '(?:^|[;&\n])\s*cd\s+(?<d>"[^"]+"|''[^'']+''|[^\s;&|]+)'); if ($cds.Count) { $dir = $cds[$cds.Count - 1].Groups['d'].Value.Trim('''"') -replace '^/([A-Za-z])(?=/|$)', '$1:' }
+      foreach ($f in @($m.Groups['a'].Value -split '\s+' | Where-Object { $_ -and $_ -notmatch '^-' })) {
+        $f = $f.Trim('''"') -replace '^/([A-Za-z])(?=/)', '$1:'; if ($f -match '[$*?`{]' -or $f -match '\.(png|jpe?g|gif|webp|pdf|zip|exe|dll|class|jar)$') { continue }
+        $full = try { [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($f)) { $f } else { Join-Path $dir $f })) } catch { continue }
+        $fi = Get-Item -LiteralPath $full -ErrorAction SilentlyContinue; if (-not $fi -or $fi.PSIsContainer) { continue }
+        $n = 0; if ($fi.Length -gt 16MB) { $n = [int]::MaxValue } else { foreach ($b in [IO.File]::ReadAllBytes($full)) { if ($b -eq 10) { $n++ } } }
+        $isKit = ($full -replace '\\', '/').StartsWith("$kit/", [StringComparison]::OrdinalIgnoreCase) -and $full -match '\.(md|json|jsonl|log|txt|ya?ml|csv)$'
+        $cap = if ($isKit) { $kitCap } else { $anyCap }
+        if ($cap -and $n -gt $cap) { return "kit guard: $f is $n lines: a whole-file cat / type / Get-Content puts all of it in your context (cap $cap lines: guard.$(if ($isKit) { 'kitReadLines (kit docs, run files)' } else { 'readMaxLines' })). Read tool: the top 40 lines (its map; a .md: Grep '^#'), then the range you need (offset / limit); a run's lead notes: pokey.ps1 lead-notes show -RunDir <run> [-Code <code>] [-Last 5]; or pipe to head / grep." }
+      }
+    } } }

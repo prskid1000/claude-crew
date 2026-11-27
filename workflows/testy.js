@@ -257,7 +257,7 @@ TARGET "${tgt(it) || '(default)'}" (a targets.local.json entry: never read that 
 LOCAL PARTS ${[].concat(it.localParts).join(', ')}: no build on this target: test their checks on the local env (phoney.ps1 build -Local + a lane), a "local run"; no lane can -> NOT_TESTED phone-only. Lease only what those checks call (& '${KIT}/skills/envy/envy.ps1' use -Env <its local env> -Services api -Agent test:<CODE>@${RUNTAG()} -Session <board token>), release it right after them (envy.ps1 release -Env <env> -Agent test:<CODE>@${RUNTAG()}): never the whole env, never for the target's checks.` : ''}
 ${R.context || ''}
 ${(R.contextFiles || []).length ? `- Read these first: ${R.contextFiles.join(' , ')}` : ''}${localBlock(it)}
-LEAD NOTES: ${R.runDir}/lead-notes.md (ask there: & ${Q} lead-notes add -RunDir '${R.runDir}' -Code ${it.code} -Text '<question>'; you cannot be messaged): re-read before each check and before any NOT_TESTED; the coordinator adds answers and rule changes there between beats, no live lead reads it: never wait for an answer, decide within your TARGET and guide, note what you decided.
+LEAD NOTES: ${R.runDir}/lead-notes.md (ask: & ${Q} lead-notes add -RunDir '${R.runDir}' -Code ${it.code} -Text '<question>'; nobody messages you): before a check or NOT_TESTED: & ${Q} lead-notes show -RunDir '${R.runDir}' -Code ${it.code}; the coordinator adds answers and rule changes between beats, no live lead reads it: never wait for an answer: decide within your TARGET and guide, note it.
 TOOLS: & '${Q}' api -Target ${tgt(it) || '<target>'} ...; tracker: & '${KIT}/skills/crafty/crafty.ps1' tracker view|comments <id>.`
 const WEB = (it) => `
 BROWSER (web): ${QA}/browser.mjs (read its header), scripts in <outDir>/scripts:

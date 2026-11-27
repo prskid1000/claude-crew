@@ -15,7 +15,7 @@ Expect "learn -Read -Skill a,b: both skills' lessons and rules, a shared org sec
 Expect 'learn -Read -Skill a: unchanged (its lessons, its org sections)' ($oneOut -match 'pub when' -and $oneOut -match 'role one' -and $oneOut -match 'role three' -and $oneOut -notmatch 'ops when|role two' -and ([regex]::Matches($ownOut, '\|---\|')).Count -eq 2)
 $capLines = @(1..25 | ForEach-Object { "- cap $_ -> a (b)$(if ($_ -eq 25) { ' (9×)' })" }) -join "`n"; [IO.File]::WriteAllText((Join-Path $k 'LESSONS.md'), "# Kit lessons`n`n## zc`n$capLines`n")
 $capOut = pwsh @np $O learn -Read -Skill zc | Out-String
-Expect "learn -Read: learn.readCap 20 lessons by default: the most-hit, then the newest (the top); the rest counted ($(([regex]::Matches($capOut, '(?m)^- cap')).Count))" (([regex]::Matches($capOut, '(?m)^- cap')).Count -eq 20 -and $capOut -match '\(5 more, fewest hits' -and $capOut -match '- cap 25 ' -and $capOut -match '- cap 19 ' -and $capOut -notmatch '- cap 2[0-4] ')
+Expect "learn -Read: learn.readCap 10 lessons by default: the most-hit, then the newest (the top); the rest counted ($(([regex]::Matches($capOut, '(?m)^- cap')).Count))" (([regex]::Matches($capOut, '(?m)^- cap')).Count -eq 10 -and $capOut -match '\(15 more, fewest hits' -and $capOut -match '- cap 25 ' -and $capOut -match '- cap 9 ' -and $capOut -notmatch '- cap (1\d|2[0-4]) ')
 # org blocks by skill and phase: "### t (crafty, ship)" = crafty in phase ship only (a phase tag alone showed it to every role)
 [IO.File]::WriteAllText((Join-Path $k 'ROLES.local.md'), "## opsy, crafty, pokey`n- role all`n### mx (crafty, ship)`n- role mx`n### rv (pokey, crafty)`n- role rv`n")
 $tagOut = @((pwsh @np $O learn -Read -Skill opsy), (pwsh @np $O learn -Read -Skill pokey), (pwsh @np $O learn -Read -Skill crafty -Phase code), (pwsh @np $O learn -Read -Skill crafty -Phase ship), (pwsh @np $O learn -Read -Skill crafty) | ForEach-Object { "$_" })
@@ -61,5 +61,16 @@ Expect "settings.json: claudeMdExcludes skips a kit worktree's CLAUDE.md ($($stg
 # board join names the contracts file, never dumps it (its readers Read it; 2.5k tokens per join)
 $ctrFile = Join-Path $k 'c.contracts.md'; [IO.File]::WriteAllText($ctrFile, "# Contracts`nCONTRACT-BODY-T`n"); $ctrOut = pwsh @np $O board join -Agent CTR -Run rctr -Contracts $ctrFile | Out-String
 Expect "board join: contracts as a one-line pointer, no body ($(($ctrOut -split "`n" | Where-Object { $_ -match 'CONTRACTS' }) -join ''))" ($ctrOut -match 'CONTRACTS: .*c\.contracts\.md \(2 lines\)' -and $ctrOut -notmatch 'CONTRACT-BODY-T')
+# lead-notes show (owner 2026-11-27: testers cat-ed the whole file before each check): result line, the code's rows, its newest answers
+$lnRun = Join-Path (Kd) 'ln-run'; $null = New-Item -ItemType Directory -Force $lnRun; $lnP = Join-Path $k 'skills/pokey/pokey.ps1'
+[IO.File]::WriteAllText((Join-Path $lnRun 'lead-notes.md'), "# Lead notes: r`n**Result:** 2 in, 0 left out`n`n## Prerequisites`n`n| Item | Flags | State |`n|---|---|---|`n| T1 | f1 | ok |`n| T2 | f2 | ok |`n`n## Left out`n`n## Answers (newest last)`n- 01:00 T2: other item`n")
+foreach ($ln in 1..7) { $null = pwsh -NoProfile -File $lnP lead-notes add -RunDir $lnRun -Code T1 -Text "answer $ln" 2>&1 }
+$lnShow = @(pwsh -NoProfile -File $lnP lead-notes show -RunDir $lnRun -Code T1 2>&1) -join "`n"
+Expect "lead-notes show -Code T1: result line, T1's prerequisite row, its newest 5 of 7 answers; no T2 row or answer ($($lnShow -replace "`n", ' / '))" ($lnShow -match '^\*\*Result:\*\* 2 in' -and $lnShow -match '\| T1 \| f1' -and $lnShow -match 'newest 5 of 7' -and $lnShow -match 'T1: answer 7' -and $lnShow -notmatch 'answer [12]\b|T2')
+# wt new's root: the kit's own worktree leaves a root under a product's CLAUDE.md (it loaded 12k tokens per kitty session); other repos keep it
+$wrWs = Split-Path $k; $wrCfg = Join-Path $k 'skills/crafty/kit.local.json'; $null = New-Item -ItemType Directory -Force (Join-Path $wrWs 'prod/.worktrees'); Set-Content (Join-Path $wrWs 'prod/CLAUDE.md') '# product'
+Set-Content $wrCfg (@{ worktreeRoots = @((Join-Path $wrWs 'prod/.worktrees')) } | ConvertTo-Json); $wrGot = & { . (Join-Path $k 'skills/crafty/lib.ps1'); "$(Get-KitWtRootFor $k)|$(Get-KitWtRootFor (Join-Path $wrWs 'prod'))" }
+Expect "wt new root: the kit -> <workspace>/.kit-worktrees, a product repo -> the first worktreeRoots entry ($wrGot)" ($wrGot -eq "$(Join-Path $wrWs '.kit-worktrees')|$(Join-Path $wrWs 'prod/.worktrees')")
+Remove-Item $wrCfg
 Remove-TestKit $k
 Complete-Tests

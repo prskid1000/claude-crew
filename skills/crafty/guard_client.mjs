@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L90 warm · L115 context
+// Sections: L25 crash · L50 plain · L90 warm · L115 context · L173 idle
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
@@ -122,10 +122,24 @@ function param(key) {
 }
 let gravity = false   // Antigravity's hook input (toolCall) wants { decision, reason } back
 function deny(why) { process.stdout.write(JSON.stringify(gravity ? { decision: 'deny', reason: why } : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
-function readRule(ti) {
+// a screenshot costs ~2k tokens per read (owner 2026-11-27: 14 per test session, 1.3 of them re-reads): its browser.viewScale copy
+// first, never the same unchanged image twice in one agent's session; Read limit: 1 = the full image on purpose (small text, after a compaction)
+function imageRule(f, who) {
+  let cache; try { const map = JSON.parse(readFileSync(join(here, 'kit.example.json'), 'utf8'))._paths; cache = join(kit, map.runtimeDir, map.runtime.cache) } catch { return }
+  let mt; try { mt = statSync(f).mtimeMs } catch { return }
+  const view = join(cache, 'shot-view', f.replace(/^.*[\\/]/, '').replace(/\.\w+$/, '') + '.jpg')
+  if (resolve(f).toLowerCase() !== view.toLowerCase()) { try { if (statSync(view).mtimeMs >= mt - 5000) deny(`kit guard: read the smaller copy ${view} (same screen at browser.viewScale, ~40% fewer image tokens); the full image (small text): Read ${f} with limit: 1`) } catch { } }
+  if (!who) return
+  const log = join(cache, 'guard-reads', `${who.replace(/[^\w.-]/g, '_')}.txt`), key = `${resolve(f).toLowerCase()}|${Math.round(mt)}`
+  let seen = ''; try { seen = readFileSync(log, 'utf8') } catch { }
+  if (seen.split('\n').includes(key)) deny(`kit guard: you already read ${f} in this session (unchanged; its image is in your context): use what you saw or noted; to look again (after a compaction, a detail): Read it with limit: 1`)
+  try { mkdirSync(dirname(log), { recursive: true }); appendFileSync(log, key + '\n') } catch { }
+}
+function readRule(ti, who = '') {
   const f = `${ti.file_path || ''}`
   // the test logins: Claude Code's settings.json deny covers its Read; this one covers every CLI's own file view (README "Install")
   if (/(^|[\\/])skills[\\/]pokey[\\/]targets\.local\.json$/i.test(f)) deny('kit guard: skills/pokey/targets.local.json holds test logins: never read it; names + tenants: pokey.ps1 user list -Target <t>; a call as a user: pokey.ps1 api -Target <t> -As <user>')
+  if (f && /\.(png|jpe?g|webp)$/i.test(f) && ti.limit == null) imageRule(f, who)
   if (!f || ti.pages || /\.(png|jpe?g|gif|webp|bmp|ico|svg|pdf|ipynb)$/i.test(f)) return
   const maxL = param('guard.readMaxLines'), maxKB = param('guard.readMaxKB'); let kb = 0, lines = 0
   const ranged = ti.offset != null || ti.limit != null, from = Math.max(1, Number(ti.offset) || 1), upto = from + (ti.limit != null ? Number(ti.limit) || 0 : 2000)   // no limit: the Read tool's 2000 lines
@@ -156,11 +170,22 @@ function sqlRule(ti) {
   if (agg && !/\bgroup\s+by\b/i.test(q)) return
   deny(`kit guard: a row query without LIMIT can fill your context: add LIMIT <= ${max} (guard.sqlMaxRows), or aggregate (COUNT, GROUP BY ... LIMIT)`)
 }
+// ---- idle: an idle wait over the 5 min prompt-cache life re-writes the whole context on the next call (owner 2026-11-27: 1,049
+// misses, 224M tokens in 4 days); a Monitor expiry or a short sleep wakes the agent inside it
+function warmRule(tn, ti) {
+  const w = param('guard.warmSeconds'); if (!w) return
+  const how = `wait in slices of <= ${w} s (guard.warmSeconds): a Monitor with timeout_ms <= ${w * 1000}, re-armed on expiry; a long command: run_in_background, then that Monitor; kit waits (decide wait, envy wait) return within it, rerun them`
+  if (tn === 'Monitor' && Number(ti.timeout_ms ?? 300000) > w * 1000) deny(`kit guard: a Monitor over ${w} s lets your prompt cache expire (5 min) while you idle: the next call re-writes your whole context. ${how}`)
+  if ((tn === 'Bash' || tn === 'PowerShell') && ti.run_in_background !== true) {
+    const s = Math.max(0, ...[...`${ti.command || ''}`.matchAll(/(?:^|[\s;&|(])(?:sleep\s+(\d+)([mh]?)\b|Start-Sleep\s+(?:-s(?:econds)?\s+)?(\d+)\b)/gi)].map((m) => m[3] ? Number(m[3]) : Number(m[1]) * ({ m: 60, h: 3600 }[m[2].toLowerCase()] || 1)))
+    if (s > w) deny(`kit guard: sleep ${s} in the foreground lets your prompt cache expire (5 min): the next call re-writes your whole context. ${how}`) }
+}
 
 if (!input.trim()) process.exit(0)
 { let j = null; try { j = JSON.parse(input) } catch { }
   const tn = `${j?.tool_name || ''}`
-  if (tn === 'Read') { readRule(j.tool_input || {}); process.exit(0) }
+  if (tn === 'Read') { readRule(j.tool_input || {}, j.session_id ? `${j.session_id}-${j.agent_id || 'main'}` : ''); process.exit(0) }
+  warmRule(tn, j?.tool_input || {}); if (tn === 'Monitor') process.exit(0)
   if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) }
   // Antigravity (https://antigravity.google/docs/hooks/): view_file { AbsolutePath, StartLine, EndLine }; MCP through call_mcp_tool
   // { ServerName, ToolName, Arguments } or an eager server's mcp_<server>_<tool>; arg values may come JSON-encoded

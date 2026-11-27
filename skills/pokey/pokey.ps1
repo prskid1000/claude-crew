@@ -10,6 +10,7 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   retest -RunDir <run> -Task <id> -Code <code> -Mrs <refs>
   prepare -Job <job JSON | file> | -RunDir <run>   L1 selection: run.json, lead-notes.md, Left out; last line RUN <run JSON>
   lead-notes add -RunDir <run> -Code <code> -Text '<question or answer>'   one line under "## Answers (newest last)"
+  lead-notes show -RunDir <run> [-Code <code>] [-Last 5]   result line, the code's prerequisite rows, its newest answers (never cat the file)
   results patch|hold -RunDir <run> -Code <code> [-Patch '<{set, add, top} JSON>'] [-Results results-retry.json] [-Why <w> -Summary <s> -EnvFix <json>]   the workflow's deltas / held.json
   ui dump|tap|tapid|tapxy|type|clear|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL)
   ui login -Target <t> -As <login> [-Serial <phone>] [-Tenant <t>]   types a stored login into the app (qa.userRecipes app.steps)
@@ -20,8 +21,8 @@ Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, ap
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L31 lanes · L45 report · L165 seat · L314 api · L589 users · L742 login surfaces (parity.json login) · L775 finalize ·
-  L1329 results · L1364 retest · L1421 prepare
+Sections: L32 lanes · L46 report · L166 seat · L315 api · L590 users · L743 login surfaces (parity.json login) · L776 finalize ·
+  L1330 results · L1365 retest · L1422 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -1548,8 +1549,17 @@ Write-KitAtomic "$dir/lead-notes.md" (($ln -join "`n") + "`n")
 }
 # testers ask and the lead answers in lead-notes.md: one line each under "## Answers (newest last)"
 function Invoke-LeadNotes {
-param([Parameter(Position = 0)][ValidateSet('add')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Alias('Item')][Parameter(Mandatory)][string]$Code, [Parameter(Mandatory)][string]$Text)
+param([Parameter(Position = 0)][ValidateSet('add', 'show')][string]$Action, [Parameter(Mandatory)][string]$RunDir, [Alias('Item')][string]$Code, [string]$Text, [int]$Last = 5)
 $nf = Join-Path $RunDir 'lead-notes.md'; if (-not (Test-Path -LiteralPath $nf)) { throw "no lead-notes.md in $RunDir (pokey.ps1 prepare writes it)" }
+if ($Action -eq 'show') {   # what a tester needs before a check, not the whole file: result line, its prerequisite rows, the newest answers
+  $ln = @(Get-Content -LiteralPath $nf -Encoding utf8); $sec = ''; $ans = @()
+  foreach ($l in $ln) { if ($l -match '^## (.+)') { $sec = $Matches[1]; continue }
+    if ($l -match '^\*\*Result:\*\*') { $l }
+    elseif ($sec -like 'Prerequisites*' -and $l -match '^\|' -and ($l -match '^\|\s*(Item|---)' -or -not $Code -or $l -match "^\|\s*$([regex]::Escape($Code))\s*\|")) { $l }
+    elseif ($sec -notlike 'Prerequisites*' -and $sec -notlike 'Left out*' -and $l -match '^- ' -and (-not $Code -or $l -match "\b$([regex]::Escape($Code))\b")) { $ans += $l } }
+  if ($ans.Count) { "## Answers (newest $([math]::Min($Last, $ans.Count)) of $($ans.Count))"; $ans | Select-Object -Last $Last }
+  return }
+if (-not ($Code -and $Text)) { throw 'lead-notes add needs -Code <code> -Text <text>' }
 Invoke-KitLocked $nf { Add-Content -LiteralPath $nf -Encoding utf8 "- $(Get-Date -Format 'HH:mm') $Code`: $($Text -replace '\s+', ' ')" }
 "noted $Code in $nf"
 }

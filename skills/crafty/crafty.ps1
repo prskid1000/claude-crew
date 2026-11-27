@@ -105,7 +105,7 @@ switch ($Action) {
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch (or -Task: a keyed task names it) -Target -Name' }
     $Repo = Resolve-WtRepo $Repo
     if (($tx = Get-KitTaskTagRx) -and $Branch -match $tx -and (Get-KitPoolSize $Repo) -gt 0 -and -not $Override) { throw "wt new refused: $(Get-KitCheckoutName $Repo) has a worktree pool and $Branch is a task branch: & $($KitCmd.dev) wt lease -Repo $Repo -Branch $Branch -Agent <your id> (a free slot, kept warm); a dedicated worktree on purpose: -Override '<why>'" }
-    if (-not $Root) { $Root = @($KitConf.WorktreeRoots)[0] }
+    if (-not $Root) { $Root = Get-KitWtRootFor $Repo }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"
     if (Test-Path $path) {   # name the blocker
       $bh = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -ne 'left' -and "$($_.worktrees)" -match [regex]::Escape($path) } | ForEach-Object agent)

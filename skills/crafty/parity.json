@@ -208,7 +208,7 @@
       "config": "built-in guard rules",
       "file": "skills/crafty/adapters/guard-localenv.ps1",
       "verbs": "check",
-      "names": "local-env deployed-env large-writes secrets runtimes script-faults"
+      "names": "local-env deployed-env large-writes secrets runtimes script-faults file-dumps"
     },
     "stack": {
       "config": "repos[] stack detection",

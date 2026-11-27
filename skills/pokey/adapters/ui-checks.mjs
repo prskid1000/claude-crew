@@ -190,3 +190,11 @@ export async function sheet(s, files, out, { cols = 2, width = 1600 } = {}) {
   } finally { await p.close().catch(() => {}) }
   return out
 }
+// the copy agents read (the guard points a Read of the shot there): the viewport at scale (browser.viewScale), ~40% fewer image
+// tokens (owner 2026-11-27: 14 shots, 1.6M tokens a test session); the shot stays the evidence
+export async function viewCopy(page, file, scale = 0.75) {
+  if (!(scale > 0 && scale < 1)) return
+  try { const fs = await import('node:fs'), path = await import('node:path'), b = await import('../browser.mjs'), v = page.viewport() || {}, [x, y] = await page.evaluate(() => [scrollX, scrollY])
+    const out = path.join(b.kitPath('cache', { create: true }), 'shot-view', path.basename(file).replace(/[.]\w+$/, '.jpg'))
+    fs.mkdirSync(path.dirname(out), { recursive: true }); await page.screenshot({ path: out, type: 'jpeg', quality: 75, clip: { x, y, width: v.width || 1600, height: v.height || 1000, scale } }) } catch { }
+}

@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L258 OS · L471 leases · L914 status · L1128 tracker · L1457 prior ·
-  L1476 ask bugs · L1661 deploy words · L1705 git-host · L1893 kitlog · L2004 params · L2309 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L266 OS · L479 leases · L922 status · L1136 tracker · L1465 prior ·
+  L1484 ask bugs · L1669 deploy words · L1713 git-host · L1901 kitlog · L2012 params · L2317 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -200,7 +200,15 @@ $__trLp = [string](Get-KitSetting 'tracker.statusLabelPrefix' 'status:')   # git
 $__trType = ([string]$(if ($env:KIT_TRACKER_TYPE) { $env:KIT_TRACKER_TYPE } else { Get-KitSetting 'tracker.type' 'none' })).ToLower()
 $__trTag = [string](Get-KitSetting 'tracker.branchTag' "$((Get-KitMember $script:KitVocab.trackers $__trType).branchTag)")
 $__repos = Get-KitValue 'reposRoot' $__ws
-$__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) | Where-Object { $_ } | Select-Object -Unique)
+function Get-KitWtKitRoot { Join-Path $__ws '.kit-worktrees' }
+# wt new's root: the first one; the kit's own worktree under a product's CLAUDE.md / AGENTS.md would load it (12k tokens a kitty session)
+function Get-KitWtRootFor([string]$Repo) {
+  $fp = { [IO.Path]::GetFullPath($args[0]).TrimEnd('\', '/') }; $root = @($KitConf.WorktreeRoots)[0]; $ws = & $fp $KitConf.Workspace
+  if ((& $fp $Repo) -eq (& $fp $KitConf.Kit)) { for ($up = & $fp $root; $up.Length -gt $ws.Length -and $up.StartsWith($ws, 'OrdinalIgnoreCase'); $up = Split-Path $up) {
+      if ((Test-Path "$up/CLAUDE.md") -or (Test-Path "$up/AGENTS.md")) { return Get-KitWtKitRoot } } }
+  $root
+}
+$__wtRoots = @(@($env:CLAUDE_WT_ROOT) + @(Get-KitValue 'worktreeRoots' @("$__repos-wt")) + @(if (Test-Path -LiteralPath (Get-KitWtKitRoot)) { Get-KitWtKitRoot }) | Where-Object { $_ } | Select-Object -Unique)
 $KitConf = [pscustomobject]@{
   Kit = $__kit
   Workspace = $__ws

@@ -48,7 +48,7 @@ $L = '<kit>/skills/envy/envy.ps1'
 #    no check -Step build before it: the train builds once; one deploy per loop round (fixes batched), never per edit;
 #    while it builds ("still ..."): the checks that need no env (check -Step test, devtools.py precheck), then wait
 & $L wait -Env <env> -Id <request>                                      #    when it printed "still ..."
-& $L wait -Env <env> -Until up -Services <svc,..> -Timeout 600          #    a service to come up: one call, never a status loop
+& $L wait -Env <env> -Until up -Services <svc,..>                       #    a service to come up: one call (270 s; not up: rerun), never a status loop
 & $L use -Env <env> -Agent <id> -Services <svc,..> -Session <board token> -Note "<goals>"   # 3. lease, then test
 & $L status -Env <env> -Agent <id>                                      # 4. "CHANGED since your lease" -> re-run those goals
 & $L logs -Env <env> -Service <svc> [-Grep <re>] [-Since <min>]; & $L events -Env <env>   #    debug ("Debug locally")

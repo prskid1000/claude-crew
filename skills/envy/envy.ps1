@@ -1998,7 +1998,7 @@ function Test-ReadOnlySql([string]$q) {
   $q -match '(?i)^\s*(select|show|describe|desc|explain|with|pragma)\b|^\s*db\.\w+\.(find|findOne|count\w*|aggregate|distinct)\(' -and $q -notmatch '["`]|;\s*\S' -and
     $q -notmatch '(?i)\b(insert|update|delete|drop|alter|create|truncate|replace|merge|grant|revoke|rename|call|exec|execute|set|load|copy|attach|into|out)\b|\.(insert|update|delete|drop|remove)\w*\('
 }
-# ---- verbs: owner / brief asks; calls return within -Wait min (8). Adapters add verbs (kind envy-verb: @{ run = { ... }; ops = @(..) },
+# ---- verbs: owner / brief asks; calls return within -Wait min (4.5). Adapters add verbs (kind envy-verb: @{ run = { ... }; ops = @(..) },
 #      run inside Invoke-LocalEnv with its parameters and helpers in scope; e.g. tenant in adapters/tenant-models.ps1)
 $script:EnvyVerbs = @('help', 'envs', 'status', 'doctor', 'deploy', 'wait', 'use', 'release', 'promote', 'task', 'logs', 'events', 'migrations', 'sql', 'dbtemp', 'mark', 'marks', 'restore', 'seed', 'teardown', 'cleanup', 'up', 'unhold', 'restart', 'down', 'drop', 'refresh', 'lanes', '_exec')
 function Test-EnvyVerb([string]$v) {
@@ -2015,8 +2015,8 @@ param(
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }),
   [string]$Branch, [string[]]$Repo, [string[]]$Dir, [string[]]$Services, [string]$Service, [Alias('Item')][string]$Task, [string]$Note, [string]$Id,
   [string]$Session, [string]$Artifact, [string]$Query, [string]$Kill, [switch]$Owner, [Alias('Run')][string]$Name, [string]$Mark, [int]$Release = -1, [string[]]$Schemas,
-  [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [switch]$Fix, [int]$Minutes = 0, [double]$Wait = 8, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
-  [int]$Lane = 0, [string]$Until, [int]$Timeout = 600, [Alias('All')][switch]$AllServices
+  [switch]$DryRun, [switch]$Refresh, [switch]$Stale, [switch]$Migrate, [switch]$LanesOnly, [switch]$Sync, [switch]$Quick, [switch]$Check, [switch]$UseToolRollback, [switch]$Fix, [int]$Minutes = 0, [double]$Wait = 4.5, [int]$Tail = 80, [string]$Grep, [double]$Since = 0, [switch]$Json,
+  [int]$Lane = 0, [string]$Until, [int]$Timeout = 270, [Alias('All')][switch]$AllServices
 )
 if ($Action -eq 'help') { foreach ($hl in @(Get-Content $PSCommandPath | Select-Object -Skip 1)) { if ($hl -eq '#>') { break }; $hl }; return }   # the verbs, before any env check
 if ($Action -eq 'marks') { if ($Name) { throw "marks lists the marks; to make one: mark -Name $Name" }; $Action = 'mark' }   # the list form agents guess
@@ -2060,7 +2060,7 @@ function Wait-Until([string]$e, [string]$state, [string[]]$names, [int]$sec) {
     if (-not $bad.Count) { "[$e] $($want -join ', '): $state"; return }
     $why = @($bad | ForEach-Object { "$($_.service) $($_.state)" }) -join ', '
     if (@($bad | Where-Object state -eq 'failed').Count -and $state -ne 'failed') { "[$e] failed: $why"; exit 1 }
-    if ((Get-Date) -ge $end) { "[$e] not $state after $sec s: $why"; exit 1 }
+    if ((Get-Date) -ge $end) { "[$e] not $state after $sec s: $why (rerun: none failed)"; exit 1 }
     Wait-KitPoll 5 }
 }
 function Wait-Request([string]$rid) {
@@ -2273,7 +2273,7 @@ switch ($Action) {
     }
     if (-not $Branch) { throw 'drop needs -Branch, -Agent or -Stale' }; $rid = New-Request @{ kind = 'drop'; branch = $Branch }; "[$e] drop $Branch queued as $rid"; Exit-Request (Wait-Request $rid) }
   'refresh' { $rid = New-Request @{ kind = 'refresh'; branch = '' }; "[$e] refresh queued as $rid"; Exit-Request (Wait-Request $rid) }
-  'wait' { if ($Until) { Wait-Until $e $Until $Services $Timeout; return }; if (-not $Id) { throw 'wait needs -Id <request> or -Until <state> [-Services a,b] [-Timeout 600]' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
+  'wait' { if ($Until) { Wait-Until $e $Until $Services $Timeout; return }; if (-not $Id) { throw 'wait needs -Id <request> or -Until <state> [-Services a,b] [-Timeout 270]' }; Touch-Lease $e $Agent; Exit-Request (Wait-Request $Id) }
   'use' {
     # a lease starts only what it names (+ deps): a whole-env lease held a staging run's shop env 1 h+; owner 2026-11-20 "a lane might not need all resources"
     if (-not $Services -and "$Agent" -like 'test:*') { "[$e] use refused for ${Agent}: name the services its checks call (-Services api[,web]); a tester never leases the whole env"; exit 2 }

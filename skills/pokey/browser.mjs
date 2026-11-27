@@ -1,9 +1,9 @@
 // browser.mjs: headless browser library for any web app (usage below). Exit codes: none.
 // targets.local.json: web, webLogin, users, browser: one Chrome per target+tenant+user, a tab each.
-// Logins shared via the locked session file (storage + cookies); never log out.
+// Logins: one locked session file; never log out.
 // webLogin.type form (path, fields, submit; {user} {pass} {tenant}, {tenant} also in web); adapters/: sso-steps, script,
-// storageState, totp; browser.engine chromium | firefox | webkit.
-//   import { session, go, clickText, shot, saveNet, relogin, record, matrix, testerScreen, hitTest } from 'file:///<kit>/skills/pokey/browser.mjs'
+// storageState, totp; browser.engine chromium|firefox|webkit.
+//   import { session, go, clickText, shot, ... } from 'file:///<kit>/skills/pokey/browser.mjs'
 //   s = await session({ target, tenant, as, path: '/x' }); waitFor(s.page, 'Saved'); shot(s.page, f); sheet(s, [f, g], out); saveNet(s, f): s.net.failed; s.done(); waits <= 20 s, no sleeps
 //   stop = await record(s, 'x.mp4') (+ .events.json); matrix(s, fn) runs fn per qa.matrix variant
 // Sections: L16 config · L48 login · L117 browsers · L160 tabs · L249 session · L303 actions · L402 ui checks · L406 evidence
@@ -399,7 +399,7 @@ export async function setInput(page, selector, value, { nth = 0, enter = true } 
   return page.evaluate((e) => e.value, el)
 }
 
-// ---- ui checks: adapters/ui-checks.mjs (matrix per qa.matrix variant, layout, contrast, waits)
+// ---- ui checks: adapters/ui-checks.mjs (qa.matrix, layout, contrast, waits, views)
 export const matrix = async (s, fn, { matrix: m = readJson(KLF, {}).qa?.matrix || {}, ...o } = {}) => (await adapter('ui-checks.mjs')).matrix(s, fn, m, o)
 export const [layoutIssues, contrast, hitTest, testerScreen, quiet, waitFor, sheet] = ['layoutIssues', 'contrast', 'hitTest', 'testerScreen', 'quiet', 'waitFor', 'sheet'].map((n) => async (...a) => (await adapter('ui-checks.mjs'))[n](...a))
 
@@ -440,10 +440,10 @@ export async function shot(page, file, { full = false, selector = null } = {}) {
   try {
     if (selector) { const el = await page.$(selector); if (el) { await el.screenshot(opts); return file } }
     await page.screenshot({ ...opts, fullPage: full })
+    if (!full) await (await adapter('ui-checks.mjs')).viewCopy(page, file, CFG.browser?.viewScale)
   } finally { await unmark(page) }
   return file
 }
-
 // screen recording (.mp4 / .webm; ffmpeg) + <file>.events.json: stop() ends both
 export async function record(s, file) {
   file = checkName(file)

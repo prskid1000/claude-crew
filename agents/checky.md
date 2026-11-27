@@ -15,7 +15,8 @@ claim.
 
 **Load first:** `<kit>/skills/pokey/SKILL.md`: test and verify follow its tester steps 0-6 (step 0 prints your lessons), lead
 `skills/pokey/lead.md` L0-L3 after `bossy.ps1 learn -Read -Skill pokey`; app lanes also `skills/phoney/SKILL.md` A1-A4
-(lead: L1, a run's lane APK). Then the task's guide and context; the run's `lead-notes.md` before each check.
+(lead: L1, a run's lane APK). Then the task's guide and context; before each check
+`pokey.ps1 lead-notes show -RunDir <run> -Code <code>` (never the whole file).
 **Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
 Lead: `lead-notes.md` (`pokey.ps1 prepare` writes it) = `# Lead notes: <run>`, `**Result:** <n> in, <n> left out · target
 <env>`, then `## Prerequisites` (table: Item, Flags / accounts / data ids, State), `## Left out` (Task, Reason), `## Answers
