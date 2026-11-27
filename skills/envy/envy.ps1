@@ -22,9 +22,9 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   (db.cascadeGuard) = adapters/db-presets.ps1; tenants.model = adapters/tenant-models.ps1 + tenant-schema.ps1 (kind tenant-model);
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
-Sections: L36 config · L240 state · L287 layer drops · L362 leases · L473 code · L484 migrations ·
-  L487 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L636 shared builds · L767 hooks · L841 marks · L1025 seed ·
-  L1092 processes · L1448 daemon · L1929 cleanup · L2001 verbs
+Sections: L36 config · L244 state · L291 layer drops · L366 leases · L477 code · L488 migrations ·
+  L491 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L640 shared builds · L751 hooks · L825 marks · L1009 seed ·
+  L1076 processes · L1432 daemon · L1913 cleanup · L1985 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -198,6 +198,10 @@ function StackOf([string]$dir) {
 function StartCmd([string]$e, $s, [string]$artifact) {
   $dir = SvcDir $e $s
   $c = if ($s.start) { [string]$s.start } elseif ($s.static) { "node `"$(StaticServer)`" `"{artifact}`" {port}" } else { (StackOf $dir).commands.run }
+  if ($s.static -and -not $s.start -and $s.routes) {   # services[].routes: a file the static server reads
+    $rf = Join-Path (Get-KitPath localenv -Create) "run/$e/$($s.name)/routes.json"; $null = New-Item -ItemType Directory -Force (Split-Path $rf)
+    ConvertTo-Json @($s.routes) -Depth 5 | Set-Content -LiteralPath $rf -Encoding utf8; $c += " :: `"$rf`""
+  }
   if (-not $c) { throw "service $e/$($s.name): no start command (set services[].start, or commands.run in a .claude-stack.json in $dir)" }
   Expand-Placeholders $c $e $s $dir $artifact
 }
@@ -742,27 +746,7 @@ function Invoke-AotTrain([string]$e, $s, [string]$artifact) {
   if ($ok) { Move-Item -LiteralPath $tmp $f -Force } else { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
   Event $e 'aot-train' @{ service = $s.name; ok = [bool]$ok; sec = [int]((Get-Date) - $t0).TotalSeconds; artifact = $artifact }
 }
-# the static server of services[].static (no start command): serves the staged files, unknown routes get index.html
-function StaticServer {
-  $f = Join-Path (Get-KitPath localenv -Create) 'run/static-server.mjs'
-  $js = @'
-import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
-const [root, port, host = '::'] = process.argv.slice(2); const base = path.resolve(root);
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain', '.wasm': 'application/wasm', '.webmanifest': 'application/manifest+json' };
-const send = (res, code, f) => fs.readFile(f, (err, buf) => { if (err) { res.writeHead(404); return res.end(); } const x = path.extname(f).toLowerCase(); res.writeHead(code, { 'Content-Type': types[x] || 'application/octet-stream', 'Cache-Control': x === '.html' ? 'no-cache' : 'max-age=3600' }); res.end(buf); });
-const srv = http.createServer((req, res) => {
-  let p; try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); return res.end(); }
-  if (p.includes('\0')) { res.writeHead(400); return res.end(); }
-  const f = path.join(base, p); if (f !== base && !f.startsWith(base + path.sep)) { res.writeHead(403); return res.end(); }
-  fs.stat(f, (err, st) => { if (!err && st.isFile()) return send(res, 200, f); if (!err && st.isDirectory()) return send(res, 200, path.join(f, 'index.html'));
-    if (path.extname(p)) { res.writeHead(404); return res.end(); } send(res, 200, path.join(base, 'index.html')); });
-});
-const up = (h) => srv.listen(+port, h, () => console.log(`Listening on ${h}:${port} (${base})`));
-srv.on('error', (e) => { if (e.code === 'EAFNOSUPPORT' && host === '::') { up('0.0.0.0'); } else { throw e; } }); up(host);
-'@
-  if (-not (Test-Path -LiteralPath $f) -or (Get-Content -LiteralPath $f -Raw) -ne $js) { New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content -LiteralPath $f $js -NoNewline -Encoding utf8 }
-  $f
-}
+# StaticServer (services[].static, routes): adapters/shared-builds.ps1 "static server"
 
 # ---- hooks: db query / exec / rollback / applied / tag, smoke checks; db.timeoutSec = seconds for every hook or { <hook>: seconds }
 # a shell command, time-bounded (lib Invoke-KitExe kills the tree), output appended to $log and kept in $script:ShellOut; -1 = timed out

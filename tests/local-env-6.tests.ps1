@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 local-env-6.tests.ps1: envy.ps1 lane trains and seeds (local-env-4 is at its cap): the warm-lane target pin, the seed hint on a
-service not up yet.
+service not up yet, the static server's routes.
 Usage: pwsh -NoProfile -File <kit>/tests/local-env-6.tests.ps1 (tests/kit-tests.ps1 -Area local-env-6).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -147,5 +147,15 @@ $mpW = @(foreach ($mpCount in 3, 4) {
     else { Write-KitLog env stop @{ env = 'shop2'; service = 'db'; why = 'idle, stopped under memory pressure (RAM)' } }
     @(Get-KitSuperviseFlagsLocalEnv) | Where-Object { $_.what -match '^MEMORY PRESSURE' } | ForEach-Object { "$($_.what) -> $($_.action -replace ';.*')" } }) -join ';' })
 Expect "supervise MEMORY PRESSURE: 3 pressure stops in the hour (an idle stop, a 2 h old one: not counted) none; the 4th = one WATCH with the live devy / checky count and the cap ($($mpW -join ' | '))" ($mpW[0] -eq '' -and $mpW[1] -eq 'MEMORY PRESSURE: 4 lane service stop(s) under memory pressure in 60 min (localEnv.pressureStopsPerHour 4), 2 devy / checky agent(s) live -> Start no new run, agent or lane until it clears (agent cap now: 1)')
+# services[].routes: a rewrite maps a prefixed path onto the files, a cmd answers with its stdout, a capture that is no path 400, a failed cmd 404
+$svr = & { . $lkL; function SvcDir { $args[1].dir }; $wtd = Join-Path $laneKit 'rt'; New-Item -ItemType Directory -Force (Join-Path $wtd 'web/dist/app') | Out-Null
+  '<html>i</html>' | Set-Content (Join-Path $wtd 'web/dist/app/index.html'); 'x' | Set-Content (Join-Path $wtd 'web/dist/app/main.js'); $fp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $fp.Start(); $port = $fp.LocalEndpoint.Port; $fp.Stop()
+  $rs = [pscustomobject]@{ name = 'web'; dir = (Join-Path $wtd 'web'); static = 'dist/app'; port = $port; routes = @(@{ match = '^/s1/(.+\.json)$'; cmd = 'echo {"f":"$1"}' }, @{ match = '^/s1/no\.txt$'; cmd = 'exit 3' }, @{ match = '^/s1(/.*)?$'; rewrite = '$1' }) }
+  $sc = StartCmd t $rs (Join-Path $wtd 'web/dist/app'); $rj = Get-Content -Raw ([regex]::Match($sc, '"([^"]+routes\.json)"').Groups[1].Value) | ConvertFrom-Json
+  $srv = Start-Process node -ArgumentList ($sc -replace '^node ') -PassThru -WindowStyle Hidden
+  try { for ($i = 0; $i -lt 120 -and -not (Test-PortListening $port); $i++) { Start-Sleep -Milliseconds 250 }
+    $g = { param($u) try { $x = Invoke-WebRequest "http://127.0.0.1:$port$u" -SkipHttpErrorCheck -TimeoutSec 10; "$($x.StatusCode):$("$($x.Content)".Trim())" } catch { 'ERR' } }
+    "$(@($rj).Count)|$(& $g '/s1/main.js')|$(& $g '/s1/about')|$(& $g '/s1/site.json')|$((& $g '/s1/a%26b.json') -replace ':.*')|$((& $g '/s1/no.txt') -replace ':.*')|$(& $g '/main.js')" } finally { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue } }
+Expect "static server routes: rewrite, cmd stdout, unsafe capture 400, failed cmd 404, plain files unchanged ($svr)" ($svr -eq '3|200:x|200:<html>i</html>|200:{"f":"site.json"}|400|404|200:x')
 Remove-TestKit $laneKit
 Complete-Tests

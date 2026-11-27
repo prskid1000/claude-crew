@@ -1,6 +1,6 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L144 lane pick · L194 start room · L238 thin artifacts · L280 lane priority
+# Sections: L4 shared builds · L144 lane pick · L194 start room · L238 thin artifacts · L280 lane priority · L340 static server
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -337,3 +337,34 @@ Register-KitAdapter envy-verb priority @{ ops = @('high', 'normal', 'list'); run
   $pr = (Read-KitParams).priority; if ($pr -isnot [Collections.IDictionary]) { $pr = @{} }; $rows = @(Get-KitHighAgents | Sort-Object)
   if (-not $rows.Count) { 'priority: no high agent (envy.ps1 priority high -Run <run>)' } else { foreach ($pa in $rows) { "high $pa$(if ($pr[$pa].run) { " (run $($pr[$pa].run)) until $(([datetime]$pr[$pa].until).ToString('MM-dd HH:mm'))" } else { ' (joined a high run)' })" } }
 } }
+# ---- static server: services[].static (no start command): serves the staged files, unknown routes get index.html;
+# services[].routes (first match): rewrite = another path of the files, cmd = its stdout (a CDN router's other origins)
+function StaticServer {
+  $f = Join-Path (Get-KitPath localenv -Create) 'run/static-server.mjs'
+  $js = @'
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import { exec } from 'node:child_process';
+const [root, port, host = '::', routesFile] = process.argv.slice(2); const base = path.resolve(root);
+const routes = routesFile ? JSON.parse(fs.readFileSync(routesFile, 'utf8').replace(/^\uFEFF/, '')).map((r) => ({ ...r, re: new RegExp(r.match) })) : [];
+const fill = (t, m) => t.replace(/\$(\d)/g, (_, i) => m[+i] ?? ''); const cache = new Map();
+const run = (res, r, m, p) => {   // captures reach a shell: path characters only
+  if (m.slice(1).some((v) => v !== undefined && (!/^[\w.\/-]*$/.test(v) || v.includes('..')))) { res.writeHead(400); return res.end(); }
+  const reply = (buf) => { res.writeHead(200, { 'Content-Type': r.type || types[path.extname(p).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache' }); res.end(buf); };
+  const hit = cache.get(p); if (hit && Date.now() - hit.at < (r.cacheSeconds || 0) * 1000) return reply(hit.buf);
+  exec(fill(r.cmd, m), { encoding: 'buffer', maxBuffer: 64 << 20, timeout: (r.timeoutSec || 30) * 1000, windowsHide: true }, (err, out) => { if (err) { res.writeHead(404); return res.end(); } cache.set(p, { buf: out, at: Date.now() }); reply(out); });
+};
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain', '.wasm': 'application/wasm', '.webmanifest': 'application/manifest+json' };
+const send = (res, code, f) => fs.readFile(f, (err, buf) => { if (err) { res.writeHead(404); return res.end(); } const x = path.extname(f).toLowerCase(); res.writeHead(code, { 'Content-Type': types[x] || 'application/octet-stream', 'Cache-Control': x === '.html' ? 'no-cache' : 'max-age=3600' }); res.end(buf); });
+const srv = http.createServer((req, res) => {
+  let p; try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); return res.end(); }
+  if (p.includes('\0')) { res.writeHead(400); return res.end(); }
+  for (const r of routes) { const m = r.re.exec(p); if (!m) continue; if (r.cmd) return run(res, r, m, p); p = fill(r.rewrite ?? p, m) || '/'; break; }
+  const f = path.join(base, p); if (f !== base && !f.startsWith(base + path.sep)) { res.writeHead(403); return res.end(); }
+  fs.stat(f, (err, st) => { if (!err && st.isFile()) return send(res, 200, f); if (!err && st.isDirectory()) return send(res, 200, path.join(f, 'index.html'));
+    if (path.extname(p)) { res.writeHead(404); return res.end(); } send(res, 200, path.join(base, 'index.html')); });
+});
+const up = (h) => srv.listen(+port, h, () => console.log(`Listening on ${h}:${port} (${base})`));
+srv.on('error', (e) => { if (e.code === 'EAFNOSUPPORT' && host === '::') { up('0.0.0.0'); } else { throw e; } }); up(host);
+'@
+  if (-not (Test-Path -LiteralPath $f) -or (Get-Content -LiteralPath $f -Raw) -ne $js) { New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content -LiteralPath $f $js -NoNewline -Encoding utf8 }
+  $f
+}

@@ -3,7 +3,7 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
 
 ## Train and leases
 - Train = every deploy queued when it starts or during its lease wait: one merge, one gated build, one switch-over; a conflict refuses that branch; a
-  failed build bisects to the culprit; merged branches drop out.
+  failed build bisects to the culprit.
 - A layer also leaves when merged, gone from origin, its agent finished (`bossy.ps1 release`) or no live holder past the
   grace (supervise); never a paused or handed-off agent's. An env without lease or hold drops at the next lease (`status`,
   leases.jsonl kind env-layer).
@@ -15,7 +15,7 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
   its requests requeue (supervise ACT TRAIN STALLED).
 - Only leases and holds start (or crash-restart) services, each in a start worker. No holder: stop after the idle grace; at
   once under memory pressure (a start waiting for RAM; a CPU wait is none).
-- A dependency of a waiting, starting or train-switched service is never idle. An out-of-memory log line restarts a
+- A dependency of a waiting, starting or train-switched service is never idle. An out-of-memory log line restarts its
   service. Idle services stop in one tick, also while a train waits.
 - Starts wait for RAM (`roomWaitMinutes` 30: fails; keep-free floor learned or `keepFreeGB`) and CPU over `cpuMaxPct` 90
   (`cpuWaitMinutes` 2: starts; `status` waiting CPU until HH:mm): up to `cpuSmallStartSec` 30 none, bigger ones in one
@@ -54,7 +54,7 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 - One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry the lane id (`{bird}` in a template).
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
 - Data and logs under the kit (`.state/localenv/lanes/<service>-<product>-<bird>`), never the system drive; low-write settings (MySQL lane ini: doublewrite off, `sync_binlog=0`).
-- Names (`localEnv.laneIds`; default `bird`) `nn` lane `lane-<10 x env index + k>`, `bird` `<product>-<bird>`; shown `shop·Kestrel`; the id in `-Env`, state, logs; `{bird}` in lane paths. Older ids (`shop2`, `shop-kestrel`, pokey `local-shop2`) warn; `doctor` flags old config keys.
+- Names (`localEnv.laneIds`; default `bird`) `nn` lane `lane-<10 x env index + k>`, `bird` `<product>-<bird>`; shown `shop·Kestrel`; the id in `-Env`, state, logs. Older ids (`shop2`, `shop-kestrel`, pokey `local-shop2`) warn; `doctor` flags old config keys.
 - Move a base env: `skills/envy/mysql-base-move.ps1` (`-Apply` copies product schemas only, `-Rename [-Ids nn]` lane names, `-Config`; config `localEnv.baseMove`).
 
 ## Config
@@ -87,8 +87,9 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 ```
 
 ## Speed and disk
-- Per service: `static` = the folder its `build` writes: the train builds once per release, the kit's static server serves a
-  staged copy (unknown routes -> index.html; no dev server).
+- `static` = the folder `build` writes; the kit's static server serves its staged copy (unknown routes -> index.html);
+  `routes` (first `match` regex wins): `rewrite` = another path (`$1` captures), `cmd` = its stdout (captures: path characters
+  only; fails: 404; `type`, `cacheSeconds`).
 - `prepare` = a command after each sync whose edits are committed locally on the lane branch `lane/<product>-<bird>` (a build cache at `{cache}`,
   outside the repo).
 - `unpack` = a command unpacking `{artifact}` into `{out}` (failed: plain artifact staged, event `unpack-fallback`).
@@ -110,7 +111,7 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
   ERROR SPIKE classes; `dependency` = a start failed on a dependency that was down: wait, retry once). `expectedErrors`
   (`localEnv.` or `envs.<env>.`; a lane uses its env's): regexes of lines that never flag (a job calling an unreachable
   system). `defaultService`: what `logs` shows without `-Service` (else the only one).
-- `mvnd` on PATH replaces mvn / mvnw in gated builds. Events `build`, `stage`, `up`, `aot-train` carry seconds.
+- `mvnd` on PATH replaces mvn / mvnw in gated builds.
 
 ## Cleanup
 - `cleanup [-Quick] [-DryRun]` (owner / coordinator): env worktrees (uncommitted ones kept), logs, run files and
