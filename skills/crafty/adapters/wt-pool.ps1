@@ -64,7 +64,7 @@ function Get-KitWtHeldTest {
 # never deleted: protectedBranchesBase (main/master/develop/release/*), configured lanes' lane/* (+ -<target> of a second target) + localenv/*, protectedBranches, target, deploy branches, origin/HEAD
 function Get-KitKeepBranchRx([string]$Repo) {
   $name = ("$(git -C $Repo remote get-url origin 2>$null)".Trim() -replace '\.git$' -split '[/:\\]')[-1]
-  $all = @(Get-KitProtectedBranches) + @(Get-KitLaneNames | ForEach-Object { "localenv/$_"; Get-KitLaneBranch $_; "$(Get-KitLaneBranch $_)-*" }) + @(Get-RepoConf $name 'target' '') + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
+  $all = @(Get-KitProtectedBranches) + @(Get-KitLaneNames | ForEach-Object { "localenv/$_"; Get-KitLaneBranch $_; "$(Get-KitLaneBranch $_)-*" }) + @(Get-KitMainLines $name) + @(@(Get-RepoConf $name 'deploys' @()) | ForEach-Object { $_.branch }) + @("$(git -C $Repo symbolic-ref --short refs/remotes/origin/HEAD 2>$null)".Trim() -replace '^origin/')
   '^(' + (@($all | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { [regex]::Escape("$_") -replace '\\\*', '.+' }) -join '|') + ')$'
 }
 # may a local branch go? delete + why; $Ctx caches per repo (keep rx, checkouts, bases, host MR refs)

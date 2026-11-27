@@ -15,29 +15,28 @@
   comment-solution comment-status final-report retro wave-brief; crafty.ps1 wt commit -Spec)
   comment / finish / mr: a text over its prose limits is refused (exit 1); --prose-ok keeps a format the brief fixes
  finish / mr / doc --key <task>:testing-*: the prior-work gate (crafty.ps1 prior -Task <id> first); --override "<why>" passes, logged
- python -X utf8 devtools.py followups <findings.json> <mr url> ...   review findings that do not hold the merge -> each MR's "## Follow-ups"
+ python -X utf8 devtools.py followups <findings.json> <mr url> ...   non-blocking review findings -> each MR's "## Follow-ups"
  mr / merge [--scope "<glob>,.."] [--scope-ok <decision id>]: a diff outside the area (--scope, else the wt lease / new -Scope record)
   is refused naming the files; --scope-ok = a person's decide record -Gate scope -Item <branch>, logged
  python -X utf8 devtools.py merge <worktree> <iid> [--override "<why>"] [--no-docs "<why>"]   merge now (per repos[].mergeMethod; green / no CI) or arm merge-when-green; waits <= 90 s;
   last line: MERGED / SCHEDULED / WAIT (also: producer unmerged) / CONFLICT / PIPELINE_FAILED / NOT_MERGED (also: a bug fix
-  whose AI testing doc has no local reproduction; --override passes, logged); --no-docs: no human-facing change, logged
+  with no local reproduction in its AI doc; --override passes); --no-docs: no human-facing change, logged
  python -X utf8 devtools.py doc "<title>" <file.html|.md> [parent] [--type <t>] [--key <task|run>:<kind> [--mode append|replace] [--label <l>]] [--dry-run]
   publish a document (reports.type), prints its URL/path; --key: one doc (.state/published), a dated round each
-  --run <cells.json> [--run-id <id>] (pokey finalize): each human doc row's Result / Evidence from its checks over every run
-  (newest PASS / FAIL decides) + a dated "<env> run" section (same --run-id: replaced)
- python -X utf8 devtools.py docgaps --key <task>:testing-doc --run <cells.json> [--run-id <id>]   human doc row ids neither this run nor an earlier one covers
+  --run <cells.json> [--run-id <id>] (pokey finalize): each human doc row's Result / Evidence from its checks (newest run decides)
+ python -X utf8 devtools.py docgaps --key <task>:testing-doc --run <cells.json> [--run-id <id>]   human doc rows no run covers
  python -X utf8 devtools.py relayout <key|doc url> ...   republish a --key doc with the current layout
- python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files (gdocs: Drive; --key reuses its folder) -> JSON
+ python -X utf8 devtools.py evidence "<name>" [--parent <id>] [--folder <id>] [--files-from <list>] [--key <k>] <file> ...   host evidence files -> JSON
  python -X utf8 devtools.py keepboth <file> [...]   rebase conflicts: keep OURS then THEIRS
  python -X utf8 devtools.py selftest   offline self-test (and each plugin's)
-Exit codes: 0 ok · 1 problem (merge refused, conflict, check issues) · 2 usage error · 3 reports.type names no report adapter.
-Sections: L50 config · L105 run · L193 tracker · L389 process · L604 git host · L677 scope · L784 MR · L1004 merge · L1338 docs ·
+Exit codes: 0 ok · 1 problem (refused, conflict) · 2 usage error · 3 reports.type names no report adapter.
+Sections: L49 config · L104 run · L192 tracker · L388 process · L603 git host · L676 scope · L784 MR · L1004 merge · L1338 docs ·
   L1575 publish · L2135 render · L2745 spec · L3289 plugins · L3303 selftest · L4052 CLI
 Config (..\\kit.local.json): "tracker" (crafty.ps1 tracker, default none), "reports" + "driveParent" (doc / evidence:
 kit.example.json reports._readme), "gitHost" / "githubHost".
 Windows: from PowerShell (python hangs in git-bash). CLIs: shutil.which.
 """
-import contextlib, difflib, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zlib
+import contextlib, difflib, fnmatch, glob, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, zlib
 from datetime import datetime, timezone
 
 KIT = os.path.dirname(os.path.abspath(__file__))  # crafty skill folder
@@ -745,7 +744,7 @@ def scope_note(url, globs, branch):
 
 def resolve_target(r, paths):
     """repos[].targets [{branch, paths}]: the main line of the touched paths (unmatched: repos[].target); two lines: refused."""
-    hit = sorted({t['branch'] for p in paths for t in r.get('targets') or [] if any(glob.fnmatch.fnmatchcase(p.replace(chr(92), '/'), g) for g in t.get('paths') or [])})
+    hit = sorted({next((t['branch'] for t in r.get('targets') or [] if any(fnmatch.fnmatchcase(p.lower().replace(chr(92), '/'), g.lower()) for g in t.get('paths') or [])), None) for p in paths} - {None})
     if len(hit) > 1:
         raise SystemExit(f"main lines: this change touches {' and '.join(hit)}: split it per main line")
     return hit[0] if hit else r.get('target')
@@ -771,7 +770,8 @@ def target_of(worktree):
         same = bool(co and main and os.path.normcase(os.path.abspath(co)) == main)
         names = [str(n).lower() for n in [r.get('name') or ''] + list(r.get('aliases') or []) if n]
         if same or (name and name in names):
-            tg = resolve_target(r, _run(['git', '-C', worktree, '-c', 'core.quotepath=false', 'diff', '--name-only', f"origin/{r['target']}...HEAD"]).splitlines())
+            fs = [_run(['git', '-C', worktree, '-c', 'core.quotepath=false', 'diff', '--name-only', f'origin/{b}...HEAD']).splitlines() for b in [r['target']] + [t['branch'] for t in r.get('targets') or []]]
+            tg = resolve_target(r, min(fs, key=len))   # the line the branch was cut from has the fewest changed files
             print(f"[mr] target {tg} (no wt record; repos[].target(s) of {r.get('name') or co})", file=sys.stderr)
             return tg
     head = _run(['git', '-C', worktree, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])

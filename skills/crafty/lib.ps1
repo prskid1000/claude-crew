@@ -1723,7 +1723,7 @@ function Get-KitMainLines([string]$Repo) { @(@(Get-RepoConf $Repo 'target' '') +
 # The main line for the paths a change touches: unmatched paths do not vote (none matched = the default); two lines = refused
 function Resolve-KitTarget([string]$Repo, [string[]]$Paths = @()) {
   $ts = @(Get-RepoConf $Repo 'targets' @()); $def = "$(Get-RepoConf $Repo 'target' '')"
-  $hit = @(foreach ($p in @($Paths | Where-Object { $_ })) { $q = ("$p" -replace '\\', '/') -replace '^\./', ''; $m = $ts | Where-Object { $t = $_; @($t.paths | Where-Object { $q -like $_ }).Count } | Select-Object -First 1; if ($m) { "$($m.branch)" } }) | Sort-Object -Unique
+  $hit = @(foreach ($p in @(Split-KitList $Paths)) { $q = ("$p" -replace '\\', '/') -replace '^\./', ''; $m = $ts | Where-Object { $t = $_; @($t.paths | Where-Object { $q -like $_ }).Count } | Select-Object -First 1; if ($m) { "$($m.branch)" } }) | Sort-Object -Unique
   if (@($hit).Count -gt 1) { throw "main lines: this change touches $(@($hit) -join ' and ') (repos[].targets of $Repo): split it into one change per main line" }
   if ($hit) { "$hit" } else { $def }
 }
