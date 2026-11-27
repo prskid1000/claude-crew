@@ -279,7 +279,7 @@ const P0 = { ok: true, record: 'RECORDED', prep: JSON.stringify({ work: 1, group
 const { calls, agent } = _mock((prompt, o) => o.label === 'prep' ? P0 : J0), L2 = []
 const lost = async (p, o) => { L2.push(o.label + (/^No report came back: first find what is done: C:\/k\/\S+\/retros\/tidy-2\.md exists/.test(p) ? '+' : '')); return o.label === 'apply' ? null : o.label === 'prep' ? P0 : J0 }
 run({ kitDir: 'C:/k' }, agent, _n, _n, null).then((res) => { const j = calls.find((c) => /Kind retro/.test(c.prompt)) || { prompt: '' }
- console.log(`tidy-run:${/naming next name tidy/.test(calls[0].prompt) && /wt lease -Repo \S+ -Branch kit\/tidy-2 -Agent tidy-2 /.test(j.prompt) && /\/tidy-2\.md\./.test(j.prompt)}`)
+ console.log(`tidy-run:${/naming next name tidy/.test(calls[0].prompt) && /wt new -Repo \S+ -Branch kit\/tidy-2 /.test(j.prompt) && /\/tidy-2\.md\./.test(j.prompt)}`)
  console.log(`tidy-parity:${JSON.stringify(res.proposedForApproval) === JSON.stringify(['p1', 'parity next: ci/x/failure: fallback -> native'])}`)
  return run({ kitDir: 'C:/k' }, lost, _n, _n, null) }).then((r2) => console.log(`tidy-redo:${L2.join() === 'prep,apply,apply@redo+' && r2.report === 'r.md'}`)).catch(_err)
 '@

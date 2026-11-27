@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 waits.ps1: waits past their cap in bossy.ps1 supervise (dot-sourced by bossy.ps1 from skills/bossy/adapters/; owner 2026-11-19
-"too much waiting"): WAIT OVER CAP (a test lock, phone lane or worktree slot wait past supervise.stuckMinutes, with its holder) and QA SLOW (a QA
+"too much waiting"): WAIT OVER CAP (a test lock or phone lane wait past supervise.stuckMinutes, with its holder) and QA SLOW (a QA
 package past qa.packageMinutes, learned per lane at pokey.ps1 seat release; it goes on, never NOT_TESTED for time). The build gate,
 env starts and trains flag on their own (supervise-resources.ps1, localenv-supervise.ps1).
 Usage: dot-sourced by bossy.ps1; supervise runs its hook Get-KitSuperviseFlagsWaits (Invoke-KitHooks Get-KitSuperviseFlags).
@@ -18,16 +18,6 @@ function Get-KitWaitsOverCap([datetime]$Now, [double]$CapMin) {
     $wl = @(if ($w.lanes) { $w.lanes } elseif ($w.lane) { $w.lane })   # a -Cap wait names every lane that offers it
     $hs = @($phones | Where-Object { -not $wl.Count -or $wl -contains $_.lane } | ForEach-Object { "$($_.agent) ($($_.lane))" })
     if ($m -ge $CapMin) { [pscustomobject]@{ agent = $w.agent; why = "phone $(if ($wl.Count) { "lane $($wl -join ' / ')" } else { 'any lane' })$(if ($w.cap) { " (cap $(@($w.cap) -join ', '))" })"; min = $m; holder = ($hs -join ', '); next = 'phoney.ps1 acquire hands it the first lane released (phoney.ps1 status)' } } }
-  foreach ($w in @(Get-KitStatusWaitSlots $Now)) { $m = [int]($Now - [datetime]$w.at).TotalMinutes
-    $hs = @(Read-KitJsonFiles (Get-KitPath wt-slots) | Where-Object { $_.slot -and $_.agent -and "$($_.slot)" -like "$($w.repo)·*" } | ForEach-Object { "$($_.agent) ($($_.slot))" })
-    if ($m -ge $CapMin) { [pscustomobject]@{ agent = $w.agent; why = $w.why; min = $m; holder = ($hs -join ', '); next = $w.next } } }
-}
-# a wt lease queued for a slot (a 4th kitty: parallel.kitty; a full product pool) -> { agent; why; at; next; repo }; also the
-# dashboard's wait rows (supervise-report.ps1 runs every Get-KitStatusWait*)
-function Get-KitStatusWaitSlots([datetime]$Now = (Get-Date)) {
-  foreach ($f in @(Get-ChildItem (Join-Path (Get-KitPath wt-slots) 'wait') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { ($Now - $_.LastWriteTime).TotalMinutes -lt (Get-KitParam 'pool.waitFreshMinutes') })) {
-    $w = try { Get-Content -LiteralPath $f.FullName -Raw | ConvertFrom-Json } catch { continue }; if (-not ($w.since -and $w.agent)) { continue }
-    [pscustomobject]@{ agent = $w.agent; why = "worktree slot of $($w.repo)"; at = $w.since; next = "crafty.ps1 wt lease takes the first slot released (wt pool -Repo $($w.repo))"; repo = $w.repo } }
 }
 # a pokey seat (one per QA package) older than qa.packageMinutes for its lane -> { agent; kind; min; expect; now = its board status }
 function Get-KitQaSlow([datetime]$Now) {

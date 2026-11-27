@@ -17,11 +17,6 @@ Get-ChildItem $wt -Force | ForEach-Object { $_.LastWriteTime = (Get-Date).AddHou
 $out = & $py -X utf8 $KT audit recover --fix --kit $kc 2>&1 | Out-String
 Expect 'kit-admin: recover --fix keeps a detached worktree with unmerged commits (listed as RECOVER-HALF); a resume brief or workflow args file is no launch record' ((Test-Path (Join-Path $wt 'unmerged.txt')) -and $out -match 'RECOVER-HALF' -and $out -notmatch 'wf-x\.resume\.md|args-buildy-x')
 git -C $kc worktree remove --force $wt 2>&1 | Out-Null
-# a kit pool slot (parallel.kitty, <git dir>/claude-slot) is listed, never removed by recover --fix
-$kSlot = Join-Path $root 'falcon-.claude'; git -C $kc worktree add -q --detach $kSlot origin/main 2>&1 | Out-Null; Set-Content (Join-Path "$(git -C $kSlot rev-parse --path-format=absolute --git-dir)".Trim() 'claude-slot') 1
-Get-ChildItem $kSlot -Force | ForEach-Object { $_.LastWriteTime = (Get-Date).AddHours(-5) }; $kSlotOut = & $py -X utf8 $KT audit recover --fix --kit $kc 2>&1 | Out-String
-Expect 'kit-admin: recover --fix leaves a clean idle kit slot (INFO kit slot, no remove)' ((Test-Path $kSlot) -and $kSlotOut -match 'kit slot on detached HEAD')
-git -C $kc worktree remove --force $kSlot 2>&1 | Out-Null
 # config: a vendor adapter's tracker name counts (adapter:tracker/<name>), a local file with no example (swarm.config.json) is no CONFIG-FILE; scan: sub-keys named plainly in a README row are documented
 $cad = Join-Path $kc 'skills/crafty/adapters'; New-Item -ItemType Directory -Force $cad, (Join-Path $kc 'skills/phoney') | Out-Null; '# adapter:tracker/zzt' | Set-Content (Join-Path $cad 'tracker_zzt.ps1')
 Set-JsonFile (Join-Path $kc 'skills/crafty/kit.local.json') @{ tracker = @{ type = 'zzt' } }; '{"lanes": []}' | Set-Content (Join-Path $kc 'skills/phoney/swarm.config.json')

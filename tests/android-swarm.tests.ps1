@@ -338,9 +338,8 @@ Expect-Each $capIos 'swarm-ios lane caps: the same -Cap lane choice, queue, refu
 $capO = Join-Path $capKit 'skills/bossy/bossy.ps1'
 $capWaits = & { . $capO; $capNow = Get-Date; $capPd = Get-KitPath phones -Create; Set-JsonFile (Join-Path $capPd 'P1.json') @{ lane = 'P1'; agent = 'test:T2' }
   Set-JsonFile (Join-Path $capPd 'wait/test_T5.json') @{ agent = 'test:T5'; lane = ''; lanes = @('P1', 'P2'); cap = @('play'); since = $capNow.AddMinutes(-30).ToString('o') }
-  $capSd = Get-KitPath wt-slots -Create; Set-JsonFile (Join-Path $capSd 'falcon-.claude.json') @{ slot = '.claude·Falcon'; agent = 'kitty-a' }; Set-JsonFile (Join-Path $capSd 'wait/kitty-d-.claude.json') @{ agent = 'kitty-d'; repo = '.claude'; since = $capNow.AddMinutes(-21).ToString('o') }
-  "$(@(Get-KitWaitsOverCap $capNow 20 | ForEach-Object { "$($_.why)/$($_.holder)" }) -join ',')|$(@(Get-KitStatusWaitResources | Where-Object agent -eq 'test:T5').why)|$(@(Get-KitStatusWaitSlots).agent)" }
-Expect "bossy wait lists: a -Cap waiter shows its capability and its lanes, a 4th kitty its kit slot, held by their holders ($capWaits)" ($capWaits -eq 'phone lane P1 / P2 (cap play)/test:T2 (P1),worktree slot of .claude/kitty-a (.claude·Falcon)|phone lane (cap play)|kitty-d')
+  "$(@(Get-KitWaitsOverCap $capNow 20 | ForEach-Object { "$($_.why)/$($_.holder)" }) -join ',')|$(@(Get-KitStatusWaitResources | Where-Object agent -eq 'test:T5').why)" }
+Expect "bossy wait lists: a -Cap waiter shows its capability and its lanes, held by their holders ($capWaits)" ($capWaits -eq 'phone lane P1 / P2 (cap play)/test:T2 (P1)|phone lane (cap play)')
 # decide ask (owner 2026-11-26): an ask that blames a lane or the env is refused until -Diagnostic says what was checked and names an existing ENV-FIX
 $capFix = if ((Px $capO decide ask -Kind envfix -Run w1 -Agent X1 -Item A6 -Question 'the lane cannot install the module' | Out-String) -match 'ENV-FIX (\S+) pending') { $Matches[1] }
 $capAsk = @('decide', 'ask', '-Run', 'w1', '-Agent', 'X1', '-Item', 'A7', '-Context', 'today: the scan check stops at the module download', '-Options', 'A: skip — the scan stays untested', 'B: wait — the item waits', '-Recommend', 'B')

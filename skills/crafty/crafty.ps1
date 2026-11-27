@@ -19,8 +19,8 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  local claude|desktop|code|status [-Model] [-Print]  a client on the local model server
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L1791 dir · L1801 checkpoint ·
-  L1841 prior · L1880 tracker · L1902 task spec · L2107 scope · L2155 host
+Sections: L26 init · L33 wt · L294 stack · L393 gate · L709 check · L1038 pipes · L1103 guard · L1790 dir · L1800 checkpoint ·
+  L1840 prior · L1879 tracker · L1901 task spec · L2106 scope · L2154 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -103,7 +103,6 @@ switch ($Action) {
     if (-not $Branch -and $Task) { $Branch = Get-KitTaskBranch $Task } elseif ($Task) { Test-KitTaskBranch $Task $Branch }   # naming make branch
     if (-not ($Repo -and $Branch -and $Target -and $Name)) { throw 'new needs -Repo -Branch (or -Task: a keyed task names it) -Target -Name' }
     $Repo = Resolve-WtRepo $Repo
-    if (-not $Override -and ($kitWhy = Get-KitWtNewKitWhy $Repo $Branch)) { throw $kitWhy }
     if (($tx = Get-KitTaskTagRx) -and $Branch -match $tx -and (Get-KitPoolSize $Repo) -gt 0 -and -not $Override) { throw "wt new refused: $(Get-KitCheckoutName $Repo) has a worktree pool and $Branch is a task branch: & $($KitCmd.dev) wt lease -Repo $Repo -Branch $Branch -Agent <your id> (a free slot, kept warm); a dedicated worktree on purpose: -Override '<why>'" }
     if (-not $Root) { $Root = Get-KitWtRootFor $Repo }
     $path = Join-Path $Root "$Name-$(Split-Path $Repo -Leaf)"

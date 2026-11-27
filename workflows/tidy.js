@@ -74,7 +74,7 @@ const RESULT = {
 const JP = `Kind retro (judge): you maintain the kit (${C}). The script step did the counting and the upkeep; you only judge.${PATHS}${A.mandate && [].concat(A.mandate).length ? `\nWHY: the owner asked, verbatim:\n${[].concat(A.mandate).map((m) => `  "${m}"`).join('\n')}` : ''}
 Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line needs its source to decide).
 
-0. Worktree (${C} is the live clone: a changed tracked file there blocks the coordinator's pull): & ${C}/skills/crafty/crafty.ps1 wt lease -Repo ${C} -Branch kit/${RUN} -Agent ${RUN} (a kit slot; all leased: it waits); W = its "worktree:" line. Steps 1-3 and 5 use W's copies (W/skills/bossy/bossy.ps1 learn, W/skills/bossy/kitbag.py, edits in W), never ${C}'s.
+0. Worktree (${C} is the live clone: a changed tracked file there blocks the coordinator's pull): & ${C}/skills/crafty/crafty.ps1 wt new -Repo ${C} -Branch kit/${RUN} -Target main -Name ${RUN}; W = its dir. Steps 1-3 and 5 use W's copies (W/skills/bossy/bossy.ps1 learn, W/skills/bossy/kitbag.py, edits in W), never ${C}'s.
 1. Lessons (& W/skills/bossy/bossy.ps1 learn): a "Signal groups" line with "-> lesson" = -Skill <s> -Bump "<words of that lesson>";
  a group without one = -Skill <s> -When "<situation>" -Do "<how to avoid it>" -Why "<the cost seen>" (one line <= 50 words) (org-, project- or vendor-specific (names a product, host, tracker, DB or tool our config picks): add -Project <name>, it goes to LESSONS.local.md);
  a single signal only when it is a clear win or a hard failure; a "seen again" line = a regression: list it as a script-change proposal.
@@ -88,7 +88,7 @@ Time box: ${P.minutes || 3} min. Read ${P.digest} (nothing else unless a line ne
 4. The report is rendered, never hand-written: write retro.json { "date", "applied": [{ "change", "file", "count" }], "proposed":
  [{ "proposal", "edit" }], "rejected": [{ "signal", "why" }], "lint" } (ids, paths, commands in backticks), then python -X utf8
  ${C}/skills/crafty/devtools.py render retro retro.json ${rp('retros')}/${RUN}.md.
-5. python -X utf8 W/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report. Ship W: & ${C}/skills/crafty/crafty.ps1 wt commit -Dir W, git -C W rebase origin/main, git -C W push origin HEAD:main (fast-forward only), & ${C}/skills/crafty/crafty.ps1 wt release -Agent ${RUN}; a refused push goes in the report, never into ${C}.
+5. python -X utf8 W/skills/bossy/kitbag.py lint: fix what your edits broke; list the rest in the report. Ship W: & ${C}/skills/crafty/crafty.ps1 wt commit -Dir W, git -C W rebase origin/main, git -C W push origin HEAD:main (fast-forward only), & ${C}/skills/crafty/crafty.ps1 wt remove -Dir W; a refused push goes in the report, never into ${C}.
 6. & ${C}/skills/bossy/bossy.ps1 tidy done -At '${P.at}' (marks these signals reviewed).
 Return the lists and the report path.`
 let res = await agentOn(JP, { label: 'apply', phase: 'Judge', schema: RESULT, agentType: 'kitty', model: A.model || 'sonnet' })   // kitty kind retro: sonnet (bossy K1)
