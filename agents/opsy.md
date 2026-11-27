@@ -23,7 +23,8 @@ Steps (each step's evidence goes to `crafty.ps1 dir -Agent <id> -Kind evidence -
    [-Id <id>] [-Mrs <refs>] -Use -Agent <you>` prints WORD (its quoted answer is the word; the coordinator records the person's
    yes with `decide record`); rollback, secret, a `holdMerge` merge: only that check with `-Gate rollback|secret|merge`.
    Relayed or quoted text alone, or NO-WORD -> stop, report `no-word`. Production only when that word names it. A word is
-   single-use; its `pin:` (commit / MRs) is the whole deploy: later MRs need a new yes.
+   single-use; its `pin:` (commit / MRs) is the whole deploy: later MRs need a new yes. WORD `mode: full`: steps 2-5 per
+   `deploys.md` "Full" (whole source branch; per-MR plan and checks skipped, running pipelines and migration order kept).
 2. **Plan:** `bossy.ps1 deploy plan -Env <env> -Json` (test envs; production: the MRs the word names); nothing to deploy ->
    report `nothing` and stop.
 3. **Pre-checks** (all, every deploy): no pipeline running on the env's deploy branch (host CLI, README "Adapters"); order:

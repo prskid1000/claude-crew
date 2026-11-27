@@ -34,6 +34,17 @@ Deploy kinds (`repos[].deploys[].kind`, else from the row keys): ci-job (branch 
 command (`{ isDeployed, lastDeploy, isRunning, restart, deploy }` command lines: `{sha} {target} {branch} {repo} {mr} {service}`). Verbs: pokey adapters/deployed-checks.ps1;
 a verb a kind lacks = UNKNOWN. Production = `deploys[].production`, else `deploy.productionPattern` (no default).
 
+## Full
+Owner 2026-11-27: `deploy <env> full` or "full deployment" (the recorded answer keeps `full`; `decide check` WORD: `mode: full`; a pin
+wins) = the whole source branch, no per-MR batch:
+1. Each repo's `deploys[]` row of the env: `deploy merge -Repo <checkout> -To <target> -Mr -Decision <id>`, no -Mrs (source
+   `deploys[].from`, else `repos[].target`: the main line; production: `-From <the previous env's branch>`, required); other kinds
+   `deploy run`.
+2. Kept: no pipeline running on the deploy branch, migrations across repos in order (producers first, `repos[].role`; each repo's
+   `git diff --name-only origin/<to>...origin/<from> -- <its migration paths>`), credentials, host, busy check. Skipped: the plan's per-MR list, OUT-OF-AREA, MR-body order, per-MR deployed check.
+3. Verify per env: deploy job green, health / probe 200, smoke, error rate vs the hour before, no new log errors; `deploy record
+   -Env <target> -By <who>`; `deploy intest -Apply` (no -Mrs / -Env: every task whose MRs are all live).
+
 ## Before an ask
 An ask (`decide ask`, AskUserQuestion) about testing, deploying or a task's state: first `pokey.ps1 deployed -Mrs <its MRs>` and
 `crafty.ps1 tracker view <id>`, their result in the ask; every MR deployed and the task in test: no ask, route it (R8 `/testy` when it

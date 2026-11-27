@@ -244,6 +244,14 @@ Expect "deploy schedule / watch from the CLI: no schedule = a clear stop; -Repo 
 Expect-Each (Invoke-PsTest 'deploy-watch' $wch @($O)) 'deploy schedule + watch: # (host history p50 / p90 + build / deploy split, cached; log history; saved plan text; gates replan; a lock starts one per pass; one loop: a failure holds its dependents only, done = verify, actual vs predicted logged)' @('history', 'plan', 'gate', 'guards', 'loop') 20
 $cliR = pwsh @np $O deploy schedule -Env st -Mrs be!1 2>&1 | Out-String; $cliN = pwsh @np $O deploy watch -Env st -Started be 2>&1 | Out-String; $cliF = pwsh @np $O deploy watch -Env st -Finished app=ok 2>&1 | Out-String
 Expect "deploy schedule refuses while a target runs; watch -Started without a sha / -Finished other than success|failed = usage ($($cliR.Trim()))" ($cliR -match 'be still running in schedule-st\.json' -and $cliN -match '-Started be needs =<merge sha>' -and $cliF -match '-Finished app=ok: use success or failed')
+# full mode (owner 2026-11-27): an unpinned word saying full; a negation or a pin is no full
+$fullWord = @'
+. (Join-Path $args[0] 'skills/crafty/lib.ps1')
+$as = 'full deployment', 'deploy st full', 'yes, full', 'not full', 'full !6', 'no full deploy', 'yes, NOT  full', 'yes in full', 'yes, full stop', 'yes, fully tested', 'yes'
+"$(($as | ForEach-Object { [int](Get-KitDeployWordPin @{ answer = $_ }).full }) -join '')|$(Format-KitWordPin @{ answer = 'full' })"
+'@
+$fwOut = "$(Invoke-PsTest 'full-word' $fullWord @($k))"
+Expect "deploy word full: mode full only for an unpinned, un-negated 'full' (WORD line '| mode: full') ($fwOut)" ($fwOut -eq '11100000000| | mode: full')
 Remove-Item Env:CLAUDE_WT_ROOT
 Remove-TestKit $k
 Complete-Tests
