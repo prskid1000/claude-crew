@@ -75,20 +75,20 @@ function Get-KitLocalModelIds($EnvMap, [string[]]$Rest, [string]$Model) {
 }
 # the token's config reference for output: a value put there by mistake is never shown
 function Format-KitLocalTokenRef([string]$Ref) { if ($Ref -match '^(env|secret):\w') { $Ref } elseif ($Ref) { '<a value, ignored: use env:<VAR> | secret:<name>>' } else { '' } }
-# --agent applies the crew file's tools allowlist and drops StructuredOutput (--json-schema then returns prose): hand the same agent over inline with it added
+# --agent applies the crew file's tools allowlist (drops StructuredOutput: --json-schema then returns prose) and its model alias (not the one the checks saw): hand the agent over inline
 function Get-KitLocalModelAgentJson([string]$Type) {
   $af = Join-Path $KitRoot "agents/$Type.md"; if (-not (Test-Path -LiteralPath $af -PathType Leaf)) { return $null }
   $mt = [regex]::Match(((Get-Content -LiteralPath $af -Raw) -replace "`r`n", "`n"), '(?s)\A---\n(.*?)\n---\n(.*)\z'); if (-not $mt.Success) { return $null }
-  $fm = @{}; foreach ($fl in $mt.Groups[1].Value -split "`n") { if ($fl -match '^(\w+):\s*(.*)$') { $fm[$Matches[1]] = $Matches[2].Trim().Trim('"') } }
-  $tl = @("$($fm.tools)" -split ',\s*' | Where-Object { $_ }); if (-not $tl.Count) { return $null }   # no allowlist: nothing is dropped
-  $ad = [ordered]@{ description = "$($fm.description)"; prompt = $mt.Groups[2].Value.Trim(); tools = @($tl + 'StructuredOutput' | Select-Object -Unique) }; if ($fm.model) { $ad.model = "$($fm.model)" }
+  $fm = @{}; foreach ($fl in $mt.Groups[1].Value -split "`n") { if ($fl -match '^(\w+):\s*(.*)$') { $fm[$Matches[1]] = ($Matches[2].Trim() -replace '^(["''])(.*)\1$', '$2') -replace '\\"', '"' } }
+  $tl = @(("$($fm.tools)" -replace '^\[|\]$', '') -split ',\s*' | Where-Object { $_ }); if (-not $tl.Count) { return $null }   # no allowlist: nothing is dropped
+  $ad = [ordered]@{ description = "$($fm.description)"; prompt = $mt.Groups[2].Value.Trim(); tools = @($tl + 'StructuredOutput' | Select-Object -Unique) }; $ad.model = 'inherit'   # the run uses ANTHROPIC_MODEL: the model the RAM and forbidden checks saw, never the crew file's alias
   @{ $Type = $ad } | ConvertTo-Json -Depth 5 -Compress
 }
 function Get-KitLocalModelArgs([string]$Client, $Cfg, [string]$Model, [bool]$Unsafe, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType, [string[]]$Rest) {
   $av = [Collections.Generic.List[string]]::new(); $skip = if ($Unsafe) { "$(& (Join-Path $KitLibDir 'flagged.ps1') unsafeflag -Text $Client)" }   # its name makes pwsh log a script
   if ($Client -eq 'claude') {
     if ($Unsafe) { $av.Add($skip) }
-    if ($PromptFile) { $av.AddRange([string[]]@('-p', '--output-format', 'json')); if ($SchemaFile) { $av.AddRange([string[]]@('--json-schema', (Get-Content -LiteralPath $SchemaFile -Raw).Trim())) }; if ($AgentType) { $aj = if ($SchemaFile) { Get-KitLocalModelAgentJson $AgentType }; if ($aj) { $av.AddRange([string[]]@('--agents', $aj)) }; $av.AddRange([string[]]@('--agent', $AgentType)) } }
+    if ($PromptFile) { $av.AddRange([string[]]@('-p', '--output-format', 'json')); if ($SchemaFile) { $av.AddRange([string[]]@('--json-schema', (Get-Content -LiteralPath $SchemaFile -Raw).Trim())) }; if ($AgentType) { $aj = Get-KitLocalModelAgentJson $AgentType; if (-not $aj -and (Test-Path -LiteralPath (Join-Path $KitRoot "agents/$AgentType.md"))) { Write-Warning "agent ${AgentType}: no tools list parsed, StructuredOutput may be dropped" }; if ($aj) { $av.AddRange([string[]]@('--agents', $aj)) }; $av.AddRange([string[]]@('--agent', $AgentType)) } }
   }
   elseif ($Client -eq 'codex') {
     if ($PromptFile) { $av.Add('exec') }
@@ -159,7 +159,7 @@ if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step co
 }
 $cfg = Get-KitLocalModelConfig; $tok = Get-KitLocalModelToken $cfg.token
 if ($Client -eq 'status') {
-  $sv = Get-KitLocalModelServed $cfg $tok; $ram = Test-KitLocalModelRam $cfg $tok; $sts = Get-KitLocalAiState 'local-model'; $mo = Get-KitModelMode
+  $sv = Get-KitLocalModelServed $cfg $tok; $ram = Test-KitLocalModelRam $cfg $tok $cfg.defaultModel; $sts = Get-KitLocalAiState 'local-model'; $mo = Get-KitModelMode
   $so = [ordered]@{ mode = $mo; use = @($cfg.use); baseUrl = $cfg.baseUrl; up = $sv.up; served = @($sv.ids); forbidden = @($sv.ids | Where-Object { Test-KitLocalModelForbidden $cfg $_ }); error = $sv.error
     seats = $sts.leases.Count; maxConcurrent = $cfg.maxConcurrent; overflow = $cfg.overflow; holders = @($sts.leases | ForEach-Object { "$($_.agent)" }); waiting = $sts.waiting.Count; ram = $ram; token = $(if ($tok) { 'set' } else { 'unset' }) }
   if ($Json) { return ($so | ConvertTo-Json -Depth 5 -Compress) }
@@ -181,7 +181,9 @@ if ($Client -eq 'codex' -and -not $mdl) { Stop-KitVerb 'local codex: needs -Mode
 $envMap = Get-KitLocalModelEnv $Client $cfg $tok $mdl
 $bad = @(Get-KitLocalModelIds $envMap $Rest $mdl | Where-Object { Test-KitLocalModelForbidden $cfg $_ })
 if ($bad.Count) { Stop-KitVerb "REFUSED: model $($bad -join ', ') is forbidden here (models.local.forbiddenModels)" 1 }
-$exe = Resolve-KitLocalModelExe $Client $cfg; $argv = @(Get-KitLocalModelArgs $Client $cfg $mdl $Unsafe.IsPresent $PromptFile $SchemaFile $AgentType $Rest)
+$exe = Resolve-KitLocalModelExe $Client $cfg
+if ($AgentType -and $exe -match '\.(cmd|bat)$') { Stop-KitVerb "REFUSED: $exe is a .cmd shim: cmd.exe cuts the inline crew agent (quotes, 8191 chars); use the native claude install (models.local.commands.claude)" 1 }
+$argv = @(Get-KitLocalModelArgs $Client $cfg $mdl $Unsafe.IsPresent $PromptFile $SchemaFile $AgentType $Rest)
 if ($Print) {
   $po = [ordered]@{ client = $Client; exe = "$exe"; args = $argv; model = $(if ($mdl) { $mdl } else { '(server default)' }); baseUrl = $cfg.baseUrl; mode = (Get-KitModelMode); token = $(if ($tok) { 'set' } else { 'unset' }); env = (Format-KitLocalEnv $envMap $tok) }
   if ($Json) { return ($po | ConvertTo-Json -Depth 5 -Compress) }
