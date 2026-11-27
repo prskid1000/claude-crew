@@ -165,14 +165,14 @@ $jit = & { . $lkL 6>$null; $jw = Join-Path $k 'ji-wt'; $jm = Join-Path $jw 'api'
   $null = New-Item -ItemType Directory -Force $jp, $jcl; git -C $jw init -q -b main; $jg = { git -C $jw -c user.name=t -c user.email=t@t @args 2>&1 | Out-Null }
   $jsrc = [ordered]@{ A = 'public class A { }'; B = 'public class B extends A { }'; C = 'public class C extends B { }'; F = 'class F { C c; }'; D = 'class D { }'; M = '@Mapper interface M { }'; E = '@Entity class E { F f; }'
     G = 'class G { void m() { H.get().f(); } }'; K = 'class K { Object o = E_.f; }' }
-  $jcs = { param($skip, $odd) foreach ($jn in $jsrc.Keys | Where-Object { $_ -notin $skip }) { $(if ($jn -eq $odd) { 'changed' } elseif ($jn -eq 'G') { 'xx p/A yy' } else { 'c' }) | Set-Content (Join-Path $jcl "$jn.class") } }
+  $jcs = { param($skip, $odd) foreach ($jn in $jsrc.Keys | Where-Object { $_ -notin $skip }) { $(if ($jn -eq $odd) { 'changed' } elseif ($jn -eq 'G') { 'xx p/A yy' } else { 'c' }) | Set-Content (Join-Path $jcl "$jn$(if ($jn -eq 'G') { '$1' }).class") } }
   'x' | Set-Content (Join-Path $jm 'pom.xml'); foreach ($jn in $jsrc.Keys) { $jsrc[$jn] | Set-Content (Join-Path $jp "$jn.java") }
   & $jg add -A; & $jg commit -q -m base; $jb = "$(git -C $jw rev-parse HEAD)".Trim()
   function EnvRepos { @{ r = [pscustomobject]@{ wt = $jw } } }; function RepoOf { 'r' }
   $jsv = [pscustomobject]@{ name = 'api'; javaIncremental = [pscustomobject]@{ fullEvery = 3; fullWhen = '@Entity' } }; $jc = 'mvn -q package'; $jlog = Join-Path $k 'ji.log'; 'x' | Set-Content $jlog
   $jold = { Get-ChildItem $jp -File | ForEach-Object { $_.LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-1) } }
   $jnew = { @(Get-ChildItem $jp -File | Where-Object { $_.LastWriteTimeUtc -gt [datetime]::UtcNow.AddMinutes(-5) } | ForEach-Object BaseName | Sort-Object) -join '' }
-  $p0 = Get-JavaIncPlan t $jsv $jm $jc; Update-State t { param($x) $x.javaInc = @{ api = @{ sha = $jb; n = 0 } } }; & $jcs; 'i' | Set-Content (Join-Path $jcl 'A$In.class')
+  $p0 = Get-JavaIncPlan t $jsv $jm $jc; $null = Step-JavaInc t $jsv $p0 0 $jlog; Update-State t { param($x) $x.javaInc = @{ api = @{ sha = $jb; n = 0 } } }; & $jcs; 'i' | Set-Content (Join-Path $jcl 'A$In.class')
   'public class A { int x; }' | Set-Content (Join-Path $jp 'A.java'); & $jg commit -q -am a; & $jold
   $p1 = Get-JavaIncPlan t $jsv $jm $jc; $t1 = & $jnew; $gone1 = -not (Test-Path (Join-Path $jcl 'A.class')) -and -not (Test-Path (Join-Path $jcl 'A$In.class')) -and (Test-Path (Join-Path $jcl 'D.class'))
   $s1 = Step-JavaInc t $jsv $p1 0 $jlog; $n1 = (Read-State t).javaInc.api.n
@@ -182,14 +182,20 @@ $jit = & { . $lkL 6>$null; $jw = Join-Path $k 'ji-wt'; $jm = Join-Path $jw 'api'
   Update-State t { param($x) $x.javaInc.api.n = 2 }; 'class D { int y; }' | Set-Content (Join-Path $jp 'D.java'); & $jg commit -q -am d
   $p3 = Get-JavaIncPlan t $jsv $jm $jc; $s3a = Step-JavaInc t $jsv $p3 0 $jlog; & $jcs @('D') 'F'; $s3b = Step-JavaInc t $jsv $p3 0 $jlog
   'class D { int z; }' | Set-Content (Join-Path $jp 'D.java'); & $jg commit -q -am d2; 'error: cannot find symbol' | Set-Content $jlog
-  $p4 = Get-JavaIncPlan t $jsv $jm $jc; $s4 = Step-JavaInc t $jsv $p4 1 $jlog; $n4 = (Read-State t).javaInc.api.n; & $jcs
-  Update-State t { param($x) $x.javaInc.api.dirty = @('api/src/main/java/p/Gone.java') }; $p6 = Get-JavaIncPlan t $jsv $jm $jc; & $jcs; Update-State t { param($x) $x.javaInc.api.dirty = @() }
-  & $jg rm -q (Join-Path $jp 'D.java'); & $jg commit -q -m rm; $p5 = Get-JavaIncPlan t $jsv $jm $jc; $gone5 = -not (Test-Path (Join-Path $jcl 'D.class')); & $jcs
+  $p4 = Get-JavaIncPlan t $jsv $jm $jc; $s4 = Step-JavaInc t $jsv $p4 1 $jlog; $n4 = (Read-State t).javaInc.api.n; & $jcs; $null = Step-JavaInc t $jsv $p4 0 $jlog
+  Update-State t { param($x) $x.javaInc.api.dirty = @('api/src/main/java/p/Gone.java') }; $p6 = Get-JavaIncPlan t $jsv $jm $jc; & $jcs; $null = Step-JavaInc t $jsv $p6 0 $jlog
+  & $jg rm -q (Join-Path $jp 'D.java'); & $jg commit -q -m rm; $p5 = Get-JavaIncPlan t $jsv $jm $jc; $gone5 = -not (Test-Path (Join-Path $jcl 'D.class')); & $jcs; $null = Step-JavaInc t $jsv $p5 0 $jlog
+  # build inputs, a changed dependency print, no classes left -> full; an uncommitted edit recorded, then reverted -> compiled again
+  $jq = { $pq = Get-JavaIncPlan t $jsv $jm $jc; & $jcs; $null = Step-JavaInc t $jsv $pq 0 $jlog; $pq.why }
+  $qs = @(foreach ($qf in 'lombok.config', 'src/main/proto/x.proto') { $null = New-Item -ItemType File -Force (Join-Path $jm $qf) -Value 'x'; & $jg add -A; & $jg commit -q -m q; & $jq })
+  Update-State t { param($x) $x.javaInc.api.deps = 'old' }; $qs += & $jq; Get-ChildItem $jcl -Filter *.class | Remove-Item; $qs += & $jq
+  'public class C extends B { int w; }' | Set-Content (Join-Path $jp 'C.java'); $null = Step-JavaInc t $jsv (Get-JavaIncPlan t $jsv $jm $jc) 0 $jlog; $dirt = (Read-State t).javaInc.api.dirty -join ','
+  & $jg checkout -q -- (Join-Path $jp 'C.java'); & $jold; $null = Get-JavaIncPlan t $jsv $jm $jc; $qs += "$dirt;$(& $jnew)"
   $kd = @(Get-JavaDependants $jw 'api/src/main/java' @('api/src/main/java/p/E.java') '' '') -join ','
   $off = Get-JavaIncPlan t ([pscustomobject]@{ name = 'api' }) $jm $jc; $bwt = [datetime]::UtcNow.AddMinutes(-1); (Get-Item (Join-Path $jcl 'A.class')).LastWriteTimeUtc = $bwt.AddMinutes(-5); $bw = Get-BuildWrites $jm $bwt
   @("$($p0.mode):$($p0.why)", "$($p1.mode):$($p1.touched):${t1}:${gone1}:$($p1.cmd)", "[$s1]$n1", "$($p2.mode):$($p2.why):$rs2", "$($p3.mode):${s3a}:[$s3b]:$($p3.diff)",
-    "$($p4.mode):${s4}:${n4}:$($p4.why)", "$($p6.mode):$($p6.why)", "$($p5.mode):$($p5.why):$gone5", $kd, "[$off]$($bw.files)") -join ' | ' }
-Expect "javaIncremental: full without a baseline; A changed -> A, B, C (subclass of B), F (names C), G (bytecode ref), M (@Mapper) touched, A classes gone, the flag; fullWhen in the set -> a clean full; every 3rd -> a full one compared (1 class differs); failed -> full; a gone uncommitted edit or a deleted source -> full; metamodel users; off -> none; writes counted ($jit)" ($jit -eq 'full:no baseline build | incremental:6:ABCFGM:True:mvn -Dmaven.compiler.useIncrementalCompilation=false -q package | []1 | full:fullWhen matches api/src/main/java/p/E.java:True | verify:mvn -q package:[]:1 | fallback:mvn -q package:0:incremental failed (exit 1): error: cannot find symbol | full:1 deleted source(s) | full:1 deleted source(s):True | api/src/main/java/p/E.java,api/src/main/java/p/K.java | []8')
+    "$($p4.mode):${s4}:${n4}:$($p4.why)", "$($p6.mode):$($p6.why)", "$($p5.mode):$($p5.why):$gone5", $kd, "[$off]$($bw.files)", ($qs -join ';')) -join ' | ' }
+Expect "javaIncremental: full without a baseline; A changed -> A, B, C (subclass of B), F (names C), G (bytecode ref), M (@Mapper) touched, A classes gone, the flag; fullWhen in the set -> a clean full; every 3rd -> a full one compared (1 class differs); failed -> full; a gone uncommitted edit or a deleted source -> full; metamodel users; off -> none; writes counted ($jit)" ($jit -eq 'full:no baseline build | incremental:6:ABCFGM:True:mvn -Dmaven.compiler.useIncrementalCompilation=false -q package | []1 | full:fullWhen matches api/src/main/java/p/E.java:True | verify:mvn -q package:[]:1 | fallback:mvn -q package:0:incremental failed (exit 1): error: cannot find symbol | full:1 deleted source(s) | full:1 deleted source(s):True | api/src/main/java/p/E.java,api/src/main/java/p/K.java | []7 | build input changed: api/lombok.config;build input changed: api/src/main/proto/x.proto;a dependency jar changed;no baseline build;api/src/main/java/p/C.java;CFM')
 # the Hibernate entity index after a compile that saw only Lamp (DIM removed) and House: other types kept, gone values and names dropped
 $jix = & { . $lkL 6>$null; $ir = Join-Path $k 'ji-idx'; $null = New-Item -ItemType Directory -Force $ir
   $wr = { param($n, $t, $h) [IO.File]::WriteAllText((Join-Path $ir $n), $t); [IO.File]::SetLastWriteTimeUtc((Join-Path $ir $n), [datetime]::UtcNow.AddHours(-$h)) }

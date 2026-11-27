@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L5 shared builds · L145 java incremental · L309 lane pick · L359 start room · L403 thin artifacts ·
-#   L445 lane priority · L505 static server
+# Sections: L5 shared builds · L145 java incremental · L313 lane pick · L363 start room · L407 thin artifacts ·
+#   L449 lane priority · L509 static server
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -160,6 +160,7 @@ function Get-JavaIncPlan([string]$e, $s, [string]$dir, [string]$cmd) {
   $p = @{ base = $cmd; cmd = $cmd; mode = 'full'; why = ''; head = "$(git -C $wt rev-parse HEAD 2>$null)".Trim(); n = [int]$rec.n; phase = 1; dir = $dir; wt = $wt; src = $src; touched = 0 }
   $full = { param($why) $p.mode = 'full'; $p.cmd = $cmd; $p.why = $why; Reset-JavaIncStatus $dir; $p }
   $cls = Join-Path $dir 'target/classes'
+  if (Test-Path -LiteralPath (Join-Path $dir 'target/javainc-full.pending')) { return (& $full 'last full run unfinished') }   # killed or failed after its clean
   if (-not $rec.sha -or -not (Test-Path -LiteralPath $cls) -or -not @([IO.Directory]::EnumerateFiles($cls, '*.class', [IO.SearchOption]::AllDirectories) | Select-Object -First 1).Count) { return (& $full 'no baseline build') }   # a cleaned full run that never finished: none
   $null = git -C $wt cat-file -e "$($rec.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { return (& $full 'baseline commit gone') }
   if ($rec.deps -and $rec.deps -ne (Get-JavaDepsPrint $e $s $wt)) { return (& $full 'a dependency jar changed') }   # stale mode skips Maven's own dependency check
@@ -167,7 +168,7 @@ function Get-JavaIncPlan([string]$e, $s, [string]$dir, [string]$cmd) {
   foreach ($row in @(git -C $wt -c core.quotepath=off diff --name-status --no-renames $rec.sha 2>$null | Where-Object { $_ })) {
     $how, $f = $row -split "`t", 2
     if ($f -match '(^|/)src/test/') { continue }
-    if ($f -match '(^|/)(pom\.xml|lombok\.config|\.mvn/.+)$') { return (& $full "build input changed: $f") }
+    if ($f -match '(^|/)(pom\.xml|lombok\.config|\.mvn/.+|src/main/(?!resources/|java/).+)$') { return (& $full "build input changed: $f") }   # .proto and other generated-source inputs
     if ($f -notmatch '\.java$') { continue }
     if (-not $f.StartsWith("$src/")) { return (& $full "source outside the module: $f") }
     if ($how -eq 'D') { $gone += $f } else { $java += $f }
@@ -218,7 +219,8 @@ function Get-JavaDependants([string]$wt, [string]$src, [string[]]$changed, [stri
   try {
     $todo = @($names)
     for ($i = 0; $todo.Count -and $i -lt 10; $i++) {
-      $sub = @(& $grep @($todo | ForEach-Object { "(extends|implements)[^{]*$w$([regex]::Escape($_))($w|$)" }) @('-E') | Where-Object { $names.Add((& $leaf $_)) })
+      $tx = "(extends|implements)[^{]*$w($(@($todo | ForEach-Object { [regex]::Escape($_) }) -join '|'))($w|$)"   # whole text: extends and the type on separate lines
+      $sub = @(& $grep @($todo) @('-w', '-F') | Where-Object { [regex]::IsMatch([IO.File]::ReadAllText((Join-Path $wt $_)), $tx) -and $names.Add((& $leaf $_)) })
       $hier += $sub; $todo = @($sub | ForEach-Object { & $leaf $_ })
     }
     $out = @($changed) + @(& $grep @(@($names) + @($names | ForEach-Object { "$($_)_" })) @('-w', '-F'))
@@ -249,6 +251,7 @@ function Remove-JavaClasses([string]$wt, [string]$dir, [string]$src, [string[]]$
 # a full run = a clean compile: no recorded inputs (maven-compiler recompiles the module), no class or processor file left over
 # (Maven deletes old outputs only from the createdFiles.lst this removes: a removed inner class would ship)
 function Reset-JavaIncStatus([string]$dir) {
+  if (Test-Path -LiteralPath (Join-Path $dir 'target')) { [IO.File]::WriteAllText((Join-Path $dir 'target/javainc-full.pending'), '') }   # a good build removes it
   Remove-Item -LiteralPath (Join-Path $dir 'target/maven-status/maven-compiler-plugin/compile'), (Join-Path $dir 'target/generated-sources/annotations') -Recurse -Force -ErrorAction SilentlyContinue
   $c = Join-Path $dir 'target/classes'; if (Test-Path -LiteralPath $c) { foreach ($f in [IO.Directory]::EnumerateFiles($c, '*.class', [IO.SearchOption]::AllDirectories)) { [IO.File]::Delete($f) } }
 }
@@ -281,7 +284,8 @@ function Step-JavaInc([string]$e, $s, $p, [int]$bc, [string]$log) {
     if ($diff.Count) { Write-Host "[$e] $($s.name): verify MISMATCH: $($diff.Count) file(s) differ from the full build (kept the full one)"; Event $e 'java-incremental-mismatch' @{ service = $s.name; files = $diff.Count; sample = @($diff | Select-Object -First 5); why = $p.why } }
   }
   if (-not $bc) {   # distinct names: Update-State's body loops over $n, $k
-    $jiDirty = @(git -C $p.wt -c core.quotepath=off diff --name-only HEAD -- $p.src 2>$null | Where-Object { $_ -match '\.java$' })
+    Remove-Item -LiteralPath (Join-Path $p.dir 'target/javainc-full.pending') -Force -ErrorAction SilentlyContinue
+    $jiDirty = @(@(git -C $p.wt -c core.quotepath=off diff --name-only HEAD -- $p.src 2>$null) + @(git -C $p.wt -c core.quotepath=off ls-files --others --exclude-standard -- $p.src 2>$null) | Where-Object { $_ -match '\.java$' } | Select-Object -Unique)   # untracked too: deleted later, its class must go
     $jiRec = @{ sha = $p.head; n = $(if ($p.mode -eq 'incremental') { $p.n + 1 } else { 0 }); at = (Now); dirty = $jiDirty; deps = (Get-JavaDepsPrint $e $s $p.wt -Save) }; $jiSvc = $s.name
     Update-State $e { param($x) if ($x.javaInc -isnot [hashtable]) { $x.javaInc = @{} }; $x.javaInc[$jiSvc] = $jiRec }
   }
