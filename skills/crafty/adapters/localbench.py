@@ -282,8 +282,8 @@ def recall(c, l):
 
 
 def enum(s):
-    """A status, id or name (compared exactly): short and one word; prose is compared by its words."""
-    return len(s) <= 24 and not re.search(r'\s', s.strip())
+    """A status, id, path, URL or name (compared exactly): one word; prose is compared by its words, or judged."""
+    return len(s) <= 300 and not re.search(r'\s', s.strip())
 
 
 def item_key(x):
