@@ -125,6 +125,10 @@ Add-Fixture $ah 'agent-w3' watchy 'nightly sweep 3' 'Kind sweep, watch W3.' '2 e
 $ad = Invoke-TestScript $D local bench build -Set cov -Roles 'watchy@sweep,datay@check' -N 3 -Add -Since 2000-01-01 -Transcripts $tr
 $after = @(Get-ChildItem (Join-Path $cd 'tasks') -Directory).Name
 Expect "bench build -Add: one new watchy@sweep task (the third), old tasks kept, datay@check no history ($($ad.code): $($ad.out.Trim()))" ($ad.code -eq 0 -and $after.Count -eq $cvIds.Count + 1 -and @($cvIds | Where-Object { $_ -notin $after }).Count -eq 0 -and $ad.out -match 'watchy@sweep 1' -and $ad.out -match 'no history: datay@check')
+$dg = Invoke-TestScript $D local bench build -Set badc -Degrade cov -N 3
+$dgIds = @(Get-ChildItem (Join-Path $k '.state/local-bench/badc/tasks') -Directory -ErrorAction SilentlyContinue)
+$dgP = if ($dgIds) { Get-Content -Raw (Join-Path $dgIds[0].FullName 'prompt.md') } else { '' }
+Expect "bench build -Degrade: a new set of degraded copies (mode in the id), cloud.json kept, the first one (vague) still has its tool outputs ($($dg.code): $($dg.out.Trim()))" ($dg.code -eq 0 -and $dgIds.Count -ge 1 -and $dgIds[0].Name -match '-vague$' -and (Test-Path (Join-Path $dgIds[0].FullName 'cloud.json')) -and $dgP -match 'TOOL CALLS ALREADY RUN')
 Stop-Job $srv -ErrorAction SilentlyContinue; Remove-Job $srv -Force -ErrorAction SilentlyContinue
 Remove-TestKit $k
 Complete-Tests

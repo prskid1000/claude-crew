@@ -180,14 +180,14 @@ param(
   [string]$Model, [switch]$Unsafe, [switch]$Print, [switch]$Json, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session, [double]$WaitMinutes = -1,
   [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [Alias('TimeoutSeconds')][int]$TimeoutSec, [switch]$Force,   # bench
-  [switch]$Add, [string]$Write, [switch]$WriteRunonEvidence, [int]$Min,   # bench build / runon / report / coverage
+  [switch]$Add, [string]$Degrade, [string]$Write, [switch]$WriteRunonEvidence, [int]$Min,   # bench build / runon / report / coverage
   [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'
 $Rest = @($Rest | Where-Object { $null -ne $_ })
 if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step comes back here as local claude)
   $ba = @($Rest) + @('-Agent', $Agent) + @(if ($Json) { '-Json' }) + @(if ($Force) { '-Force' }) + @(if ($Add) { '-Add' }) + @(if ($WriteRunonEvidence) { '-WriteRunonEvidence' }) + @(if ($N) { '-N', $N }) + @(if ($Min) { '-Min', $Min }) + @(if ($TimeoutSec) { '-TimeoutSec', $TimeoutSec })
-  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Since', $Since), @('-Transcripts', $Transcripts), @('-Write', $Write))) { if ($bp[1]) { $ba += $bp } }
+  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Degrade', $Degrade), @('-Since', $Since), @('-Transcripts', $Transcripts), @('-Write', $Write))) { if ($bp[1]) { $ba += $bp } }
   & (Get-Python) -X utf8 (Join-Path $KitLibDir 'adapters/localbench.py') @ba; $global:LASTEXITCODE = $LASTEXITCODE; if ($LASTEXITCODE) { exit $LASTEXITCODE }; return
 }
 if ($Client -eq 'resolve') {   # one run unit: cloud | local and how a local one starts (the coordinator, before each spawn)
