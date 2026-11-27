@@ -366,7 +366,7 @@ function Resolve-PokeyTarget($targets, [string]$Name) {
   $kd = if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { @{ DateKind = 'String' } } else { @{} }
   $lt = $lt | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable @kd; if ($own) { foreach ($lk in 'defaultUser', 'defaultTenant') { if ($null -ne (Get-KitMember $own $lk)) { $lt[$lk] = Get-KitMember $own $lk } } }
   # users / created: the base's (a lane DB is a copy of the same seed) + the lane entry's own, which win on a clash
-  foreach ($lk in 'users', 'created') { $mg = [ordered]@{}; foreach ($src in @($lt[$lk], $(if ($own) { Get-KitMember $own $lk }))) { if ($src -is [Collections.IDictionary]) { foreach ($sk in @($src.Keys)) { $mg[$sk] = $src[$sk] } } elseif ($null -ne $src) { foreach ($p in @(Get-KitProps $src)) { $mg[$p.Name] = $p.Value } } }; $lt[$lk] = $mg }
+  foreach ($lk in 'users', 'created', 'userAuth') { $mg = [ordered]@{}; foreach ($src in @($lt[$lk], $(if ($own) { Get-KitMember $own $lk }))) { if ($src -is [Collections.IDictionary]) { foreach ($sk in @($src.Keys)) { $mg[$sk] = $src[$sk] } } elseif ($null -ne $src) { foreach ($p in @(Get-KitProps $src)) { $mg[$p.Name] = $p.Value } } }; $lt[$lk] = $mg }
   # user / ui login read .Keys (hashtable targets); api reads members
   if ($targets -is [Collections.IDictionary]) { $lt } else { $lt | ConvertTo-Json -Depth 20 | ConvertFrom-Json @kd }
 }
@@ -675,7 +675,7 @@ if ($Action -eq 'auth') {
   if ($Path -and $Path -notmatch '^(/|https?://)') { "REFUSED: -Path '$Path' is not /... or http(s)://... (from Git Bash: MSYS_NO_PATHCONV=1, or pwsh)"; exit 2 }
   if (-not ($Path -or $WebLogin -or $Tenant)) { "usage: pokey.ps1 user auth -Target <t> -Name <login> [-Path <api login path>] [-WebLogin <JSON: path, fields, submit>] [-Tenant <t>]"; exit 2 }
   Invoke-KitLocked $tf.file {
-    $d = Get-Content -LiteralPath $tf.file -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates; $tt = $d.targets[$Target]
+    $d = Get-Content -LiteralPath $tf.file -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates; $tt = $d.targets[$Target]; if ($null -eq $tt) { $tt = $d.targets[$Target] = [ordered]@{} }
     if ($tt.userAuth -isnot [Collections.IDictionary]) { $tt.userAuth = [ordered]@{} }
     if ($tt.userAuth[$Name] -isnot [Collections.IDictionary]) { $tt.userAuth[$Name] = [ordered]@{} }
     $ua0 = $tt.userAuth[$Name]

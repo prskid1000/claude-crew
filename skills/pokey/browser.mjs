@@ -253,7 +253,7 @@ export function defaultUser(t, name = '') {
   throw new Error(`target ${name}: several users: { as } or defaultUser`)
 }
 // created, userAuth: a login's own tenant
-export const tenantOf = (t, as, tenant) => tenant ?? t.created?.[as]?.tenant ?? t.userAuth?.[as]?.tenant ?? t.defaultTenant ?? ''
+export const tenantOf = (t, as, tenant) => tenant ?? t.userAuth?.[as]?.tenant ?? t.created?.[as]?.tenant ?? t.defaultTenant ?? ''
 export async function session({ target, tenant, as, path } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
   if (pin.length && !pin.includes(tn)) throw new Error(`target '${tn}' is not this QA run's target (${pin.join(', ')})`)

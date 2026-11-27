@@ -71,7 +71,7 @@ export function resolveTarget(name, targets, lanes) {
   const own = targets[name]; if (own && (own.web || own.api)) return own
   const lt = laneTarget(name, targets, lanes); if (!lt) return own
   const t = { ...lt }; for (const k of ['defaultUser', 'defaultTenant']) if (own?.[k] != null) t[k] = own[k]
-  for (const k of ['users', 'created']) t[k] = { ...lt[k], ...own?.[k] }
+  for (const k of ['users', 'created', 'userAuth']) t[k] = { ...lt[k], ...own?.[k] }
   return t
 }
 // userAuth.<as>.webLogin over webLogin: a login's own web login page and fields (a super admin's), as pokey.ps1 api for auth
