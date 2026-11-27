@@ -2,9 +2,10 @@
 # Usage: pwsh -NoProfile -File tests/local-model.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 # tests/local-model.tests.ps1: crafty.ps1 local (adapters/local-model.ps1): config resolution, token redaction, no unsafe flag by
 # default, -Unsafe refused from an agent shell, forbidden model and RAM refusals, server down / model not served (a fake
-# /v1/models), seats full (OVERFLOW in mixed mode, QUEUED else), a fake client gets the env and its exit code, supervise line.
+# /v1/models), seats full (OVERFLOW in mixed mode, QUEUED else), a resident model skips the RAM need, a schema run keeps StructuredOutput in the
+# crew agent's tools, a fake client gets the env and its exit code, supervise line.
 . (Join-Path $PSScriptRoot 'harness.ps1')
-$TestKitFiles = @('skills/crafty/adapters/local-model.ps1', 'skills/crafty/adapters/video.ps1')
+$TestKitFiles = @('skills/crafty/adapters/local-model.ps1', 'skills/crafty/adapters/video.ps1', 'agents/steppy.md')
 $k = New-TestKit lm; $D = Join-Path $k 'skills/crafty/crafty.ps1'; $cfgFile = Join-Path $k 'skills/crafty/kit.local.json'
 $env:LM_TEST_TOKEN = 'tok-' + [guid]::NewGuid().ToString('N')   # a value the output must never show
 $lmCfg = @{ baseUrl = 'http://127.0.0.1:9/'; token = 'env:LM_TEST_TOKEN'; defaultModel = 'small-a'; forbiddenModels = @('big-*-mtp'); env = @{ BASH_MAX_TIMEOUT_MS = $null; EXTRA_FLAG = '1' } }
@@ -55,6 +56,20 @@ $run = Invoke-TestScript $D local claude -PromptFile $pf -AgentType steppy
 Expect "local: a headless run gets the env, -p json, the crew agent, the prompt on stdin; the client's exit 3 comes back as 13 (3 = no seat) ($($run.code): $($run.out.Trim()))" ($run.code -eq 13 -and $run.out -match "BASE=http://127\.0\.0\.1:$port MODEL=small-a ARGS=-p --output-format json --agent steppy IN=hello local")
 $rst = pwsh -NoProfile -Command "`$null = & '$D' local claude -PromptFile '$pf' 2>&1; `"rc=`$LASTEXITCODE base=[`$env:ANTHROPIC_BASE_URL] tool=[`$env:KIT_TOOL]`"" 2>&1 | Select-Object -Last 1
 Expect "local: run in the caller's own pwsh (& crafty.ps1), the client's env is gone after it ($rst)" ("$rst" -eq 'rc=13 base=[] tool=[]')
+# a model already in memory needs no new RAM (GET /v1/models/active); another model, or a server without that route, still does; a schema run keeps StructuredOutput in the crew agent's tools
+$tl2 = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl2.Start(); $port2 = $tl2.LocalEndpoint.Port; $tl2.Stop()
+$srv2 = Start-Job { param($p) $hl = [Net.HttpListener]::new(); $hl.Prefixes.Add("http://127.0.0.1:$p/"); $hl.Start(); $end = (Get-Date).AddMinutes(3)
+  while ((Get-Date) -lt $end) { $ct = $hl.GetContextAsync(); while (-not $ct.Wait(500)) { if ((Get-Date) -ge $end) { break } }; if (-not $ct.IsCompleted) { break }
+    $js = if ($ct.Result.Request.Url.AbsolutePath -eq '/v1/models/active') { '{"alive":true,"active_model":"small-a","inflight":0}' } else { '{"object":"list","data":[{"id":"small-a"},{"id":"small-b"}]}' }
+    $by = [Text.Encoding]::UTF8.GetBytes($js); $rs = $ct.Result.Response; $rs.ContentType = 'application/json'; $rs.OutputStream.Write($by, 0, $by.Length); $rs.Close() } } -ArgumentList $port2
+for ($wi = 0; $wi -lt 60; $wi++) { try { $tc = [Net.Sockets.TcpClient]::new('127.0.0.1', $port2); $tc.Dispose(); break } catch { Start-Sleep -Milliseconds 250 } }
+$lmCfg.baseUrl = "http://127.0.0.1:$port2"; & $J @{ models = @{ local = $lmCfg } } $cfgFile; $env:CLAUDE_GATE_KEEP_FREE_GB = '99999'
+$rr = Invoke-TestScript $D local claude -Model small-a -PromptFile $pf; $ro = Invoke-TestScript $D local claude -Model small-b -PromptFile $pf; $rs2 = Invoke-TestScript $D local status
+Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB; $lmCfg.baseUrl = "http://127.0.0.1:$port"; & $J @{ models = @{ local = $lmCfg } } $cfgFile
+Expect "local: RAM short but the requested model is resident: the client starts (exit 13), another model is still refused, status says resident ($($rr.code) $($ro.code))" ($rr.code -eq 13 -and $rr.out -match 'MODEL=small-a' -and $ro.code -eq 1 -and $ro.out -match 'REFUSED: RAM' -and $rs2.out -match 'a model is resident')
+$scf = Join-Path (Kd) 'schema.json'; Set-Content $scf '{"type":"object"}' -Encoding utf8; $ra = Invoke-TestScript $D local claude -PromptFile $pf -SchemaFile $scf -AgentType steppy
+Expect "local: -SchemaFile with -AgentType hands the agent over inline with StructuredOutput added to its tools ($($ra.out.Trim().Substring(0, [math]::Min(160, $ra.out.Trim().Length))))" ($ra.out -match '--agents \{"steppy":\{"description":"[^\n]*"tools":\["Read","Write","Bash","PowerShell","ToolSearch","StructuredOutput"\]' -and $ra.out -match '--agent steppy IN=hello local')
+Stop-Job $srv2 -ErrorAction SilentlyContinue; Remove-Job $srv2 -Force -ErrorAction SilentlyContinue
 $sf = Join-Path (Kd) 'seat.ps1'; Set-Content $sf ". '$(Lib)'; `$me = @{ agent = 'busy'; pid = $PID; pidStart = (Get-KitPidStart $PID); at = (Get-KitStamp) }; `$null = Update-KitLocalAi 'local-model' { param(`$st) `$st.leases += `$me }" -Encoding utf8
 $lmCfg.maxConcurrent = 1; & $J @{ models = @{ mode = 'mixed'; local = $lmCfg } } $cfgFile; $null = pwsh @np $sf
 $ov = Invoke-TestScript $D local claude -PromptFile $pf; $qd = Invoke-TestScript $D local claude -WaitMinutes 0

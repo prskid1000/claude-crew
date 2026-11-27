@@ -12,7 +12,7 @@ local-model.ps1: Claude Code, Claude Desktop, VS Code or Codex on a local model 
   & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Runner claude|codex] ...
       recorded real steps replayed on the local model, scored per role (localbench.py header: verbs, store, scoring)
 Checks before a start, in order: forbidden model ids (models.local.forbiddenModels, wildcards: -Model, ANTHROPIC_*MODEL,
---model / -m in the client args), free RAM (Get-GateAvailGB - models.local.needGB >= Get-KitKeepFreeGB), the server
+--model / -m in the client args), free RAM (Get-GateAvailGB - models.local.needGB >= Get-KitKeepFreeGB; skipped while the requested model is resident: GET /v1/models/active), the server
 (GET <baseUrl>/v1/models within models.local.probeSec lists the model), a seat (lease local-model, models.local.maxConcurrent;
 full: a mixed-mode headless run with models.local.overflow cloud exits 3 OVERFLOW at once, else waits up to -WaitMinutes /
 models.local.queueMinutes, then exits 3 QUEUED).
@@ -21,7 +21,7 @@ models.local { baseUrl, token (env:<VAR> | secret:<name>; never printed), defaul
 env (name: value, null drops a default), use, overflow, maxConcurrent, needGB, probeSec, queueMinutes, streamIdleTimeoutMs }
 (README "Configuration"). Lease state: video.ps1 Get-KitLocalAiState local-model. Outputs: text, JSON with -Json.
 Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat · else the client's (its 1-3 as 11-13).
-Sections: L27 config · L105 checks · L125 verb
+Sections: L27 config · L114 checks · L144 verb
 #>
 #Requires -Version 7
 # ---- config: models.mode, models.local, the token, each client's env and arguments
@@ -75,11 +75,20 @@ function Get-KitLocalModelIds($EnvMap, [string[]]$Rest, [string]$Model) {
 }
 # the token's config reference for output: a value put there by mistake is never shown
 function Format-KitLocalTokenRef([string]$Ref) { if ($Ref -match '^(env|secret):\w') { $Ref } elseif ($Ref) { '<a value, ignored: use env:<VAR> | secret:<name>>' } else { '' } }
+# --agent applies the crew file's tools allowlist and drops StructuredOutput (--json-schema then returns prose): hand the same agent over inline with it added
+function Get-KitLocalModelAgentJson([string]$Type) {
+  $af = Join-Path $KitRoot "agents/$Type.md"; if (-not (Test-Path -LiteralPath $af -PathType Leaf)) { return $null }
+  $mt = [regex]::Match(((Get-Content -LiteralPath $af -Raw) -replace "`r`n", "`n"), '(?s)\A---\n(.*?)\n---\n(.*)\z'); if (-not $mt.Success) { return $null }
+  $fm = @{}; foreach ($fl in $mt.Groups[1].Value -split "`n") { if ($fl -match '^(\w+):\s*(.*)$') { $fm[$Matches[1]] = $Matches[2].Trim().Trim('"') } }
+  $tl = @("$($fm.tools)" -split ',\s*' | Where-Object { $_ }); if (-not $tl.Count) { return $null }   # no allowlist: nothing is dropped
+  $ad = [ordered]@{ description = "$($fm.description)"; prompt = $mt.Groups[2].Value.Trim(); tools = @($tl + 'StructuredOutput' | Select-Object -Unique) }; if ($fm.model) { $ad.model = "$($fm.model)" }
+  @{ $Type = $ad } | ConvertTo-Json -Depth 5 -Compress
+}
 function Get-KitLocalModelArgs([string]$Client, $Cfg, [string]$Model, [bool]$Unsafe, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType, [string[]]$Rest) {
   $av = [Collections.Generic.List[string]]::new(); $skip = if ($Unsafe) { "$(& (Join-Path $KitLibDir 'flagged.ps1') unsafeflag -Text $Client)" }   # its name makes pwsh log a script
   if ($Client -eq 'claude') {
     if ($Unsafe) { $av.Add($skip) }
-    if ($PromptFile) { $av.AddRange([string[]]@('-p', '--output-format', 'json')); if ($SchemaFile) { $av.AddRange([string[]]@('--json-schema', (Get-Content -LiteralPath $SchemaFile -Raw).Trim())) }; if ($AgentType) { $av.AddRange([string[]]@('--agent', $AgentType)) } }
+    if ($PromptFile) { $av.AddRange([string[]]@('-p', '--output-format', 'json')); if ($SchemaFile) { $av.AddRange([string[]]@('--json-schema', (Get-Content -LiteralPath $SchemaFile -Raw).Trim())) }; if ($AgentType) { $aj = if ($SchemaFile) { Get-KitLocalModelAgentJson $AgentType }; if ($aj) { $av.AddRange([string[]]@('--agents', $aj)) }; $av.AddRange([string[]]@('--agent', $AgentType)) } }
   }
   elseif ($Client -eq 'codex') {
     if ($PromptFile) { $av.Add('exec') }
@@ -103,7 +112,17 @@ function Resolve-KitLocalModelExe([string]$Client, $Cfg) {
 }
 
 # ---- checks: RAM, the server's models, seats (lease local-model)
-function Test-KitLocalModelRam($Cfg) { $mem = Get-SysMem; $avl = Get-GateAvailGB $mem; $flo = Get-KitKeepFreeGB; [pscustomobject]@{ ok = ($avl - $Cfg.needGB -ge $flo); availGB = $avl; needGB = $Cfg.needGB; keepFreeGB = $flo } }
+# a model already in memory needs no new RAM: GET <baseUrl>/v1/models/active (Telecode-style: alive, active_model); a server without it = not resident
+function Test-KitLocalModelResident($Cfg, [string]$Token, [string]$Model) {
+  $hd = @{}; if ($Token) { $hd.Authorization = "Bearer $Token"; $hd['x-api-key'] = $Token }
+  try { $ac = Invoke-RestMethod -Uri "$($Cfg.baseUrl)/v1/models/active" -Headers $hd -TimeoutSec ([int](Get-KitParam 'models.local.probeSec')) -ErrorAction Stop } catch { return $false }
+  $am = "$($ac.active_model)"; [bool]($ac.alive -and $am -and -not (Test-KitLocalModelForbidden $Cfg $am) -and (-not $Model -or $am -eq $Model))
+}
+function Test-KitLocalModelRam($Cfg, [string]$Token = '', [string]$Model = '') {
+  $mem = Get-SysMem; $avl = Get-GateAvailGB $mem; $flo = Get-KitKeepFreeGB; $ok = ($avl - $Cfg.needGB -ge $flo); $res = $false
+  if (-not $ok) { $res = Test-KitLocalModelResident $Cfg $Token $Model; $ok = $res }
+  [pscustomobject]@{ ok = $ok; resident = $res; availGB = $avl; needGB = $Cfg.needGB; keepFreeGB = $flo }
+}
 function Get-KitLocalModelServed($Cfg, [string]$Token) {
   $hd = @{}; if ($Token) { $hd.Authorization = "Bearer $Token"; $hd['x-api-key'] = $Token }
   try { $rs = Invoke-RestMethod -Uri "$($Cfg.baseUrl)/v1/models" -Headers $hd -TimeoutSec ([int](Get-KitParam 'models.local.probeSec')) -ErrorAction Stop; [pscustomobject]@{ up = $true; ids = @($rs.data | ForEach-Object { "$($_.id)" } | Where-Object { $_ }); error = '' } }
@@ -140,14 +159,14 @@ if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step co
 }
 $cfg = Get-KitLocalModelConfig; $tok = Get-KitLocalModelToken $cfg.token
 if ($Client -eq 'status') {
-  $sv = Get-KitLocalModelServed $cfg $tok; $ram = Test-KitLocalModelRam $cfg; $sts = Get-KitLocalAiState 'local-model'; $mo = Get-KitModelMode
+  $sv = Get-KitLocalModelServed $cfg $tok; $ram = Test-KitLocalModelRam $cfg $tok; $sts = Get-KitLocalAiState 'local-model'; $mo = Get-KitModelMode
   $so = [ordered]@{ mode = $mo; use = @($cfg.use); baseUrl = $cfg.baseUrl; up = $sv.up; served = @($sv.ids); forbidden = @($sv.ids | Where-Object { Test-KitLocalModelForbidden $cfg $_ }); error = $sv.error
     seats = $sts.leases.Count; maxConcurrent = $cfg.maxConcurrent; overflow = $cfg.overflow; holders = @($sts.leases | ForEach-Object { "$($_.agent)" }); waiting = $sts.waiting.Count; ram = $ram; token = $(if ($tok) { 'set' } else { 'unset' }) }
   if ($Json) { return ($so | ConvertTo-Json -Depth 5 -Compress) }
   "mode: $mo$(if ($mo -eq 'mixed') { " · local use: $($cfg.use -join ', ') · overflow $($cfg.overflow)" })"
   "server $($cfg.baseUrl): $(if ($sv.up) { "up, serves $(@($sv.ids) -join ', ')$(if ($so.forbidden.Count) { " (forbidden: $($so.forbidden -join ', '))" })" } else { "DOWN ($($sv.error))" })"
   "seats: $($sts.leases.Count)/$($cfg.maxConcurrent)$(if ($sts.leases.Count) { " ($($so.holders -join ', '))" }) · $($sts.waiting.Count) waiting"
-  "RAM: $($ram.availGB) GB available, a start needs $($ram.needGB) GB over the $($ram.keepFreeGB) GB floor: $(if ($ram.ok) { 'ok' } else { 'SHORT' })"
+  "RAM: $($ram.availGB) GB available, a start needs $($ram.needGB) GB over the $($ram.keepFreeGB) GB floor: $(if ($ram.resident) { 'ok, a model is resident (no new start)' } elseif ($ram.ok) { 'ok' } else { 'SHORT' })"
   "token ($(Format-KitLocalTokenRef $cfg.token)): $($so.token)"; return
 }
 $headless = [bool]$PromptFile
@@ -171,7 +190,7 @@ if ($Print) {
   foreach ($pe in $po.env.GetEnumerator()) { "  $($pe.Key)=$($pe.Value)" }; return
 }
 if (-not $exe) { Stop-KitVerb "REFUSED: $Client not found (models.local.commands.${Client}: $(@($cfg.commands[$Client]) -join ', '))" 1 }
-$ram = Test-KitLocalModelRam $cfg
+$ram = Test-KitLocalModelRam $cfg $tok $mdl
 if (-not $ram.ok) { Stop-KitVerb "REFUSED: RAM $($ram.availGB) GB available; a local start needs $($ram.needGB) GB over the $($ram.keepFreeGB) GB floor (models.local.needGB, gate.keepFreeGB)" 1 }
 $sv = Get-KitLocalModelServed $cfg $tok
 if (-not $sv.up) { Stop-KitVerb "REFUSED: no local model server at $($cfg.baseUrl) ($($sv.error)): start it or set models.local.baseUrl" 1 }
