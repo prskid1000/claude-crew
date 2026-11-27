@@ -732,7 +732,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $agg = { param([scriptblock]$pick) $vs = @($lv | ForEach-Object $pick | Where-Object { $null -ne $_ }); if ($vs.Count) { & $n1 ($vs | Measure-Object -Maximum).Maximum } else { '—' } }   # 7-day peak
   # machine: RAM, gate and QA seats as tiles over Resources · 24 h (Format-KitMachineTop); disks (owner 2026-11-19: no Disks card): a row
   # per drive in its machine group (Writes metric: GB the drive filled per hour; free, % used and fill rate on the row) and free GB per
-  # day per drive in Disk · 7 days
+  # day per drive: Per day group Disk
   $memPct = if ($null -ne $nw.mem) { $nw.mem } elseif ($tot) { [math]::Round(100 * $used / $tot) }; $memFree = if ($null -ne $nw.avail) { $nw.avail } elseif ($tot) { $avail }
   $dkTone = { param($dk, $ttf) $dv = "$($dk.drive)"; if (& $diskTone $dv) { & $diskTone $dv } elseif ($null -eq $ttf) { '' } elseif ($ttf -lt 24) { 'hot' } else { 'warn' } }
   $hr0 = $at.Date.AddHours($at.Hour - 23); $dDays = @(6..0 | ForEach-Object { & $dayKey $_ })
@@ -748,7 +748,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   $wrX = [pscustomobject]@{ rows = @(@($st.writes.rows) + @($diskW)); more = @($st.writes.more); src = "$($st.writes.src)" }   # the drive rows ride the Writes rows
   $l24 = @($lv | Where-Object { $_.at -and [datetime]$_.at -ge $at.AddDays(-1) })
   $gs = $st.gate; $machTop = Format-KitMachineTop $gs $nw $memPct $memFree $tot ([double]$st.keepFree)   # tiles, RAM bar (supervise-stats.ps1)
-  $machineHtml = "<div class=mcol>$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }) $wrX $st.waits $gs $machTop)$(Format-KitWritesCard $st.writes $diskW $dDays)</div>"
+  $machineHtml = "<div class=mcol>$(Format-KitResHeat $st.cpu $j.resources $l24 $tot $(if ($tot) { $used }) $wrX $st.waits $gs $machTop)</div>"
   # kit health rows of the Trends day heatmap (owner 2026-11-19): sweep s, agents failed / finished, branches, worktrees
   # kit health per day (Format-KitDayHeat): sweep s (stats.live samples), agents failed / finished (calls logs), branches and worktrees
   # (the day's last sample); 7 d: avg, sum or peak as the row's tooltip says
@@ -771,7 +771,7 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
   # Kit health's group line (owner 2026-11-25)
   $fdW = @(for ($i = 0; $i -lt 7; $i++) { if ([int]$fd[$i]) { [pscustomobject]@{ d = $d7[$i]; n = [int]$fd[$i] } } }) | Sort-Object { -$_.n } | Select-Object -First 1
   $khEx = if ($fdW) { "$(& $s7 $fd) agents failed, most on $($fdW.d) ($($fdW.n))" } else { 'all green: no agent failed' }
-  $dayMore = @(Get-KitQaDayRows $st.qa) + @($UP.dayRows) + @(@{ hd = 'Kit health'; g = 'kit'; ex = (& $e $khEx) }) + @($hRows) + @(Get-KitRepoDayRows $st.repos $st.sync $lv $d7 $rTot)
+  $dayMore = @(Get-KitQaDayRows $st.qa) + @($UP.dayRows) + @(@{ hd = 'Kit health'; g = 'kit'; ex = (& $e $khEx) }) + @($hRows) + @(Get-KitDiskDayRows $st.writes $diskW $dDays) + @(Get-KitRepoDayRows $st.repos $st.sync $lv $d7 $rTot)
   # a command on one line, cut at 120 chars with an ellipsis in the text (no CSS clip), the whole one a click away
   $cmdCell = { param([string]$c) $full = "$c".Trim(); $one = $full -replace '\s+', ' '; if ($one -eq $full -and $one.Length -le 120) { return $one }
     $hd = if ($one.Length -gt 120) { $one.Substring(0, 119).TrimEnd() + '…' } else { $one }
@@ -918,10 +918,10 @@ function Format-KitSuperviseHtml($j, [hashtable]$Pages) {
     "<div class=tb><input id=q type=search placeholder='Filter  ( / )' aria-label='Filter the page'><button id=ar class=ib type=button aria-pressed=true aria-label='Auto-refresh every 60 s' title='Auto-refresh every 60 s'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' fill=none stroke=currentColor stroke-width=2 stroke-linecap=round /></svg></button><button id=tt class=ib type=button aria-label='Toggle theme' title='Toggle theme'><svg viewBox='0 0 24 24' width=16 height=16 aria-hidden=true><path d='M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z' fill=currentColor /></svg></button></div></header>"
   # top to bottom (owner 2026-11-19): flags, runs, resources, shells; Kit internals (folded) = Trends + Tuning
   $nSh = @($j.shells | Where-Object { $_ }).Count
-  # Trends (owner 2026-11-19): Delivery + Usage + kit health in one day heatmap, its tiles one strip, spend and repos as sub-blocks (adapters/outcomes.ps1)
+  # Trends (owner 2026-11-19): Delivery + Usage + kit health in one day heatmap, tiles one strip, spend and repos sub-blocks (outcomes.ps1)
   $oc = if (Get-Command Get-KitOutcomeStats -ErrorAction SilentlyContinue) { try { Get-KitOutcomeStats -StatsFrom (Get-KitStatsCutoff) } catch { $null } }
   $trends = try { Format-KitDeliveryHtml $oc $UP $dayMore "$($UP.spend)" } catch { "<p class=m>Trends view failed: $(& $e $_.Exception.Message)</p>" }
-  $runsH = try { Format-KitRunsTimeline @($st.usage.runs) $agents @($UP.pages.Keys) $st.usage.at @($st.usage.agentSteps) } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
+  $runsH = try { Format-KitRunsTimeline @($st.usage.runs) @(Get-KitBoardRunAgents $UP.boardRuns $agents) @($UP.pages.Keys) $st.usage.at @($st.usage.agentSteps) } catch { "<p class=m>Runs view failed: $(& $e $_.Exception.Message)</p>" }
   $popJs = Get-KitPopoverJs
   if ($null -ne $Pages -and $UP.pages) { foreach ($pk in @($UP.pages.Keys)){ $Pages["$pk"] = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Run $(& $e $pk)</title><style>$css</style><script>try{var t=localStorage.getItem('kc-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script></head><body><main class='wrap rpg'>$(ConvertTo-KitLabelCase $UP.pages[$pk])</main><script>$popJs</script></body></html>" } }
   $main = "<main class=wrap>" + (& $section 'flags' 'Flags' '' $flagHtml -Open -extra '<button type=button class=ga data-tg=fl-hist aria-expanded=false>24 h history</button>') +

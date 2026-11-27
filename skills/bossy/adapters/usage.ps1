@@ -3,8 +3,8 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L385 context · L747 waste (owner 2026-11-23 · L817 split · L891 budget · L977 handoffs · L989 limits ·
-  L1008 workflow config · L1033 dead runs
+Sections: L10 usage · L410 context · L774 waste (owner 2026-11-23 · L844 split · L918 budget · L1004 handoffs · L1016 limits ·
+  L1035 workflow config · L1060 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
@@ -132,6 +132,29 @@ function Get-KitRunShownRow([string]$Run, [string]$Subject = '') { if ($script:K
   if ($r.args) { , @('run', $Run, "$(Get-KitRunTopic $r.args "$($r.runDir)")", [IO.Path]::GetFileNameWithoutExtension("$($r.script)")) } else { , @('run', $Run, $Subject, '') } }
 # a board run's topic: its -Subject, else its first agent's area (fix-ask-012 + "cancel SO reason" -> cancel-reason)
 function Get-KitBoardRunTopic($Rows) { @(@($Rows | ForEach-Object { "$($_.subject)" }) + @($Rows | ForEach-Object { "$($_.area)" -replace '^(?i)area-' }) | Where-Object { $_.Trim() })[0] }
+# runs outside a workflow (owner 2026-11-27: Agent-tool spawns joined to the board by run, solo-* / adhoc): one per run name with no
+# launch record, usage workflow run or workflow transcript, active since $Since, live or started after the stats reset (Select-KitUsageSince)
+# -> { run; label; kind; started; at; live; spend; agents; rows = its board rows }
+function Get-KitBoardRuns([datetime]$Since, $U = $null, [switch]$All) {   # -All: before the stats reset too
+  $cutS = if ($All) { [datetime]::MinValue } else { Get-KitStatsCutoff }
+  $wf = Get-KitWorkflowRunNames $U
+  $rows = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.run -and "$($_.run)" -ne 'solo' -and "$($_.type)" -ne 'coordinator' -and $_.joined -and $_.beat -and [datetime]$_.beat -ge $Since -and -not $wf.ContainsKey("$($_.run)") -and "$($_.transcript)" -notmatch '[\\/]workflows[\\/]' })
+  $kindOf = @{ devy = 'build'; briefy = 'build'; checky = 'test'; kitty = 'kit'; opsy = 'deploy' }
+  foreach ($g in @($rows | Group-Object { "$($_.run)" })) { $ty = @($g.Group | ForEach-Object { "$($_.type)" } | Where-Object { $_ } | Select-Object -Unique)
+    $st0 = @($g.Group | ForEach-Object { [datetime]$_.joined } | Sort-Object)[0]; $lv = [bool]@($g.Group | Where-Object { $_.status -notin 'left', 'crashed' -and (Test-KitHolder $_) -ne $false }).Count
+    if (-not $lv -and $st0 -lt $cutS) { continue }
+    [pscustomobject]@{ run = $g.Name; label = (Get-KitRunTitle $g.Name (Get-KitBoardRunTopic $g.Group)); kind = $(if ('devy' -in $ty) { 'build' } elseif ($kindOf[@($ty)[0]]) { $kindOf[@($ty)[0]] } else { 'agents' })
+      started = $st0; at = @($g.Group | ForEach-Object { [datetime]$_.beat } | Sort-Object)[-1]; live = $lv
+      spend = [long](@($g.Group | ForEach-Object { [double]$_.spend }) | Measure-Object -Sum).Sum; agents = $g.Count; rows = @($g.Group) } }
+}
+# the Runs band: the status rows ($Agents) + a finished row per ended agent of those runs they no longer list (older days)
+function Get-KitBoardRunAgents($BoardRuns, $Agents) { $have = @{}; @($Agents); foreach ($a in @($Agents)) { $have["$($a.run)|$(("$($a.name)" -split ' ')[0])"] = 1 }
+  foreach ($b in @(@($BoardRuns | Where-Object { $_ -and -not $_.live }) | ForEach-Object { $_.rows })) { if ($b -and -not $have.ContainsKey("$($b.run)|$($b.agent)")) {
+      [pscustomobject]@{ name = "$($b.agent) ($($b.type))"; area = "$($b.area)"; run = "$($b.run)"; tx = "$($b.transcript)"; started = $b.joined; ended = $b.beat; last = $b.beat; since = $b.beat; state = 'FINISHED' } } } }
+# budget -Run of a run outside a workflow: its board agents' spend, no cap; returns the exit code
+function Write-KitBoardRunBudget([string]$Run, [bool]$Json) { $br = @(Get-KitBoardRuns ([datetime]::MinValue) -All | Where-Object run -eq $Run)[0]; if (-not $br) { "no launch record or board agent for run $Run"; return 1 }
+  $o = [ordered]@{ run = $Run; spent = [int]$br.spend; agents = [int]$br.agents; cap = 0; workflow = $false }
+  if ($Json) { $o | ConvertTo-Json -Compress } else { "run $Run`: spent $($o.spent) ($($o.agents) board agents, no workflow: no cap)" }; 0 }
 function Get-KitRunTitle([string]$Run, [string]$Subject = '') { $rw = Get-KitRunShownRow $Run $Subject; Get-KitShownName @rw }
 function Get-KitRunMandate($A) { $m = ((@($A.mandate) | Where-Object { $_ }) -join ' · ' -replace '\s+', ' ').Trim(); if ($m.Length -gt 400) { $m.Substring(0, 399) + '…' } else { $m } }
 function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seconds = 60) {
@@ -354,7 +377,9 @@ function Format-KitUsageHtml($U) {
       "<p class=m>Review findings and QA detail: <code>bossy.ps1 report -Run $(& $e $r.run) -Detail</code></p>" }
   # Per day (owner 2026-11-19: a time series = the day heatmap): est. cost and tokens per day, the 7-day sum on the right, the average in
   # the row tooltip; runs and MRs per day: the Delivery heatmap
-  $byDay = @{}; foreach ($r in $devRuns) { $dk = & $dayOf $r; if ($dk) { $byDay[$dk] = @(@($byDay[$dk] | Where-Object { $_ }) + $r) } }
+  # runs outside a workflow count with them (owner 2026-11-27), kit runs aside as above; nothing before the stats reset (Select-KitUsageSince)
+  $bAll = @(Get-KitBoardRuns $(try { [datetime]$U.since } catch { (Get-Date).AddDays(-7) }) $U); $bRuns = @($bAll | Where-Object { $_.kind -ne 'kit' })
+  $byDay = @{}; foreach ($r in @($devRuns) + @($bRuns)) { $dk = & $dayOf $r; if ($dk) { $byDay[$dk] = @(@($byDay[$dk] | Where-Object { $_ }) + $r) } }
   $cAvg = & $avg 'cost'; $tAvg = & $avg 'tok'; $ud = @($dy | ForEach-Object { "$($_.day)" })
   # at the bottom of Trends, a rule above (owner 2026-11-21)
   $uRows = @(@{ n = 'Est. cost'; mk = 'cost-day'; title = "est. cost per day (budget.prices); 7 d: sum$(if ($null -ne $cAvg) { " · avg of the 6 days before today $(& $usd $cAvg)" })"; v = @($dy | ForEach-Object { if ($null -eq $_.cost) { $null } else { [double]$_.cost } }); fmt = { param($v) '$' + [math]::Round([double]$v) }; t = (& $usd (& $sum 'cost')); cls = 'ws'; keep = $true; sk = 'cost'; so = $dy; tips = @($dy | ForEach-Object { "`n$(Get-KitSplitTip $_)" }) },
@@ -372,8 +397,8 @@ function Format-KitUsageHtml($U) {
   $uOut = [double](@($dy | ForEach-Object { $sp = Get-KitSplitParts $_ 'tokens'; if ($sp.ok) { @($sp.p4 | Where-Object k -eq 'out' | ForEach-Object { [double]$_.v }) } }) + 0 | Measure-Object -Sum).Sum
   $uEx = @($(if ($uOut) { "output tokens $(& $tk $uOut) in 7 d" }), $(if ($top -and $rAll) { "top: $($top.k) $(& $pct $top.sum $rAll)%" }) | Where-Object { $_ }) -join ' · '
   $uRows = @(@{ hd = 'Usage'; g = 'usage'; ex = (& $e $uEx) }) + $uRows   # its group in the Per day map (the 7-day sums: the right column, once)
-  $nRunning = @($devRuns | Where-Object status -eq 'running').Count
-  [pscustomobject]@{ runsN = $(if ($shown.Count) { "$($devRuns.Count - $nRunning) ended in 7 days" } else { 0 }); nRunning = $nRunning; tpm = $tpm
+  $nRunning = @($devRuns | Where-Object status -eq 'running').Count + @($bRuns | Where-Object live).Count; $nEnded = $devRuns.Count + $bRuns.Count - $nRunning
+  [pscustomobject]@{ runsN = $(if ($nEnded) { "$nEnded ended in 7 days" } else { 0 }); nRunning = $nRunning; tpm = $tpm; boardRuns = $bAll
     dayRuns = $byDay; days = $dy; mrs = @($U.mrList | Where-Object { $_ })
     tiles = $uTiles; dayRows = $uRows; spend = $spend
     pages = $pages
@@ -649,7 +674,9 @@ function Invoke-KitContextUsage {
   if ($Since -notmatch '^(\d+)([mhd])$') { Stop-KitVerb "usage -Context: -Since '$Since': <n>m, <n>h or <n>d" 2 }
   $cut = (Get-Date).AddMinutes(-[double]$Matches[1] * @{ m = 1; h = 60; d = 1440 }[$Matches[2]])
   $u = if ($Refresh) { Get-KitUsage -Seconds (Get-KitParam 'usage.passSeconds') } else { Read-KitUsageResult }; if (-not $u) { 'usage -Context: no usage pass yet (bossy.ps1 budget -Usage, or -Refresh)'; exit 1 }
-  $ss = @(Get-KitContextSteps $u | Where-Object { $at = try { [datetime]"$($_.at)" } catch { $null }; (-not $at -or $at -ge $cut) -and (-not $Type -or "$($_.role)" -eq $Type) -and (-not $Run -or "$($_.run)" -eq $Run -or "$($_.wid)" -eq $Run) -and (-not $Agent -or "$($_.label)" -like "*$Agent*" -or [IO.Path]::GetFileNameWithoutExtension("$($_.tf)") -like "*$Agent*") } | Sort-Object { -[double]$_.cx.pk })
+  $txKey = { param($p) "$p".ToLowerInvariant() -replace '\\', '/' }   # -Run of a run outside a workflow: its board agents' transcripts
+  $runTx = @{}; if ($Run) { foreach ($b in @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { "$($_.run)" -eq $Run -and $_.transcript })) { $runTx[(& $txKey $b.transcript)] = 1 } }
+  $ss = @(Get-KitContextSteps $u | Where-Object { $at = try { [datetime]"$($_.at)" } catch { $null }; (-not $at -or $at -ge $cut) -and (-not $Type -or "$($_.role)" -eq $Type) -and (-not $Run -or "$($_.run)" -eq $Run -or "$($_.wid)" -eq $Run -or ($_.tf -and $runTx.ContainsKey((& $txKey $_.tf)))) -and (-not $Agent -or "$($_.label)" -like "*$Agent*" -or [IO.Path]::GetFileNameWithoutExtension("$($_.tf)") -like "*$Agent*") } | Sort-Object { -[double]$_.cx.pk })
   $f = { param($v) if ([double]$v -le 0) { '0' } else { Format-KitCompactNum ([double]$v) } }
   $mix = { param($c) $car = @($c.car); $ct = [math]::Max(1.0, [double](@($car | ForEach-Object { [double]$_ }) | Measure-Object -Sum).Sum); @(0..7 | Sort-Object { -[double]$car[$_] } | Select-Object -First 3 | ForEach-Object { "$($script:KitCtxCats[$_][1]) $([math]::Round(100 * [double]$car[$_] / $ct))%" }) -join ', ' }
   $obj = { param($s) $c = $s.cx; [ordered]@{ label = "$($s.label)"; role = "$($s.role)"; run = "$($s.run)"; model = "$($s.model)"; calls = [int]$c.n; start = [long]$c.s0; peak = [long]$c.pk; avg = [long]([double]$c.sum / [math]::Max(1, [int]$c.n)); compactions = [int]$c.cmp; handoff = [int]$c.ho

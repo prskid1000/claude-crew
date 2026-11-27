@@ -273,7 +273,7 @@ param([string]$Tool = '', [string]$Model = '', [int]$Window = 0, [string]$Plan =
 if ($Usage) { Show-KitUsage 180 $Json; exit 0 }   # detached: a week's backlog (~150 s) once, then new lines only
 if ($Run) {
   $sf = @(Read-KitJsonFiles (Get-KitPath launches -Create) 'self-*.json' | Where-Object run -eq $Run | Sort-Object { [datetime]$_.at } -Descending)[0]
-  if (-not $sf) { "no launch record for run $Run"; exit 1 }
+  if (-not $sf) { $r = @(Write-KitBoardRunBudget $Run $Json); $r[0]; exit $r[-1] }   # outside a workflow (usage.ps1)
   $wf = if ($sf.wfDir -and (Test-Path $sf.wfDir)) { $sf.wfDir } else { $t = Find-KitTranscript "-Run '$Run' " 'agent-*.jsonl'; if ($t) { Split-Path $t } }
   $sp = @(if ($wf) { Get-ChildItem $wf -Filter 'agent-*.jsonl' | ForEach-Object { (Get-KitSpend $_.FullName).spend } })
   $o = [ordered]@{ run = $Run; spent = [int](($sp | Measure-Object -Sum).Sum); agents = $sp.Count; cap = [int]$sf.cap; estimate = [int]$sf.estimate; stopAt = [double]$sf.stopAt; minutes = [int]((Get-Date) - [datetime]$sf.at).TotalMinutes }

@@ -7,8 +7,8 @@ page drawer render inside Format-KitSuperviseHtml; the page's icons and sentence
 every title / data-tip (Get-KitPopoverJs, Get-KitPopoverCss; the page and its run pages); the PARITY next batch flag.
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L733 flags · L958 bands ·
-  L1128 shells · L1199 reset · L1253 parity · L1265 faults
+Sections: L14 gate · L66 waits · L92 qa · L109 cpu · L145 writes (owner 2026-11-18 · L429 cards · L735 flags · L956 bands ·
+  L1126 shells · L1197 reset · L1251 parity · L1263 faults
 #>
 #Requires -Version 7
 # ---- gate: the build gate per kind, 24 h
@@ -432,43 +432,34 @@ function Get-KitWriteView($Samples, $Hist, [datetime]$Now, [int]$Top = 8) {
 # the 24 hour labels over a heatmap: every 6th clock hour, "now" over the last cell; -Clock: a calendar day (00-23), no "now"
 # a label spans 3 cells, "now" the last 4 (2 cells clipped them at 900 px); labels end before "now"
 function Format-KitHourHead([datetime]$H0, [switch]$Clock) { @(for ($hi = 0; $hi -lt $(if ($Clock) { 23 } else { 18 }); $hi++) { if ($H0.AddHours($hi).Hour % 6 -eq 0) { "<b style='grid-column:$($hi + 1)/span $([math]::Min(3, 24 - $hi))'>$($H0.AddHours($hi).ToString('HH'))</b>" } }) + $(if (-not $Clock) { "<b class=nw style='grid-column:21/span 4'>now</b>" }) -join '' }
-# Disk · 7 days (owner 2026-11-21: one disk section): a row per day (today on top), 24 clock hours, then GB written, kit GB (share) and
-# each drive's free GB at day end with its change; it answers how much is written, by whom (kit or not) and whether a drive fills up.
-# An hour: shade = machine GB (one scale for the week), bottom stripe = kit share, the number only from writes.cellMinGB; no sample
-# covered it: hatched (never 0); $Drives: Resources disk rows (free = GB per day of $DDays, oldest first)
-function Format-KitWritesCard($W, $Drives = @(), $DDays = @()) {
-  $drv = @($Drives | Where-Object { $_ -and @($_.free | Where-Object { $null -ne $_ }).Count })
-  # no write samples yet: the days still carry the drives' free space (hours hatched)
-  $ds = @($W.days | Where-Object { $_ }); if (-not $ds.Count) { if (-not $drv.Count) { return '' }; $ds = @(@($DDays)[(@($DDays).Count - 1)..0] | ForEach-Object { [pscustomobject]@{ d = "$_"; m = 0; k = 0; h = @() } }) }
-  $hard = [double](Get-KitParam 'writes.hardGBPerHour'); $minGB = [double](Get-KitParam 'writes.cellMinGB'); $dropGB = [double](Get-KitParam 'writes.freeDropWarnGB'); $ic = [cultureinfo]::InvariantCulture
-  $gv = { param($v) $d = [double]$v; if ($d -le 0) { '0' } elseif ($d -lt 0.095) { $d.ToString('0.00', $ic) } else { & $n1 $d } }
+# Disk (owner 2026-11-27: a row group of Trends' Per day, the one day heatmap; was the Disk · 7 days card): Written GB per day (the bar
+# = kit share), each drive's free GB at day end (▼ / ▲ change; amber = a drop of writes.freeDropWarnGB+); a day's hour detail (top hours,
+# their writers) in its tooltip; the summary line = the group header. $W: stats.writes (days newest first); $Drives: Resources disk rows
+# (free = GB per day of $DDays, oldest first)
+function Get-KitDiskDayRows($W, $Drives = @(), $DDays = @()) {
+  $drv = @($Drives | Where-Object { $_ -and @($_.free | Where-Object { $null -ne $_ }).Count }); $ds = @($W.days | Where-Object { $_ }); if (-not $ds.Count -and -not $drv.Count) { return }
+  $dropGB = [double](Get-KitParam 'writes.freeDropWarnGB'); $ic = [cultureinfo]::InvariantCulture
   $gbT = { param($v) $d = [double]$v; if ($d -lt 1) { "$([math]::Round($d * 1024)) MB" } else { "$(& $n1 $d) GB" } }
   $fGB = { param($v) $d = [double]$v; if ($d -ge 100) { "$([math]::Round($d))" } else { & $n1 $d } }
-  $at = if ($W.at) { [datetime]$W.at } else { $at }; $last = if ($W.last) { [datetime]$W.last } else { $null }
-  $scD = [math]::Max($hard, [double](@($ds | ForEach-Object { @($_.h) | ForEach-Object { [double]@($_)[0] } }) + 0 | Measure-Object -Maximum).Maximum)
-  $lowD = @{}; foreach ($dv in $drv) { $lowD[$dv.n] = [double](@($dv.free | Where-Object { $null -ne $_ }) | Measure-Object -Minimum).Minimum }
-  $cell = { param($hv, [datetime]$t, [bool]$isNow) $m = [double]@($hv)[0]; $k = [double]@($hv)[1]; $tw = "$(@($hv)[2])"; $hh = $t.ToString('HH:00'); $nw = if ($isNow) { ' nw' } else { '' }
-    if ($t -gt $at) { return '<i class=fu></i>' }
-    if (-not [int]@($hv)[3] -and $m -le 0) { return "<i class='ns$nw' title='$hh · no samples'></i>" }
-    if ($m -le 0) { return "<i$(if ($nw) { ' class=nw' }) title='$hh · 0 written'></i>" }
-    $a = Get-KitHeatShade ($m / $scD); $kp = [int][math]::Round(100 * [math]::Min(1.0, $k / $m))
-    "<i class='$("$(if ($a -ge 55) { 'hi' })$nw".Trim())' style='--a:$a%;--k:$kp%' title='$(& $e "$hh · $(& $gbT $m) machine · $(& $gbT $k) kit ($kp%)$(if ($tw) { " · top writer: $tw" })")'>$(if ($m -ge $minGB) { Format-KitHeatNum $m })</i>" }
-  $dHead = "<div class='gk gh'><span class=gn>day · hour</span><span class='gs0 hrs' aria-hidden=true>$(Format-KitHourHead ([datetime]$ds[0].d) -Clock)</span><span class=gc title='GB the machine wrote that day'><small>written</small></span><span class=gc title='GB kit-owned processes wrote that day (share of the day)'><small>kit</small></span>$(@($drv | ForEach-Object { "<span class=gc title='$(& $e "$($_.n): free GB at the day's last sample, change vs the day before")'><small>$(& $e ($_.n -replace '^disk ')) free</small></span>" }) -join '')</div>"
-  $dRows = @(for ($di = 0; $di -lt $ds.Count; $di++) { $dy = $ds[$di]; $d0 = [datetime]$dy.d; $dl = if ($di) { $d0.ToString('ddd dd', $ic) } else { "today · as of $(if ($last) { $last.ToString('HH:mm') } else { $at.ToString('HH:mm') })" }
-      $kp = if ([double]$dy.m -gt 0) { [int][math]::Round(100 * [math]::Min(1.0, [double]$dy.k / [double]$dy.m)) } else { 0 }
-      $hrs = "<span class='gs hm dw' role=img aria-label='$(& $e "$dl, GB written per hour")'>$(@(for ($hi = 0; $hi -lt 24; $hi++) { & $cell @($dy.h)[$hi] $d0.AddHours($hi) ((-not $di) -and $hi -eq $at.Hour) }) -join '')</span>"
-      $ix = [array]::IndexOf(@($DDays), $d0.ToString('yyyy-MM-dd'))
-      $fc = @(foreach ($dv in $drv) { $fv = if ($ix -ge 0) { @($dv.free)[$ix] } else { $null }; $pv = if ($ix -gt 0) { @($dv.free)[$ix - 1] } else { $null }
-          if ($null -eq $fv) { "<span class='gc z' title='no free-space sample that day'>—</span>"; continue }
-          $dd = if ($null -ne $pv) { [double]$fv - [double]$pv } else { $null }; $wn = $null -ne $dd -and -$dd -ge $dropGB
-          "<span class='gc fr$(if ($wn) { ' warn' })$(if ([double]$fv -le $lowD[$dv.n]) { ' lo' })' title='$(& $e "$($dv.n) $dl`: $(& $n1 $fv) GB free$(if ($null -ne $dd) { ", $(if ($dd -lt 0) { 'down' } else { 'up' }) $(& $n1 ([math]::Abs($dd))) GB vs the day before" })")'>$(& $fGB $fv)$(if ($null -ne $dd -and [math]::Abs($dd) -ge 0.05) { "<small>$(if ($dd -lt 0) { '▼' } else { '▲' })$(& $n1 ([math]::Abs($dd)))</small>" })</span>" })
-      $cov = [bool]@(@($dy.h) | Where-Object { [int]@($_)[3] -or [double]@($_)[0] -gt 0 }).Count   # a day no sample covered: "—", not 0
-      $wc = if ($cov) { "<span class='gc$(if ((& $gv $dy.m) -eq '0') { ' z' })'>$(& $gv $dy.m)</span><span class='gc$(if ((& $gv $dy.k) -eq '0') { ' z' })'>$(& $gv $dy.k)$(if ($kp) { "<small>$kp%</small>" })</span>" } else { "<span class='gc z' title='no samples that day'>—</span><span class='gc z'>—</span>" }
-      "<div class=gk><span class=gn title='$(& $e "${dl}: $(if ($cov) { "$(& $gbT $dy.m) written, $(& $gbT $dy.k) kit-owned ($kp%)" } else { 'no samples' })")'>$(& $e $dl)</span>$hrs$wc$($fc -join '')</div>" })
+  $byD = @{}; foreach ($dy in $ds) { $byD[([datetime]$dy.d).ToString('yyyy-MM-dd')] = $dy }
+  $dk = @(@($DDays) + @($byD.Keys) | Where-Object { $_ } | Sort-Object -Unique); $last = if ($W.last) { [datetime]$W.last } else { $null }
+  $wv = @(); $wsb = @(); $wtp = @(); foreach ($d in $dk) { $dy = $byD[$d]; $cov = $dy -and [bool]@(@($dy.h) | Where-Object { [int]@($_)[3] -or [double]@($_)[0] -gt 0 }).Count   # a day no sample covered: no value, never 0
+    if (-not $cov) { $wv += $null; $wsb += ''; $wtp += 'no samples'; continue }
+    $kp = if ([double]$dy.m -gt 0) { [int][math]::Round(100 * [math]::Min(1.0, [double]$dy.k / [double]$dy.m)) } else { 0 }
+    $top = @(for ($hi = 0; $hi -lt @($dy.h).Count; $hi++) { $hv = @($dy.h)[$hi]; if ([double]@($hv)[0] -gt 0) { [pscustomobject]@{ h = $hi; m = [double]@($hv)[0]; w = "$(@($hv)[2])" } } }) | Sort-Object { -$_.m } | Select-Object -First 3
+    $wv += [double]$dy.m; $wsb += "linear-gradient(90deg,var(--k3) 0% $kp%,var(--slate) $kp% 100%)"
+    $wtp += "$(& $gbT $dy.m) written, $(& $gbT $dy.k) kit-owned ($kp%)$(if ($top) { " · top hours: $(@($top | ForEach-Object { "$('{0:00}' -f $_.h):00 $(& $gbT $_.m)$(if ($_.w) { " ($($_.w))" })" }) -join ', ')" })" }
+  $rows = @(@{ n = 'Written GB'; mk = 'disk-written-day'; d = $dk; v = $wv; sb = $wsb; tips = $wtp; fmt = { param($v) & $n1 $v }; t = (& $n1 ([double](@($wv | Where-Object { $null -ne $_ }) + 0 | Measure-Object -Sum).Sum)); title = 'GB the machine wrote per day (disk-write monitor); the bar: kit-owned share; 7 d: sum' })
+  foreach ($dv in $drv) { $fr = @(foreach ($d in $dk) { $ix = [array]::IndexOf(@($DDays), $d); if ($ix -ge 0) { @($dv.free)[$ix] } else { $null } }); $lo = [double](@($fr | Where-Object { $null -ne $_ }) | Measure-Object -Minimum).Minimum
+    $dd = @(for ($i = 0; $i -lt $dk.Count; $i++) { if ($i -and $null -ne $fr[$i] -and $null -ne $fr[$i - 1]) { [double]$fr[$i] - [double]$fr[$i - 1] } else { $null } })
+    $rows += @{ n = "$($dv.n -replace '^disk ') free"; mk = "disk-free-$($dv.n)"; d = $dk; v = $fr; keep = $true; t = "$(& $fGB $dv.fnow)"; title = "$($dv.n): free GB at the day's last sample; ▼ / ▲ = change vs the day before, amber = a drop of $(& $n1 $dropGB) GB or more; 7 d: free now"
+      tx = @(for ($i = 0; $i -lt $dk.Count; $i++) { if ($null -ne $fr[$i]) { "$(& $fGB $fr[$i])$(if ($null -ne $dd[$i] -and [math]::Abs($dd[$i]) -ge 0.05) { "$(if ($dd[$i] -lt 0) { '▼' } else { '▲' })$(& $n1 ([math]::Abs($dd[$i])))" })" } else { '' } })
+      dt = @(for ($i = 0; $i -lt $dk.Count; $i++) { if ($null -ne $dd[$i] -and -$dd[$i] -ge $dropGB) { 'warn' } else { '' } })
+      tips = @(for ($i = 0; $i -lt $dk.Count; $i++) { if ($null -eq $fr[$i]) { 'no free-space sample that day' } else { "$(& $n1 $fr[$i]) GB free$(if ($null -ne $dd[$i]) { ", $(if ($dd[$i] -lt 0) { 'down' } else { 'up' }) $(& $n1 ([math]::Abs($dd[$i]))) GB vs the day before" })$(if ([double]$fr[$i] -le $lo) { ' · the lowest of the week' })" } }) } }
   $tot = [double](@($ds | ForEach-Object { [double]$_.m }) + 0 | Measure-Object -Sum).Sum; $totK = [double](@($ds | ForEach-Object { [double]$_.k }) + 0 | Measure-Object -Sum).Sum
   $stale = $last -and ($at - $last).TotalMinutes -gt 2 * [double](Get-KitParam 'supervise.heartbeatMinutes')
   $sum = "$(& $gbT $tot) written in 7 days (kit $(& $gbT $totK), $(if ($tot -gt 0) { [int][math]::Round(100 * $totK / $tot) } else { 0 })%)$(if ($drv.Count) { " · free now $(@($drv | ForEach-Object { "$($_.n -replace '^disk ') $(& $fGB $_.fnow) GB" }) -join ' · ')" })$(if ($stale) { " · no samples since $($last.ToString('HH:mm'))" })"
-  & $fold 'writes' 'Disk · 7 days' '' "<div class='gks wdk' style='--rc:$(2 + $drv.Count)' data-mk=writes-day-hour>$dHead$($dRows -join '')</div>$(Format-KitLegend "<i class='lgk r'></i>shade = GB / hour <i class='lgk kst'></i>stripe = kit share <i class='lgk nsx'></i>hatch = no samples · ▼ = free-space drop" "an hour: shade = GB the machine wrote (one scale for the week; a number from $(& $n1 $minGB) GB), the bottom stripe's width = the kit-owned share (est. = share of process I/O x disk writes) · outlined = now · free = GB at the day's last sample, amber = a drop of $(& $n1 $dropGB) GB or more, bold = the week's lowest · per owner: Resources · 24 h, Writes GB")" -tag h4 -cls 'sub st' -extra "<span class=fsm>$(& $e $sum)</span>"   # never .wr: the waste row grid squeezed this summary to 36 px
+  @(@{ hd = 'Disk'; g = 'disk'; ex = (& $e $sum) }) + $rows
 }
 # a share 0..1 -> cell shade % (square root: a small value still shows; 0 = blank)
 function Get-KitHeatShade([double]$F) { if ($F -gt 0) { [int][math]::Round(25 + 75 * [math]::Sqrt([math]::Min(1.0, $F))) } else { 0 } }
@@ -542,7 +533,7 @@ function Format-KitDayHeat($Rows, [string[]]$Dates, [string]$What, [string]$TotL
 # shared card parts (owner 2026-11-19: value + label tiles, one labelled stacked bar, an aligned table; never dot-joined text lines)
 # stat tiles: @{ v = value; u = unit; l = label; t = tone (act | watch); tip }
 function Format-KitTiles($Tiles) {
-  "<div class=tls>$(@($Tiles | Where-Object { $_ } | ForEach-Object { "<div class='tl$(if ($_.t) { " $($_.t)" })'$(if ($_.mk) { " data-mk=$($_.mk)" }) title='$(& $e (Format-KitLabel $(if ($_.tip) { $_.tip } else { "$($_.l): $($_.v)$($_.u)" })))'><b>$(& $e "$($_.v)")$(if ($_.u) { "<small>$(& $e $_.u)</small>" })</b><span>$(& $e (Format-KitLabel $_.l))</span></div>" }) -join '')</div>" }   # sentence case: the caption and its tooltip agree (ui-check)
+  "<div class=tls>$(@($Tiles | Where-Object { $_ } | ForEach-Object { "<div class='tl$(if ($_.t) { " $($_.t)" })$(if ("$($_.v)" -match '^(0|—)( |$)') { ' z' })'$(if ($_.mk) { " data-mk=$($_.mk)" }) title='$(& $e (Format-KitLabel $(if ($_.tip) { $_.tip } else { "$($_.l): $($_.v)$($_.u)" })))'><b>$(& $e "$($_.v)")$(if ($_.u) { "<small>$(& $e $_.u)</small>" })</b><span>$(& $e (Format-KitLabel $_.l))</span></div>" }) -join '')</div>" }   # sentence case: the caption and its tooltip agree (ui-check)
 # one stacked bar of $Max: parts @{ v; l = label; c = colour class (sk-u used, sk-p promised, sk-f free, sk-r reserve) }; the values in a legend
 function Format-KitStackBar($Parts, [double]$Max, [string]$Aria, [string]$Unit = 'GB') {
   $ps = @($Parts | Where-Object { $_ -and [double]$_.v -gt 0 }); if ($Max -le 0 -or -not $ps.Count) { return '' }
@@ -562,6 +553,17 @@ function Format-KitMachineTop($Gs, $Nw, $MemPct, $MemFree, $TotalGB, [double]$Fl
     $(if ($Gs) { @{ v = [int]$Gs.today; l = 'builds today' } }), @{ v = (& $n1 $gw); u = ' min'; l = 'longest gate wait'; t = $(if ($gw -ge 30) { 'act' }) },
     $(if ($null -ne $Nw.seatsMax) { @{ v = "$(& $fm $Nw.seats) / $(& $fm $Nw.seatsMax)"; l = 'QA seats' } }), $(if ($Gs.lanes) { @{ v = "$($Gs.leased) / $($Gs.lanes)"; l = 'phone lanes leased' } }),
     $(if ($Gs.emulators) { @{ v = $Gs.emulators; l = 'emulators running' } }), $(if ($Gs.browsers) { @{ v = $Gs.browsers; l = "test browsers · $(& $n1 $Gs.browserGB) GB" } }))
+  # owner 2026-11-27 (the row fills the width): agents live vs supervise.manyAgents, lane services up, CPU now / 24 h peak, disk written
+  # today; from the caller's report ($j, $st: dynamic scope), each tile's source in its tooltip
+  $agN = @($j.agents | Where-Object { $_ -and "$($_.name)" -notmatch '\(workflow\)$' -and "$($_.state)" -notmatch '^(FINISHED|STOPPED|CRASHED)' }).Count; $agCap = [int](Get-KitParam 'supervise.manyAgents')
+  $svc = @($st.cpu.svc | Where-Object { $_ }); $up = @($j.resources | Where-Object { $_ -and $_.kind -eq 'env' } | ForEach-Object { "$($_.name)" })
+  $lanes = @($svc | Group-Object { ("$_" -split ' · ')[0] } | ForEach-Object { "$($_.Name) $(@($_.Group | Where-Object { $_ -in $up }).Count)/$($_.Count)" })
+  $cs = @($st.cpu.samples | Where-Object { $_ -and $null -ne $_.all }); $cpu0 = if ($cs.Count) { [double]$cs[-1].all }; $cpuPk = if ($cs.Count) { [double]($cs | Measure-Object all -Maximum).Maximum }
+  $wm = @($st.writes.rows | Where-Object { $_ -and $_.n -eq 'whole machine' })[0]; $wt = @(@($st.writes.rows) + @($st.writes.more) | Where-Object { $_ -and $_.n -ne 'whole machine' -and [double]$_.day -gt 0 } | Sort-Object { -[double]$_.day })[0]
+  $tiles += @(@{ v = "$agN / $agCap"; l = 'agents live'; t = $(if ($agN -ge $agCap) { 'watch' }); tip = "agents live: $agN now (the status rows: board agents and workflow steps) of supervise.manyAgents $agCap (the heartbeat speeds up at it; lane stops under memory pressure: localEnv.pressureStopsPerHour)" },
+    $(if ($svc.Count) { @{ v = "$(@($svc | Where-Object { $_ -in $up }).Count) / $($svc.Count)"; l = 'lane services up'; tip = "lane services up: running now (Resources rows) of the configured ones (CPU stats svc): $($lanes -join ' · ')" } }),
+    $(if ($cs.Count) { @{ v = [math]::Round($cpu0); u = '%'; l = "CPU now · 24 h peak $([math]::Round($cpuPk))%"; t = $(if ($cpu0 -ge 90) { 'act' } elseif ($cpu0 -ge 75) { 'watch' }); tip = "CPU now / 24 h peak: the machine's CPU % per sweep sample (CPU stats, $($cs.Count) samples in 24 h)" } }),
+    $(if ($wm) { @{ v = (& $n1 $wm.day); u = ' GB'; l = 'disk written today'; tip = "disk written today: the whole machine (disk-write monitor, $($st.writes.src))$(if ($wt) { "; top writer $($wt.n) $(& $n1 $wt.day) GB" })" } }))
   "$(Format-KitTiles $tiles)$ramBar"
 }
 # Resources · 24 h (owner, 2026-11-17: CPU and RAM per resource in one heatmap): a row per resource, every name of 24 h plus each
@@ -888,10 +890,6 @@ function Get-KitStatsCss {
   # disk writes: muted sage cells; the 7-day block slate over sage
   '.hm.ws:not(.sp) i{background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}' +
   '.hm.sbr i.sdc{background:var(--sb) left bottom/100% 3px no-repeat,color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}' +
-  # Disk · 7 days: right columns at their width, the hour grid flexes; shade = machine GB, bottom stripe = kit share, hatch = no samples
-  '@media(min-width:700px){.gks.wdk{grid-template-columns:minmax(0,max-content) minmax(264px,1fr) repeat(var(--rc),minmax(48px,max-content))}}.hm.dw i{background:linear-gradient(var(--slate),var(--slate)) left bottom/var(--k,0%) 3px no-repeat,color-mix(in srgb,var(--sage2) var(--a,0%),var(--sf2))}' +
-  '.hm.dw i.ns,.lgk.nsx{background:repeating-linear-gradient(135deg,var(--sf2) 0 3px,color-mix(in srgb,var(--mt) 35%,var(--sf2)) 3px 5px)}.hm.dw i.fu{background:transparent;outline:1px dashed var(--ln);outline-offset:-1px}.lgk.kst{background:linear-gradient(var(--slate),var(--slate)) left bottom/100% 3px no-repeat,var(--sf2)}' +
-  '.wdk .gc small{margin-left:3px;color:var(--mt);font-size:10px}.wdk .gc.fr.warn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}.wdk .gc.fr.warn small{color:inherit}.wdk .gc.lo{font-weight:700}@media(max-width:699px){.gks.wdk .gk{grid-template-columns:repeat(var(--rc),minmax(0,1fr))}}' +
   # day heatmaps: a column per day (--n), taller cells for the wider numbers
   '.hm.dy,.hrs.dy{grid-template-columns:repeat(var(--n),minmax(0,1fr))}.dyh .hm.dy{height:20px}.dyh .hm.dy i{line-height:20px;font-size:10.5px}.hm.dy i[data-ft]{cursor:pointer}.hrs.dy b{text-align:center}.dyh .gk.gl0>*{border-top:1px solid var(--ln);padding-top:2px}.dyh .gk.gl0>.hm.dy{height:23px}' +   # 23 = 20 + the rule above
   '.cpg{margin-top:6px}:is(.cpg,.fhm) .gk.gl0>*{border-top:1px solid var(--ln);padding-top:2px}.gks .gc small{color:var(--mt);font-weight:500}.cpg .gk.hot>.gn,.cpg .gk.hot>.gc:nth-last-child(15){color:color-mix(in srgb,var(--act) 60%,var(--fg));font-weight:650}.cpg .gk.warn>.gn{color:color-mix(in srgb,var(--watch) 55%,var(--fg))}' +
@@ -937,7 +935,7 @@ function Get-KitStatsCss {
   '@media(max-width:699px){.flt thead,.flt colgroup{display:none}.tw>table.flt tr{display:flex!important;flex-wrap:wrap;gap:2px 8px;padding:6px 0;border-top:1px solid var(--ln)}.tw>table.flt td{border:0;padding:0;flex:0 1 auto}.tw>table.flt td:nth-child(n+4),.tw>table.flt td[colspan]{flex-basis:100%}.tw>table.flt td::before{display:none}.mhw .gks.w0{grid-template-columns:minmax(0,1fr)}.gks.w0 .gk{grid-template-columns:minmax(0,1fr)}}' +
   '.rtl .gn{max-width:380px}.rtl .rr>.gn{display:flex;flex-wrap:nowrap;gap:2px 6px;align-items:baseline;white-space:normal;min-width:0}.rtg{all:unset;cursor:pointer;font-weight:600;overflow-wrap:anywhere;flex:0 1 auto;min-width:0}.rtl .rr>.gn>:not(.rtg){flex:none}.rtg::before{content:"\25B8 ";color:var(--mt)}.rgg:not(.cl)>.rr .rtg::before{content:"\25BE "}.rtl .gk.ag>.gn{padding-left:16px;white-space:normal;overflow-wrap:anywhere}.rtl .gk.ag .chip{margin-left:6px}:is(.rdg,.rkg).cl>.rgg{display:none}.rkh .gn small{font-weight:500}.rtl .rkg>.rgg>.rr>.gn{padding-left:16px}.rtl .rkg .gk.ag>.gn{padding-left:32px}.hm.rn i{--a:0%;background:color-mix(in srgb,var(--sage2) var(--a),var(--sf2))}.rtl .rk{font-size:11px}' +
   '.gks.w0{grid-template-columns:minmax(0,max-content) minmax(160px,1fr)}.mhw .gks.w0{min-width:calc(var(--n) * 52px + 110px + var(--xw,0px))}.mhw .hm.dy,.mhw .hrs.dy{grid-template-columns:var(--gt,repeat(var(--n),minmax(48px,1fr)))}:is(.hm.mh,.hm.dy) i[data-t=warn]{background:color-mix(in srgb,var(--watch) 60%,var(--sf2))}:is(.hm.mh,.hm.dy) i[data-t=act]{background:color-mix(in srgb,var(--act) 60%,var(--sf2))}.gn small .rdw{color:color-mix(in srgb,var(--watch) 70%,var(--fg));font-weight:650}.gn small .rdv{color:color-mix(in srgb,var(--act) 70%,var(--fg));font-weight:650}.dyh .dgh>.rgb{margin-top:4px}.mgh b{border-bottom:2px solid var(--sage2);text-align:center;font-weight:650;color:var(--fg);padding-bottom:1px}.mhw [data-g0]{margin-left:6px}' +
-  '.tl.few{opacity:.6}.tls{align-items:stretch}.tl{min-height:46px;width:136px;display:flex;flex-direction:column;justify-content:space-between}.tl b{line-height:20px;white-space:nowrap}.tl span{display:block;line-height:14px;overflow-wrap:break-word}' +   # a long label wraps (never cut with an ellipsis)
+  '.tl.few{opacity:.6}.tls{align-items:stretch}.tl{min-height:46px;width:136px;display:flex;flex-direction:column;justify-content:space-between}@media(min-width:1100px){.tls{flex-wrap:nowrap}.tls>.tl{flex:1 1 0;width:auto;min-width:0}}.tl.z b{color:color-mix(in srgb,var(--mt) 70%,var(--bg))}.tl b{line-height:20px;white-space:nowrap}.tl span{display:block;line-height:14px;overflow-wrap:break-word}' +   # a long label wraps (never cut with an ellipsis)
   '.fsm{margin-left:8px;font-size:12px;font-weight:400;color:var(--mt);overflow-wrap:anywhere}' +   # a folded block's one-line summary in its header
   # split cells (usage.ps1 split, owner 2026-11-20): a row of small muted tiles (tint = type, fill capped by --kcap so text keeps 4.5:1,
   # a 2px accent at the left; output strongest, cache read faintest, the total strongest of all); the cell's own width picks the form

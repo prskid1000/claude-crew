@@ -256,19 +256,20 @@ of two fields a line, low-value columns hidden; tone-coloured text is mixed towa
   agents: its sums; the newest open); a run row: short title (run name + task codes; the mandate in its tooltip), kind, its steps page, tokens · cost, time (agent minutes
   added up; elapsed = to its last step's write in the tooltip); agents (steps by agent code, live board rows with
   state and age) under it on a tap; board agents outside a workflow run grouped by their run (in one only by proof: its run name or transcript folder), with no run a row each (agents kind);
-- machine and resources: tiles (RAM used, builds running / queued / today, longest gate wait, QA seats, phone lanes,
+- machine and resources: tiles in one row (RAM used, builds running / queued / today, longest gate wait, QA seats, phone lanes, agents
+  live, lane services up, CPU, disk written today,
   emulators, test browsers) and one RAM bar (used / promised to builds / free above the floor / floor); Resources · 24 h: one
   heatmap, metric switch CPU · RAM | Writes GB | Waits min | Builds min, rows in folding groups (count + the worst state): the
   machine (whole machine, a row per internal drive with free GB, % used, fill rate and full-in under 72 h, kit-owned, other
   processes), env services, builds, worktree slots, phones, browser tabs, shells, shared; a row: holder + branch / task; the
   builds group: a row per gate kind, its owners today as chips, today / build-min / failed (red chip) / wait avg / peak; then
-  the top other processes (10%+) folded; Disk writes · 7 days (day x hour, machine over kit-owned) with free GB per day per
-  drive; shells: their own section;
+  the top other processes (10%+) folded; shells: their own section;
 - trends (7 calendar days ending today; usage: `bossy.ps1 budget -Usage` reads the transcripts incrementally, `_paths`
   `usage-cache` + `.cold.json`; `budget.prices` per model; delivery: `.state/outcomes.jsonl`): one tile strip (QA first pass %,
   came back %, median fix rounds, p50 hours to promoted (from agent start, first MR; 1 vs 2+ MRs), output tokens per merged MR, review + fix share, a tile per step outcome: a tap
   shows the runs with it); ONE day heatmap, folding row groups: Delivery (MRs per repo, tasks closed, came back, runs
-  started: a cell filters the tasks or runs), Work in flight (today), Outcomes and test checks, Usage, Kit health, Repos
+  started: a cell filters the tasks or runs), Work in flight (today), Outcomes and test checks, Usage, Kit health, Disk,
+  Repos
   (a row per repo: branches / worktrees, kept, dirty amber, diverged red); ONE "Per role" heatmap, column groups: Spend (steps,
   tokens · est. cost, share, avg / p90 active time), Model mix, Context, Waste (fixable / open / fixed);
 - context: a run row's peak cell (bar by source, waste in the tooltip); Trends "Context mix", "Peak context"; Per role

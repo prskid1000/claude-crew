@@ -41,6 +41,25 @@ $null = pwsh @np $fx 'Update-KitOutcomes -All'
 $ks = pwsh @np $fx '$a = Get-KitOutcomeStats; $b = Get-KitOutcomeStats -StatsFrom ([datetime]"2026-11-10"); "$($a.kpi.startOf)|$($b.kpi.startOf)|$($b.kpi.start)|$($b.tasks.Count)|$($b.kpi.backN)|$($b.kpi.firstN)|$(([datetimeoffset]($b.tasks | Where-Object id -eq s1).startAt).UtcDateTime.Hour)"'
 $oh2 = & { . $O; Format-KitSuperviseHtml ([pscustomobject]@{ at = (Get-Date).ToString('o') }) } | Out-String
 Expect "KPI tiles: no reset = every promoted task, after one only tasks started since (the lists keep all; a test-only task starts at its first QA run; a start never moves later); n on the tile, under 5 greyed ($ks)" ("$ks" -eq '4|1|1|6|1|1|10' -and $oh2 -match "class='tl few'" -and $oh2 -match 'QA first pass &#183; n \d' -and $oh2 -match 'n \d is under 5: too few to read')
+# owner 2026-11-27: every number counts agents outside a workflow (Agent-tool spawns on the board, run with no launch record) next to
+# workflow ones. sd1: a solo devy (start = its join, spend = its row), rounds from its goals doc; wf-run's devy and a QA runDir's checky
+# belong to workflows (their launch records): no spend, no start, no run of their own
+& $put tasks 'sd1.json' @{ task = 'sd1'; spec = @{ kind = 'Feature' }; track = @{ mrs = @('api!21'); created = '2026-11-20T20:00:00+00:00'; done = $true; doneAt = '2026-11-20T23:00:00+00:00' }; updated = $now
+  envRuns = @(@{ run = 'R'; code = 'T3'; pass = 2; fail = 0; notTested = 0; failIds = @(); bug = ''; at = '2026-11-21T10:00:00+00:00' }) }
+& $put published 'sd1_testing-ai.json' @{ key = 'sd1:testing-ai'; rounds = @(@{ at = '2026-11-20 12:00'; label = ''; body = $body }) }
+$sdB = { param($ag, $ty, $run, $sp, $jn) & $put board "sd-$ag.json" @{ agent = $ag; type = $ty; session = "sd-$ag"; run = $run; items = 'sd1'; status = 'left'; joined = $jn; beat = (Get-Date).AddHours(-1).ToString('o'); spend = $sp; transcript = "C:\tx\$ag.jsonl" } }
+& $put cache 'usage.result.json' @{ at = $now; agentSteps = @(@{ tf = 'C:/TX/devy-sd.jsonl'; label = 'devy sd'; role = 'devy'; at = $now; cx = @{ n = 2; pk = 900; s0 = 100; sum = 1000; car = @(0) * 8; add = @(0) * 8 } }, @{ tf = 'C:/tx/other.jsonl'; label = 'other'; role = 'devy'; at = $now; cx = @{ n = 1; pk = 5; s0 = 5; sum = 5; car = @(0) * 8; add = @(0) * 8 } }) }
+& $sdB devy-sd devy solo-sd 4000 '2026-11-20T12:00:00+00:00'; & $sdB devy-wf devy wf-run 9000 '2026-11-19T00:00:00+00:00'; & $sdB checky-q checky qa-dir-1 700 '2026-11-19T00:00:00+00:00'
+& $put launches 'self-buildy-wf-run.json' @{ script = 'C:/kit/workflows/buildy.js'; run = 'wf-run'; at = '2026-11-19T00:00:00+00:00'; spent = 0 }
+& $put launches 'self-testy-qa.json' @{ script = 'C:/kit/workflows/testy.js'; run = 'qa-run'; runDir = 'C:/q/qa-dir-1'; at = '2026-11-19T00:00:00+00:00'; spent = 0 }
+$null = pwsh @np $fx 'Update-KitOutcomes -All'; $sdR = @(Get-Content (TkPath $k outcomes) | ConvertFrom-Json | Where-Object task -eq 'sd1')[-1]
+$sdK = & { . $O; $sdS = Get-KitOutcomeStats; $sdT = @($sdS.tasks | Where-Object id -eq sd1)[0]; $e = { param($x) "$x" }; $n1 = { param($x) "$x" }; $fold = { param($i, $t, $c, $h) $h }; $taskA = $mrA = $bar = $table = { '' }
+  $sdU = Format-KitUsageHtml ([pscustomobject]@{ since = (Get-Date).AddDays(-6).ToString('o'); days = @([pscustomobject]@{ day = '2026-11-20'; tok = 1 }); runs = @() })
+  "$($sdT.bucket)|$($sdT.rounds)|$($sdS.kpi.roundsOf)|$(@($sdU.boardRuns | ForEach-Object { "$($_.run):$($_.kind):$($_.spend)" }) -join ',')|$($sdU.runsN)|$(@($sdU.dayRuns['2026-11-20'] | ForEach-Object run) -join ',')" }
+$sdBud = pwsh @np $O budget -Run solo-sd -Json | ConvertFrom-Json; $sdCx = @(pwsh @np $O usage -Context -Run solo-sd -Json | ConvertFrom-Json); $sdTp = Get-Content (pwsh @np $O tidy prep -DryRun -Json | ConvertFrom-Json).digest -Raw
+Expect "agents outside a workflow: the row's start = the devy's join, its spend; rounds from the goals doc (r2, a KPI sample); one board run (not a workflow's devy or QA runDir), counted in Runs and runs started; budget -Run; usage -Context -Run; the tidy digest ($sdK)" ("$(@($sdCx.label) -join ',')" -eq 'devy sd' -and
+  $sdR.spend -eq 4000 -and ([datetimeoffset]$sdR.startAt).UtcDateTime.ToString('yyyy-MM-ddTHH:mm') -eq '2026-11-20T12:00' -and $sdK -match '^r2\|2\|[1-9]\d*\|solo-sd:build:4000\|1 ended in 7 days\|solo-sd$' -and $sdBud.spent -eq 4000 -and $sdBud.agents -eq 1 -and -not $sdBud.workflow -and $sdTp -match 'solo-sd \(build, 1 agent\(s\), no workflow\) spent 4000')
+Get-ChildItem (TkPath $k board) -Filter 'sd-*.json' | Remove-Item; Remove-Item (Join-Path (TkPath $k cache) 'usage.result.json')
 # bossy.ps1 stats reset (owner 2026-11-26: DELETE, no archive): outcomes + clock stream gone, a cutoff for test checks; task files and QA runs kept
 $cd = Join-Path (TkPath $k audit -Create) '2026-11-02'; $null = New-Item -ItemType Directory -Force $cd; '{"at":"2026-11-02T10:00:00Z","phase":"code"}' | Set-Content (Join-Path $cd 'clock.jsonl')
 $qd = Join-Path (TkPath $k qa-runs -Create) 'testy-x/T1'; $null = New-Item -ItemType Directory -Force $qd; '{"checks":[]}' | Set-Content (Join-Path $qd 'results.json')
