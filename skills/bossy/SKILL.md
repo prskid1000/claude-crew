@@ -87,7 +87,7 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
 
 ## Change the kit (HEAL and extending)
 - K1. Spawn ONE `kitty` (`subagent_type: 'kitty'`, kind build / fix / docs / audit / setup / env / recover) with the change or the
-  friction in the owner's words; kinds docs / env / retro pass `model: 'sonnet'`; a supervise `model override`
+  friction in the owner's words; kinds fix / docs / env / retro pass `model: 'sonnet'`; a supervise `model override`
   line: that model on every spawn and tidy `args.model`. It works in its own kit worktree (never the
   live clone), keeps the kit generic (org values in `kit.local.json`), prefers a script check over a rule; its run id
   (HANDOFF: pass it on). A queued kit item (`- [ ]` in `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.

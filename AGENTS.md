@@ -31,7 +31,7 @@ Codex and Antigravity read this file, Claude Code via `CLAUDE.md`; edit only her
   back. Bugs are reproduced locally before they are fixed.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per human testing doc -> all pass: closed · own check failed
   or untested (undeployed): failedTesting · untested, no dev fix: owner decides · a new defect: one [Bug] under the original ask.
-- **Budget** (README "Configuration"): agent hands off (resume brief, fresh agent) at 80% of tool compaction point, or at a `CONTEXT-CHECK` by its own call; run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
+- **Budget** (README "Configuration"): agent hands off (resume brief, fresh agent) at 80% of tool compaction point or its role's `budget.agentCap` (devy 200k), or at a `CONTEXT-CHECK` by its own call; run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
 - **Decision pauses**: user-visible behaviour change not asked for, or multiple valid paths -> ask (`bossy.ps1 decide ask`), item waits, rest continue; internal logic with identical output needs no ask.
 
 ## Crew and routing

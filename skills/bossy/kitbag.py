@@ -24,8 +24,8 @@ Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings)
 a non-kit dir).
 
 Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L998 lint ·
-  L1420 README graph · L1538 lint command · L1851 audit · L1999 registry · L2059 tools · L2147 parity · L2753 arch lint ·
-  L3072 prose · L3327 sections · L3459 budget · L3477 migrate · L3625 plugins · L3682 state lint · L3870 main
+  L1420 README graph · L1538 lint command · L1851 audit · L1999 registry · L2060 tools · L2148 parity · L2754 arch lint ·
+  L3073 prose · L3328 sections · L3460 budget · L3478 migrate · L3626 plugins · L3683 state lint · L3871 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -2006,7 +2006,8 @@ SCHEMAS = {
  'agent': {'type': 'object', 'required': ['name', 'description'], 'additionalProperties': False,
    'properties': {'name': {'type': 'string', 'pattern': r'^[a-z][a-z0-9-]*$'},
        'description': {'type': 'string', 'pattern': r'Spawned by .+Not for'},
-       'tools': {'type': 'string', 'minLength': 3}, 'disallowedTools': {'type': 'string', 'minLength': 3}, 'model': {'type': 'string', 'enum': ['fable', 'sonnet', 'opus', 'haiku', 'inherit']}}},
+       'tools': {'type': 'string', 'minLength': 3}, 'disallowedTools': {'type': 'string', 'minLength': 3}, 'model': {'type': 'string', 'enum': ['fable', 'sonnet', 'opus', 'haiku', 'inherit']},
+       'experimental': {'type': 'string', 'pattern': r'^cacheTtl: (5m|1h)$'}}},   # Claude Code per-agent prompt cache TTL
  'character': {'type': 'object', 'required': ['traits', 'bias', 'catchphrase', 'never'], 'additionalProperties': False,
     'properties': {x: {'type': 'string', 'minLength': 3} for x in ('traits', 'bias', 'catchphrase', 'never')}},
  'manifest-agent': {'type': 'object', 'required': ['job', 'kinds', 'roles', 'skill', 'tools', 'usedIn', 'cant', 'character'], 'additionalProperties': False,

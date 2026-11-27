@@ -254,6 +254,10 @@
         "codex": "fallback: Claude tiers only (usage.ps1 Get-KitModelOverride); a Codex session sets models.tiers.codex by hand and removes it after",
         "antigravity": "fallback: Claude tiers only; an Antigravity session sets models.tiers.antigravity / ports.models by hand and removes it after"
       },
+      "per-role prompt cache TTL (agent front matter experimental.cacheTtl: devy 1h; settings subagentPromptCacheTtl / env CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL override it)": {
+        "codex": "gap: no config.toml key or custom-agent field sets a cache TTL (codex.exe 2026-11-27: prompt_cache_key / options are set by Codex itself); caching stays automatic",
+        "antigravity": "gap: no per-agent cache TTL setting; Gemini caching stays implicit"
+      },
       "per-agent tool and MCP lists": {
         "codex": "gap: no such feature: https://learn.chatgpt.com/docs/agent-configuration/subagents a custom agent has no tools allow-list and its mcp_servers / sandbox_mode do not override the parent: the ported note names the allowlist, the guard covers both",
         "antigravity": "port: tools: [<agy names>] in .agents/agents/*.md (https://antigravity.google/docs/subagents/; kitbag_ports.py GRAVITY_TOOL_MAP + call_mcp_tool); an agent with a tool agy cannot name (WebFetch, WebSearch) keeps all tools"

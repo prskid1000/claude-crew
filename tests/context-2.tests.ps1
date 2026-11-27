@@ -72,5 +72,8 @@ $wrWs = Split-Path $k; $wrCfg = Join-Path $k 'skills/crafty/kit.local.json'; $nu
 Set-Content $wrCfg (@{ worktreeRoots = @((Join-Path $wrWs 'prod/.worktrees')) } | ConvertTo-Json); $wrGot = & { . (Join-Path $k 'skills/crafty/lib.ps1'); "$(Get-KitWtRootFor $k)|$(Get-KitWtRootFor (Join-Path $wrWs 'prod'))" }
 Expect "wt new root: the kit -> <workspace>/.kit-worktrees, a product repo -> the first worktreeRoots entry ($wrGot)" ($wrGot -eq "$(Join-Path $wrWs '.kit-worktrees')|$(Join-Path $wrWs 'prod/.worktrees')")
 Remove-Item $wrCfg
+# owner 2026-11-27: devy alone runs a 1-hour prompt cache (Claude Code agent front matter experimental.cacheTtl); lint SCHEMA takes only 5m / 1h
+$ttlAgents = @(Get-ChildItem (Join-Path $src 'agents') -Filter *.md | Where-Object { (Get-Content $_.FullName -Raw) -match '(?m)^experimental:\r?\n  cacheTtl: 1h\r?$' } | ForEach-Object BaseName)
+Expect "prompt cache 1h: devy only ($($ttlAgents -join ',')); schema pattern 5m|1h" ("$ttlAgents" -eq 'devy' -and (Get-Content (Join-Path $src 'skills/bossy/kitbag.py') -Raw) -match "'experimental': \{'type': 'string', 'pattern': r'\^cacheTtl: \(5m\|1h\)\$'\}")
 Remove-TestKit $k
 Complete-Tests
