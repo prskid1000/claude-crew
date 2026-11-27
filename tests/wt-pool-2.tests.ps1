@@ -100,5 +100,7 @@ $ksClone = "$ksBase/kitc"; git clone -q "$ksBase/kit.git" $ksClone 2>$null; 'n' 
 $kh0 = "$(git -C $k rev-parse HEAD)".Trim(); $null = pwsh @np $ksD wt release -Agent kitty-1 2>&1; $ks = pwsh @np $ksD wt pool -Repo $k -Sync 2>&1 | Out-String
 $kq4 = & $kLease kitty-3 kit/three; $kf = "$ksBase/wt/falcon-.claude"
 Expect "kit slots: the sync leaves the live clone's main behind (named), a released slot goes to the waiter on a fresh origin/main ($(($ks -split "`n" | Select-String 'kept') -join ' '))" ("$(git -C $k rev-parse HEAD)".Trim() -eq $kh0 -and $ks -match 'main behind 1 \(the live kit clone' -and $kq4 -match '\.claude·Falcon' -and (Test-Path "$kf/new.txt") -and (git -C $kf branch --show-current) -eq 'kit/three')
+$ksSlotRun = pwsh @np "$kf/skills/crafty/crafty.ps1" wt pool -Repo $k -Sync 2>&1 | Out-String   # review R4: a slot's own crafty.ps1 ($KitConf.Kit = the slot)
+Expect "kit slots: a sync run from a kit slot's crafty.ps1 still leaves the live clone alone ($(($ksSlotRun -split "`n" | Select-String 'kept') -join ' '))" ("$(git -C $k rev-parse HEAD)".Trim() -eq $kh0 -and $ksSlotRun -match 'the live kit clone')
 Remove-TestKit $k
 Complete-Tests

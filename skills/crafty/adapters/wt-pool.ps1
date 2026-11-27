@@ -9,7 +9,7 @@ Inputs: kit.local.json pool.size (10), pool.names, repos[].poolSize, parallel.ki
 Dot-sourced by lib.ps1 (adapters/*.ps1); the Invoke-Wt* verbs run inside crafty.ps1 Invoke-Wt (its parameters and helpers).
 Also the sweep of worktrees and local branches (crafty.ps1 wt remove, sweep, cleanup; from crafty.ps1: its token cap).
 Exit codes: 0 ok · 1 problem (no slot within -WaitMinutes, a branch another agent holds, git failed) · 2 usage.
-Sections: L15 worktrees · L191 names · L284 slots · L357 lease · L475 release · L521 lanes · L670 sync · L773 pool · L816 sweep
+Sections: L15 worktrees · L191 names · L284 slots · L362 lease · L480 release · L526 lanes · L675 sync · L778 pool · L821 sweep
 #>
 #Requires -Version 7
 # ---- worktrees: helpers of crafty.ps1 wt (Invoke-Wt, sweep); Get-WtDirty runs inside Invoke-Wt (its Meta)
@@ -289,7 +289,12 @@ function Get-KitCheckoutName([string]$Repo) {
   $u = "$(git -C $Repo remote get-url origin 2>$null)".Trim(); if ($u) { (($u -replace '\.git$') -split '[/:\\]')[-1] } else { Split-Path $Repo -Leaf }
 }
 # repos[].poolSize, else pool.size (10); the kit's own clone: parallel.kitty (3; owner 2026-11-27: up to 3 kitty at once, one per slot)
-function Test-KitIsKit([string]$Repo) { (Resolve-Path -LiteralPath $Repo -ErrorAction SilentlyContinue).Path -eq (Resolve-Path -LiteralPath $KitConf.Kit).Path }
+# the kit's main clone, also when this crafty.ps1 runs from a kit slot ($KitConf.Kit = the slot): main working trees via the git common dir
+function Test-KitIsKit([string]$Repo) {
+  $p = (Resolve-Path -LiteralPath $Repo -ErrorAction SilentlyContinue).Path; $fk = [IO.Path]::GetFullPath($KitConf.Kit).TrimEnd('\', '/')
+  $c = if ("$(git -C $fk rev-parse --show-toplevel 2>$null)".Trim().Replace('/', '\') -ieq $fk.Replace('/', '\')) { "$(git -C $fk rev-parse --path-format=absolute --git-common-dir 2>$null)".Trim() }   # a kit folder inside another repo: no kit clone
+  [bool]($p -and $c -and [IO.Path]::GetFullPath($p).TrimEnd('\', '/') -ieq [IO.Path]::GetFullPath((Split-Path $c)).TrimEnd('\', '/'))
+}
 # wt new of the kit with kit slots: refused (the slots cap the kitty agents at once) -> the reason, '' = allowed
 function Get-KitWtNewKitWhy([string]$Repo, [string]$Branch) { if ((Test-KitIsKit $Repo) -and ($kitSlots = Get-KitPoolSize $Repo)) { "wt new refused: the kit has $kitSlots kit slots (parallel.kitty): wt lease -Repo $Repo -Branch $Branch -Agent <id>; on purpose: -Override '<why>'" } else { '' } }
 function Get-KitPoolSize([string]$Repo) {
