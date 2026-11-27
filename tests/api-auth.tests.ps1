@@ -91,6 +91,13 @@ $saTj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $saTj.targets.tu.
 $saMe = Px $Q api -Target tu -As sa -Path '/me' -Save 'A1-C1_01_sa' -OutDir (Kd) 2>&1 | Out-String; $saAd = Px $Q api -Target tu -As admin -Path '/me' 2>&1 | Out-String
 $saPost = @(Get-Content $usLog | ConvertFrom-Json | Where-Object { $_.u -eq '/admin/auth' })
 Expect "api userAuth: the super admin logs in at its endpoint with its tenant (token field its own), the admin still at auth.path; no password printed" ($saMe -match 'HTTP 200' -and (Get-Content "$(Kd)/A1-C1_01_sa.json" -Raw) -match 'superAdmin' -and $saPost.Count -eq 1 -and ($saPost[0].b | ConvertFrom-Json).t -eq 'adm' -and $saAd -match 'HTTP 200' -and "$saMe$saAd" -notmatch 'SaPw7')
+# user auth (2026-11-27: agents may not read targets.local.json, so userAuth had no writer): sets path / webLogin, keeps the rest, prints names only
+$uaW = Px $Q user auth -Target tu -Name sa -Path '/admin/auth' -WebLogin '{"path":"/sa/login"}' 2>&1 | Out-String; $uaRow = (Get-Content $tjf -Raw | ConvertFrom-Json).targets.tu.userAuth.sa
+$uaNo = Px $Q user auth -Target tu -Name nosuch -Path '/x' 2>&1 | Out-String; $uanc = $LASTEXITCODE
+$uaMs = Px $Q user auth -Target tu -Name sa -Path 'C:/Program Files/Git/admin/auth' 2>&1 | Out-String; $uamc = $LASTEXITCODE
+Expect "user auth: a Git Bash-converted -Path is REFUSED exit 2, userAuth kept ($uamc)" ($uamc -eq 2 -and $uaMs -match 'REFUSED.*MSYS_NO_PATHCONV' -and (Get-Content $tjf -Raw | ConvertFrom-Json).targets.tu.userAuth.sa.path -eq '/admin/auth')
+$saMe2 = Px $Q api -Target tu -As sa -Path '/me' 2>&1 | Out-String
+Expect "user auth: userAuth.sa path + webLogin set, tenant / tokenField kept, field names only; unknown login NO-USER exit 2; api still logs in at it ($uanc)" ($uaW -match 'AUTH tu userAuth\.sa set: path, webLogin' -and $uaRow.path -eq '/admin/auth' -and $uaRow.webLogin.path -eq '/sa/login' -and $uaRow.tenant -eq 'adm' -and $uaRow.tokenField -eq 'sa_token' -and $uaW -notmatch 'SaPw7|root' -and $uanc -eq 2 -and $uaNo -match 'NO-USER' -and $saMe2 -match 'HTTP 200')
 # login profiles: profiles.<name> = login + secret (a secrets.store name) + opaque fields (tenant one of them); not in users
 $pfTj = Get-Content $tjf -Raw | ConvertFrom-Json -AsHashtable; $pfTj.targets.tu.users.p1 = @('p1', 'PfPw3'); $pfTj.targets.tu.profiles = @{ ops = @{ login = 'p1'; secret = 'targets/tu/p1/password'; fields = @{ tenant = 'zeta' } } }; & $J $pfTj $tjf 6
 $pfMe = Px $Q api -Target tu -As ops -Path '/me' 2>&1 | Out-String

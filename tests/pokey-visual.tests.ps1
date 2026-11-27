@@ -98,10 +98,10 @@ if ($bk) {
 const { mkdirSync, writeFileSync } = await import('node:fs'), { join } = await import('node:path'), r = process.argv[2], mn = join(r, 'main'), wt = join(r, 'wt'), gd = join(mn, '.git', 'worktrees', 'w')
 for (const d of [gd, join(mn, 'skills', 'pokey'), wt]) mkdirSync(d, { recursive: true })
 writeFileSync(join(gd, 'commondir'), '../..\n'); writeFileSync(join(wt, '.git'), `gitdir: ${gd}\n`); writeFileSync(join(mn, 'skills', 'pokey', 'targets.local.json'), '{}')
-const t = { defaultTenant: 'd', created: { qa: { tenant: 'c' } } }
-console.log(m.localFile('skills/pokey/targets.local.json', wt) === join(mn, 'skills', 'pokey', 'targets.local.json'), m.localFile('nope.json', wt) === join(wt, 'nope.json'), [m.tenantOf(t, 'qa'), m.tenantOf(t, 'x'), m.tenantOf(t, 'qa', 'e')].join())
+const t = { defaultTenant: 'd', created: { qa: { tenant: 'c' } }, webLogin: { path: '/login', submit: '#go' }, userAuth: { sa: { tenant: 'adm', webLogin: { path: '/sa/login' } } } }, wa = await import(BM.replace('browser.mjs', 'adapters/web-login.mjs')), wl = wa.webLoginOf(t, 'sa')
+console.log(m.localFile('skills/pokey/targets.local.json', wt) === join(mn, 'skills', 'pokey', 'targets.local.json'), m.localFile('nope.json', wt) === join(wt, 'nope.json'), [m.tenantOf(t, 'qa'), m.tenantOf(t, 'x'), m.tenantOf(t, 'qa', 'e'), m.tenantOf(t, 'sa'), wl.path, wl.submit, wa.webLoginOf(t, 'qa').path].join())
 '@ (Join-Path (Kd) 'wtl')
-  Expect 'browser.mjs: a kit worktree finds the main clone logins file; a created login keeps its tenant' ("$res" -eq 'true true c,d,e')
+  Expect 'browser.mjs: a kit worktree finds the main clone logins file; a created login keeps its tenant; userAuth.<as> tenant + webLogin over webLogin (a super admin page), others keep webLogin' ("$res" -eq 'true true c,d,e,adm,/sa/login,#go,/login')
 } else { 'SKIP browser.mjs worktree logins (no puppeteer-core in skills/pokey)' }
 $qUsers = @{ 'skills/crafty/adapters/report_pdf.py' = "dt.VOCAB.get('chromeQuietArgs'"; 'skills/pokey/adapters/media-grab.mjs' = 'quietProfile(mkdtempSync('; 'skills/bossy/kitbag.py' = 'userDataDir: ud,'; 'skills/crafty/adapters/build-heap.ps1' = "if (`$Kind -eq 'cypress' -and -not `$env:ELECTRON_EXTRA_LAUNCH_ARGS) { `$env:ELECTRON_EXTRA_LAUNCH_ARGS = `$script:KitVocab.chromeQuietArgs -join"; 'skills/pokey/adapters/engine-playwright.mjs' = "args: eng === 'chromium' ? quiet : []" }
 $qMiss = @($qUsers.Keys | Where-Object { -not (Get-Content (Join-Path $src $_) -Raw).Contains($qUsers[$_]) })

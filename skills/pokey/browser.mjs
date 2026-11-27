@@ -252,15 +252,15 @@ export function defaultUser(t, name = '') {
   if (d || !u.length) return d || ''
   throw new Error(`target ${name}: several users: { as } or defaultUser`)
 }
-// a user create login keeps its tenant
-export const tenantOf = (t, as, tenant) => tenant ?? t.created?.[as]?.tenant ?? t.defaultTenant ?? ''
+// created, userAuth: a login's own tenant
+export const tenantOf = (t, as, tenant) => tenant ?? t.created?.[as]?.tenant ?? t.userAuth?.[as]?.tenant ?? t.defaultTenant ?? ''
 export async function session({ target, tenant, as, path } = {}) {
   const pin = String(process.env.KIT_QA_TARGETS || '').split(/[,\s]+/).filter(Boolean), tn = target || CFG.default
   if (pin.length && !pin.includes(tn)) throw new Error(`target '${tn}' is not this QA run's target (${pin.join(', ')})`)
-  const t0 = (await adapter('web-login.mjs')).resolveTarget(tn, CFG.targets) || targetOf(tn)
+  const wa = await adapter('web-login.mjs'), t0 = wa.resolveTarget(tn, CFG.targets) || targetOf(tn)
   as = as || defaultUser(t0, tn)
   tenant = tenantOf(t0, as, tenant)
-  const t = { ...t0, web: fill(t0.web || '', '', '', tenant) }, bo = browserOpts(t0), eng = process.env.KIT_BROWSER_ENGINE || bo.engine
+  const t = { ...t0, web: fill(t0.web || '', '', '', tenant), webLogin: wa.webLoginOf(t0, as) }, bo = browserOpts(t0), eng = process.env.KIT_BROWSER_ENGINE || bo.engine
   const key = sessionKey(tn, tenant, as), VIEW = { width: Number(bo.width), height: Number(bo.height) }
   BASE = t.web
   let browser, page, port = null

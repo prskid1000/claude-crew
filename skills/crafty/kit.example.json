@@ -117,7 +117,7 @@
  "orgTerms": ["<your org name>", "<your product names, hosts, tenant names>"],
  "localFiles": {
   "skills/pokey/targets.local.json": {
-   "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]; created.<login> {tenant, role, run, ids, kind, seat}: written by pokey.ps1 user create (api -As uses its tenant; never the default user). production: true = no user create, no seat logins. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: pokey adapters/api-auth.ps1; api may hold {tenant}. userAuth.<user> {path, tenant, ...}: that login's own auth fields (a super admin endpoint). browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
+   "_readme": "One entry per TEST environment (never production), local env included. Passwords live ONLY here. users: <key for pokey.ps1 api -As / browser.mjs as> -> [login, password]; created.<login> {tenant, role, run, ids, kind, seat}: written by pokey.ps1 user create (api -As uses its tenant; never the default user). production: true = no user create, no seat logins. auth.type: login (refreshField) | none; token, basic, query, cookie, command, client certs: pokey adapters/api-auth.ps1; api may hold {tenant}. userAuth.<user> {path, tenant, webLogin, ...}: a login's own (super admin; pokey.ps1 user auth). browser.portBase (or KIT_BROWSER_PORT_BASE): first of 2000 shared-Chrome debug ports.",
    "default": "my-staging",
    "browser": { "lang": "en-GB", "timezone": "", "width": 1600, "height": 1000, "portBase": 21000, "diskCache": false },
    "targets": {

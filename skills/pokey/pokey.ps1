@@ -14,13 +14,14 @@ pokey.ps1: pokey commands (SKILL.md tester steps 1-6, lead L1-L3). pwsh 7: & <ki
   ui dump|tap|tapid|tapxy|type|clear|key|swipe|openurl|shot|shotmark|wait|log|photo|mic ...   ($env:ANDROID_SERIAL)
   ui login -Target <t> -As <login> [-Serial <phone>] [-Tenant <t>]   types a stored login into the app (qa.userRecipes app.steps)
   user create -Target <t> -Name <login> -Role <role> [-Kind web|api|app] [-As <admin>] [-Tenant <t>] [-Run <run>] [-Seat] · user list -Target <t> · user deactivate -Target <t> -Name <login>
+  user auth -Target <t> -Name <login> [-Path <api login path>] [-WebLogin <JSON>] [-Tenant <t>]   that login's own endpoints (userAuth)
 In: targets.local.json (logins; user create writes users.<login> + created.<login>, never prints a password), kit.local.json, the run folder. Out: text / JSON (-Json), evidence files.
 Exit codes: 0 ok · 1 problem (evidence check, not deployed, publish refused, api HTTP >= 400 / no answer, ui NOT FOUND / TIMEOUT) · 2 usage,
   api NO-USER · 3 seat ALREADY (item taken) · 4 seat still waiting (run it again).
 Adapters (adapters/): ui-android (ui, deploys[] laneApk), annotate, deployed-checks (deployed), api-auth, report-html (the styled
   HTML report), ui-ios, media evidence (evidence).
-Sections: L30 lanes · L44 report · L164 seat · L313 api · L588 users · L720 login surfaces (parity.json login) · L753 finalize ·
-  L1307 results · L1342 retest · L1399 prepare
+Sections: L31 lanes · L45 report · L165 seat · L314 api · L589 users · L742 login surfaces (parity.json login) · L775 finalize ·
+  L1329 results · L1364 retest · L1421 prepare
 #>
 #Requires -Version 7
 $__verb = if ($args.Count) { [string]$args[0] } else { '' }
@@ -468,9 +469,9 @@ if (-not (Get-KitMember $t.users $As) -and -not $pf -and $kind -ne 'none') {   #
   $nu = "NO-USER '$As' in target $Target (not retried: add it to targets.local.json or use another -As). Known: $((Get-KitProps $t.users).Name -join ', ')$(if ($holders) { ". '$As' is in target(s) $($holders -join ', '): -Target $($holders[0]) -As $As" })"
   if ($script:ApiNoExit) { throw $nu }; $nu; exit 2 }   # user create: in-process, an exit would drop the text
 if (-not $PSBoundParameters['Tenant'] -and ($ut = [string](Get-KitMember (Get-KitMember $t.created $As) 'tenant'))) { $Tenant = $ut }   # pokey.ps1 user create kept the login's tenant
-# userAuth.<user>: that login's own auth fields over auth (a super admin's endpoint); its tenant unless -Tenant
+# userAuth.<user>: that login's own auth fields over auth (a super admin's endpoint); its tenant unless -Tenant; webLogin: browser.mjs
 if (($ua = Get-KitMember $t.userAuth $As)) {
-  $ao = [ordered]@{}; foreach ($p in (Get-KitProps $a)) { $ao[$p.Name] = $p.Value }; foreach ($p in (Get-KitProps $ua)) { if ($p.Name -ne 'tenant' -and $null -ne $p.Value) { $ao[$p.Name] = $p.Value } }
+  $ao = [ordered]@{}; foreach ($p in (Get-KitProps $a)) { $ao[$p.Name] = $p.Value }; foreach ($p in (Get-KitProps $ua)) { if ($p.Name -notin 'tenant', 'webLogin' -and $null -ne $p.Value) { $ao[$p.Name] = $p.Value } }
   $a = Resolve-ApiAuth ([pscustomobject]$ao); $kind = "$($a.type)"; if (-not $kind) { $kind = 'login' }
   if (-not $PSBoundParameters['Tenant'] -and "$($ua.tenant)") { $Tenant = [string]$ua.tenant }
 }
@@ -641,7 +642,7 @@ function Invoke-UserStep($Step, [hashtable]$Vars, [string]$Target, [string]$As, 
 }
 function Invoke-User {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('create', 'list', 'deactivate')][string]$Action,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('create', 'list', 'deactivate', 'auth')][string]$Action,
   [Parameter(Mandatory)][string]$Target,
   [string]$Name,                     # the login (and its users key)
   [string]$Role,                     # a key of the recipe's roles
@@ -649,7 +650,9 @@ param(
   [string]$Tenant,                   # '' = targets.<t>.defaultTenant
   [string]$Run = $env:KIT_RUN,       # kept with the login: cleanup finds a run's logins
   [string]$Kind,                     # web | api | app: refused when the role's kinds lack it
-  [switch]$Seat                      # a run's own parallel login (seat acquire): seat cleanup deactivates it
+  [switch]$Seat,                     # a run's own parallel login (seat acquire): seat cleanup deactivates it
+  [string]$Path,                     # auth: userAuth.<login>.path (its API login endpoint)
+  [string]$WebLogin                  # auth: userAuth.<login>.webLogin JSON over webLogin (its web login page: path, fields, submit)
 )
 $ErrorActionPreference = 'Stop'
 $tf = Get-PokeyTargets; $t = Resolve-PokeyTarget $tf.data.targets $Target
@@ -665,6 +668,25 @@ if ($Action -eq 'list') {
   return
 }
 if ($Name -notmatch '^[_.@A-Za-z0-9-]{1,50}$') { "usage: pokey.ps1 user $Action -Target <t> -Name <login: 1-50 of A-Z a-z 0-9 _ . @ -> ..."; exit 2 }
+# auth: a stored login's own login endpoints (a super admin's), written under the lock; prints field names only
+if ($Action -eq 'auth') {
+  if (-not $t.users[$Name]) { "NO-USER '$Name' in target $Target (user list -Target $Target)"; exit 2 }
+  # Git Bash turns /api/x into C:/Program Files/Git/api/x (the login then hit 'No such host')
+  if ($Path -and $Path -notmatch '^(/|https?://)') { "REFUSED: -Path '$Path' is not /... or http(s)://... (from Git Bash: MSYS_NO_PATHCONV=1, or pwsh)"; exit 2 }
+  if (-not ($Path -or $WebLogin -or $Tenant)) { "usage: pokey.ps1 user auth -Target <t> -Name <login> [-Path <api login path>] [-WebLogin <JSON: path, fields, submit>] [-Tenant <t>]"; exit 2 }
+  Invoke-KitLocked $tf.file {
+    $d = Get-Content -LiteralPath $tf.file -Raw | ConvertFrom-Json -AsHashtable @JsonKeepDates; $tt = $d.targets[$Target]
+    if ($tt.userAuth -isnot [Collections.IDictionary]) { $tt.userAuth = [ordered]@{} }
+    if ($tt.userAuth[$Name] -isnot [Collections.IDictionary]) { $tt.userAuth[$Name] = [ordered]@{} }
+    $ua0 = $tt.userAuth[$Name]
+    if ($Path) { $ua0.path = $Path }
+    if ($Tenant) { $ua0.tenant = $Tenant }
+    if ($WebLogin) { $ua0.webLogin = $WebLogin | ConvertFrom-Json -AsHashtable }
+    Write-KitAtomic $tf.file ($d | ConvertTo-Json -Depth 30); $script:UserAuthKeys = @($ua0.Keys)
+  }
+  "AUTH $Target userAuth.$Name set: $(@($(if ($Path) { 'path' }), $(if ($WebLogin) { 'webLogin' }), $(if ($Tenant) { 'tenant' }) | Where-Object { $_ }) -join ', ') (fields now: $($script:UserAuthKeys -join ', '))"
+  return
+}
 $rc = Get-UserRecipe $Target
 if (-not $Tenant) { $Tenant = if ($made[$Name].tenant) { [string]$made[$Name].tenant } else { [string]$t.defaultTenant } }
 $local = $t.users[$Name]

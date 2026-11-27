@@ -74,6 +74,8 @@ export function resolveTarget(name, targets, lanes) {
   for (const k of ['users', 'created']) t[k] = { ...lt[k], ...own?.[k] }
   return t
 }
+// userAuth.<as>.webLogin over webLogin: a login's own web login page and fields (a super admin's), as pokey.ps1 api for auth
+export const webLoginOf = (t, as) => t.webLogin && { ...t.webLogin, ...t.userAuth?.[as]?.webLogin }
 // registry (parity.json login): the web surface (browser.mjs login()) reads users, profiles and secret:<name> refs (resolveSecret)
 export const ADAPTERS = { login: {} }
 ADAPTERS['login']['web'] = { users: true, profiles: true, secretRefs: resolveSecret }
