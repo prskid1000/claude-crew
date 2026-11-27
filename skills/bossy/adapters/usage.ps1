@@ -3,12 +3,12 @@ usage.ps1 (core): tokens, cost and time per run, step, role and model for the su
 budget -Usage; budget handoffs and their successors; dot-sourced by bossy.ps1 (skills/bossy/adapters/).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L10 usage · L411 context · L775 waste (owner 2026-11-23 · L845 split · L919 budget · L1006 handoffs · L1018 limits ·
-  L1037 workflow config · L1062 dead runs
+Sections: L10 usage · L398 context · L727 waste (owner 2026-11-23 · L797 split · L871 budget · L943 handoffs · L955 limits ·
+  L974 workflow config · L999 dead runs
 #>
 #Requires -Version 7
 # ---- usage: tokens, cost, time per run, step, role, model (Statistics "Usage"); transcripts parsed incrementally, cached
-# one transcript's totals since its last read offset (append-only files); Claude: per message id (a message repeats per content block), Codex: last cumulative count
+# one transcript's totals since its last read offset (append-only files); per message id (a message repeats per content block)
 # token vector [in, out, cache read, cache write, of it 1-hour cache write]; days = that vector per local day (the 7-day window cuts by day)
 function Update-KitUsageFile([string]$Path, $Rec, [ref]$Left) {
   $fi = [IO.FileInfo]::new($Path); if (-not $fi.Exists) { return $Rec }
@@ -25,14 +25,9 @@ function Update-KitUsageFile([string]$Path, $Rec, [ref]$Left) {
   $Left.Value -= $end + 1; $Rec.off = [long]$Rec.off + $end + 1; $Rec.tOff = $Rec.off
   $num = { param($l, [string]$k) $m = [regex]::Match($l, """$k"":(\d+)"); if ($m.Success) { [long]$m.Groups[1].Value } else { 0L } }
   foreach ($l in [Text.Encoding]::UTF8.GetString($b, 0, $end).Split([char]10)) {
-    $ts = [regex]::Match($l, '"timestamp":"([^"]+)"'); if (-not $ts.Success -and $l.StartsWith('{"step_index"')) { $ts = [regex]::Match($l, '"created_at":"([^"]+)"') }; if ($ts.Success) { if (-not $Rec.t0) { $Rec.t0 = $ts.Groups[1].Value }; $Rec.t1 = $ts.Groups[1].Value; Step-KitUsageTime $Rec $l $ts.Groups[1].Value }   # created_at: Antigravity
+    $ts = [regex]::Match($l, '"timestamp":"([^"]+)"'); if ($ts.Success) { if (-not $Rec.t0) { $Rec.t0 = $ts.Groups[1].Value }; $Rec.t1 = $ts.Groups[1].Value; Step-KitUsageTime $Rec $l $ts.Groups[1].Value }
     $was = @([long]$Rec.in, [long]$Rec.out, [long]$Rec.cr, [long]$Rec.cw, [long]$Rec.cw1)
-    $mdl = Get-KitTranscriptModel $l; if ($mdl) { $Rec.model = $mdl }
-    if ($l.Contains('"total_token_usage"')) {   # codex rollout: cumulative
-      $m = [regex]::Match($l, '"total_token_usage":\{([^}]*)\}'); if (-not $m.Success) { continue }; $u = $m.Groups[1].Value; $Rec.cr = & $num $u 'cached_input_tokens'; $Rec.in = (& $num $u 'input_tokens') - $Rec.cr; $Rec.out = & $num $u 'output_tokens'; $Rec.n++ }
-    elseif ($l.Contains('"type":"PLANNER_RESPONSE"')) {   # antigravity: one model call per line, input without the cache read
-      if (-not $l.Contains('"input_tokens"')) { continue }; $Rec.in += & $num $l 'input_tokens'; $Rec.cr += & $num $l 'cache_read_tokens'; $Rec.out += & $num $l 'output_tokens'; $Rec.n++; $Rec.tools += ([regex]::Matches($l, '\{"name":"')).Count }
-    elseif (-not $l.Contains('"usage"') -or -not $l.Contains('"assistant"')) { continue }
+    if (-not $l.Contains('"usage"') -or -not $l.Contains('"assistant"')) { continue }
     else {
       $Rec.tools += ([regex]::Matches($l, '"type":"tool_use"')).Count
       $md = [regex]::Match($l, '"model":"([^"]+)"'); if ($md.Success -and $md.Groups[1].Value -ne '<synthetic>') { $Rec.model = $md.Groups[1].Value }
@@ -53,13 +48,12 @@ function Update-KitUsageFile([string]$Path, $Rec, [ref]$Left) {
 # a transcript line's time (owner 2026-11-20): prompt or tool result -> assistant = model (a gap over 30 min = idle); tool_use -> its results = that
 # tool's kind, the gate's printed queue time = waiting; an answer with no tool -> the next prompt = idle; tm = seconds [model, build, ci, browser, other tool, waiting]
 function Step-KitUsageTime($Rec, [string]$L, [string]$Ts) {
-  # the 3 CLIs: Claude assistant / user lines, Codex response items (function_call -> *_call_output), Antigravity steps (PLANNER_RESPONSE -> its tool's step)
+  # Claude assistant / user lines
   if ($L.Contains('"type":"api-request')) { return }   # Claude's request copies: no turn
-  $ag = $L.StartsWith('{"step_index"'); $isA = $L.Contains('"role":"assistant"') -or $L.Contains('"type":"PLANNER_RESPONSE"') -or $L.Contains('"type":"function_call"') -or $L.Contains('"type":"custom_tool_call"')
-  $isR = $L.Contains('"tool_result"') -or $L.Contains('_call_output"') -or ($ag -and $L.Contains('"source":"MODEL"'))
-  $isU = -not $isA -and ($isR -or $L.Contains('"type":"user"') -or $L.Contains('"type":"USER_INPUT"') -or ($L.Contains('"response_item"') -and $L.Contains('"role":"user"'))); if (-not $isA -and -not $isU) { return }
+  $isA = $L.Contains('"role":"assistant"'); $isR = $L.Contains('"tool_result"')
+  $isU = -not $isA -and ($isR -or $L.Contains('"type":"user"')); if (-not $isA -and -not $isU) { return }
   $t = [datetimeoffset]$Ts; $gap = if ($Rec.tL) { [math]::Max(0.0, ($t - [datetimeoffset]$Rec.tL).TotalSeconds) } else { 0.0 }; $tm = @($Rec.tm | ForEach-Object { [double]$_ })
-  if ($isA) { if ($Rec.tK -and $gap -le 1800) { $tm[0] += $gap }; if ($L.Contains('"type":"tool_use"') -or $L.Contains('"tool_calls"') -or $L.Contains('_call"')) { $Rec.tK = 'a'; $Rec.tC = Get-KitToolTimeKind $L } else { $Rec.tK = 'e' } }
+  if ($isA) { if ($Rec.tK -and $gap -le 1800) { $tm[0] += $gap }; if ($L.Contains('"type":"tool_use"')) { $Rec.tK = 'a'; $Rec.tC = Get-KitToolTimeKind $L } else { $Rec.tK = 'e' } }
   elseif ($isR) { if ($Rec.tK -in 'a', 'r') { $q = [math]::Min($gap, [double](@([regex]::Matches($L, '\[gate\] starting:[^\\"]*?queued (\d+) s') | ForEach-Object { [double]$_.Groups[1].Value }) + 0 | Measure-Object -Sum).Sum); $tm[[int]$Rec.tC] += $gap - $q; $tm[5] += $q }; $Rec.tK = 'r' }
   else { $Rec.tK = 'u' }
   if ($null -ne $Rec.tmd) { $dk = $t.LocalDateTime.ToString('yyyy-MM-dd'); $d6 = @(if ($Rec.tmd[$dk]) { $Rec.tmd[$dk] } else { 0, 0, 0, 0, 0, 0 }); $was6 = @($Rec.tm)   # per day: the 7-day window counts its own days only
@@ -94,7 +88,7 @@ function Get-KitUsageCostSplit($Tok, [string]$Model) {
 function Show-KitUsage([double]$Seconds, [bool]$Json) {
   $u = Get-KitUsage -Seconds $Seconds; $d0 = @($u.days)[-1]
   if ($Json) { $u | ConvertTo-Json -Depth 8 -Compress; return }
-  "usage: today $($d0.tok) tokens (output $($d0.out), fresh in $($d0.in), cache write $($d0.cw), cache read $($d0.cr))$(if ($null -ne $d0.cost) { ", est. `$$($d0.cost)$(if ($d0.cs) { " (output `$$([math]::Round(@($d0.cs)[1], 2)), fresh in `$$([math]::Round(@($d0.cs)[0], 2)), cache write `$$([math]::Round(@($d0.cs)[3], 2)), cache read `$$([math]::Round(@($d0.cs)[2], 2)))" })" }); 7 days $(($u.days | Measure-Object tok -Sum).Sum) tokens, $(@($u.runs).Count) run(s), $((@($u.bg) | Measure-Object n -Sum).Sum) agent(s) outside workflows, $(@($u.coord).Count) coordinator session(s)$(if (@($u.unpriced | Where-Object { -not $_.only }).Count) { "; not priced (add to budget.prices): $(@($u.unpriced | Where-Object { -not $_.only } | ForEach-Object { "$($_.model) $($_.tok) tokens" }) -join ', ')" })$(if (@($u.unpriced | Where-Object only).Count) { "; tokens only (no list price kept): $(@($u.unpriced | Where-Object only | ForEach-Object { "$($_.model) $($_.tok) tokens" }) -join ', ')" })$(if ($u.partial) { '; transcripts still being read (run again)' })"
+  "usage: today $($d0.tok) tokens (output $($d0.out), fresh in $($d0.in), cache write $($d0.cw), cache read $($d0.cr))$(if ($null -ne $d0.cost) { ", est. `$$($d0.cost)$(if ($d0.cs) { " (output `$$([math]::Round(@($d0.cs)[1], 2)), fresh in `$$([math]::Round(@($d0.cs)[0], 2)), cache write `$$([math]::Round(@($d0.cs)[3], 2)), cache read `$$([math]::Round(@($d0.cs)[2], 2)))" })" }); 7 days $(($u.days | Measure-Object tok -Sum).Sum) tokens, $(@($u.runs).Count) run(s), $((@($u.bg) | Measure-Object n -Sum).Sum) agent(s) outside workflows, $(@($u.coord).Count) coordinator session(s)$(if (@($u.unpriced).Count) { "; not priced (add to budget.prices): $(@($u.unpriced | ForEach-Object { "$($_.model) $($_.tok) tokens" }) -join ', ')" })$(if (@($u.unpriced | Where-Object only).Count) { "; tokens only (no list price kept): $(@($u.unpriced | Where-Object only | ForEach-Object { "$($_.model) $($_.tok) tokens" }) -join ', ')" })$(if ($u.partial) { '; transcripts still being read (run again)' })"
 }
 # the git host's merged MRs of this machine's login since $Since (deploy MRs left out); cached 2 beats in the usage cache; $null = no login or no repos
 # days as yyyy-MM-dd: ConvertFrom-Json turns ISO date-times into DateTime
@@ -242,13 +236,6 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
       $st = & $mkStep $u $model @{ label = "$($m.description)"; type = 'agent'; role = $rl; tool = 'claude'; at = (Get-KitStamp stored $f.LastWriteTime); tf = $f.FullName }; if (-not $st) { continue }
       & $toBg $k $st $rl }
   }
-  # Codex rollouts and Antigravity transcripts (owner 2026-11-22: every CLI): an agent step each, grouped by its tool; tests read only KIT_TRANSCRIPTS_<TOOL>
-  foreach ($tl in 'codex', 'antigravity') { if ($env:KIT_TRANSCRIPTS -and -not [Environment]::GetEnvironmentVariable("KIT_TRANSCRIPTS_$($tl.ToUpper())")) { continue }
-    $tr = Invoke-KitAdapter transcript $tl root; if (-not $tr.dir -or -not (Test-Path -LiteralPath $tr.dir)) { continue }
-    foreach ($f in @(Get-Item -Force -Path (Join-Path ([WildcardPattern]::Escape($tr.dir)) "$($tr.sub)/$($tr.filter)") -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer -and $_.LastWriteTime -gt $since })) {
-      $u = & $read $f.FullName; $id = if ($tl -eq 'antigravity') { Split-Path (Split-Path (Split-Path $f.DirectoryName)) -Leaf } else { $f.BaseName -replace '^rollout-' }
-      $st = & $mkStep $u $(if ($u.model) { "$($u.model)" } else { $tl }) @{ label = "$tl $id"; type = 'agent'; role = $tl; tool = $tl; at = (& $atOf $u $f.FullName); tf = $f.FullName }; if (-not $st -or -not $st.tok) { continue }
-      & $toBg $tl $st $tl } }
   foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter '*.jsonl' -File -ErrorAction SilentlyContinue | Where-Object LastWriteTime -gt $since)) {   # main sessions: the coordinator's own turns
     $u = & $read $f.FullName; $st = & $mkStep $u "$($u.model)" @{ label = "session $($f.BaseName)"; type = 'coordinator'; role = 'coordinator'; at = (& $atOf $u $f.FullName) }; if (-not $st -or -not $st.tok) { continue }
     $steps.Add($st); $coord.Add((& $withSplit ([pscustomobject]@{ session = $f.BaseName; model = $st.model; tok = $st.tok; cost = $(if ($null -ne $st.cost) { [math]::Round($st.cost, 2) }); min = $st.min; at = $st.at }) @($st))) }
@@ -274,7 +261,7 @@ function Get-KitUsage([datetime]$Now = (Get-Date), [int]$Days = 7, [double]$Seco
       [pscustomobject]@{ day = $dk; cx = $(if ($ctxDay[$dk]) { [ordered]@{ add = @($ctxDay[$dk].v[0..7]); car = @($ctxDay[$dk].v[8..15]); pk = $ctxDay[$dk].v[16]; role = $ctxDay[$dk].role } }); tok = $tk; cost = $(if ($dc.Count) { [math]::Round(($dc | Measure-Object -Sum).Sum, 2) }); in = [long]$t8[0]; out = [long]$t8[1]; cr = [long]$t8[2]; cw = [long]$t8[3]; cs = $(if ($dc.Count) { @($t8[4..7] | ForEach-Object { [math]::Round($_, 4) }) }); runs = @($ds | Where-Object wid | ForEach-Object run | Select-Object -Unique).Count
         merged = $(if ($hostMrs) { @($hostMrs.mrs | Where-Object { "$($_.day)" -eq $dk }).Count } else { @(@($steps | Where-Object { "$($_.at)".StartsWith($dk) }).mrs | Where-Object { $_ } | Select-Object -Unique).Count }) } })
   $usageOut = [pscustomobject]@{ at = (Get-KitStamp stored $Now); since = (Get-KitStamp stored $since); partial = $script:KitUsagePartial; runs = @($runs | Sort-Object at -Descending); bg = @($bg.Values | ForEach-Object { & $withSplit ([pscustomobject]@{ session = $_.session; n = $_.n; tok = $_.tok; cost = $(if ($null -ne $_.cost) { [math]::Round($_.cost, 2) }); roles = (@($_.roles.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ' · ') }) $_.ss } | Sort-Object { -$_.tok })
-    coord = @($coord | Sort-Object { -$_.tok }); modelCost = @($mcost.GetEnumerator() | ForEach-Object { [pscustomobject]@{ k = $_.Key; v = [math]::Round($_.Value, 2) } }); unpriced = @($unp.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { [pscustomobject]@{ model = $_.Key; tok = $_.Value; only = "$($_.Key)" -match '^(gpt|gemini|o\d|codex|antigravity)' } })   # only: Codex / Antigravity models, no list price kept
+    coord = @($coord | Sort-Object { -$_.tok }); modelCost = @($mcost.GetEnumerator() | ForEach-Object { [pscustomobject]@{ k = $_.Key; v = [math]::Round($_.Value, 2) } }); unpriced = @($unp.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { [pscustomobject]@{ model = $_.Key; tok = $_.Value } })
     mrList = @(@(if ($hostMrs) { $hostMrs.mrs } else { foreach ($sx in $wf) { foreach ($mr in @($sx.mrs | Where-Object { $_ })) { @{ ref = "$mr"; day = $(try { ([datetimeoffset]"$($sx.at)").LocalDateTime.ToString('yyyy-MM-dd') } catch { '' }); lead = $null } } } }) | Sort-Object { "$($_.ref)" } -Unique)   # the Delivery repo x day map, lead times
     merged = $(if ($hostMrs) { [pscustomobject]@{ source = 'host'; user = $hostMrs.user; n = @($hostMrs.mrs).Count } } else { [pscustomobject]@{ source = 'workflows'; user = ''; n = @($wf.mrs | Where-Object { $_ } | Select-Object -Unique).Count } })
     byType = (& $grp type); byModel = (& $grp model)
@@ -304,7 +291,7 @@ function Format-KitUsageHtml($U) {
   $sum = { param([string]$k) $vs = @($dy | ForEach-Object { (Get-KitMember $_ $k) } | Where-Object { $null -ne $_ }); if ($vs.Count) { ($vs | Measure-Object -Sum).Sum } }
   $runs = @($U.runs | Where-Object { $_ }); $wfTok = [double](($runs | Measure-Object tok -Sum).Sum); $loop = [double](($runs | Measure-Object loop -Sum).Sum)
   $merged = [int](($runs | Measure-Object merged -Sum).Sum); $items = [int](($runs | Measure-Object items -Sum).Sum); $rt = $U.rates;
-  $allTok = [double](& $sum 'tok'); $hm = $U.merged; $onHost = $hm.source -eq 'host'; $unp = @($U.unpriced | Where-Object { $_ -and -not $_.only }); $tko = @($U.unpriced | Where-Object { $_ -and $_.only })
+  $allTok = [double](& $sum 'tok'); $hm = $U.merged; $onHost = $hm.source -eq 'host'; $unp = @($U.unpriced | Where-Object { $_ })
   $card = { param([string]$label, [string]$v, [string]$sub, [string]$w, [string]$cls = '') "<div class='st $cls' data-fit><div class=k>$(& $e $label)</div><div class=v>$v</div>$(if ($sub) { "<div class=s title='$(& $e $sub)'>$(& $e $sub)</div>" })$(if ($w) { "<div class=w>$(& $e $w)</div>" })</div>" }
   $pct = { param($a, $b) if ([double]$b) { [math]::Round(100 * [double]$a / [double]$b) } }
   # step outcomes (pass, empty, failed, stopped, running, stuck): a tile each, the zero ones left out
@@ -341,7 +328,7 @@ function Format-KitUsageHtml($U) {
         tips = @('', '', '', "$(& $mn $_.avgMin), avg of $($_.n) steps: active time$(if ([int]$_.wallN) { ", wall clock for the $($_.wallN) without a split" })$(if ([int]$_.tmN) { "; the cell: the $($_.tmN) with one`n$(Get-KitSplitTip ([pscustomobject]@{ tm = $tim0.tm }))" })", "$(& $mn $_.p90Min), p90 of $($_.n) steps (active time$(if ([int]$_.wallN) { "; wall clock for $($_.wallN)" }))") + @($mdl | ForEach-Object { '' }) + $cxc.tips + $wsc.tips
         tx = @("$($_.n)", (& $tk $_.sum), "$(& $pct $_.sum $rAll)%", (& $mn $_.avgMin), (& $mn $_.p90Min)) + @($msh | ForEach-Object { if ($_) { "$_%" } else { '' } }) + $cxc.tx + $wsc.tx } })
   $top = $roles | Select-Object -First 1   # folded (owner 2026-11-19): the top role in its header (the 7-day cost is a Trends tile)
-  $spend = & $fold 'u-spend' 'Per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'P90 time') + @($mdl | ForEach-Object { & $mShort $_.k }) + @('avg start', 'avg peak', 'start / peak') + @($script:KitCtxCats | ForEach-Object { $_[1] }) + @('fixable', 'open', 'fixed')) 'role · metric' 'spend-role' @(@(@('Spend', 5), @('Model mix', $mdl.Count), @('Context', 11), @('Waste', 3)) | Where-Object { [int]$_[1] }))$(Format-KitLegend "shade = column peak · amber fixable · red open · $(Format-KitContextLegend)$(if ($unp.Count) { ' · some not priced' })" "a column shaded by its peak (a split cell: each tile by its type's peak, named in the column head) · Spend: time = active (model + tools + waiting), wall clock where no split is recorded · Model mix: each model's share of the role's tokens · Context: start = the first model call's context (the instruction load), peak = the largest call, the source columns: each source's share of the tokens re-sent with every call (bossy.ps1 usage -Context -Type <role>) · Waste: $(Format-KitWasteLegend) · hover a role for its step types and context$(if ($unp.Count) { " · not priced: $(@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })$(if ($tko.Count) { " · tokens only (Codex / Antigravity, no list price kept): $(@($tko | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })")"
+  $spend = & $fold 'u-spend' 'Per role' $roles.Count -tag h4 -cls 'sub st uc ur' -extra "$(if ($top) { "<span class=fsm>top: $(& $e $top.k), $(& $pct $top.sum $rAll)% of the tokens</span>" })" -inner "$(Format-KitMetricHeat $spRows (@('steps', 'tokens · est. cost', 'share', 'avg time', 'P90 time') + @($mdl | ForEach-Object { & $mShort $_.k }) + @('avg start', 'avg peak', 'start / peak') + @($script:KitCtxCats | ForEach-Object { $_[1] }) + @('fixable', 'open', 'fixed')) 'role · metric' 'spend-role' @(@(@('Spend', 5), @('Model mix', $mdl.Count), @('Context', 11), @('Waste', 3)) | Where-Object { [int]$_[1] }))$(Format-KitLegend "shade = column peak · amber fixable · red open · $(Format-KitContextLegend)$(if ($unp.Count) { ' · some not priced' })" "a column shaded by its peak (a split cell: each tile by its type's peak, named in the column head) · Spend: time = active (model + tools + waiting), wall clock where no split is recorded · Model mix: each model's share of the role's tokens · Context: start = the first model call's context (the instruction load), peak = the largest call, the source columns: each source's share of the tokens re-sent with every call (bossy.ps1 usage -Context -Type <role>) · Waste: $(Format-KitWasteLegend) · hover a role for its step types and context$(if ($unp.Count) { " · not priced: $(@($unp | ForEach-Object { "$($_.model) $(& $tk $_.tok)" }) -join ', ')" })")"
   $stepRows = { param($ss) @($ss | ForEach-Object { $tip = Get-KitSplitTip $_ "$($_.label)"; , @($_.label, $_.role, ("$($_.model)" -replace '^claude-'), @{ h = Format-KitSplitCell $_ 'tc' $tip }, @{ h = Format-KitSplitCell $_ 'time' (Get-KitSplitTip ($_ | Select-Object tm, tmN, min)) }, $_.tools, @{ h = "<span class='chip $(switch ($_.result) { 'pass' { 's-act' } 'running' { 's-fin' } 'stuck' { 's-stuck' } 'fail' { 's-stuck' } default { 's-oth' } })'>$(& $e $_.result)</span>" }, "$($_.round)$(if ($_.retry) { " · retry $($_.retry)" })") }) }
   # a run: its human label (mandate / area, the run id in the tooltip), kind chip, resumed, outcome-split step bar; budget bar while running or over 80%
   $kindOf = { param($r) if ($r.kind) { "$($r.kind)" } elseif ("$($r.roles)" -match '^(kitty \d+( · )?)+$') { 'kit' } elseif ("$($r.roles)" -match 'checky') { 'test' } else { 'build' } }
@@ -408,28 +395,22 @@ function Format-KitUsageHtml($U) {
 # empty step = a result with no field but ok, or only null / blank-text fields; an array (even []), a number or a bool is an answer
 # (219 of 219 "empty" steps were clean reviews / audits ({findings: []}) or verdict lists: object arrays stringify blank, 2026-11-25)
 function Test-KitStepEmpty($R) { -not @((Get-KitProps $R) | Where-Object { $_.Name -ne 'ok' -and $null -ne $_.Value -and ($_.Value -isnot [string] -or $_.Value.Trim()) }).Count }
-# ---- context: what fills each agent's context (owner 2026-11-22), per model call, from Claude, Codex and Antigravity transcripts
+# ---- context: what fills each agent's context (owner 2026-11-22), per model call, from Claude Code transcripts
 # tokens = UTF-8 bytes / 4 (kitbag budget); call 1's measured size minus its prompt = kit instructions (system prompt, tools, CLAUDE.md /
 # AGENTS.md, rules); at each call the categories in context are scaled to the call's size (input + cache read + cache write) and added to
 # carried (re-sent); a compaction (marker, or a drop under usage.context.compactDrop) keeps the start load and the summary
 $script:KitCtxCats = @(@('ki', 'kit instructions'), @('ti', 'task input'), @('cd', 'code reads'), @('kd', 'kit data'), @('bt', 'build + test output'), @('ot', 'other tool output'), @('wd', 'web + docs'), @('mo', 'model output'))
-# a model id from a Codex turn_context or an Antigravity model switch line; '' = none on this line
-function Get-KitTranscriptModel([string]$L) {
-  if ($L.Contains('"turn_context"')) { $m = [regex]::Match($L, '"model":"([^"]+)"'); if ($m.Success) { return $m.Groups[1].Value } }
-  if ($L.Contains('"type":"USER_INPUT"')) { $m = [regex]::Match($L, 'Model Selection` from [^`]*? to ([A-Za-z][\w .-]*?)(?: \(|\.\s|\.\\|\."|\\|"|$)'); if ($m.Success) { return ($m.Groups[1].Value.Trim().ToLower() -replace '\s+', '-') } }
-  ''
-}
 # the parser's params, read once per process (a line read them 5 times: half the pass)
 function Get-KitContextParam([string]$Key) { if ($null -eq $script:KitCtxP) { $script:KitCtxP = @{} }; if (-not $script:KitCtxP.ContainsKey($Key)) { $script:KitCtxP[$Key] = [double](Get-KitParam "usage.context.$Key") }; $script:KitCtxP[$Key] }
 function New-KitContextRec { [ordered]@{ v = 2; off = 0L; n = 0; s0 = 0L; pk = 0L; sum = 0L; last = 0L; cmp = 0; ho = 0; cut = 0; kpk = 0L; lastId = ''; lastOut = 0L; add = @(0L) * 8; car = @(0L) * 8; live = @(0.0) * 8; pend = @{}; q = @(); rd = @{}; rmax = @(0, ''); w = @(0L) * 6; top = @(); days = @{} } }
 # a tool's category: 0 kit instructions · 1 task input · 2 code reads · 3 kit data · 4 build + test output · 5 other tool output · 6 web + docs
-# (7 = model output: output tokens); tool names of the 3 CLIs; $Key = its path or command
+# (7 = model output: output tokens); $Key = its path or command
 function Get-KitContextCat([string]$Name, [string]$Key) {
   switch -Regex ($Name) {
     '^(Skill|skill)$' { return 0 }
-    '^(WebFetch|WebSearch|web_search|search_web|read_url_content)$|^mcp__.*(doc|drive|gws|google)' { return 6 }
-    '^(Read|NotebookRead|view_file\w*|read_file|Grep|Glob|LSP|grep_search|list_dir\w*|find_by_name|codebase_search|view_code_item)$' { return (Get-KitContextPathCat $Key 2) }
-    '^(Bash|PowerShell|run_command|command_status|shell|shell_command|exec_command|local_shell\w*)$' { return (Get-KitContextCmdCat $Key) }
+    '^(WebFetch|WebSearch)$|^mcp__.*(doc|drive|gws|google)' { return 6 }
+    '^(Read|NotebookRead|Grep|Glob|LSP)$' { return (Get-KitContextPathCat $Key 2) }
+    '^(Bash|PowerShell)$' { return (Get-KitContextCmdCat $Key) }
   }
   5
 }
@@ -485,7 +466,7 @@ function Reset-KitContextLive($Cx) { if (-not [int]$Cx.n -or [int]$Cx.cut) { ret
 # a tool result: its tokens + the waste signals: w = [rereads, their tokens, results over usage.context.bigResultTokens, their tokens,
 # build / test results over usage.context.logTokens, their tokens]; rmax = the most re-read file; top = the 3 largest results "tok|cat|label"
 function Add-KitContextResult($Cx, [string]$Pend, [double]$Tok, [string]$Day) {
-  $p = "$Pend" -split '\|', 3; $cat = if ($p[0] -match '^\d$') { [int]$p[0] } else { 5 }; $tool = "$($p[1])"; $rk = "$($p[2])"; $isRead = $tool -match '^(Read|NotebookRead|view_file\w*|read_file)$'; $key = if ($isRead) { $rk -replace '#L[^#]*$', '' } else { $rk }
+  $p = "$Pend" -split '\|', 3; $cat = if ($p[0] -match '^\d$') { [int]$p[0] } else { 5 }; $tool = "$($p[1])"; $rk = "$($p[2])"; $isRead = $tool -match '^(Read|NotebookRead)$'; $key = if ($isRead) { $rk -replace '#L[^#]*$', '' } else { $rk }
   Add-KitContextTok $Cx $cat $Tok $Day; $w = $Cx.w
   if ($key -and $isRead) { $k = $rk.ToLowerInvariant() -replace '\\', '/'
     if ($Cx.rd.Contains($k) -or $Cx.rd.Count -lt 1000) { $c = 1 + [int]$Cx.rd[$k]; $Cx.rd[$k] = $c; if ($c -ge 2) { $w[0] = [long]$w[0] + 1; $w[1] = [long]$w[1] + [long]$Tok }; if ($c -gt [int]@($Cx.rmax)[0]) { $Cx.rmax = @($c, ($key -replace '\\', '/')) } } }
@@ -500,10 +481,10 @@ function Add-KitContextResult($Cx, [string]$Pend, [double]$Tok, [string]$Day) {
 function Get-KitContextPend([string]$Name, $In) {
   if ($In -is [string]) { $In = try { $In | ConvertFrom-Json -AsHashtable -Depth 20 } catch { @{ command = $In } } }
   if ($In -is [Collections.IDictionary]) { $In = [hashtable]::new($In, [StringComparer]::OrdinalIgnoreCase) }   # JSON keys are case-sensitive: Path / path
-  $v = { param($k) $x = $In[$k]; if ($x -is [string] -and $x.StartsWith('"')) { $x = try { $x | ConvertFrom-Json } catch { $x } }; if ($x -is [array]) { $x = $x -join ' ' }; "$x".Trim('"').Trim() }   # Antigravity args are JSON strings
-  $key = @(@(foreach ($k in 'file_path', 'path', 'notebook_path', 'AbsolutePath', 'SearchPath', 'SearchDirectory', 'DirectoryPath', 'command', 'CommandLine', 'cmd', 'Url', 'url', 'skill') { if ($In -is [Collections.IDictionary] -and $In.Contains($k)) { & $v $k } }) | Where-Object { $_ })[0]
+  $v = { param($k) $x = $In[$k]; if ($x -is [string] -and $x.StartsWith('"')) { $x = try { $x | ConvertFrom-Json } catch { $x } }; if ($x -is [array]) { $x = $x -join ' ' }; "$x".Trim('"').Trim() }   # a JSON-string arg
+  $key = @(@(foreach ($k in 'file_path', 'path', 'notebook_path', 'command', 'url', 'skill') { if ($In -is [Collections.IDictionary] -and $In.Contains($k)) { & $v $k } }) | Where-Object { $_ })[0]
   # a read's range joins its key: the next range of a file is no re-read (AGENTS.md "File inspection" asks for ranges)
-  $rg = if ($In -is [Collections.IDictionary] -and $Name -match '^(Read|NotebookRead|view_file\w*|read_file)$') { (@('offset', 'limit', 'StartLine', 'EndLine', 'pages') | ForEach-Object { & $v $_ }) -join ',' }
+  $rg = if ($In -is [Collections.IDictionary] -and $Name -match '^(Read|NotebookRead)$') { (@('offset', 'limit', 'pages') | ForEach-Object { & $v $_ }) -join ',' }
   "$(Get-KitContextCat $Name "$key")|$Name|$("$key" -replace '[\r\n|]+', ' ')$(if ($rg -match '[^,]') { "#L$rg" })"
 }
 # a fast estimate for a big line: its tool results between tool ids (Claude: up to toolUseResult, its copy)
@@ -513,41 +494,12 @@ function Get-KitContextSegments([string]$L, [string]$IdKey) {
   for ($i = 0; $i -lt $ms.Count; $i++) { $s0 = $ms[$i].Index; $e = if ($i + 1 -lt $ms.Count) { $ms[$i + 1].Index } else { $stop }; $im = @($img | Where-Object { $_.Index -gt $s0 -and $_.Index -lt $e })
     [pscustomobject]@{ id = $ms[$i].Groups[1].Value; tok = [math]::Max(0.0, ($e - $s0 - 60 - [double](@($im | ForEach-Object { $_.Length }) + 0 | Measure-Object -Sum).Sum) / 4.0) + $im.Count * (Get-KitContextParam imageTokens) } }
 }
-# one transcript line; the 3 formats: Antigravity steps ({"step_index"), Codex rollout items ({"timestamp", payload), Claude Code lines
+# one Claude Code transcript line
 function Step-KitContextLine($Cx, [string]$L) {
   if ($L.Length -lt 20 -or $L.Contains('"type":"api-request')) { return }
-  $ti = $L.IndexOf('"timestamp":"', [StringComparison]::Ordinal); $tk = 13; if ($ti -lt 0) { $ti = $L.IndexOf('"created_at":"', [StringComparison]::Ordinal); $tk = 14 }   # ordinal: a regex scanned MB lines
+  $ti = $L.IndexOf('"timestamp":"', [StringComparison]::Ordinal); $tk = 13   # ordinal: a regex scanned MB lines
   $day = if ($ti -ge 0) { $te = $L.IndexOf('"', $ti + $tk); try { ([datetimeoffset]$L.Substring($ti + $tk, $te - $ti - $tk)).LocalDateTime.ToString('yyyy-MM-dd') } catch { '' } } else { '' }
   $parse = { try { $L | ConvertFrom-Json -AsHashtable -Depth 100 } catch { $null } }
-  if ($L.StartsWith('{"step_index"')) {
-    $ty = [regex]::Match($L, '"type":"([A-Z_]+)"').Groups[1].Value
-    switch ($ty) {
-      'PLANNER_RESPONSE' { $o = & $parse; if (-not $o) { return }
-        if ($null -ne $o.input_tokens) { Add-KitContextCall $Cx ([double]$o.input_tokens + [double]$o.cache_read_tokens) $day; Add-KitContextTok $Cx 7 ([double]$o.output_tokens) $day }
-        $Cx.q = @(@($Cx.q) + @(@($o.tool_calls) | Where-Object { $_.name } | ForEach-Object { Get-KitContextPend "$($_.name)" $_.args })); return }
-      'USER_INPUT' { if (-not [int]$Cx.n -and $L -match 'resume-[\w.-]+\.md') { $Cx.ho = 1 }; Add-KitContextTok $Cx 1 (($L.Length - 150) / 4.0) $day; return }
-      'SYSTEM_MESSAGE' { Add-KitContextTok $Cx 0 (($L.Length - 150) / 4.0) $day; return }
-      'CHECKPOINT' { Reset-KitContextLive $Cx; Add-KitContextTok $Cx 7 (($L.Length - 150) / 4.0) $day; return }
-      'CONVERSATION_HISTORY' { return }
-    }
-    if (-not $L.Contains('"source":"MODEL"')) { return }   # a tool's step: the next queued call's
-    $pd = @($Cx.q)[0]; $Cx.q = @(@($Cx.q) | Select-Object -Skip 1)
-    if (-not $pd) { $pd = "$(switch ($ty) { 'VIEW_FILE' { Get-KitContextPathCat ([regex]::Match($L, 'File Path: `file:///([^`]+)`').Groups[1].Value) 2 } { $_ -in 'GREP_SEARCH', 'LIST_DIRECTORY' } { 2 } default { 5 } })|$ty|" }
-    Add-KitContextResult $Cx $pd (($L.Length - 150) / 4.0) $day; return }
-  if ($L -match '^\{"timestamp":"[^"]*",("ordinal":\d+,)?"type":"(response_item|event_msg|turn_context|session_meta|compacted)"') {
-    $kd = $Matches[2]
-    if ($kd -eq 'compacted' -or $L.Contains('"type":"context_compacted"')) { Reset-KitContextLive $Cx; return }
-    if ($kd -eq 'event_msg') { if (-not $L.Contains('"last_token_usage"')) { return }; $o = & $parse; $u = $o.payload.info.last_token_usage; $tt = [long]$o.payload.info.total_token_usage.total_tokens
-      if (-not $u -or $tt -eq [long]$Cx.lastOut) { return }; $Cx.lastOut = $tt   # a repeated count: no new call
-      Add-KitContextCall $Cx ([double]$u.input_tokens) $day; Add-KitContextTok $Cx 7 ([double]$u.output_tokens) $day; return }
-    if ($kd -ne 'response_item') { return }
-    $pt = [regex]::Match($L, '"payload":\{"type":"(\w+)"').Groups[1].Value
-    if ($pt -match '_output$') { $id = [regex]::Match($L, '"call_id":"([^"]+)"').Groups[1].Value; $pd = $Cx.pend[$id]; if ($id) { $Cx.pend.Remove($id) }; Add-KitContextResult $Cx "$pd" (($L.Length - 200) / 4.0) $day; return }
-    if ($pt -in 'function_call', 'custom_tool_call', 'local_shell_call') { $o = & $parse; $p = $o.payload; $Cx.pend["$($p.call_id)"] = Get-KitContextPend "$(if ($p.name) { $p.name } else { 'local_shell' })" $(if ($null -ne $p.arguments) { $p.arguments } elseif ($null -ne $p.action) { $p.action } else { @{ command = "$($p.input)" } }); return }
-    if ($pt -eq 'message' -and $L -match '"role":"(developer|user|system)"') { $tok = ($L.Length - 200) / 4.0; $kit = $Matches[1] -ne 'user' -or $L -match '"text":"\s*(<user_instructions>|<environment_context>|<skills_instructions>|# AGENTS\.md)'
-      if (-not $kit -and -not [int]$Cx.n -and $L -match 'resume-[\w.-]+\.md') { $Cx.ho = 1 }; Add-KitContextTok $Cx $(if ($kit) { 0 } else { 1 }) $tok $day }
-    return }
-  # Claude Code
   if ($L.Contains('"compact_boundary"') -and $L.Contains('"type":"system"')) { Reset-KitContextLive $Cx; return }
   if ($L.Contains('"type":"assistant"') -and $L.Contains('"message"')) { $o = & $parse; $m = $o.message; if (-not $m -or "$($o.type)" -ne 'assistant') { return }
     $u = $m.usage; $id = "$($m.id)"
@@ -714,7 +666,7 @@ function Get-KitContextFlags($Steps, [datetime]$Now, [switch]$Observe) {
   $who = { param($s) "$($s.role) $(if ("$($s.label)".Trim()) { $s.label } else { [IO.Path]::GetFileNameWithoutExtension("$($s.tf)") })".Trim() }
   $wl = [Collections.Generic.List[object]]::new(); $cks = Read-KitCtxChecks
   foreach ($s in @($ss | Where-Object { & $isLive $_ })) { $c = $s.cx; $w = @($c.w); $nm = & $who $s
-    $bo = Get-KitBudget -Tool $(if ("$($s.tool)" -in 'codex', 'antigravity', 'local') { "$($s.tool)" } else { '' }) -Model "$($s.model)"; $b = $bo.budget
+    $bo = Get-KitBudget -Tool $(if ("$($s.tool)" -eq 'local') { 'local' } else { '' }) -Model "$($s.model)"; $b = $bo.budget
     # its self-check answered at the last threshold: shown (INFO), no WATCH; asked, no answer: the WATCH says so
     $ck = $cks["$($s.tf)".ToLower()]; $dn = $ck.check -and [double]$ck.check.ctx -ge [double]$ck.asked
     if ($dn) { $fl.Add([pscustomobject]@{ level = 'INFO'; what = "context: $nm self-check $($ck.check.decision) at $(& $f $ck.check.ctx)"; action = "$($ck.check.reason)" }) }
@@ -928,10 +880,8 @@ function Get-KitInstrCap([double]$Window) {
 # the agent tool this runs under: KIT_TOOL=local (crafty.ps1 local: the server answers claude-* ids too), a model id's
 # prefix, KIT_TOOL, then the tool's own env vars
 function Get-KitTool([string]$Model = '') {
-  $envs = @(Get-ChildItem env: | ForEach-Object Name)
-  if ($Model -match '^local/' -or $env:KIT_TOOL -eq 'local') { 'local' } elseif ($Model -match '^(claude|fable|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
-  elseif ($Model -match '^gemini') { 'antigravity' } elseif ($v = $env:KIT_TOOL) { $v } elseif ($env:CLAUDECODE) { 'claude' }
-  elseif ($envs -like 'CODEX_*') { 'codex' } elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' } else { 'unknown' }
+  if ($Model -match '^local/' -or $env:KIT_TOOL -eq 'local') { 'local' } elseif ($Model -match '^(claude|fable|opus|sonnet|haiku)') { 'claude' }
+  elseif ($v = $env:KIT_TOOL) { $v } elseif ($env:CLAUDECODE) { 'claude' } else { 'unknown' }
 }
 # workflow model tiers of a tool: models.tiers.<tool> (kit.local.json per key over the example); a missing tier = the next stronger, then '' (inherit)
 function Get-KitTiers([string]$Tool = '') {
@@ -976,20 +926,7 @@ function Get-KitBudget([string]$Tool = '', [string]$Model = '', [int]$Window = 0
       if ($v = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW) { $tok = [int]$v; $src = 'env CLAUDE_CODE_AUTO_COMPACT_WINDOW' }
       if ($v = $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $tok = [math]::Min($tok, [int]($(if ($big) { 1e6 } else { 2e5 }) * [double]$v / 100)); $src = 'env CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' }
     }
-  } elseif ($Tool -eq 'codex') {
-    $ch = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
-    $tt = "$(Get-Content (Join-Path $ch 'config.toml') -Raw -ErrorAction SilentlyContinue)"
-    if (-not $Model -and $tt -match '(?m)^\s*model\s*=\s*"([^"]+)"') { $Model = $Matches[1] }
-    $mc = try { @((Get-Content (Join-Path $ch 'models_cache.json') -Raw | ConvertFrom-Json).models | Where-Object slug -eq $Model)[0] } catch { $null }
-    $n = 'codex'
-    if ($tt -match '(?m)^\s*model_auto_compact_token_limit\s*=\s*(\d+)') { $tok = [int]$Matches[1]; $src = 'config.toml model_auto_compact_token_limit' }
-    elseif ($v = $mc.auto_compact_token_limit) { $tok = [int]$v; $src = 'models_cache.json auto_compact_token_limit' }
-    else {
-      $w = if ($v = $mc.context_window) { [double]$v * $(if ($q = $mc.effective_context_window_percent) { [double]$q } else { 100 }) / 100 } else { $Window }
-      $tok = [int]($w * [double](& $row $n).fraction)
-    }
-  } elseif ($Tool -eq 'antigravity') { $n = 'antigravity'; $tok = if ($Window) { [int]($Window * [double](& $row $n).fraction) } else { [int](& $row $n).tokens } }   # no window known (board join): the row's tokens
-  elseif ($Tool -eq 'local') { $n = 'local'; $tok = [int](& $row $n).tokens   # the server's context: llama.cpp LLAMA_ARG_CTX_SIZE (-c), Ollama OLLAMA_CONTEXT_LENGTH
+  } elseif ($Tool -eq 'local') { $n = 'local'; $tok = [int](& $row $n).tokens   # the server's context: llama.cpp LLAMA_ARG_CTX_SIZE (-c), Ollama OLLAMA_CONTEXT_LENGTH
     if ($Window) { $tok = $Window; $src = 'window given' } elseif ($v = $env:LLAMA_ARG_CTX_SIZE) { $tok = [int]$v; $src = 'llama n_ctx (LLAMA_ARG_CTX_SIZE)' } elseif ($v = $env:OLLAMA_CONTEXT_LENGTH) { $tok = [int]$v; $src = 'ollama OLLAMA_CONTEXT_LENGTH' } }
   if (-not $tok) { $n = 'unknown'; $tok = [int](& $row $n).tokens }
   if (-not $src) { $src = (& $row $n).source }

@@ -86,11 +86,11 @@ $null = Complete-KitPause $pf 0; $fin = Get-Content $pf -Raw | ConvertFrom-Json;
   Expect 'supervise: every sweep starts the usage refresh as a detached job, outside the section budget' (Test-Path -LiteralPath $usageJob)
   Expect-Each $planRes 'sessions: # (plan: launched areas no wave delivered hold promotion, HoldPromotion '''' releases; mrread: one MR read per resume; fin: the pause finisher keeps a released run)' @('plan', 'mrread', 'fin') 8
 } finally { $fp.Kill(); $mp.Kill(); Remove-Item Env:KIT_HOLDER_PID }
-# heartbeat reply (owner 2026-11-12): 1-4 action lines, never the supervise stdout; the GEMINI.md port quotes the prompt word for word (SKILL.md E1 points to HEARTBEAT_PROMPT=)
+# heartbeat reply (owner 2026-11-12): 1-4 action lines, never the supervise stdout (SKILL.md E1 points to HEARTBEAT_PROMPT=)
 $beatRx = 'Get-KitBeatPrompt \{ "Run & .+? supervise -AutoFix -Brief\. (.+?)" \}'
 $beatTail = if ((Get-Content (Join-Path $src 'skills/crafty/lib.ps1') -Raw) -match $beatRx) { $Matches[1] }
-$beatDocs = @('CLAUDE.md', 'GEMINI.md', 'skills/bossy/SKILL.md' | ForEach-Object { Get-Content (Join-Path $src $_) -Raw -ErrorAction SilentlyContinue })
-Expect 'heartbeat prompt: reply = 1-4 action lines, never the stdout; the port quotes it; no doc asks to paste the stdout' ($beatTail -match 'Reply = 1-4 lines.*never paste the stdout' -and "$($beatDocs[1])".Contains($beatTail) -and -not ($beatDocs -match 'verbatim,? (and )?unfenced|entire stdout|renders as cards'))
+$beatDocs = @('CLAUDE.md', 'skills/bossy/SKILL.md' | ForEach-Object { Get-Content (Join-Path $src $_) -Raw -ErrorAction SilentlyContinue })
+Expect 'heartbeat prompt: reply = 1-4 action lines, never the stdout; no doc asks to paste the stdout' ($beatTail -match 'Reply = 1-4 lines.*never paste the stdout' -and -not ($beatDocs -match 'verbatim,? (and )?unfenced|entire stdout|renders as cards'))
 # git-host adapters
 $gh = @'
 . $args[0]

@@ -12,7 +12,7 @@
   "supervise": "heartbeat: ramActPct, ramCleanupPct (85: RAM % to clean), minDiskFreeGB, ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): NEXT=<n> (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent = STUCK / a shell with no CPU, IO, output = STALLED; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: section cadence",
   "idle": "README Leases: no live holder for graceMinutes -> released; a board beat counts for beatMinutes",
   "cleanup": "maxBrowserProfiles: profiles kept; worktreeDays (7): idle days before a clean worktree with a gone upstream goes; idleDaemons: idle build daemons to stop [{process, match, label, busyKinds}]",
-  "kitBranch, models": "kit branch (origin/HEAD); <phase>: tier fast | balanced | strong | inherit, or a model id; tiers.<tool>: tier -> model (unset: next stronger); mode cloud | local | mixed; local: crafty.ps1 local (token env:<VAR> | secret:<name>; wireApi, commands, env, bench.env)",
+  "kitBranch, models": "kit branch (origin/HEAD); <phase>: tier fast | balanced | strong | inherit, or a model id; tiers.<tool>: tier -> model (unset: next stronger); mode cloud | local | mixed; local: crafty.ps1 local (token env:<VAR> | secret:<name>; commands, env, bench.env)",
   "localOnly, orgTerms": "org-only kit paths kept out of git; words pre-push blocks",
   "localFiles": "example (setup -WriteLocal)",
   "localEnv": "local envs the dev flow tests on; `defaults` / `envs.<env>.extends` share one shape (envy reference.md); baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1",
@@ -72,7 +72,6 @@
  "browsers": { "_readme": "chromePolicies: {<key under Software/Policies, e.g. Google/Chrome>: {<policy>: <number or text>}}: bossy.ps1 setup writes them per user (HKCU; an admin-only key: prints the elevated command); setup -BrowserPolicy -Undo removes them, -Clean deletes model folders in kit and Cypress profiles.", "chromePolicies": {} },
  "decide": { "_readme": "neverAuto: regex words a question never gets a standing rule for, added to the built-in deploy / prod / data / customer list (bossy outcomes.ps1)", "neverAuto": [] },
  "guard": { "_readme": "heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) | block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir; kit scripts exempt). writeRoots: more folders agents may create files in; envChangeCommands: more deployed-env change commands to deny (regexes; built-in: vocab.json); a new file at a drive root or outside the workspace, kit, repos, worktree roots, temp, ~/.claude, ~/Downloads is denied.", "layout": "warn", "writeRoots": [] },
- "ports": { "_readme": "kitbag.py port workspace copies: none (default) / codex / antigravity / both. models: {<Claude model>: <agy model>} for the runner (default haiku -> flash)", "targets": "none", "models": { "haiku": "flash" } },
  "memory": { "_readme": "false = auto memory off (settings.json); true = on (settings.local.json).", "keepDefault": false },
  "devices": { "type": "none" },
  "kitAudit": { "_readme": "everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off).", "everyDays": 7 },
@@ -97,12 +96,10 @@
   "defaults": {
    "claude-1m": { "tokens": 967000, "source": "Claude Code docs: 1M models compact at ~967k" },
    "claude-200k": { "tokens": 167000, "source": "conservative 83.5% of 200k (docs: at the limit)" },
-   "codex": { "fraction": 0.9, "source": "0.9 x the models_cache.json window; auto_compact_token_limit wins" },
-   "antigravity": { "fraction": 0.8, "tokens": 800000, "source": "unverified: 0.8 x the model window (no window: 0.8 x a 1M Gemini window)" },
    "local": { "tokens": 32000, "source": "a locally served model (llama.cpp -c, Ollama num_ctx): set tokens to its context; KIT_TOOL=local or a model id under local/" },
    "unknown": { "tokens": 160000, "source": "0.8 x 200k" } },
   "models": [ { "match": "\\[1m\\]|fable|^(opus|sonnet|haiku|inherit|default)?$|opus-(4-[7-9]|[5-9])|sonnet-[5-9]|haiku-(5-[5-9]|[6-9])", "row": "claude-1m" } ] },
- "models": { "tiers": { "claude": { "fast": "haiku", "balanced": "sonnet", "strong": "opus" }, "codex": { "fast": "gpt-5.5-mini", "strong": "gpt-5.5" }, "antigravity": { "fast": "flash" } }, "mode": "cloud",
+ "models": { "tiers": { "claude": { "fast": "haiku", "balanced": "sonnet", "strong": "opus" } }, "mode": "cloud",
   "local": { "baseUrl": "http://localhost:8080", "token": "env:LOCAL_MODEL_TOKEN", "defaultModel": "<served id>", "forbiddenModels": ["<id or wildcard>"], "use": ["steppy", "checky:close", "checky:audit", "devy:ship"], "overflow": "cloud" } },
  "repos": [
   { "name": "backend", "aliases": ["api"], "checkout": "<workspace>/repos/backend", "target": "main", "ci": { "mrPipelines": true }, "mergeMethod": "squash", "migrations": { "check": "<e.g. flyway validate>" }, "regenerate": [{ "path": "docs/cov.xlsx", "run": "python cov.py --mr {mr}" }],
@@ -174,7 +171,7 @@
   },
   "router": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R19", "R20", "R18"],
   "events": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14", "E15"],
-   "ram": { "_readme": "supervise RAM categories by process name (no .exe) after the kit trees (kit), then windowsPath (exe path); else unknown; unowned RAM: windows; supervise.ramNames overrides a key", "kit": "^(claude|codex|antigravity)$",
+   "ram": { "_readme": "supervise RAM categories by process name (no .exe) after the kit trees (kit), then windowsPath (exe path); else unknown; unowned RAM: windows; supervise.ramNames overrides a key", "kit": "^claude$",
    "windows": "^(System|Registry|Idle|Secure System|smss|csrss|wininit|winlogon|services|lsass|LsaIso|svchost|dwm|fontdrvhost|Memory Compression|MsMpEng|Search\\w+|spoolsv|WmiPrvSE|RuntimeBroker|sihost|taskhostw|ctfmon|explorer|\\w*Host|audiodg|conhost|dllhost|NVIDIA.*|nv\\w+|tailscaled?|Intel.*)$",
     "browsers": "^(chrome|msedge|msedgewebview2|firefox|brave|opera|vivaldi)$",
     "apps": "^(slack|ms-teams|teams|outlook|olk|winword|excel|powerpnt|onenote|code|cursor|idea64|devenv|postman|spotify|discord|zoom|whatsapp.*|telegram|notion|smartconnect|windowsterminal|wt|mstsc|putty|anydesk|teamviewer)$",
@@ -219,7 +216,7 @@
    "retros": "logs/retros/", "kitty-audits": "logs/kitty-audits/", "localenv": "work/localenv/",
    "localenv-logs": "logs/localenv/",
    "localenv-history": "cache/localenv-history.json", "media": "cache/media/", "outcomes-sweep": "cache/outcomes-sweep.txt", "tracker-statuses": "cache/tracker-statuses/",
-   "tmp": "tmp/", "build-gate": "work/build-gate/", "port-runs": "work/port-runs/", "tools": "tools/"
+   "tmp": "tmp/", "build-gate": "work/build-gate/", "tools": "tools/"
   },
   "durable": {
    "signals": "learning.jsonl", "last-retro": "learning.stamp", "last-kitty-audit": "kitty-audit.stamp",
@@ -228,7 +225,7 @@
    "outbox": "outbox.jsonl", "pauses": "pauses/", "programs": "programs/",
    "tracker-none": "tracker-none/", "published": "published/", "desc-backups": "desc-backups/", "wip-patches": "wip-patches/",
    "localenv-env": "localenv/",
-   "browser-ports": "browser-ports.json", "ports-deployed": "ports-deployed.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "locks": "runtimes/locks.json", "storage": "storage/",
+   "browser-ports": "browser-ports.json", "owner-apps": "owner-apps.json", "runtimes": "runtimes/", "locks": "runtimes/locks.json", "storage": "storage/",
    "param-state": "params.json", "leases": "leases.jsonl", "tasks": "tasks/", "automerge": "automerge.json", "mr-ignore": "mr-ignore.json", "params-changes": "params-changes.jsonl", "logs-summary": "logs-summary.jsonl", "outcomes": "outcomes.jsonl", "standing-rules": "standing-rules.json", "pool-usage": "pool-usage.json", "disk-writes": "disk-writes.jsonl", "kit-tests-db": "kit-tests/server.json", "forgotten": "forgotten/", "naming": "naming.json", "faults-cursor": "faults-cursor.json", "local-bench": "local-bench/"
   },
   "log": { "_readme": "kitlog (lib.ps1 Write-KitLog, kitbag.py kitlog): every log line: at, run, agent, task, script, verb, event + fields, secrets masked. A durable name's stream writes that file, else audit/<yyyy-MM-dd>/<stream>.jsonl (merged by bossy.ps1 audit).",

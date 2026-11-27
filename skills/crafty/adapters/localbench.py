@@ -1,8 +1,8 @@
 """localbench.py: replay recorded real agent steps against a local model and score them (crafty.ps1 local bench).
   build  [-Set s] [-Roles r1,r2] [-N 4] [-Since yyyy-mm-dd] [-Transcripts dir] [-Force]   replay set from recorded steps, per
          role; an existing set: -Force empties it (results of a changed task are never reused: meta.promptSha)
-  run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-Runner claude|codex] [-TimeoutSec 600] [-Force]   resumable: skips ids that
-         ran (rc 0) on the same prompt; -Ids re-runs them; claude: --tools= (none), codex: --sandbox read-only
+  run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-TimeoutSec 600] [-Force]   resumable: skips ids that
+         ran (rc 0) on the same prompt; -Ids re-runs them; claude --tools= (none)
   score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (fields, list items, text facts)
   report -Model m [-Set s] [-Json]   accept rate over the ids that ran, infra fails apart, median / p90 s per role, cloud tier
   diff   -Model m -Against m2 [-Set s] [-Json]   per role delta and the ids that flip
@@ -11,9 +11,8 @@ A task: the step's prompt, every tool call it made with its output (cut), then "
 derived from the answer the cloud run returned (cloud.json). Nothing runs tools: run passes --tools "" (claude); a reply that
 writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<set>/tasks/<id>/ (set) and
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
-Transcripts: Claude Code subagent transcripts (~/.claude/projects/<workspace>/*/subagents/**); Codex / Antigravity sessions:
-no reader (README parity row). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L32 store · L66 reply parsing · L111 outcome · L224 build · L361 run
+Transcripts: Claude Code subagent transcripts (~/.claude/projects/<workspace>/*/subagents/**). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
+Sections: L31 store · L65 reply parsing · L110 outcome · L223 build · L360 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
@@ -358,7 +357,7 @@ def tasks_of(a):
     return td, ids
 
 
-# ---- run: each task through crafty.ps1 local <client> (the launcher's checks, seat and env), no tools, one id at a time
+# ---- run: each task through crafty.ps1 local claude (the launcher's checks, seat and env), no tools, one id at a time
 def cmd_run(a):
     td, ids = tasks_of(a)
     if not ids:
@@ -379,9 +378,9 @@ def cmd_run(a):
         psha = (rjson(osp.join(td, tid, 'meta.json'), {}) or {}).get('promptSha')
         if not a.force and (res.get(tid) or {}).get('rc') == '0' and res[tid].get('promptSha') == psha:
             continue   # ran on this prompt; a launcher refusal or a timeout runs again
-        # --tools= (not --tools ''): a .cmd shim drops an empty argument; codex: no writes
-        rest = ['--', '--tools=', '--strict-mcp-config', '--no-session-persistence'] if a.client == 'claude' else ['--', '--sandbox', 'read-only']
-        argv = [pwsh, '-NoProfile', '-File', crafty, 'local', a.client, '-Model', a.model, '-Agent', a.agent, '-WaitMinutes', '0', '-PromptFile', osp.join(td, tid, 'prompt.md')] + rest
+        # --tools= (not --tools ''): a .cmd shim drops an empty argument
+        rest = ['--', '--tools=', '--strict-mcp-config', '--no-session-persistence']
+        argv = [pwsh, '-NoProfile', '-File', crafty, 'local', 'claude', '-Model', a.model, '-Agent', a.agent, '-WaitMinutes', '0', '-PromptFile', osp.join(td, tid, 'prompt.md')] + rest
         t0 = time.time()
         pr = subprocess.Popen(argv, cwd=osp.join(td, tid), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=os.name != 'nt')
         try:
@@ -402,7 +401,7 @@ def cmd_run(a):
             fh.write(out or b'')
         with open(osp.join(md, 'runs', tid + '.err'), 'wb') as fh:
             fh.write(err or b'')
-        res[tid] = {'id': tid, 'rc': str(rc), 'sec': round(time.time() - t0, 1), 'at': datetime.datetime.now().isoformat(timespec='seconds'), 'client': a.client, 'promptSha': psha}
+        res[tid] = {'id': tid, 'rc': str(rc), 'sec': round(time.time() - t0, 1), 'at': datetime.datetime.now().isoformat(timespec='seconds'), 'client': 'claude', 'promptSha': psha}
         wjson(res_p, res)
         print(f"run {tid}: rc {rc}, {res[tid]['sec']} s", flush=True)
     return 0
@@ -417,7 +416,7 @@ def reply_of(path):
             continue
         if isinstance(d, dict) and 'result' in d:
             return str(d.get('result') or '')
-    return raw   # codex exec: the reply is stdout
+    return raw   # no JSON result line: the whole stdout
 
 
 def cmd_score(a):
@@ -513,7 +512,6 @@ def main(argv):
     ap.add_argument('-N', '--n', dest='n', type=int, default=4)
     ap.add_argument('-Since', '--since', dest='since', default='')
     ap.add_argument('-Transcripts', '--transcripts', dest='transcripts', default='')
-    ap.add_argument('-Runner', '-Client', '--client', dest='client', choices=['claude', 'codex'], default='claude')
     ap.add_argument('-Agent', '--agent', dest='agent', default=os.environ.get('CLAUDE_AGENT') or 'main')
     ap.add_argument('-TimeoutSec', '--timeoutsec', dest='timeoutsec', type=int, default=600)
     ap.add_argument('-Force', '--force', dest='force', action='store_true')

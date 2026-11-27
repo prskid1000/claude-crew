@@ -20,9 +20,9 @@ $env:KIT_POLL_MS = '200'; $env:CLAUDE_GATE_KEEP_FREE_GB = '0'; $env:KIT_STORAGE_
 $tmpMap = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._paths   # not lib.ps1: its adapters would register in this process
 $tmpRoot = Join-Path (Join-Path $src $tmpMap.runtimeDir) $tmpMap.runtime.tmp.TrimEnd('/'); New-Item -ItemType Directory -Force $tmpRoot | Out-Null   # the source kit's <runtime>/tmp (CLAUDE_RUNTIME unset above)
 $env:TEMP = $env:TMP = $env:TMPDIR = Join-Path $tmpRoot "kit-tests-$PID"; New-Item -ItemType Directory -Force $env:TEMP | Out-Null   # GetTempPath, python tempfile, node tmpdir of every test
-# K2X: the area's own home and cwd under that root (child processes: ~/.claude, ~/.codex, relative writes; USERPROFILE stays: Chrome
+# K2X: the area's own home and cwd under that root (child processes: ~/.claude, relative writes; USERPROFILE stays: Chrome
 # refused a profile under a fake one); the drive roots now: Complete-Tests fails on a new entry
-$env:HOME = $env:CODEX_HOME = $env:CLAUDE_CONFIG_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'home')).FullName; Set-Location -LiteralPath $env:TEMP
+$env:HOME = $env:CLAUDE_CONFIG_DIR = (New-Item -ItemType Directory -Force (Join-Path $env:TEMP 'home')).FullName; Set-Location -LiteralPath $env:TEMP
 $script:rootsAt = @{}; foreach ($dr in @($src, $env:TEMP | ForEach-Object { [IO.Path]::GetPathRoot($_) } | Select-Object -Unique)) { $script:rootsAt[$dr] = @(Get-ChildItem -LiteralPath $dr -Force -Name -ErrorAction SilentlyContinue) }
 $env:GIT_CEILING_DIRECTORIES = $tmpRoot   # a non-git test kit under it never finds the kit's own repo
 $env:GIT_TEMPLATE_DIR = (New-Item -ItemType Directory -Force (Join-Path $tmpRoot 'git-template/info')).Parent.FullName   # test init / clone: info/ only, no hook samples (11 entries, not 28)

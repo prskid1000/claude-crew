@@ -4,7 +4,7 @@ A multi-agent dev + QA kit for any stack, repo shape, migration tool, local/test
 configured in `skills/crafty/kit.local.json`. Org specifics live only in `*.local.*` files and `rules/*.local.md`. **Never put
 passwords, tokens or API keys here**: test logins live only in `skills/pokey/targets.local.json` (git-ignored).
 
-Codex and Antigravity read this file, Claude Code via `CLAUDE.md`; edit only here.
+Claude Code reads this file through `CLAUDE.md` (`@AGENTS.md`); edit only here.
 
 ## Writing (hard rule, every agent and session)
 - Result first, then only what the reader needs to act: `<thing> <state/action> <reason>` -> next step.
@@ -18,11 +18,11 @@ Codex and Antigravity read this file, Claude Code via `CLAUDE.md`; edit only her
 - Chat to owner: dense text only; no Mermaid, SVG gauges or box art. Visuals live in dashboard (supervise-report.html) and report artifacts:
   text wraps, never truncates; a changed page ships after `kitbag.py ui-check <page>` passes, shots read.
 - **Corrections:** a correction applies to its whole group: when the owner corrects one output, format or behaviour, fix every
-  sibling the same way (all adapters, templates, ports, docs that produce or describe it), a test each; list what changed.
+  sibling the same way (all adapters, templates, docs that produce or describe it), a test each; list what changed.
 - **Understand first** (owner 2026-11-25): before instructing an agent, proposing or changing anything, read the logic, data and
   docs it touches; state what exists in one `Today:` line; an instruction that changes behaviour cites it (briefs: rendered).
-- **Parity** (owner 2026-11-24): a kit feature works on every adapter of its family (native, or a documented fallback with the
-  same outcome) and in Claude Code, Codex and Antigravity (native, or a documented gap); not done until `kitbag.py parity` passes.
+- **Parity** (owner 2026-11-24; Claude Code only, owner 2026-11-27): a kit feature works on every adapter of its family (tracker,
+  git host, ...: native, or a documented fallback with the same outcome); not done until `kitbag.py parity` passes.
 
 ## The two flows
 - **Dev** (every code change): code -> testing-goals doc -> reproduce / debug + test on the local env (loop) -> review, merge,
@@ -98,4 +98,4 @@ Check auth before using a CLI (never log in headlessly). Windows: resolve shims 
 | `glab` / `gh` | git host: MRs/PRs, pipelines (kit scripts: `lib.ps1` Invoke-HostVerb, README "Adapters") | `glab auth status` / `gh auth status` |
 | tracker | tasks, comments, statuses: only through `skills/crafty/crafty.ps1 tracker` (`tracker.type`: README "Adapters") | `crafty.ps1 tracker view <id>` |
 
-Org specifics (settings, rules, Org router rows, more CLIs) and what does not port to Codex / Antigravity: README "Install".
+Org specifics (settings, rules, Org router rows, more CLIs): README "Install".

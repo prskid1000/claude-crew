@@ -1,8 +1,8 @@
 <#
 Kit library (config, paths, OS, tracker + git-host adapters). Usage (pwsh 7): dot-source: . (Join-Path <kit> 'skills/crafty/lib.ps1')
 Functions only, silent. Exit codes: none. Out: $KitConf, $KitCmd, Get-KitPath, Get-KitSetting, tracker, Invoke-HostVerb.
-Sections: L12 paths · L96 state · L177 config · L266 OS · L479 leases · L922 status · L1136 tracker · L1465 prior ·
-  L1484 ask bugs · L1669 deploy words · L1712 git-host · L1900 kitlog · L2012 params · L2317 entry-scripts
+Sections: L12 paths · L96 state · L177 config · L266 OS · L474 leases · L917 status · L1107 tracker · L1436 prior ·
+  L1455 ask bugs · L1640 deploy words · L1683 git-host · L1871 kitlog · L1983 params · L2288 entry-scripts
 #>
 #Requires -Version 7
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }   # stdout and child output UTF-8 (· → £ é), never the OEM code page
@@ -420,17 +420,12 @@ function Get-KitSpend([string]$File) {
   # no usage fields: bytes / 4 after the last compaction (JSON overhead: hands off early, never late)
   $all = $(if ($whole) { $t } else { @() }); if (-not $all.Count) { return $null }
   # the markers unescaped: a tool result's text never matches
-  $from = 0; for ($i = $all.Count - 1; $i -ge 0; $i--) { if ($all[$i] -match '"subtype":"compact_boundary"|^\{"timestamp":"[^"]*",("ordinal":\d+,)?"type":"compacted"|^\{"step_index":\d+,"source":"\w+","type":"CHECKPOINT"') { $from = $i + 1; break } }
+  $from = 0; for ($i = $all.Count - 1; $i -ge 0; $i--) { if ($all[$i] -match '"subtype":"compact_boundary"') { $from = $i + 1; break } }
   $est = [long]0; for ($i = $from; $i -lt $all.Count; $i++) { $est += [Text.Encoding]::UTF8.GetByteCount($all[$i]) }
   if ($est -le 0) { return $null }; [pscustomobject]@{ spend = [int]($est / 4); model = ''; estimated = $true }
 }
 function Read-KitSpendLines([string[]]$t) {
   for ($i = $t.Count - 1; $i -ge 0; $i--) {
-    if ($t[$i] -match '"token_count"') {   # Codex rollout: the last request's context = its compaction measure
-      $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.payload.info.last_token_usage; if ($u) { return [pscustomobject]@{ spend = [int]$u.total_tokens; model = '' } }
-    }
-    if ($t[$i].StartsWith('{"step_index"') -and $t[$i] -match '"type":"PLANNER_RESPONSE".*"input_tokens":(\d+)') {   # Antigravity: input (without the cache read) + cache read + output of the last call
-      $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; return [pscustomobject]@{ spend = [int]([long]$o.input_tokens + [long]$o.cache_read_tokens + [long]$o.output_tokens); model = '' } }
     if ($t[$i] -notmatch '"usage"') { continue }
     $o = try { $t[$i] | ConvertFrom-Json -Depth 40 } catch { continue }; $u = $o.message.usage; if (-not $u) { continue }
     return [pscustomobject]@{ spend = [int]($u.input_tokens + $u.cache_creation_input_tokens + $u.cache_read_input_tokens + $u.output_tokens); model = "$($o.message.model)" }
@@ -920,9 +915,9 @@ function Get-KitAuth([string]$Env, [string]$Kind = 'bearer') {
   @{ Authorization = switch ($Kind) { 'basic' { 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($(if ($t -match ':') { $t } else { ":$t" }))) } 'token' { "token $t" } default { "Bearer $t" } } }
 }
 # ---- status: one row per agent and workflow run, from files only; no LLM, no network
-# <Claude project dir>/<session>/subagents/workflows/<run>; Antigravity runs (kitbag_ports.py RUNNER): <port-runs>/antigravity/...
+# <Claude project dir>/<session>/subagents/workflows/<run>
 function Get-KitWorkflowDirs([string]$Session) {
-  @((Invoke-KitAdapter transcript claude root).dir, (Get-KitPath port-runs)) | ForEach-Object { Get-ChildItem $_ -Directory -ErrorAction SilentlyContinue } | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
+  @((Invoke-KitAdapter transcript claude root).dir) | ForEach-Object { Get-ChildItem $_ -Directory -ErrorAction SilentlyContinue } | Where-Object { -not $Session -or $_.Name -eq $Session } | ForEach-Object { Get-ChildItem (Join-Path $_.FullName 'subagents/workflows') -Directory -ErrorAction SilentlyContinue }
 }
 # launch records by run id or wfDir, plus the record-args step's "RECORDED <leaf> <run> (fnv <h>)" within 30 min
 function Get-KitWorkflowRecords($Dir, $Events, $Launches) {
@@ -1028,38 +1023,14 @@ Register-KitAdapter 'transcript' 'claude' @{
   'agent-meta' = { param($a) $p = if ($env:KIT_TRANSCRIPTS) { Join-Path $env:KIT_TRANSCRIPTS '*' } else { Join-Path (Split-Path $KitConf.ClaudeProjectDir) '*/*' }
     Get-ChildItem (Join-Path $p "subagents/workflows/*/agent-$($a.id).meta.json") -ErrorAction SilentlyContinue | Select-Object -First 1 }
 }
-# adapter:transcript/codex: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl; line 1 session_meta; newest task_complete = turn ended
-Register-KitAdapter 'transcript' 'codex' @{
-  'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS_CODEX) { $env:KIT_TRANSCRIPTS_CODEX } else { Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }) 'sessions' }); filter = 'rollout-*.jsonl'; sub = '*/*/*' } }
-  # a spawned agent's rollout (rollout-<time>-<thread id>.jsonl) whose session_meta names a parent thread (codex-rs protocol SessionMeta)
-  'agent-meta' = { param($a) $r = Invoke-KitAdapter transcript codex root; if ("$($a.id)" -notmatch '^[\w-]+$') { return }
-    Get-ChildItem -LiteralPath $r.dir -Recurse -Filter "rollout-*$($a.id).jsonl" -File -ErrorAction SilentlyContinue | Where-Object { $m = try { Get-Content -LiteralPath $_.FullName -TotalCount 1 | ConvertFrom-Json } catch { $null }; $m.payload.parent_thread_id -or $m.payload.source.subagent } | Select-Object -First 1 }
-  'last' = { param($a) $s = Read-KitTranscriptTail $a.file 'function_call"|task_started|task_complete' { param($o, $s) $p = $o.payload
-      if (-not $s.tool -and $o.type -eq 'response_item' -and $p.type -eq 'function_call') { $s.tool = "$($p.name)"; $g = try { "$($p.arguments)" | ConvertFrom-Json } catch { $null }; $s.what = "$(if ($g.cmd) { $g.cmd } else { $g.command })" }
-      elseif ($null -eq $s.ended -and $o.type -eq 'event_msg' -and $p.type -in 'task_started', 'task_complete') { $s.ended = $p.type -eq 'task_complete' }
-      $s.tool -and $null -ne $s.ended }
-    if ($s) { $m = try { Get-Content -LiteralPath $s.file -TotalCount 1 | ConvertFrom-Json } catch { $null }; if ($m.payload.cli_version) { $s.version = "codex $($m.payload.cli_version)" } }; $s }
-}
-# adapter:transcript/antigravity: brain/<id>/.system_generated/logs/transcript.jsonl; killed per the parent's subagents/<id>.json state
-Register-KitAdapter 'transcript' 'antigravity' @{
-  'root' = { @{ dir = $(if ($env:KIT_TRANSCRIPTS_ANTIGRAVITY) { $env:KIT_TRANSCRIPTS_ANTIGRAVITY } else { Join-Path $HOME '.gemini/antigravity-cli/brain' }); filter = 'transcript.jsonl'; sub = '*/.system_generated/logs' } }
-  # a subagent's state file in its parent conversation: subagentDescriptor { typeName, role }, state
-  'agent-meta' = { param($a) if ("$($a.id)" -notmatch '^[\w-]+$') { return }
-    Get-Item -Force -Path (Join-Path (Invoke-KitAdapter transcript antigravity root).dir "*/.system_generated/subagents/$($a.id).json") -ErrorAction SilentlyContinue | Select-Object -First 1 }
-  'last' = { param($a) $s = Read-KitTranscriptTail $a.file '"tool_calls"' { param($o, $s) $c = @($o.tool_calls)[-1]; if ($c.name) { $s.tool = "$($c.name)"; $s.what = "$($c.args.toolSummary)" }; [bool]$c.name }
-    if ($s) { $id = Split-Path (Split-Path (Split-Path (Split-Path $s.file))) -Leaf; $brain = Split-Path (Split-Path (Split-Path (Split-Path $s.file)))
-      $k = @(Get-Item -Force -Path (Join-Path $brain "*/.system_generated/subagents/$id.json") -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} })[0]
-      $s.killed = "$($k.state)" -eq 'SUBAGENT_STATE_KILLED' }; $s }
-}
 # adapter:transcript/none: no transcript (another tool): board and journal only
 Register-KitAdapter 'transcript' 'none' @{ caps = @{ agentMeta = $false }; 'root' = { $null }; 'last' = { $null } }
 # adapter-end:transcript
-# SessionStart output: Antigravity (input has conversationId) takes injectSteps, others a systemMessage
-# $Context: model-only text (ROUTER.md), first so a long $Text never pushes it past the hook cap; Antigravity: one channel
+# SessionStart output: additionalContext + a systemMessage
+# $Context: model-only text (ROUTER.md), first so a long $Text never pushes it past the hook cap
 function Format-KitSessionStart([string]$Text, $Hook, [string]$Context = '') {
   $all = (@($Context, $Text) | Where-Object { $_ }) -join "`n`n"
-  if ($Hook.conversationId) { @{ injectSteps = @($(if ($all) { @{ systemMessage = @{ systemMessage = $all } } })) } | ConvertTo-Json -Compress -Depth 5 }
-  elseif ($all) { $o = @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $all } }; if ($Text) { $o.systemMessage = $Text }; $o | ConvertTo-Json -Compress -Depth 4 }
+  if ($all) { $o = @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $all } }; if ($Text) { $o.systemMessage = $Text }; $o | ConvertTo-Json -Compress -Depth 4 }
 }
 function Get-KitTranscriptKind([string]$Tool) { if (-not $Tool) { 'claude' } elseif ($KitAdapters.transcript[$Tool]) { $Tool } else { 'none' } }
 # liveness (STUCK rows, stale board rows, lease grace, shell owners): newest board beat or transcript (+ task output) write
@@ -1078,7 +1049,7 @@ function Set-KitStatusState($R, [datetime]$Now, [double]$StuckMin) {
 }
 # agent transcripts (not workflow steps), board row or not; the session-folder walk is cached 60 s
 function Get-KitLiveTranscripts([datetime]$Now, [double]$Minutes, [string]$Kind = 'claude') {
-  if ($Kind -eq '*') { foreach ($k in 'claude', 'codex', 'antigravity') { Get-KitLiveTranscripts $Now $Minutes $k }; return }
+  if ($Kind -eq '*') { $Kind = 'claude' }
   $r = Invoke-KitAdapter transcript $Kind root; if (-not $r.dir -or -not (Test-Path -LiteralPath $r.dir)) { return }
   $cf = Get-KitPath transcript-dirs -Create; $c = try { Read-KitText $cf | ConvertFrom-Json -AsHashtable } catch { @{} }; if (-not $c) { $c = @{} }
   $hit = $c[$r.dir]; $dirs = if ($hit -and ((Get-Date) - [datetime]$hit.at).TotalSeconds -lt 60) { @($hit.dirs) } else {
@@ -1658,7 +1629,7 @@ function Format-KitDecisionItems($Rows, [string]$Link, [string]$Task) {
   }
   if ($Link) { [pscustomobject]@{ text = "plan · $Link"; done = $true } }
 }
-# blocking decisions as ONE native question call (AskUserQuestion: 4 questions, 4 options, header <= 12 chars; Codex: 3)
+# blocking decisions as ONE native question call (AskUserQuestion: 4 questions, 4 options, header <= 12 chars)
 function ConvertTo-KitAskPayload($Decisions, [int]$Max = 4) {
   $ds = @($Decisions | Where-Object { @(Get-KitDecisionOrder $_).Count -ge 2 } | Select-Object -First $Max)   # the tools need 2-4 options
   [pscustomobject]@{ ids = @($ds | ForEach-Object id); questions = @(foreach ($d in $ds) {

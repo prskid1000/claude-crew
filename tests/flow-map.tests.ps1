@@ -19,7 +19,7 @@ function Hint { "== heartbeat: arm ONE: CronCreate (cron */10 * * * *), prompt: 
 function Keep($x, $rm) { $x.m = @(@($x.m) | Where-Object { $p = "$_" -split '>', 2; $p[0] -notin $rm }) }
 function Label { $v = if ($Matches[1]) { ' (independent re-test)' } else { '' }; $v }
 function Bounded { for ($i = 0; $i -lt 3; $i++) { Start-Sleep 1 }; foreach ($x in @(1, 2)) { $x }; while ((Get-Date) -lt $end) { Start-Sleep 5 } }
-''', 'fp.py': 'def port():\n    print("kitbag port: GEMINI.md stale or missing; retry later")\n',
+''', 'fp.py': 'def tools():\n    print("kitbag tools: a Character block stale or missing; retry later")\n',
      'fp.mjs': 'export function login(page, L) {\n  if (!page.url().includes(L.path)) {   // logged in as someone else: clear and retry\n    return 1\n  }\n}\n',
      'real.ps1': 'function Poll($f) {\n  while ($true) { Start-Sleep 5; if (Test-Path $f) { break } }\n}\n',
      'real.mjs': 'export async function waitDone(poll) {\n  let done = false\n  while (!done) { done = await poll() }\n}\n',

@@ -269,10 +269,10 @@ $mt = Invoke-PsTest ctx-tiers @'
 $null = . $args[0] 6>$null
 "$((Get-KitBudget -Tool claude -Model 'claude-opus-4-7').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row) $((Get-KitBudget -Tool claude -Model 'claude-haiku-5-5').row) $((Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6[1m]').row)"
 $t = Get-KitTiers claude; "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)"
-$__cfg = [pscustomobject]@{ models = [pscustomobject]@{ tiers = [pscustomobject]@{ codex = [pscustomobject]@{ strong = 'big-x'; fast = '' } } }; budget = [pscustomobject]@{ models = @([pscustomobject]@{ match = 'sonnet'; row = 'claude-1m' }) } }
-$t = Get-KitTiers codex; "$($t.fast)/$($t.balanced)/$($t.strong)"; $t = Get-KitTiers local; "[$($t.fast)/$($t.strong)]"; (Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row
+$__cfg = [pscustomobject]@{ models = [pscustomobject]@{ tiers = [pscustomobject]@{ local = [pscustomobject]@{ strong = 'big-x'; fast = '' } } }; budget = [pscustomobject]@{ models = @([pscustomobject]@{ match = 'sonnet'; row = 'claude-1m' }) } }
+$t = Get-KitTiers local; "$($t.fast)/$($t.balanced)/$($t.strong)"; (Get-KitBudget -Tool claude -Model 'claude-sonnet-4-6').row
 '@ @($O)
-Expect "tiers: budget.models rows (opus 4.7 / haiku 5.5 / [1m] = 1M, sonnet 4.6 = 200k; a local list wins); claude tiers; codex fast unset -> balanced; local -> inherit ($($mt -join ' / '))" ("$($mt -join '|')" -eq 'claude-1m claude-200k claude-1m claude-1m|haiku/sonnet/opus/|big-x/big-x/big-x|[/]|claude-1m')
+Expect "tiers: budget.models rows (opus 4.7 / haiku 5.5 / [1m] = 1M, sonnet 4.6 = 200k; a local list wins); claude tiers; local: fast unset -> the next stronger ($($mt -join ' / '))" ("$($mt -join '|')" -eq 'claude-1m claude-200k claude-1m claude-1m|haiku/sonnet/opus/|big-x/big-x/big-x|claude-1m')
 # tidy: the prep step returns the run id (kitbag.py naming next id tidy); worktree, branch and retro file carry it
 $jsT = @'
 const P0 = { ok: true, record: 'RECORDED', prep: JSON.stringify({ work: 1, groups: 0, sec: 1, steps: [], digest: 'd.md', at: 'x', parity: ['ci/x/failure: fallback -> native'] }), run: 'tidy-2' }, J0 = { applied: [], proposedForApproval: ['p1'], rejected: [], report: 'r.md' }

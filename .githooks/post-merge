@@ -2,7 +2,7 @@
 # Kit post-merge hook (enabled by bossy.ps1 setup: core.hooksPath .githooks; post-rewrite runs it after pull --rebase): after git
 # pull / merge runs the one-time layout migration (kitbag.py migrate: old install records out; quick, idempotent), the generated
 # allow-list (bossy.ps1 setup -Allow), then in the
-# background redeploys the workspace-root ports (kitbag.py port --deploy: ports.targets) and regenerates the kit-flow page
+# background renders the crew tool grants (kitbag.py tools --deploy) and regenerates the kit-flow page
 # (kitbag.py flow). Never opens it, never fails the merge.
 root="$(git rev-parse --show-toplevel)"
 for p in python python3 py; do
@@ -10,7 +10,7 @@ for p in python python3 py; do
     "$p" -X utf8 "$root/skills/bossy/kitbag.py" migrate >&2 </dev/null
     # vendor CLI + OS allows from the configured adapters (settings.local.json)
     if command -v pwsh >/dev/null 2>&1; then pwsh -NoProfile -NonInteractive -File "$root/skills/bossy/bossy.ps1" setup -Allow -Quiet >&2 </dev/null || true; fi
-    (("$p" -X utf8 "$root/skills/bossy/kitbag.py" port --deploy; "$p" -X utf8 "$root/skills/bossy/kitbag.py" flow) >/dev/null 2>&1 &)
+    (("$p" -X utf8 "$root/skills/bossy/kitbag.py" tools --deploy; "$p" -X utf8 "$root/skills/bossy/kitbag.py" flow) >/dev/null 2>&1 &)
     break
   fi
 done

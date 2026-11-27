@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
-tests/context.tests.ps1: adapters/usage.ps1 context offline: what fills each agent's context per model call (Claude, Codex, Antigravity
-transcripts: categories, start load, peak, carried, compactions, handoffs, waste signals), the CLIs' tokens and spend, usage -Context, the
+tests/context.tests.ps1: adapters/usage.ps1 context offline: what fills each agent's context per model call (Claude Code
+transcripts: categories, start load, peak, carried, compactions, handoffs, waste signals), tokens and spend, usage -Context, the
 supervise WATCH / ACT rules and the learned start norm, the Runs band cell, the Trends rows and the per-role table, the info popover.
 Usage: pwsh -NoProfile -File tests/context.tests.ps1
 Exit codes: 0 pass · 1 a check failed.
@@ -27,43 +27,18 @@ $cl = @("{`"type`":`"user`",`"timestamp`":`"$(& $iso 0)`",`"message`":{`"role`":
   "{`"type`":`"user`",`"isCompactSummary`":true,`"timestamp`":`"$(& $iso 10)`",`"message`":{`"role`":`"user`",`"content`":`"$('s' * 4000)`"}}",
   (& $cu 'msg_4' 21000 30 '{"type":"text","text":"done"}' 11)) -join "`n"
 [IO.File]::WriteAllText("$fx/claude.jsonl", $cl + "`n")
-# Codex: developer instructions, the task, a shell read + its output, token counts (one repeated), a compaction, a build + a 14 KB log
-$cxl = { param($s, [string]$ty, [string]$pl) "{`"timestamp`":`"$(& $iso $s)`",`"type`":`"$ty`",`"payload`":$pl}" }
-$tc = { param([int]$in, [int]$out, [int]$tot) "{`"type`":`"token_count`",`"info`":{`"total_token_usage`":{`"input_tokens`":$in,`"cached_input_tokens`":$([int]($in * 0.8)),`"output_tokens`":$out,`"total_tokens`":$tot},`"last_token_usage`":{`"input_tokens`":$in,`"cached_input_tokens`":$([int]($in * 0.8)),`"output_tokens`":$out,`"total_tokens`":$tot}}}" }
-$co = @((& $cxl 0 'session_meta' '{"id":"s1","cli_version":"1.0"}'), (& $cxl 0 'turn_context' '{"model":"gpt-6-mini","cwd":"/w/app"}'),
-  (& $cxl 1 'response_item' "{`"type`":`"message`",`"role`":`"developer`",`"content`":[{`"type`":`"input_text`",`"text`":`"$('k' * 8000)`"}]}"),
-  (& $cxl 2 'response_item' "{`"type`":`"message`",`"role`":`"user`",`"content`":[{`"type`":`"input_text`",`"text`":`"fix the bug $('t' * 1000)`"}]}"),
-  (& $cxl 3 'response_item' '{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"cat src/app.py\"}","call_id":"c1"}'), (& $cxl 4 'event_msg' (& $tc 12000 200 12200)),
-  (& $cxl 5 'response_item' "{`"type`":`"function_call_output`",`"call_id`":`"c1`",`"output`":`"$('o' * 6000)`"}"), (& $cxl 6 'event_msg' (& $tc 15000 100 27300)), (& $cxl 6 'event_msg' (& $tc 15000 100 27300)),
-  (& $cxl 7 'compacted' '{"message":"summary"}'), (& $cxl 8 'response_item' '{"type":"function_call","name":"shell_command","arguments":"{\"command\":[\"pytest\",\"-q\"]}","call_id":"c2"}'),
-  (& $cxl 9 'event_msg' (& $tc 6000 50 33350)), (& $cxl 10 'response_item' "{`"type`":`"function_call_output`",`"call_id`":`"c2`",`"output`":`"$('p' * 14000)`"}"), (& $cxl 11 'event_msg' (& $tc 9500 40 42890))) -join "`n"
-$cxd = New-Item -ItemType Directory -Force "$fx/codex/2026/01/02"; [IO.File]::WriteAllText("$cxd/rollout-2026-01-02-c1.jsonl", $co + "`n")
-# Antigravity: the task with a model switch, a call (view_file + run_command), their steps, a checkpoint, a second call
-$ag = { param([int]$i, [string]$ty, [string]$rest, [string]$src = 'MODEL') "{`"step_index`":$i,`"source`":`"$src`",`"type`":`"$ty`",`"status`":`"DONE`",`"created_at`":`"$(& $iso $i)`"$rest}" }
-$an = @((& $ag 0 'USER_INPUT' ",`"content`":`"<USER_REQUEST>add the screen</USER_REQUEST> The user changed setting ``Model Selection`` from None to Gemini 3.5 Flash (Medium).`"" 'USER_EXPLICIT'),
-  (& $ag 1 'PLANNER_RESPONSE' ',"input_tokens":9000,"cache_read_tokens":1000,"output_tokens":300,"tool_calls":[{"name":"view_file","args":{"AbsolutePath":"\"/w/app/src/screen.tsx\""}},{"name":"run_command","args":{"CommandLine":"\"mvn test\""}}]'),
-  (& $ag 2 'VIEW_FILE' ",`"content`":`"File Path: ``file:///w/app/src/screen.tsx`` $('v' * 8000)`""), (& $ag 3 'RUN_COMMAND' ",`"content`":`"$('m' * 16000)`""),
-  (& $ag 4 'CHECKPOINT' ",`"content`":`"# Resuming from a compaction $('r' * 2000)`"" 'SYSTEM'), (& $ag 5 'PLANNER_RESPONSE' ',"input_tokens":2000,"cache_read_tokens":4000,"output_tokens":100')) -join "`n"
-$agd = New-Item -ItemType Directory -Force "$fx/ag/b1/.system_generated/logs"; [IO.File]::WriteAllText("$agd/transcript.jsonl", $an + "`n")
-
 $r = Invoke-PsTest ctx-parse @'
-$null = . $args[0] 6>$null; $o = foreach ($f in $args[1..3]) { $l = [ref][long]1GB; $u = Update-KitContextFile $f (Update-KitUsageFile $f $null $l) $l; $c = $u.cx
+$null = . $args[0] 6>$null; $o = foreach ($f in $args[1]) { $l = [ref][long]1GB; $u = Update-KitContextFile $f (Update-KitUsageFile $f $null $l) $l; $c = $u.cx
   "$($u.model)|$($u.in)/$($u.out)/$($u.cr)|$($c.n)|$($c.s0)|$($c.pk)|$($c.cmp)|$($c.ho)|$(@($c.add) -join ',')|$(@($c.car | ForEach-Object { [math]::Round($_ / 1000) }) -join ',')|$(@($c.w) -join ',')|$(@($c.rmax) -join ':')|$(@($u.tm | ForEach-Object { [int]$_ }) -join '/')" }
-$o; $s = Read-KitSpendLines @([IO.File]::ReadAllLines($args[3])); "spend $($s.spend)"; "budget $((Get-KitBudget -Tool antigravity).budget) $((Get-KitBudget -Model 'gemini-3.5-flash').row)"; "$((Get-KitInstrCap 0).start) $(@($args[2..3] | ForEach-Object { Get-KitInstrLive $_ '' }) -join ' ') $(Get-KitContextCat exec_command 'cat /w/.claude/skills/a/SKILL.md')$(Get-KitContextCat view_file '/w/.claude/skills/a/SKILL.md')"
-'@ @($O, "$fx/claude.jsonl", "$cxd/rollout-2026-01-02-c1.jsonl", "$agd/transcript.jsonl")
-$c1 = "$($r[0])" -split '\|'; $c2 = "$($r[1])" -split '\|'; $c3 = "$($r[2])" -split '\|'
+$o; "cat $(Get-KitContextCat Bash 'cat /w/.claude/skills/a/SKILL.md')$(Get-KitContextCat Read '/w/.claude/skills/a/SKILL.md')"
+'@ @($O, "$fx/claude.jsonl")
+$c1 = "$($r[0])" -split '\|'
 # Claude: start 20000 - prompt 1000 = 19000 kit; skill 2000 + memory 500 kit; code 3 x 1000; the gated build's 16 KB = build output, a pasted log
 Expect "context claude: 4 calls, start 20k, peak 29k, a compaction (marker; the drop after it is not counted twice), resumed from a handoff ($($r[0]))" ($c1[2] -eq '4' -and $c1[3] -eq '20000' -and $c1[4] -eq '29000' -and $c1[5] -eq '1' -and $c1[6] -eq '1')
 Expect "context claude: added per category: kit 19000 + skill 2000, task 1000, code 3000 + memory 500, build 4000, model 200 + summary 1000 ($($c1[7]))" ($c1[7] -match '^2(09|10)\d\d,10\d\d,3[45]\d\d,0,39\d\d,0,0,1200$')
 Expect "context claude: waste = the file re-read 2x (2 rereads), no result over 8k, one build log over 3k pasted; most re-read Main.java 3x ($($c1[9]) $($c1[10]))" ($c1[9] -match '^2,\d+,0,0,1,\d+$' -and $c1[10] -eq '3:/w/app/src/main.java')
 Expect "context claude: carried = mix x call size (20k + 24k + 29k + 21k = 94k) ($($c1[8]))" (([int[]]($c1[8] -split ',') | Measure-Object -Sum).Sum -in 93..95)
-# Codex: 4 counted calls (a repeated count skipped), developer text = kit, task, cat = code, pytest = build; compaction marker; tokens and model wired
-Expect "context codex: tokens in 1900 out 40 cache read 7600 (cumulative), model from turn_context, 4 calls, start 12k, peak 15k, a compaction ($($r[1]))" ($c2[0] -eq 'gpt-6-mini' -and $c2[1] -eq '1900/40/7600' -and $c2[2] -eq '4' -and $c2[3] -eq '12000' -and $c2[4] -eq '15000' -and $c2[5] -eq '1')
-Expect "context codex: added kit (start), task 250, code 1500, build 3500 (a log over 3k), model 390 ($($c2[7]) w $($c2[9]))" ($c2[7] -match '^\d+,2\d\d,14\d\d,0,34\d\d,0,0,390$' -and $c2[9] -match '^0,0,0,0,1,\d+$')
-Expect "context antigravity: model switch line, tokens 11000/400/5000, 2 calls, start 10k, checkpoint = compaction, view_file = code, mvn = build ($($r[2]))" ($c3[0] -eq 'gemini-3.5-flash' -and $c3[1] -eq '11000/400/5000' -and $c3[2] -eq '2' -and $c3[3] -eq '10000' -and $c3[5] -eq '1' -and $c3[7] -match '^\d+,\d+,20\d\d,0,39\d\d,0,0,\d+$')
-Expect "time split: Codex and Antigravity model and tool time ($($c2[11]) $($c3[11]))" ([int]($c2[11] -split '/')[0] -gt 0 -and [int]($c3[11] -split '/')[0] -gt 0)
-Expect "spend: an Antigravity agent's last call = input + cache read + output (6100); its budget without a window = 800k (antigravity row) ($($r[3]) $($r[4]))" ($r[3] -eq 'spend 6100' -and $r[4] -eq 'budget 800000 antigravity')
-$il = "$($r[5])" -split ' '; Expect "instructions live: Codex, Antigravity = start (no kit read); a shell / view_file skill read = kit ($($r[5]))" ($il[1] -eq $il[0] -and $il[2] -eq $il[0] -and $il[3] -eq '00')
+Expect "context: a shell / Read skill read = kit instructions ($($r[1]))" ($r[1] -eq 'cat 00')
 # budget (owner 2026-11-23): handoff = whichever first, handoffAt x the tool's cap or the kit's role budget; design window = min(200k, the cap)
 $bu = Invoke-PsTest ctx-budget @'
 $null = . $args[0] 6>$null; $o = { param($b) "$($b.handoff)|$($b.design)|$($b.instrCap)|$($b.capBy)" }
@@ -85,19 +60,19 @@ Expect "budget: 1M devy -> 200k (agentCap.devy), 200k -> 160k, 32k local -> 25.6
 Expect "budget: kit role cap 400k wins over 800k (shown: kit budget devy), another role keeps 800k; Ollama's context length read ($($bu[3..5] -join ' / '))" ($bu[3] -eq '400000|200000|50000|kit budget devy' -and $bu[4] -like '800000|*' -and $bu[5] -like '52429|65536|24576|local 0.8 x (ollama OLLAMA_CONTEXT_LENGTH)')
 Expect "spend: a transcript without usage fields (a local model) is estimated from its text, bytes / 4 ($($bu[6]))" ($bu[6] -match '^est 100\d\d True$')
 
-# Get-KitUsage walks all 3 CLIs (tests: KIT_TRANSCRIPTS_<TOOL>), steps carry the summary; the day rows the mix; usage -Context text + JSON
+# Get-KitUsage walks the transcripts (tests: KIT_TRANSCRIPTS), steps carry the summary; the day rows the mix; usage -Context text + JSON
 $tx = New-Item -ItemType Directory -Force (Join-Path (Kd) 'tx/s1/subagents'); Copy-Item "$fx/claude.jsonl" "$tx/agent-d1.jsonl"; '{"agentType":"devy","description":"build A1"}' | Set-Content "$tx/agent-d1.meta.json"
 $u = Invoke-PsTest ctx-usage @'
-$null = . $args[0] 6>$null; $env:KIT_TRANSCRIPTS = $args[1]; $env:KIT_TRANSCRIPTS_CODEX = $args[2]; $env:KIT_TRANSCRIPTS_ANTIGRAVITY = $args[3]
+$null = . $args[0] 6>$null; $env:KIT_TRANSCRIPTS = $args[1]
 $u = Get-KitUsage -Seconds 30; $as = @($u.agentSteps); $d = @($u.days)[-1]
 "$(@($as | ForEach-Object { "$($_.role):$($_.tool):$($_.cx.pk)" } | Sort-Object) -join ',')|$(@($u.bg | ForEach-Object session | Sort-Object) -join ',')|$($d.cx.pk)|$([long](@($d.cx.car) | Measure-Object -Sum).Sum -gt 0)"
-'@ @($O, (Split-Path (Split-Path $tx)), "$fx/codex", "$fx/ag")
-Expect "usage: Claude, Codex and Antigravity agents each a step with its tool and context peak; grouped by session / tool; today's day row the peak and mix ($u)" ("$u" -eq 'antigravity:antigravity:10000,codex:codex:15000,devy:claude:29000|antigravity,codex,s1|29000|True')
+'@ @($O, (Split-Path (Split-Path $tx)))
+Expect "usage: an agent is a step with its tool and context peak; grouped by session; today's day row the peak and mix ($u)" ("$u" -eq 'devy:claude:29000|s1|29000|True')
 $cli = Invoke-PsTest ctx-cli @'
 $env:KIT_TRANSCRIPTS = $args[1]; & $args[0] usage -Context -Type devy -Since 2d; "rc $LASTEXITCODE"; $j = & $args[0] usage -Context -Since 2d -Json | ConvertFrom-Json; "$(@($j).Count) $(@($j | Where-Object role -eq devy)[0].carried.'build + test output' -gt 0) $(@($j | Where-Object role -eq devy)[0].waste[0])"
 & $args[0] usage -Since x 2>&1 | Out-Null; "rc2 $LASTEXITCODE"
 '@ @($O, (Split-Path (Split-Path $tx)))
-Expect "usage -Context: text per type and agent (start, peak, top sources, waste), -Json the numbers, a bad call exits 2 ($($cli -join ' / '))" (($cli -join "`n") -match 'context since .*1 agent\(s\) · avg start 20k' -and ($cli -join "`n") -match 'devy build A1: start 20k · peak 29k' -and ($cli -join "`n") -match 'rc 0' -and ($cli -join "`n") -match '\b3 True start load 69% of the peak' -and ($cli -join "`n") -match 'read Main\.java 3x \(2k tokens re-read\)' -and ($cli -join "`n") -match 'rc2 2')
+Expect "usage -Context: text per type and agent (start, peak, top sources, waste), -Json the numbers, a bad call exits 2 ($($cli -join ' / '))" (($cli -join "`n") -match 'context since .*1 agent\(s\) · avg start 20k' -and ($cli -join "`n") -match 'devy build A1: start 20k · peak 29k' -and ($cli -join "`n") -match 'rc 0' -and ($cli -join "`n") -match '\b1 True start load 69% of the peak' -and ($cli -join "`n") -match 'read Main\.java 3x \(2k tokens re-read\)' -and ($cli -join "`n") -match 'rc2 2')
 
 # supervise rules: WATCH per live agent, ACT on a signal in 2+ agents, the learned start norm (observed once per transcript)
 $fl = Invoke-PsTest ctx-flags @'
@@ -141,20 +116,20 @@ $ok3 = $day.Contains("class='gs hm dy sbr'") -and $day -match $rx3; $ok4 = "$($r
 "$ok1|$($none.Contains('cxc z'))|$ok3|$ok4"
 '@ @($O)
 Expect "page: Runs band context cell = peak over 5 source parts (the zero ones left out), tooltip with waste; no record = a dash; Trends mix row = a stacked bar per day; per-role table (start / peak 69%) ($pg)" ("$pg" -eq 'True|True|True|True')
-# category rules (revy 2026-11-22): a pure read naming a test tool is a code read, git is no build, MandateService.java is code, Antigravity
-# Path keys (any case, JSON-in-JSON) count re-reads, secrets in a command label are masked, a tool input's created_at never dates a Claude line
+# category rules (revy 2026-11-22): a pure read naming a test tool is a code read, git is no build, MandateService.java is code,
+# path keys (any case, JSON-in-JSON) count re-reads, secrets in a command label are masked, a tool input's created_at never dates a Claude line
 $cr = Invoke-PsTest ctx-rules @'
 $null = . $args[0] 6>$null
 $cmd = @('cat web/cypress/e2e/orders.cy.ts', 'sed -n 1,80p build.gradle', 'cat jest.config.js', 'grep -rn pytest docs', 'rg -n jest src', 'git commit -m "fix tsc errors"', 'mvn test | tail -50', 'cd /w/app && yarn test', 'F=/w/x.log cat /w/a.py', 'cat /w/kit/.claude/skills/x/SKILL.md', 'bash -lc "cat src/a.py"', 'cd /w && git diff -- tests/kit-tests.ps1 | head', 'cd /w && sed -n 1,9p e2e/a.cy.ts; grep -n jest b.ts', 'cd /w; pwsh -File tests/kit-tests.ps1 -Area x') | ForEach-Object { Get-KitContextCmdCat $_ }
 $rng = New-KitContextRec; foreach ($in in '{"file_path":"/w/a.ps1","offset":1,"limit":40}', '{"file_path":"/w/a.ps1","offset":41,"limit":40}', '{"file_path":"/w/a.ps1","offset":41,"limit":40}') { Add-KitContextResult $rng (Get-KitContextPend 'Read' $in) 100 '' }; Add-KitContextResult $rng '5|Bash|grep -n #Lines a.log' 9000 ''
 $pth = @('/w/src/main/java/MandateService.java', '/w/briefs/mandate.md') | ForEach-Object { Get-KitContextPathCat $_ 2 }
-$cx = New-KitContextRec; foreach ($i in 1, 2) { $p = Get-KitContextPend 'read_file' '{"Path":"\"D:\\\\w\\\\.claude\\\\a.md\""}'; Add-KitContextResult $cx $p 100 '' }
+$cx = New-KitContextRec; foreach ($i in 1, 2) { $p = Get-KitContextPend 'Read' '{"Path":"\"D:\\\\w\\\\.claude\\\\a.md\""}'; Add-KitContextResult $cx $p 100 '' }
 $sec = New-KitContextRec; foreach ($c in 'pokey.ps1 login -User admin -Password Hunter2pw', 'curl -u admin:S3cretpw https://x.test', 'mysql -p Hunter3pw -e "select 1"') { Add-KitContextResult $sec "5|Bash|$c" 9000 '' }
 $tx = Join-Path $args[1] 'ts.jsonl'; [IO.File]::WriteAllText($tx, '{"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__x__create","input":{"created_at":"2020-01-01T00:00:00Z"}}],"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-01-05T09:00:00.000Z"}' + "`n")
 $u = Update-KitUsageFile $tx $null ([ref][long]1MB)
 "$($cmd -join ',')|$($pth -join ',')|$(@($cx.rmax)[0]):$($p.Split('|')[0])|$(@($rng.w)[0]):$(@($rng.rmax)[1]):$((@($rng.top) -join ' ') -match '#Lines a\.log')|$((@($sec.top) -join ' ') -notmatch 'Hunter2pw|S3cretpw|Hunter3pw')|$($u.t1)|$(@($u.days.Keys) -join ',')"
 '@ @($O, "$(Kd)")
-Expect "category rules: reads naming test tools = code (2), git commit = other (5), mvn / yarn test = build (4), VAR= and sh -c wrappers off, kit .md = instructions (0); MandateService.java = code, briefs/mandate.md = task; Antigravity Path read twice = 2 re-reads of a kit .md; a read or git step naming a test tool in a chain is no build, a chained kit-tests run is; a next range is no re-read, the same range is (label without the range); no secret in labels; the line's timestamp, not a tool input's created_at ($cr)" ("$cr" -eq '2,2,2,2,2,5,4,4,2,0,2,5,2,4|2,1|2:0|1:/w/a.ps1:True|True|2026-01-05T09:00:00.000Z|2026-01-05|claude-sonnet-5-5')
+Expect "category rules: reads naming test tools = code (2), git commit = other (5), mvn / yarn test = build (4), VAR= and sh -c wrappers off, kit .md = instructions (0); MandateService.java = code, briefs/mandate.md = task; a Path read twice = 2 re-reads of a kit .md; a read or git step naming a test tool in a chain is no build, a chained kit-tests run is; a next range is no re-read, the same range is (label without the range); no secret in labels; the line's timestamp, not a tool input's created_at ($cr)" ("$cr" -eq '2,2,2,2,2,5,4,4,2,0,2,5,2,4|2,1|2:0|1:/w/a.ps1:True|True|2026-01-05T09:00:00.000Z|2026-01-05|claude-sonnet-5-5')
 if (Use-BrowserKit) {
   $uiKb = Join-Path $k 'skills/bossy/kitbag.py'
   # the popover (owner 2026-11-23): a context tip at the bottom-right corner opens on hover inside the viewport as title, 4 tiles, a swatch

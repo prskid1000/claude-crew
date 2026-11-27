@@ -9,10 +9,9 @@ $ErrorActionPreference = 'Stop'
 $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'python3' }
 $kc = Join-Path ([IO.Path]::GetTempPath()) "kit-scaffold-$PID\.claude"; New-Item -ItemType Directory -Force $kc | Out-Null
 foreach ($f in @(git -C $Kit ls-files)) { $s1 = Join-Path $Kit $f; if (Test-Path $s1) { $d = Join-Path $kc (Split-Path $f); New-Item -ItemType Directory -Force $d | Out-Null; Copy-Item $s1 $d -Force } }
-# the plugins are copied from this kit and git-ignored in the copy (rename regenerates ports through kitbag_ports.py)
-$plug = @((Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/kitbag_scaffold.py'), (Join-Path $Kit 'skills/bossy/kitbag_ports.py')) | Where-Object { Test-Path $_ }
+# the scaffold plugin is copied from this kit and git-ignored in the copy
+$plug = @((Join-Path (Split-Path $PSScriptRoot) 'skills/bossy/kitbag_scaffold.py')) | Where-Object { Test-Path $_ }
 foreach ($p in $plug) { Copy-Item $p (Join-Path $kc 'skills/bossy'); "/skills/bossy/$(Split-Path $p -Leaf)" | Add-Content (Join-Path $kc '.gitignore') }
-$ports = $plug.Count -eq 2
 git -C $kc init -q; git -C $kc add -A; git -C $kc -c user.name=t -c user.email=t@t commit -q -m 'feat: base'
 $KT = Join-Path $kc 'skills/bossy/kitbag.py'
 $mf = { (Get-Content (Join-Path $kc 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json)._manifest }
@@ -22,8 +21,7 @@ $okNew = (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).agents.zappy
 $tpl = Join-Path $kc 'skills/crafty/templates.md'; Add-Content $tpl "`nsee last-zappys and zappy-stamp" -Encoding utf8
 $null = & $py -X utf8 $KT rename agent zappy zippy 2>&1
 $okRen = (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (Test-Path (Join-Path $kc 'agents/zappy.md')) -and (& $mf).renamed.zappy -eq 'zippy' -and
-  (Get-Content $tpl -Raw) -match 'see last-zippys and zippy-stamp' -and (Get-Content (Join-Path $kc 'ROUTER.md') -Raw) -match '`zippy` agent' -and
-  (-not $ports -or ((Test-Path (Join-Path $kc '.codex/agents/zippy.toml')) -and -not (Test-Path (Join-Path $kc '.codex/agents/zappy.toml'))))
+  (Get-Content $tpl -Raw) -match 'see last-zippys and zippy-stamp' -and (Get-Content (Join-Path $kc 'ROUTER.md') -Raw) -match '`zippy` agent'
 $null = & $py -X utf8 $KT remove agent zippy 2>&1
 $okRem = -not (Test-Path (Join-Path $kc 'agents/zippy.md')) -and -not (& $mf).agents.zippy -and (Get-Content (Join-Path $kc 'ROUTER.md') -Raw) -notmatch 'zippy'
 $ev = @((& $mf).events); $e1, $e2 = $ev[-1], "E$([int]$ev[-1].Substring(1) + 1)"

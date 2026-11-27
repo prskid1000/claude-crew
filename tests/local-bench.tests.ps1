@@ -2,7 +2,7 @@
 # Usage: pwsh -NoProfile -File tests/local-bench.tests.ps1 (tests/kit-tests.ps1 runs it). Exit codes: 0 pass · 1 a check failed.
 # tests/local-bench.tests.ps1: crafty.ps1 local bench (adapters/localbench.py) on a tiny fixture, no model: build from recorded
 # transcripts (a step's StructuredOutput, an ad hoc agent's final JSON, a null field), a rebuild needs -Force; run through the
-# launcher (fake server + fake clients: no tools, the bench User-Agent, codex 'ARGS=exec|.*--sandbox|read-only|-s*$'), resume, -Ids re-run, a timeout ends the
+# launcher (fake server + fake client: no tools, the bench User-Agent), resume, -Ids re-run, a timeout ends the
 # client tree, a launcher refusal is infra (re-run, out of the rate); score: right answers accepted, a flipped ok, a missing
 # count and a tool call written as text rejected, strict vs repairable JSON; report per role; diff.
 . (Join-Path $PSScriptRoot 'harness.ps1')
@@ -61,8 +61,7 @@ $r = if ($in -match 'publish T1') { '{"ok": true, "output": "T1 report https://d
   else { '<tool_call><function=Read></function></tool_call>' }
 @{ result = $r; num_turns = 1 } | ConvertTo-Json -Compress
 '@).Replace('PIDFILE', $pidFile) -Encoding utf8
-$fakeCodex = Join-Path (Kd) 'fakecodex.ps1'; Set-Content $fakeCodex "[Console]::Error.WriteLine(`"ARGS=`$(`$args -join '|')`"); '{`"status`": `"clean`", `"bugs`": 0}'" -Encoding utf8
-& $J @{ models = @{ local = @{ baseUrl = "http://127.0.0.1:$port"; defaultModel = 'small-a'; needGB = 0; commands = @{ claude = @($fake); codex = @($fakeCodex) } } } } $cfgFile
+& $J @{ models = @{ local = @{ baseUrl = "http://127.0.0.1:$port"; defaultModel = 'small-a'; needGB = 0; commands = @{ claude = @($fake) } } } } $cfgFile
 for ($wi = 0; $wi -lt 60; $wi++) { try { $tc = [Net.Sockets.TcpClient]::new('127.0.0.1', $port); $tc.Dispose(); break } catch { Start-Sleep -Milliseconds 250 } }
 
 $md = Join-Path $k '.state/local-bench/t1/small-a'; $t4 = $byLabel['close:T4'].id; $w1 = $byLabel['nightly sweep'].id
@@ -91,9 +90,6 @@ $ix = Invoke-TestScript $D local bench run -Set t1 -Model other-1 -Ids $w1; $nul
 $ir = try { (Invoke-TestScript $D local bench report -Set t1 -Model other-1 -Json).out | ConvertFrom-Json } catch { @() }
 $ir2 = Invoke-TestScript $D local bench run -Set t1 -Model other-1 -Ids $w1
 Expect "bench run: a launcher refusal (model not served) is infra: out of the rate, run again ($($ix.out.Trim()))" ($ix.out -match "run ${w1}: rc 1" -and @($ir | Where-Object role -eq 'watchy@sweep')[0].infra -eq 1 -and $null -eq @($ir | Where-Object role -eq 'watchy@sweep')[0].rate -and $ir2.out -match "run ${w1}: rc 1")
-$cx = Invoke-TestScript $D local bench run -Set t1 -Model small-a -Ids $w1 -Runner codex
-$cer = Get-Content (Join-Path $md "runs/$w1.err") -Raw -ErrorAction SilentlyContinue
-Expect "bench run -Runner codex: codex exec, read-only sandbox, the prompt on stdin ($("$cer".Trim()))" ($cx.out -match "run ${w1}: rc 0" -and "$cer".Trim() -match 'ARGS=exec\|.*--sandbox\|read-only\|-$')
 
 $pt = Join-Path (Kd) 'parse.py'
 Set-Content $pt "import sys; sys.path.insert(0, r'$k/skills/crafty/adapters'); import localbench as b`nr = b.parse_reply('{`"ok`": true, `"output`": `"a\nb`"}'); f = b.parse_reply('``````json\n{`"ok`": false}\n``````'); p = b.parse_reply('Here: {`"ok`": true, `"output`": `"x`"} done'); t = b.parse_reply('{`"name`": `"PowerShell`", `"arguments`": {}}')`nprint(r['strict'] is None, isinstance(r['repairable'], dict), f['strict'] is None, f['repairable'] == {'ok': False}, p['lenient'] == {'ok': True, 'output': 'x'}, t['toolText'])" -Encoding utf8

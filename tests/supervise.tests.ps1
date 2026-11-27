@@ -32,19 +32,16 @@ Expect 'supervise -AutoFix: stale entries with a journal result (not one running
   $sw -match '\[INFO\] auto-fixed: board entry QB-2 \(r4\) left: a stale duplicate of QB, which beats' -and
   $sw -match '\[INFO\] auto-fixed: board entry review-PY-RET \(r1\) left: its workflow step has a journal result' -and $sw -match '\[INFO\] auto-fixed: board entry revy-1400 \(kit-fix\) left: every other agent of its run left' -and
   $sw -match '\[WATCH\] STUCK H9 \(revy\) \(r2\): no progress for 30 min' -and $sw -match '\[INFO\] auto-fixed: run wf_r3 finished: its launch record closes in the background' -and $lr3.completed -and $lr3.learned -match 'own|launch -Done')
-# status rows, one per state; transcripts (Claude, Codex, Antigravity shapes) with set mtimes
+# status rows, one per state; Claude Code transcripts with set mtimes
 $tx = { param($f, [string[]]$Lines, [int]$Min = 1) New-Item -ItemType Directory -Force (Split-Path $f) | Out-Null; Set-Content $f $Lines; (Get-Item $f).LastWriteTime = (Get-Date).AddMinutes(-$Min); $f }
 $ago = { param($m) (Get-Date).AddMinutes(-$m).ToString('o') }; $wd = Join-Path $env:KIT_TRANSCRIPTS 's1/subagents/workflows/wf_s1'
 New-Journal wf_s1 (@(1..31 | ForEach-Object { @{ type = 'started'; agentId = "x$_"; label = "test:$(if ($_ -eq 1) { 'S1' } else { "T$_" })" }, @{ type = 'result'; agentId = "x$_"; result = @{ summary = "S$_ shipped !1$_" } } }) + @{ type = 'started'; agentId = 'x32'; label = 'build:S32' })
 $null = & $tx "$wd/agent-x32.jsonl" '{"type":"assistant","version":"2.9","message":{"content":[{"type":"tool_use","name":"Bash","input":{"description":"🧪 Run the tests"}}]}}'
 & $J @{ run = 'sr'; script = 'C:/k/buildy.js'; wfDir = $wd; cap = 2e7; spent = 1.5e6; at = (& $ago 60) } (Join-Path (TkPath $k launches) 'self-buildy-sr.json')
-$cx = & $tx (Join-Path (Kd) 'codex/rollout-1.jsonl') '{"type":"session_meta","payload":{"cli_version":"0.157.0","agent_role":"devy"}}', '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"npm test\"}"}}', '{"type":"event_msg","payload":{"type":"task_complete"}}', '{"type":"brand_new_kind","payload":{}}'
-$ag = & $tx (Join-Path (Kd) 'brain/c1/.system_generated/logs/transcript.jsonl') '{"step_index":4,"type":"PLANNER_RESPONSE","status":"DONE","tool_calls":[{"name":"run_command","args":{"toolSummary":"Run unit tests"}}]}'
-& $J @{ conversationId = 'c1'; state = 'SUBAGENT_STATE_KILLED'; subagentDescriptor = @{ typeName = 'checky' } } (Join-Path (Kd) 'brain/p1/.system_generated/subagents/c1.json')
 $se = { param($a, [hashtable]$x) $b = @{ session = "s-$a"; agent = $a; run = 'sr'; type = 'devy'; status = 'working'; beat = (& $ago 1); joined = (& $ago 90); holderPid = $PID; holderStart = $hs }; foreach ($kx in $x.Keys) { $b[$kx] = $x[$kx] }; & $J $b (Join-Path $bd "s-$a.json") }
 & $se S1 @{ status = 'left'; transcript = (& $tx (Join-Path (Kd) 'S1.jsonl') '{"message":{"content":[{"type":"tool_use","name":"Bash","input":{"description":"Reporting results, leaving the board"}}]}}' 0) }
 & $se S2 @{ beat = (& $ago 30) }; & $se S3 @{ beat = (& $ago 30) }; & $se S4 @{ status = 'left'; crashed = (& $ago 5) }; & $se S5 @{ beat = (& $ago 40); transcript = (& $tx (Join-Path (Kd) 'S5.jsonl') '{}') }
-& $se S6 @{}; & $se S7 @{ tool = 'codex'; transcript = $cx }; & $se S8 @{ tool = 'antigravity'; transcript = $ag; status = 'running tests' }
+& $se S6 @{}
 & $J @{ id = 'e-1'; kind = 'envfix'; run = 'sr'; agent = 'S2'; status = 'pending'; at = (& $ago 20) } (Join-Path (TkPath $k decisions -Create) 'e-1.json')
 & $J @{ waiting = @(@{ kind = 'lanes'; holder = 'S6'; heldBy = 'vision x'; pid = $PID; pidStart = $hs; at = (& $ago 3) }) } (Join-Path (TkPath $k runtimes -Create) 'gpu.json')
 # run sr: older folder (S32 done, rerun in the newer), a run whose one step waits, a paused run
@@ -77,8 +74,8 @@ $fr = Invoke-PsTest 'finished' '. $args[0]; $n = Get-Date; (Select-KitBriefRows 
 Expect "-Brief table: FINISHED 31 min ago hidden, 29 min ago shown, STUCK always ($fr)" ("$fr" -match '^f29,s$')
 Expect "status: one row per state, transcripts first ($($st -join ' // '))" ((& $sv 'sr (workflow)' 'ACTIVE \(1 step left\)') -and @($st -match 'buildy\.js wf_s1 · steps 31/32 · 1\.5M tokens of 20M').Count -and (& $sv 'S32 (devy)' 'ACTIVE \| .* Bash: 🧪 Run the tests') -and -not @($st -match 'S32 \(step\)|STUCK sp').Count -and (& $sv 'sp (workflow)' 'WAITING: env fix e-2 \|') -and (& $sv 'sq (workflow)' 'WAITING: owner pause') -and
   (& $sv 'S1 (devy)' 'FINISHED: S1 shipped !11 \|') -and (& $sv 'S2 (devy)' 'WAITING: env fix e-1') -and (& $sv 'S3 (devy)' 'STUCK \(3[0-2] min\)') -and (& $sv 'S4 (devy)' 'STOPPED \(crashed\)') -and (& $sv 'S5 (devy)' 'ACTIVE') -and
-  (& $sv 'S6 (devy)' 'WAITING: GPU, held by vision x') -and (& $sv 'S7 (devy)' 'FINISHED: turn complete \| .* exec_ command: npm test') -and (& $sv 'S8 (devy)' 'STOPPED \(killed\) \| .* run_command: Run unit tests') -and
-  @($st -match '^transcripts read: claude 2\.9, codex 0\.157\.0$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 3[0-2] min').Count -and
+  (& $sv 'S6 (devy)' 'WAITING: GPU, held by vision x') -and
+  @($st -match '^transcripts read: claude 2\.9$').Count -and @($st -match '^\[WATCH\] STUCK S3 \(devy\) \(sr\): no progress for 3[0-2] min').Count -and
   @(pwsh @np $O status -Json | ConvertFrom-Json | Where-Object { $_.name -eq 'S2 (devy)' -and $_.state -eq 'WAITING' }).Count)
 # Doing · next, no agent report: journal phase + script meta next phase, checkpoint step / round / evidence + next, newest tool's file; tail cached (size + time)
 & $wj wf_s4 sph @(@{ type = 'started'; agentId = 'p1'; label = 'build:PH1'; phase = 'Build' }) 0 @{ script = (Join-Path $src 'workflows/buildy.js') }

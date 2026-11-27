@@ -8,9 +8,9 @@ Its hooks run inside the bossy.ps1 verb that calls them and use that verb's vari
 Left), cleanup ($now, $DryRun, $actions, Gone, Old).
 Usage: dot-sourced by bossy.ps1 (adapters/*.ps1), not run on its own.
 Exit codes: none (functions only).
-Sections: L16 builds · L60 supervise · L358 shells · L548 page · L1049 release · L1095 lines · L1122 cleanup · L1189 launch ·
-  L1306 pause · L1425 heartbeat · L1441 sessions · L1500 ci tasks ·
-  L1565 the kit origin's default branch (kitBranch, else origin/HEAD)
+Sections: L16 builds · L60 supervise · L358 shells · L544 page · L1045 release · L1091 lines · L1118 cleanup · L1185 launch ·
+  L1302 pause · L1421 heartbeat · L1437 sessions · L1496 ci tasks ·
+  L1561 the kit origin's default branch (kitBranch, else origin/HEAD)
 #>
 #Requires -Version 7
 # ---- builds: repeated failures, cache flush
@@ -363,7 +363,7 @@ function Get-KitShellCommand([string]$CommandLine) {
   $c = "$CommandLine"
   if ($c -match "(?s)\beval '(.*)'\s*(<\s*/dev/null\s*)?&&\s*pwd -P" -or $c -match "(?s)\beval '(.*)'") { return ($Matches[1] -replace "'\\''", "'" -replace '\\"', '"').Trim() }
   if ($c -match '(?i)\s-e(?:c|n[a-z]*)?\s+([A-Za-z0-9+/=]{8,})') { try { return [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1])).Trim() } catch {} }
-  if ($c -match '(?is)\s-(?:[a-z]?c|Command)\s+(.*)$') { return ($Matches[1].Trim() -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1' -replace '\\"', '"').Trim() }   # -lc: Codex
+  if ($c -match '(?is)\s-(?:[a-z]?c|Command)\s+(.*)$') { return ($Matches[1].Trim() -replace '^"(.*)"$', '$1' -replace "^'(.*)'$", '$1' -replace '\\"', '"').Trim() }
   ($c -replace '^\s*("[^"]*"|\S+)\s*', '').Trim()
 }
 # table cell: quoting undone, cd / export preambles skipped, heredoc as "<cmd> <<EOF (heredoc, N lines)", 60 chars
@@ -392,17 +392,14 @@ function Get-KitAgentShells($Procs) {
   $mine = @{}; $q = $byId[$PID]; for ($i = 0; $q -and -not $mine[$q.Id] -and $i -lt 64; $i++) { $mine[$q.Id] = 1; $q = $byId[$q.ParentId] }
   foreach ($p in $Procs) {
     $par = $byId[$p.ParentId]
-    if ($p.Name -match '^(bash|sh|zsh|pwsh|powershell)(\.exe)?$' -and -not $mine[$p.Id] -and $par -and ($par.Name -match '^(claude|codex|agy|antigravity)(\.exe)?$' -or ($par.Name -match '^node(\.exe)?$' -and "$($par.CommandLine)" -match '(?i)claude-code|@anthropic-ai[\\/]claude|[\\/]claude(\.exe|\.js|\.mjs)?(\s|"|$)'))) { $p }
+    if ($p.Name -match '^(bash|sh|zsh|pwsh|powershell)(\.exe)?$' -and -not $mine[$p.Id] -and $par -and ($par.Name -match '^claude(\.exe)?$' -or ($par.Name -match '^node(\.exe)?$' -and "$($par.CommandLine)" -match '(?i)claude-code|@anthropic-ai[\\/]claude|[\\/]claude(\.exe|\.js|\.mjs)?(\s|"|$)'))) { $p }
   }
 }
-# the transcript line that started a shell -> @{ bg; mon; id } per kind: claude tool_use, codex function_call, agy run_command
-# (codex / agy: a shell outliving its yield / wait runs in the background)
+# the transcript line that started a shell -> @{ bg; mon; id }: claude tool_use
 $script:KitShellCall = @{
   claude = @{ want = '"tool_use"'; call = { param($o, $f) $u = @($o.message.content | Where-Object { $_.type -eq 'tool_use' -and "$($_.input.command)".Contains($f) })[0]
       # K104: a Monitor call is a background shell too (21 outlived their agents)
       if ($u) { $mon = "$($u.name)" -eq 'Monitor'; @{ bg = ([bool]$u.input.run_in_background -or $mon); mon = $mon; id = "$($u.id)" } } } }
-  codex = @{ want = '"function_call"'; call = { param($o, $f) $p = $o.payload; if ($p.type -eq 'function_call' -and "$($p.arguments)".Contains($f)) { @{ bg = 1; id = "$($p.call_id)" } } } }
-  antigravity = @{ want = '"run_command"'; call = { param($o, $f) if (@($o.tool_calls | Where-Object { $_.name -eq 'run_command' -and "$($_.args.CommandLine)".Contains($f) }).Count) { @{ bg = 1 } } } }
 }
 # per new shell (key -> cmd, created): the transcript (any kind) whose tool call ran it, nearest its start; per file its last 16 MB,
 # IndexOf (Select-String per shell over 90 MB cost 20 s a sweep)
@@ -422,7 +419,6 @@ function Find-KitShellTranscripts([hashtable]$Want) {
           if (-not $line.Contains($sc.want) -or ($line -match '"timestamp":"([^"]+)"' -and [math]::Abs(([datetimeoffset]$Matches[1] - [datetimeoffset]$Want[$k].created).TotalSeconds) -gt 120)) { continue }   # parse only lines near the shell's start
           $o = try { $line | ConvertFrom-Json -Depth 80 } catch { continue }
           $u = & $sc.call $o $frags[$k]; if (-not $u) { continue }
-          # agy: no timestamp
           $gap =if ($o.timestamp) { [math]::Abs(([datetimeoffset]$o.timestamp - [datetimeoffset]$Want[$k].created).TotalSeconds) } else { 119 }
           if ($gap -le 120 -and (-not $out[$k] -or $gap -lt $out[$k].gap)) { $out[$k] = [pscustomobject]@{ file = $file; bg = $u.bg; mon = $u.mon; gap = $gap; tuid = $u.id; out = $(if ($kind -eq 'claude') { Find-KitShellOutputPath $text $u.id } else { '' }) } }
         }
@@ -1438,7 +1434,7 @@ function Get-KitBeatOverdue([datetime]$Now = (Get-Date)) {
   $live = @(Read-KitJsonFiles (Get-KitPath board) | Where-Object { $_.status -notin 'left', 'crashed' -and $_.beat -and ($Now - [datetime]$_.beat).TotalHours -lt [double](Get-KitParam 'board.rowHours') -and ($a = Get-KitLastActivity "$($_.transcript)" $_ "$($_.tool)") -and ($Now - $a).TotalMinutes -lt $bm })   # board Active or writing its transcript
   if ($late -gt 0 -and $live.Count) { "heartbeat OVERDUE $late min: last beat $($last.ToString('HH:mm')), next was due $($due.ToString('HH:mm')), $($live.Count) agent(s) live: run supervise now; $(Get-KitBeatArmLine -Arm)" }
 }
-# ---- sessions: several coordinators on one machine (Claude Code, Codex, Antigravity): run owners, routed flags, task claims, step age
+# ---- sessions: several coordinators on one machine: run owners, routed flags, task claims, step age
 # owner = the session process (holder) that wrote a launch record, board row or pause; this process's own, gone or unknown = mine
 $script:KitMe = $null
 # KIT_HOLDER_PID: tests, a detached shell; no session process above: cannot tell = mine

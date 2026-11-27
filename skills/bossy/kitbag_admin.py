@@ -6,11 +6,13 @@ scan, token cost and releases.
   python -X utf8 skills/bossy/kitbag.py release [--tag] [--publish]        # next SemVer + notes from Conventional Commits
   python -X utf8 skills/bossy/kitbag.py faults [next] [--n 3] [--days 7] [--json]   # agents' failed commands -> recurring script-fault items
   python -X utf8 skills/bossy/kitbag.py popups [--minutes 30]   # Windows: the program behind each console window that pops up
+  python -X utf8 skills/bossy/kitbag.py tools [--days 14] [--json] | --write | --deploy   # crew allowlists vs tool use; --write: Character
+    blocks + tools lines from the manifest (pre-commit, scaffold); --deploy: the grants filter, MCP lines (post-merge, health)
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L19 helpers · L60 setup · L181 config · L410 recover · L559 release · L610 cost · L720 registry · L724 scan ·
-  L860 faults · L1075 popups
+Sections: L21 helpers · L62 setup · L172 config · L401 recover · L550 release · L601 cost · L711 scan · L842 faults ·
+  L1029 popups · L1150 characters · L1185 tools
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -137,17 +139,6 @@ def cmd_setup(kit, fix):
     sl = osp.join(kit, 'settings.local.json')
     if osp.isfile(sl) and load_json(sl)[1]:
         out('ACT', 'SETUP-CONFIG', 'settings.local.json', load_json(sl)[1])
-    # Codex / Antigravity ports + deployed copies
-    pk = osp.join(kit, 'skills', 'bossy', 'kitbag.py')
-    if osp.isfile(pk):
-        rc, o, e = run([py(), '-X', 'utf8', pk, 'port', '--check'], timeout=kit_param('audit.probeTimeoutSec'))
-        if rc:
-            out('ACT', 'SETUP-PORTS', 'kitbag.py port --check', (o or e)[:300], f'python -X utf8 {pk} port (in the clone that changed, then commit)')
-    ws = osp.dirname(kit)
-    for n in ('AGENTS.md', 'GEMINI.md'):
-        src, dst = osp.join(kit, n), osp.join(ws, n)
-        if osp.isfile(src) and (not osp.isfile(dst) or aread(kit, n) != aread(ws, n)):
-            out('WARN', 'SETUP-PORTS', f'<workspace>/{n}', 'missing or differs from the kit copy (Codex/Antigravity read this one)', f'python -X utf8 {pk} port')
     # CLIs: present and logged in (never log in)
     for exe in ('git', 'pwsh', 'node'):
         if not shutil.which(exe):
@@ -717,10 +708,6 @@ def cmd_cost(a):
         print(f"| {row['agent']} | {row['always']} | {row['files']} | {row['total']} |")
     return 0
 
-# ---- registry: audit verbs, commands, args for kitbag.py
-def aread(kit, rel):
-    return read(osp.join(kit, rel))
-
 # ---- scan: consistency and script pitfall candidates for agents/kitty.md step 4 (the agent proves each; moved from kitbag.py)
 LIBS = ('lib.ps1',)   # dot-sourced: an exit there ends the caller
 def config_doc_keys(kit):
@@ -765,11 +752,6 @@ def cmd_scan(kit):
     terms = (load_json(local)[0] or {}).get('orgTerms') if osp.isfile(local) else None
     for code, where, problem in lint(k, graph(k), terms):
         out('ACT', ('GENERIC-' if code == 'ORG-TERM' else 'LINT-') + code, where, problem)
-    if osp.samefile(kit, KIT_DIR) and 'port' in PLUGINS:   # ports (kitbag_ports.py) are checked for the kit this file lives in
-        with contextlib.redirect_stdout(io.StringIO()) as said:
-            stale = PLUGINS['port'](['--check'])
-        if stale:
-            out('ACT', 'PORT-DRIFT', 'kitbag.py port --check', said.getvalue().strip()[:300], 'python -X utf8 skills/bossy/kitbag.py port')
     texts = {f: read(osp.join(kit, f)) for f in files}
     for f in sec_files(files):
         for ln, nm, n in sec_sizes(f, texts[f]):
@@ -801,7 +783,7 @@ def cmd_scan(kit):
         elif ex is not None and top not in ex:
             out('WARN', 'CONFIG-EXAMPLE', where, f'"{top}" is documented but missing from kit.example.json')
     for f, t in texts.items():
-        if not f.startswith(('examples/',) + GENERATED) and f.endswith(('.ps1', '.py', '.js', '.mjs', '.md', '.json')):
+        if not f.startswith('examples/') and f.endswith(('.ps1', '.py', '.js', '.mjs', '.md', '.json')):
             for ln, line in enumerate(t.split('\n'), 1):
                 if re.search(r'(?<![\w/])[A-Za-z]:[\\/](?:Users|Codebase|src|work|Projects)\b|/home/\w+/|/Users/\w+/', line) and not re.search(r'e\.g\.|example|<|//|^\s*#|Windows:', line):
                     out('WARN', 'GENERIC-PATH', f'{f}:{ln}', 'absolute machine path: config key or derived path instead?')
@@ -846,7 +828,7 @@ def doc_flags(texts):
                 ps = {x.lower() for x in re.findall(r'\$(\w+)', m.group(1))} | {x.lower() for x in re.findall(r"Alias\('([^']+)'", m.group(1))}
                 params.setdefault(osp.basename(f), set()).update(ps)
     for f, t in texts.items():
-        if not f.endswith('.md') or f.startswith(GENERATED) or f.endswith('LESSONS.md'):
+        if not f.endswith('.md') or f.endswith('LESSONS.md'):
             continue
         for ln, line in enumerate(t.split('\n'), 1):
             for span in re.findall(r'`([^`]+)`', line):
@@ -929,12 +911,9 @@ def fault_class(cmd, text):
     return 'exit', '', ''
 
 def fault_roots():
-    """(harness, root, glob) of every transcript tree (lib.ps1 transcript adapters; KIT_TRANSCRIPTS* override)."""
+    """(harness, root, glob) of the Claude Code transcript tree (lib.ps1 transcript adapter; KIT_TRANSCRIPTS overrides)."""
     home, ws = osp.expanduser('~'), osp.dirname(main_clone(KIT_DIR))
-    codex = os.environ.get('KIT_TRANSCRIPTS_CODEX') or osp.join(os.environ.get('CODEX_HOME') or osp.join(home, '.codex'), 'sessions')
-    return [('claude', os.environ.get('KIT_TRANSCRIPTS') or osp.join(home, '.claude', 'projects', re.sub(r'[^A-Za-z0-9]', '-', ws)), '**/*.jsonl'),
-            ('codex', codex, '**/rollout-*.jsonl'),
-            ('antigravity', os.environ.get('KIT_TRANSCRIPTS_ANTIGRAVITY') or osp.join(home, '.gemini', 'antigravity-cli', 'brain'), '*/.system_generated/logs/transcript.jsonl')]
+    return [('claude', os.environ.get('KIT_TRANSCRIPTS') or osp.join(home, '.claude', 'projects', re.sub(r'[^A-Za-z0-9]', '-', ws)), '**/*.jsonl')]
 
 def _fault_calls(h, o, pend):
     """Yield (tool, cmd, rc, text, at) failed calls of one transcript record; pend: call id -> (tool, cmd) across lines."""
@@ -949,32 +928,9 @@ def _fault_calls(h, o, pend):
                 m = re.match(r'\s*Exit code (\d+)', text)
                 if m or c.get('is_error') or fault_known(cmd, text):
                     yield tool, cmd, int(m.group(1)) if m else int(bool(c.get('is_error'))), text, o.get('timestamp') or ''
-    elif h == 'codex':
-        p = o.get('payload') or {}
-        if p.get('type') == 'function_call' and p.get('name') in FAULT_TOOLS:
-            try:
-                g = json.loads(p.get('arguments') or '{}')
-            except ValueError:
-                g = {}
-            pend[p.get('call_id')] = (p['name'], fault_mask(g.get('cmd') or g.get('command') or '', 600))
-        elif p.get('type') == 'function_call_output' and p.get('call_id') in pend:
-            tool, cmd = pend.pop(p['call_id'])
-            text = str(p.get('output') or '')
-            m = re.search(r'(?:exited with code|Exit code:?) (\d+)', text) or re.search(r'"exit_code":\s*(\d+)', text)
-            if m and (m.group(1) != '0' or fault_known(cmd, text)):
-                yield tool, cmd, int(m.group(1)), text, o.get('timestamp') or ''
-    else:
-        for c in o.get('tool_calls') or []:
-            if c.get('name') in FAULT_TOOLS:
-                pend['last'] = (c['name'], fault_mask(str((c.get('args') or {}).get('CommandLine') or '').strip('"'), 600))
-        m = re.search(r'The command exited with code (\d+)', str(o.get('content') or '')) if o.get('type') != 'PLANNER_RESPONSE' else None
-        if m and 'last' in pend:
-            tool, cmd = pend.pop('last')
-            if m.group(1) != '0' or fault_known(cmd, o['content']):
-                yield tool, cmd, int(m.group(1)), str(o['content']), o.get('created_at') or ''
 
-FAULT_TOOLS = {'Bash', 'PowerShell', 'exec_command', 'shell', 'run_command'}
-FAULT_WANT = re.compile(r'"tool_use"|"tool_result"|function_call|"tool_calls"|exited with code|"session_meta"')
+FAULT_TOOLS = {'Bash', 'PowerShell'}
+FAULT_WANT = re.compile(r'"tool_use"|"tool_result"')
 
 def fault_scan(days=1):
     """Read new transcript lines (byte cursor per file, durable faults-cursor) and append each failed command to audit/<day>/faults.jsonl."""
@@ -991,7 +947,7 @@ def fault_scan(days=1):
             if off == st.st_size:
                 continue
             pend = dict(c.get('pend') or {})
-            agent = re.sub(r'^agent-|\.jsonl$|^rollout-[\dT-]+-', '', osp.basename(f)) if h != 'antigravity' else osp.basename(osp.dirname(osp.dirname(osp.dirname(f))))
+            agent = re.sub(r'^agent-|\.jsonl$', '', osp.basename(f))
             with open(f, 'rb') as fh:
                 fh.seek(off)
                 data = fh.read()
@@ -1004,8 +960,6 @@ def fault_scan(days=1):
                     o = json.loads(line)
                 except ValueError:
                     continue
-                if h == 'codex' and o.get('type') == 'session_meta' and not osp.normcase(str((o.get('payload') or {}).get('cwd') or '')).startswith(osp.normcase(osp.dirname(main_clone(KIT_DIR)))):
-                    pend['skip'] = 1
                 for tool, cmd, rc, text, at in ([] if pend.get('skip') else _fault_calls(h, o, pend)):
                     first = fault_line(text)
                     if not first or FAULT_SKIP.search(text[:400]):
@@ -1193,8 +1147,190 @@ def cmd_popups(a):
     print(f'popups: {hits} window(s) in {mins:g} min; log {log}')
     return 0
 
+# ---- characters: Character blocks from the manifest
+def character_block(ch, width=128):
+    """The Character paragraph tools --write writes into agents/<name>.md from the manifest (one fixed shape for every agent)."""
+    words = f'**Character:** traits: {ch["traits"]} · bias: {ch["bias"]} · catchphrase: "{ch["catchphrase"]}" · never: {ch["never"]}.'.split(' ')
+    lines, cur = [], ''
+    for w in words:
+        if cur and len(cur) + 1 + len(w) > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f'{cur} {w}' if cur else w
+    return '\n'.join(lines + [cur])
+
+def write_characters(kit=None):
+    """tools --write: every agent's Character block from the manifest (one shape, one source)."""
+    kd = kit or KIT_DIR
+    n = 0
+    for a, m in (manifest(kd).get('agents') or {}).items():
+        p = osp.join(kd, 'agents', f'{a}.md')
+        ch = m.get('character') or {}
+        if not osp.isfile(p) or schema_errors(ch, SCHEMAS['character']) or TODO in json.dumps(ch):
+            continue
+        with open(p, encoding='utf-8', newline='') as fh:
+            raw = fh.read()
+        eol = '\r\n' if '\r\n' in raw else '\n'
+        t = raw.replace('\r\n', '\n')
+        blk = character_block(ch)
+        t2 = CHAR_RX.sub(lambda _: blk, t, count=1) if CHAR_RX.search(t) else t
+        if t2 != t:
+            with open(p, 'w', encoding='utf-8', newline='') as fh:
+                fh.write(t2.replace('\n', eol))
+            n += 1
+    if n:
+        print(f'Character blocks written from the manifest: {n}')
+
+# ---- tools: crew allowlists into agents/*.md (role_tools in kitbag.py); the git filter keeps grants out of commits
+FILTER = 'kittools'   # .gitattributes agents/*.md filter=kittools: clean = the manifest line, smudge = + the grants (installed kit only)
+HARNESS_TOOLS = {'StructuredOutput', 'ReportFindings', 'ListAgents', 'DeferredToolPlaceholder'}   # injected by the harness, never listed
+
+def write_tools(kit=None):
+    """Every agent's tools line from the manifest (+ kit.local.json tools.roles grants in the installed kit); [changed paths]."""
+    kd = kit or KIT_DIR
+    done = []
+    for a in manifest(kd).get('agents') or {}:
+        p = osp.join(kd, 'agents', f'{a}.md')
+        line = role_tools(a, kd, tools_live(kd))
+        if not osp.isfile(p) or not line:
+            continue
+        with open(p, encoding='utf-8', newline='') as fh:
+            t = fh.read()
+        t2 = set_tools_line(t, line)
+        if t2 != t:
+            with open(p + '.tmp', 'w', encoding='utf-8', newline='') as fh:
+                fh.write(t2)
+            os.replace(p + '.tmp', p)   # a session never reads a half-written agent file
+            done.append(p)
+    return done
+
+def tools_filter(mode, path):
+    """git filter (stdin -> stdout): clean = the tracked manifest line, smudge = + grants; any failure passes the bytes through."""
+    data = sys.stdin.buffer.read()
+    try:
+        name = osp.splitext(osp.basename(path))[0]
+        t = data.decode('utf-8')
+        line = role_tools(name, KIT_DIR, mode == 'smudge' and tools_live(KIT_DIR))
+        sys.stdout.buffer.write(set_tools_line(t, line).encode('utf-8') if line else data)
+    except Exception:
+        if mode == 'clean':   # fail closed: no mcp__ entry (an org server name) ever reaches a commit
+            data = re.sub(rb'(?m)^(tools:[^\r\n]*?)(?:,\s*mcp__[\w*-]+)+(?=\r?$)', rb'\1', data)
+        sys.stdout.buffer.write(data)
+    return 0
+
+def git_quiet(*args):
+    import subprocess
+    return subprocess.run(['git', '-C', KIT_DIR, *args], capture_output=True, text=True, timeout=kit_param('flow.gitTimeoutSec'))
+
+def tools_deploy():
+    """Installed kit: the filter in .git/config, grants rendered (status stays clean), MCP coverage line."""
+    if not tools_live(KIT_DIR) or not osp.exists(osp.join(KIT_DIR, '.git')):
+        return
+    py = Path(sys.executable).as_posix()
+    for verb in ('clean', 'smudge'):
+        want = f'"{py}" -X utf8 skills/bossy/kitbag.py tools --filter {verb} --file %f'
+        if git_quiet('config', '--local', f'filter.{FILTER}.{verb}').stdout.strip() != want:
+            git_quiet('config', '--local', f'filter.{FILTER}.{verb}', want)
+    for p in write_tools(KIT_DIR):   # a re-add refreshes the stat cache (update-index --refresh keeps the file M); same blob only
+        if git_quiet('diff', '--quiet', '--', p).returncode == 0:
+            git_quiet('add', '--', p)
+    if (line := mcp_line()):
+        print(line)
+
+def mcp_failed(run=None):
+    """MCP servers that do not connect now (`claude mcp list`, ~4 s: tools --deploy from health -Checks, in the background), shown before the
+    next run (chrome-devtools failed unseen in testy-wave2). No claude CLI: no line."""
+    import subprocess
+    exe = shutil.which('claude')
+    if not exe and not run:
+        return ''
+    try:
+        out = (run or (lambda: subprocess.run([exe, 'mcp', 'list'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=kit_param('tools.mcpListSec')).stdout))()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    bad = [m.group(1) for m in re.finditer(r'(?m)^(\S+?): .* - ✗ ', out or '')]
+    return (f"tools: MCP server(s) {', '.join(bad)} failed to connect (claude mcp list): reconnect with /mcp or fix its config before a run "
+      'that needs it') if bad else ''
+
+def mcp_servers(home=None, ws=None):
+    """MCP servers Claude Code starts in the workspace: ~/.claude.json user + project scope (minus its disabledMcpServers),
+    <workspace>/.mcp.json, enabled plugins' servers (plugin_<plugin>_<server>). Names only, never a value."""
+    home, ws = Path(home or Path.home()), Path(ws or Path(main_clone(KIT_DIR)).parent)
+    cfg = load_json(str(home / '.claude.json'))[0] or {}
+    key = lambda p: str(p).replace('\\', '/').rstrip('/').lower()
+    proj = next((v for k, v in (cfg.get('projects') or {}).items() if key(k) == key(ws)), {}) or {}
+    names = set(cfg.get('mcpServers') or {}) | set(proj.get('mcpServers') or {}) | set((load_json(str(ws / '.mcp.json'))[0] or {}).get('mcpServers') or {})
+    on = {k for k, v in ((load_json(str(home / '.claude' / 'settings.json'))[0] or {}).get('enabledPlugins') or {}).items() if v}
+    inst = (load_json(str(home / '.claude' / 'plugins' / 'installed_plugins.json'))[0] or {}).get('plugins') or {}
+    for pid in sorted(on):
+        for e in inst.get(pid) or []:
+            base = Path(e.get('installPath') or '') if isinstance(e, dict) else None
+            for f in ((base / '.claude-plugin' / 'plugin.json'), (base / '.mcp.json')) if base else ():
+                j = load_json(str(f))[0] or {}
+                srv = j.get('mcpServers') or (j if f.name == '.mcp.json' else {})   # a string (a path to a .mcp.json) names no server here
+                names |= {f'plugin_{pid.split("@")[0]}_{s}' for s in (srv if isinstance(srv, dict) else ())}
+    off = {re.sub(r'^plugin:([^:]+):', r'plugin_\1_', d) for d in proj.get('disabledMcpServers') or []}
+    return sorted(names - off)
+
+def mcp_line(home=None, ws=None):
+    """Owner 2026-11-24: a server no crew role grants reaches the coordinator only; one line until a role grants it or mainOnly lists it."""
+    roles = list(manifest(KIT_DIR).get('agents') or {})
+    allow = {t for a in roles for t in (role_tools(a, KIT_DIR, True) or '').split(', ')}
+    quiet = set((local_config(KIT_DIR, 'kit.local.json').get('tools') or {}).get('mainOnly') or [])
+    new = [s for s in mcp_servers(home, ws) if s not in quiet and not any(t == f'mcp__{s}' or t.startswith(f'mcp__{s}__') for t in allow)]
+    return (f"tools: MCP server(s) {', '.join(new)} reach no crew role (coordinator only): grant one in kit.local.json tools.roles.<role> "
+      f"[\"mcp__<server>\"] or list it in tools.mainOnly") if new else ''
+
+def tool_use(days=14, root=None):
+    """{role: Counter(tool: calls)} from the workspace's Claude Code subagent transcripts of the last days (crew roles only)."""
+    import collections, glob, time
+    root = Path(root or Path.home() / '.claude' / 'projects' / re.sub(r'[^A-Za-z0-9]', '-', str(Path(main_clone(KIT_DIR)).parent)))
+    cut, rx, out = time.time() - days * 86400, re.compile(r'"type":"tool_use","id":"[^"]+","name":"([^"]+)"'), collections.defaultdict(collections.Counter)
+    for m in glob.glob(str(root / '*' / 'subagents' / '**' / 'agent-*.meta.json'), recursive=True):
+        f = m[:-10] + '.jsonl'
+        if not osp.isfile(f) or osp.getmtime(f) < cut:
+            continue
+        role = (load_json(m)[0] or {}).get('agentType') or '?'
+        with open(f, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                if '"tool_use"' in line:
+                    out[role].update(rx.findall(line))
+    return out
+
+def cmd_tools(a):
+    if '--write' in a:   # pre-commit, scaffold: Character blocks + tools lines from the manifest; installed kit: filter + grants
+        write_characters(KIT_DIR)
+        write_tools(KIT_DIR)
+        tools_deploy()
+        return 0
+    if '--deploy' in a:   # post-merge, health -Checks (background): the filter, grants, MCP lines; never a commit's write
+        tools_deploy()
+        if (line := mcp_failed()):
+            print(line)
+        return 0
+    if '--filter' in a:
+        return tools_filter(a[a.index('--filter') + 1], a[a.index('--file') + 1] if '--file' in a else '')
+    days = int(a[a.index('--days') + 1]) if '--days' in a else 14
+    use, rows = tool_use(days), []
+    for r in manifest(KIT_DIR).get('agents') or {}:
+        allow = (role_tools(r, KIT_DIR, True) or '').split(', ')
+        got = {t: n for t, n in use.get(r, {}).items() if t not in HARNESS_TOOLS and re.match(r'^(mcp__[\w-]+|[A-Z]\w*)$', t)}   # no invented names (bash, pwsh)
+        ok = lambda t: t in allow or any(t.startswith(g + '__') for g in allow if g.startswith('mcp__'))
+        rows.append({'role': r, 'allow': allow, 'calls': sum(got.values()), 'unused': [t for t in allow if not any(u == t or u.startswith(t + '__') for u in got)],
+          'denied': {t: n for t, n in got.items() if not ok(t)}})
+    if '--json' in a:
+        print(json.dumps({'days': days, 'roles': rows, 'mcp': mcp_servers()}, indent=1))
+    for x in rows if '--json' not in a else []:
+        print(f"{x['role']}: {len(x['allow'])} tools, {x['calls']} calls in {days} d · unused: {', '.join(x['unused']) or '-'}"
+          + (f" · USED, NOT ALLOWED: {', '.join(f'{t} {n}' for t, n in x['denied'].items())}" if x['denied'] else ''))
+    if '--json' not in a and (line := mcp_line()):
+        print(line)
+    return 1 if any(x['denied'] for x in rows) else 0
+
 AUDIT_VERBS = {'scan': lambda kit, flags: cmd_scan(kit), 'setup': lambda kit, flags: cmd_setup(kit, '--fix' in flags), 'config': lambda kit, flags: cmd_config(kit, '--fill' in flags, '--ack-caps' in flags),
   'recover': lambda kit, flags: cmd_recover(kit, '--fix' in flags)}
-COMMANDS = {'cost': cmd_cost, 'release': cmd_release, 'faults': cmd_faults, 'popups': cmd_popups}
+COMMANDS = {'cost': cmd_cost, 'release': cmd_release, 'faults': cmd_faults, 'popups': cmd_popups, 'tools': cmd_tools}
 ARGS = {'audit': ({'--fix', '--fill', '--ack-caps'}, {'--kit', '--json'}, False), 'cost': ({'--steps', '--json'}, set(), True),
-  'release': ({'--tag', '--publish'}, set(), False), 'faults': ({'--json'}, {'--n', '--days'}, False), 'popups': (set(), {'--minutes', '--exe'}, False)}
+  'release': ({'--tag', '--publish'}, set(), False), 'faults': ({'--json'}, {'--n', '--days'}, False), 'popups': (set(), {'--minutes', '--exe'}, False),
+  'tools': ({'--json', '--write', '--deploy'}, {'--filter', '--file', '--days'}, False)}

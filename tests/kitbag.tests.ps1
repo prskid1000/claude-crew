@@ -36,7 +36,7 @@ Expect 'kitty model per kind: tidy apply, bossy K1 fix / docs / env / retro -> s
 $out = python -X utf8 $KT prose --kind mr-body $pf | Out-String
 Expect 'prose: filler (the whole banned list), missing sections, a 4th bullet are findings' ($LASTEXITCODE -eq 1 -and $out -match 'filler: "basically"' -and $out -match '"I hope"' -and $out -match '"successfully"' -and $out -match 'missing sections' -and $out -match '4 bullets')
 $rd = Get-Content (Join-Path $src 'README.md') -Raw; $sec = { param($h) ($rd -split '(?m)^## ' | Where-Object { $_.StartsWith($h) }) -join '' }
-Expect 'README keeps what other files cite it for: Install (not ported, Org router rows), Using it (supervise.output)' ((& $sec 'Install') -match 'Not ported' -and (& $sec 'Install') -match 'Org router rows' -and (& $sec 'Using it') -match 'supervise\.output')
+Expect 'README keeps what other files cite it for: Install (Org router rows), Using it (supervise.output)' ((& $sec 'Install') -match 'Org router rows' -and (& $sec 'Using it') -match 'supervise\.output')
 $out = KtPy "sys.exit(k.audited('x.py', ['v'], lambda: int('zz')))" 2>&1 | Out-String
 Expect "audited: an uncaught error prints one line (script verb: type: why (at file:line)), exit 1 ($LASTEXITCODE)" ($LASTEXITCODE -eq 1 -and $out -match 'x\.py v: ValueError: .*zz.*\(at <string>:1\)' -and $out -notmatch 'Traceback')
 $out = KtPy "g = []; k.kitlog = lambda *a: g.append(a[2]); k.audited('x', ['v'], lambda: (print('usage: x\nx: error: no verb', file=sys.stderr), sys.exit(2))); print(g[-1])" 2>&1 | Out-String
@@ -81,8 +81,6 @@ Expect 'prose: a results.json note over 40 words is a finding' ($LASTEXITCODE -e
 Push-Location $k; $null = python -X utf8 $KT lint --help; $h = $LASTEXITCODE; $null = python -X utf8 $KT flow --bogus 2>&1; $u = $LASTEXITCODE
 $null = python -X utf8 $KT lint (Join-Path $k 'skills') 2>&1; $nk = $LASTEXITCODE; Pop-Location
 Expect 'kitbag: --help 0, writes nothing; bad flag / non-kit dir 2' ($h -eq 0 -and $u -eq 2 -and $nk -eq 2 -and -not (Test-Path (Join-Path $k '--help')))
-$eol = git -C $src check-attr eol -- .codex/config.toml .agents/hooks.json .codex/agents/x.toml .agents/workflows/x.md GEMINI.md
-Expect 'port: generated ports are eol=lf (an autocrlf clone shows no line-ending-only diffs)' (@($eol | Where-Object { $_ -match ': eol: lf$' }).Count -eq 5)
 # kitbag internals (python)
 $ktt = @'
 import importlib.util, json, os, sys, tempfile, tomllib

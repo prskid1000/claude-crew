@@ -58,7 +58,7 @@
       "file": "skills/crafty/lib.ps1",
       "verbs": "root last",
       "caps": "agentMeta",
-      "names": "claude codex antigravity none",
+      "names": "claude none",
       "gaps": {
         "none/agentMeta": "no transcript (another tool): no agent to look up; board and journal only"
       }
@@ -215,97 +215,6 @@
       "file": "skills/crafty/adapters/stack-presets.ps1",
       "verbs": "detect",
       "names": "core presets"
-    }
-  },
-  "harness": {
-    "_readme": "kitbag.py port writes the Codex (.codex/) and Antigravity (.agents/) copies; a hook not listed runs the same script verb there",
-    "hooks": {
-      "PreToolUse guard_client.mjs": {
-        "codex": "guard_client.mjs",
-        "antigravity": "guard_client.mjs"
-      },
-      "PreToolUse bossy.ps1 guard-sendmessage": {
-        "codex": "fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg",
-        "antigravity": "fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg"
-      },
-      "PostToolUse ctx_hook.mjs": {
-        "codex": "fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print (board beat, crafty.ps1 wt / check / checkpoint, the gate). PostToolUse additionalContext exists (https://learn.chatgpt.com/docs/hooks) but its input names no agent: a sub-agent's hook would drain its parent's inbox",
-        "antigravity": "fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print. PostToolUse returns {} only (https://antigravity.google/docs/hooks/); PostInvocation injectSteps is not wired: sub-agent firing unverified"
-      }
-    },
-    "features": {
-      "idle-wait guard (Monitor timeout_ms, foreground sleep over guard.warmSeconds; subagents only)": {
-        "codex": "fallback: kit waits return within guard.warmSeconds (decide wait 4 min, envy wait 4.5 min / 270 s); AGENTS.md Waits",
-        "antigravity": "fallback: kit waits return within guard.warmSeconds; AGENTS.md Waits"
-      },
-      "screenshot view copy and re-read deny": {
-        "codex": "gap: Codex reads images outside the hooks; the view copy is written, AGENTS.md points to it",
-        "antigravity": "port: guard_client.mjs redirects view_file of a shot to its view copy; re-read deny gap (no session id in the hook input)"
-      },
-      "guard on file reads and MCP SQL": {
-        "codex": "port: PreToolUse guard_client.mjs on Bash|apply_patch|mcp__*(sql|query)* (Codex reads files through its shell; hook input tool_name / tool_input as Claude Code)",
-        "antigravity": "port: PreToolUse guard_client.mjs on view_file|call_mcp_tool|mcp_.* (https://antigravity.google/docs/hooks/: Read caps, the logins file, SQL row caps; answered { decision, reason })"
-      },
-      "test-login read deny": {
-        "codex": "fallback: kit.rules exec policy + the shell guard (best-effort)",
-        "antigravity": "port: guard_client.mjs denies view_file of the logins file, an always-on rule, the shell guard"
-      },
-      "dated model override (kit.local.json models.override {model, until: ISO time}: every claude tier and models.<phase> id until then; brief agents[].model / items[].model, debateModels and inherit keep theirs)": {
-        "codex": "fallback: Claude tiers only (usage.ps1 Get-KitModelOverride); a Codex session sets models.tiers.codex by hand and removes it after",
-        "antigravity": "fallback: Claude tiers only; an Antigravity session sets models.tiers.antigravity / ports.models by hand and removes it after"
-      },
-      "per-role prompt cache TTL (agent front matter experimental.cacheTtl: devy 1h; settings subagentPromptCacheTtl / env CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL override it)": {
-        "codex": "gap: no config.toml key or custom-agent field sets a cache TTL (codex.exe 2026-11-27: prompt_cache_key / options are set by Codex itself); caching stays automatic",
-        "antigravity": "gap: no per-agent cache TTL setting; Gemini caching stays implicit"
-      },
-      "per-agent tool and MCP lists": {
-        "codex": "gap: no such feature: https://learn.chatgpt.com/docs/agent-configuration/subagents a custom agent has no tools allow-list and its mcp_servers / sandbox_mode do not override the parent: the ported note names the allowlist, the guard covers both",
-        "antigravity": "port: tools: [<agy names>] in .agents/agents/*.md (https://antigravity.google/docs/subagents/; kitbag_ports.py GRAVITY_TOOL_MAP + call_mcp_tool); an agent with a tool agy cannot name (WebFetch, WebSearch) keeps all tools"
-      },
-      "Artifacts": {
-        "codex": "fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; the Codex CLI has no viewer (https://learn.chatgpt.com/docs/artifacts-viewer)",
-        "antigravity": "fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; agy Artifacts are its own plans and walkthroughs (https://antigravity.google/docs/artifacts/)"
-      },
-      "heartbeat cron (CronList)": {
-        "codex": "fallback: bossy.ps1 heartbeat (OS timer)",
-        "antigravity": "fallback: schedule"
-      },
-      "blocking owner questions": {
-        "codex": "fallback: request_user_input in Plan mode, else bossy.ps1 decide ask (blocking)",
-        "antigravity": "fallback: ask_question when listed, else bossy.ps1 decide ask"
-      },
-      "run journals (Runs band, stuck checks, recover)": {
-        "codex": "fallback: the .codex/workflows procedure journals each step (kitbag.py port --journal) into <runtime>/work/port-runs/codex/",
-        "antigravity": "port: run_workflow journal in <runtime>/work/port-runs/"
-      },
-      "Monitor and background-shell check": {
-        "codex": "port: the shell sweep finds shells under codex by their exec_command in the rollout (supervise-resources.ps1 KitShellCall)",
-        "antigravity": "port: the shell sweep finds shells under agy by their run_command in transcript.jsonl (supervise-resources.ps1 KitShellCall)"
-      },
-      "task clock (clock log, TASK CLOCK ACT, dashboard Delivery task rows)": {
-        "codex": "port: the kit verbs write the clock rows themselves (lib.ps1 Invoke-KitVerb, devtools.py main): the same rows from any harness's shell",
-        "antigravity": "port: the kit verbs write the clock rows themselves (lib.ps1 Invoke-KitVerb, devtools.py main): the same rows from any harness's shell"
-      },
-      "script-fault capture and guard (kitbag.py faults, guard rule script-faults)": {
-        "codex": "port: faults reads exec_command / function_call_output in the rollouts; the guard runs on Bash; fallback: its Bash-only checks (bash -n, MSYS paths, bash-quoted pwsh payloads) skip Codex (its shell on Windows is PowerShell), and apply_patch edits get the case and Java checks when the script runs or compiles",
-        "antigravity": "port: faults reads run_command and its 'exited with code' step in transcript.jsonl; the guard runs on run_command; fallback: the Bash-only checks skip it (no Git Bash shell), edits are checked when the script runs"
-      },
-      "main-session router (ROUTER.md: SessionStart bossy.ps1 health adds it as model-only context; spawned agents never load it)": {
-        "codex": "port: the SessionStart hook runs the same health (hookSpecificOutput.additionalContext); fallback: AGENTS.md 'Crew and routing' has the main session Read ROUTER.md when it is not in context; a sub-agent firing SessionStart is unverified (if it does, it holds the router too: same outcome, no saving)",
-        "antigravity": "port: SessionStart health injects it as a system message (injectSteps: agy has no model-only channel, the owner sees it); fallback: AGENTS.md 'Crew and routing' Read rule; sub-agent firing unverified"
-      },
-      "local model launcher (crafty.ps1 local: a client on a local server, its env from models.local, seats, RAM and forbidden-model checks)": {
-        "codex": "port: crafty.ps1 local codex starts Codex on the server (-c model_providers.local.{base_url, wire_api, env_key, stream_idle_timeout_ms}, model_provider=local; headless: codex exec --output-schema); the same verb runs from a Codex shell",
-        "antigravity": "gap: no such feature: https://antigravity.google/docs/settings/ (read 2026-11-27) the app, CLI and IDE add custom models only over the Gemini API (customModelsConfig, modelName gemini-api://<base_url>/models/<model>, modelProvider gemini + GEMINI_API_KEY), not an OpenAI or Anthropic endpoint; only the Python SDK has LocalOpenAIAgentConfig(base_url) (https://antigravity.google/docs/sdk/local-models/), which the kit's agy port does not run. Closes when the local server answers the Gemini API (then local antigravity writes customModelsConfig) or the port runs on the SDK"
-      },
-      "local model bench (crafty.ps1 local bench: recorded real steps replayed on the local model, scored per role)": {
-        "codex": "port: run -Runner codex replays a set through local codex (codex exec, reply = stdout); gap: build reads Claude Code subagent transcripts only (no Codex session reader): a set built from Claude Code runs is replayed and scored the same from a Codex shell",
-        "antigravity": "gap: no local model client (row above), so no bench run; build / score / report / diff run from any shell. Closes with the launcher's gap"
-      },
-      "context plan (kit instructions 30k / 50k, slices, kit scripts run not read, a kit worktree's CLAUDE.md never loaded twice)": {
-        "codex": "port: usage.ps1 reads its rollouts into the same slices and flags; the kit-script Read rule runs in guard_client.mjs; AGENTS.md loads once at session start, so no claudeMdExcludes is needed",
-        "antigravity": "port: usage.ps1 reads transcript.jsonl into the same slices and flags; the kit-script Read rule runs on view_file; AGENTS.md loads once at session start, so no claudeMdExcludes is needed"
-      }
     }
   }
 }

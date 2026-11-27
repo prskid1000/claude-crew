@@ -1,15 +1,15 @@
 <#
-local-model.ps1: Claude Code, Claude Desktop, VS Code or Codex on a local model server (models.local), one seat per client.
-  & <kit>/skills/crafty/crafty.ps1 local <claude|desktop|code|codex> [-Model <id>] [-Print] [-Json] [-Unsafe] [-WaitMinutes <m>] [-- <client args>]
-      claude / codex run in this terminal, desktop / code start detached (close an open instance first: it keeps its env).
+local-model.ps1: Claude Code, Claude Desktop or VS Code on a local model server (models.local), one seat per client.
+  & <kit>/skills/crafty/crafty.ps1 local <claude|desktop|code> [-Model <id>] [-Print] [-Json] [-Unsafe] [-WaitMinutes <m>] [-- <client args>]
+      claude runs in this terminal, desktop / code start detached (close an open instance first: it keeps its env).
       From pwsh quote the separator ('--'): a bare -- ends PowerShell's own parameters and never arrives.
       -Print: the command, env names and values (tokens redacted); starts nothing. -Unsafe: adds the client's permission-skip
       flag (flagged.ps1 unsafeflag) for a person's own interactive session only (refused from an agent shell, piped input or
       -PromptFile: agents never skip permissions).
-  & <kit>/skills/crafty/crafty.ps1 local <claude|codex> -PromptFile <f> [-SchemaFile <f>] [-AgentType <crew>] [-Agent <id>]
-      headless, the prompt on stdin: claude -p --output-format json [--json-schema] [--agent] · codex exec [--output-schema] -
+  & <kit>/skills/crafty/crafty.ps1 local claude -PromptFile <f> [-SchemaFile <f>] [-AgentType <crew>] [-Agent <id>]
+      headless, the prompt on stdin: claude -p --output-format json [--json-schema] [--agent]
   & <kit>/skills/crafty/crafty.ps1 local status [-Json]   mode, mixed-mode use list, server models, seats, RAM, token set or not
-  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Runner claude|codex] ...
+  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] ...
       recorded real steps replayed on the local model, scored per role (localbench.py header: verbs, store, scoring)
 Checks before a start, in order: forbidden model ids (models.local.forbiddenModels, wildcards: -Model, ANTHROPIC_*MODEL,
 --model / -m in the client args), free RAM (Get-GateAvailGB - models.local.needGB >= Get-KitKeepFreeGB; skipped while the requested model is resident: GET /v1/models/active), the server
@@ -17,11 +17,11 @@ Checks before a start, in order: forbidden model ids (models.local.forbiddenMode
 full: a mixed-mode headless run with models.local.overflow cloud exits 3 OVERFLOW at once, else waits up to -WaitMinutes /
 models.local.queueMinutes, then exits 3 QUEUED).
 Inputs: kit.local.json models.mode (cloud | local | mixed; env KIT_MODEL_MODE wins: every client started here gets local),
-models.local { baseUrl, token (env:<VAR> | secret:<name>; never printed), defaultModel, forbiddenModels, wireApi, commands,
-env (name: value, null drops a default), use, overflow, maxConcurrent, needGB, probeSec, queueMinutes, streamIdleTimeoutMs }
+models.local { baseUrl, token (env:<VAR> | secret:<name>; never printed), defaultModel, forbiddenModels, commands,
+env (name: value, null drops a default), use, overflow, maxConcurrent, needGB, probeSec, queueMinutes }
 (README "Configuration"). Lease state: video.ps1 Get-KitLocalAiState local-model. Outputs: text, JSON with -Json.
 Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat · else the client's (its 1-3 as 11-13).
-Sections: L27 config · L114 checks · L144 verb
+Sections: L27 config · L102 checks · L132 verb
 #>
 #Requires -Version 7
 # ---- config: models.mode, models.local, the token, each client's env and arguments
@@ -30,12 +30,12 @@ function Get-KitModelMode { $mm = "$(if ($env:KIT_MODEL_MODE) { $env:KIT_MODEL_M
 $script:KitLocalUse = @('steppy', 'checky:close', 'checky:audit', 'devy:ship')
 function Get-KitLocalModelConfig {
   $lc = Get-KitSetting 'models.local' $null
-  $cmds = @{ claude = @('claude'); codex = @('codex'); code = @('code', 'code-insiders'); desktop = @() }
+  $cmds = @{ claude = @('claude'); code = @('code', 'code-insiders'); desktop = @() }
   foreach ($cp in @(Get-KitProps (Get-KitMember $lc 'commands'))) { $cmds[$cp.Name] = @($cp.Value | Where-Object { $_ }) }
   [pscustomobject]@{
     baseUrl = "$(Get-KitSetting 'models.local.baseUrl' 'http://localhost:8080')".TrimEnd('/')
     token = "$(Get-KitSetting 'models.local.token' 'env:LOCAL_MODEL_TOKEN')"; defaultModel = "$(Get-KitSetting 'models.local.defaultModel' '')"
-    forbidden = @(Get-KitSetting 'models.local.forbiddenModels' @() | Where-Object { $_ }); wireApi = "$(Get-KitSetting 'models.local.wireApi' 'responses')"
+    forbidden = @(Get-KitSetting 'models.local.forbiddenModels' @() | Where-Object { $_ })
     commands = $cmds; env = (Get-KitMember $lc 'env'); use = @(Get-KitSetting 'models.local.use' $script:KitLocalUse)
     overflow = "$(Get-KitSetting 'models.local.overflow' 'cloud')".ToLower(); maxConcurrent = [math]::Max(1, [int](Get-KitParam 'models.local.maxConcurrent'))
     needGB = [double](Get-KitParam 'models.local.needGB')
@@ -50,27 +50,24 @@ function Get-KitLocalModelToken([string]$Ref) {
 function Test-KitLocalSecretName([string]$Name) { $Name -match '(^|_)(AUTH_TOKEN|API_KEY|TOKEN|KEY|SECRET|PASSWORD)$' }
 function Get-KitLocalModelEnv([string]$Client, $Cfg, [string]$Token, [string]$Model) {
   $ev = [ordered]@{ KIT_TOOL = 'local'; KIT_MODEL_MODE = 'local' }   # kit budgets (usage.ps1 Get-KitTool) and mode see the session as local
-  $tk = if ($Token) { $Token } else { 'local' }   # both clients need a non-empty key; a server without auth ignores it
-  if ($Client -eq 'codex') { $ev.KIT_LOCAL_MODEL_TOKEN = $tk }
-  else {
-    $ev.ANTHROPIC_BASE_URL = $Cfg.baseUrl; $ev.ANTHROPIC_AUTH_TOKEN = $tk
-    # a local server: no prompt-cache markers, telemetry, betas, 1M window or tool search; slow tokens: long shell timeouts
-    foreach ($dv in @('DISABLE_PROMPT_CACHING=1', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1', 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1', 'CLAUDE_CODE_ATTRIBUTION_HEADER=0',
-        'CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384', 'ENABLE_TOOL_SEARCH=false', 'CLAUDE_CODE_DISABLE_1M_CONTEXT=1', 'BASH_DEFAULT_TIMEOUT_MS=1800000', 'BASH_MAX_TIMEOUT_MS=3600000')) { $dp = $dv -split '=', 2; $ev[$dp[0]] = $dp[1] }
-    if ($KitIsWindows) { $ev.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1' }   # the kit runs python and node from the PowerShell tool
-    if ($Model) { $ev.ANTHROPIC_MODEL = $Model }
-  }
+  $tk = if ($Token) { $Token } else { 'local' }   # the client needs a non-empty key; a server without auth ignores it
+  $ev.ANTHROPIC_BASE_URL = $Cfg.baseUrl; $ev.ANTHROPIC_AUTH_TOKEN = $tk
+  # a local server: no prompt-cache markers, telemetry, betas, 1M window or tool search; slow tokens: long shell timeouts
+  foreach ($dv in @('DISABLE_PROMPT_CACHING=1', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1', 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1', 'CLAUDE_CODE_ATTRIBUTION_HEADER=0',
+      'CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384', 'ENABLE_TOOL_SEARCH=false', 'CLAUDE_CODE_DISABLE_1M_CONTEXT=1', 'BASH_DEFAULT_TIMEOUT_MS=1800000', 'BASH_MAX_TIMEOUT_MS=3600000')) { $dp = $dv -split '=', 2; $ev[$dp[0]] = $dp[1] }
+  if ($KitIsWindows) { $ev.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1' }   # the kit runs python and node from the PowerShell tool
+  if ($Model) { $ev.ANTHROPIC_MODEL = $Model }
   foreach ($op in @(Get-KitProps $Cfg.env)) { if ($null -eq $op.Value -or "$($op.Value)" -eq '') { $ev.Remove($op.Name) } else { $ev[$op.Name] = "$($op.Value)" } }
   $ev
 }
 # every model id a start would use: -Model, ANTHROPIC_*MODEL / CLAUDE_CODE_SUBAGENT_MODEL (the map, else inherited), --model,
-# -m, --fallback-model (=<id> too), codex -c / --config model=<id>
+# -m, --fallback-model (=<id> too)
 function Get-KitLocalModelIds($EnvMap, [string[]]$Rest, [string]$Model) {
   $mids = [Collections.Generic.List[string]]::new(); if ($Model) { $mids.Add($Model) }
   foreach ($ek in @(@($EnvMap.Keys) + @(Get-ChildItem env: | ForEach-Object Name) | Select-Object -Unique)) {
     if ($ek -match '^(ANTHROPIC_(\w+_)?MODEL|CLAUDE_CODE_SUBAGENT_MODEL)$') { $mv = if ($EnvMap.Contains($ek)) { $EnvMap[$ek] } else { [Environment]::GetEnvironmentVariable($ek) }; if ($mv) { $mids.Add("$mv") } } }
   for ($ri = 0; $ri -lt $Rest.Count; $ri++) { $ra = "$($Rest[$ri])"; $nx = if ($ri + 1 -lt $Rest.Count) { "$($Rest[$ri + 1])" }
-    if ($ra -in '--model', '-m', '--fallback-model' -and $nx) { $mids.Add($nx) } elseif ($ra -match '^--(fallback-)?model=(.+)$') { $mids.Add($Matches[2]) } elseif ($ra -in '-c', '--config' -and $nx -match '^model\s*=\s*"?([^"]+)"?$') { $mids.Add($Matches[1]) } }
+    if ($ra -in '--model', '-m', '--fallback-model' -and $nx) { $mids.Add($nx) } elseif ($ra -match '^--(fallback-)?model=(.+)$') { $mids.Add($Matches[2]) } }
   @($mids | Select-Object -Unique)
 }
 # the token's config reference for output: a value put there by mistake is never shown
@@ -90,16 +87,7 @@ function Get-KitLocalModelArgs([string]$Client, $Cfg, [string]$Model, [bool]$Uns
     if ($Unsafe) { $av.Add($skip) }
     if ($PromptFile) { $av.AddRange([string[]]@('-p', '--output-format', 'json')); if ($SchemaFile) { $av.AddRange([string[]]@('--json-schema', (Get-Content -LiteralPath $SchemaFile -Raw).Trim())) }; if ($AgentType) { $aj = Get-KitLocalModelAgentJson $AgentType; if (-not $aj -and (Test-Path -LiteralPath (Join-Path $KitRoot "agents/$AgentType.md"))) { Write-Warning "agent ${AgentType}: no tools list parsed, StructuredOutput may be dropped" }; if ($aj) { $av.AddRange([string[]]@('--agents', $aj)) }; $av.AddRange([string[]]@('--agent', $AgentType)) } }
   }
-  elseif ($Client -eq 'codex') {
-    if ($PromptFile) { $av.Add('exec') }
-    $pv = 'model_providers.local'; $idle = [int64](Get-KitParam 'models.local.streamIdleTimeoutMs')
-    foreach ($kv in @("$pv.name=local", "$pv.base_url=$($Cfg.baseUrl)/v1", "$pv.wire_api=$($Cfg.wireApi)", "$pv.env_key=KIT_LOCAL_MODEL_TOKEN", "$pv.stream_idle_timeout_ms=$idle", 'model_provider=local')) { $av.AddRange([string[]]@('-c', $kv)) }
-    if ($Model) { $av.AddRange([string[]]@('-m', $Model)) }
-    if ($Unsafe) { $av.Add($skip) }
-    if ($PromptFile -and $SchemaFile) { $av.AddRange([string[]]@('--output-schema', $SchemaFile)) }
-  }
   foreach ($ra in $Rest) { $av.Add("$ra") }
-  if ($Client -eq 'codex' -and $PromptFile) { $av.Add('-') }   # exec reads the prompt from stdin
   $av.ToArray()
 }
 # the client's program: commands.<client> (first one found); desktop: the Claude Desktop app install
@@ -144,17 +132,17 @@ function Format-KitLocalEnv($EnvMap, [string]$Token) {
 # ---- verb: crafty.ps1 local
 function Invoke-Local {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('claude', 'desktop', 'code', 'codex', 'status', 'bench')][string]$Client,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('claude', 'desktop', 'code', 'status', 'bench')][string]$Client,
   [string]$Model, [switch]$Unsafe, [switch]$Print, [switch]$Json, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session, [double]$WaitMinutes = -1,
-  [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [string]$Runner, [int]$TimeoutSec, [switch]$Force,   # bench
+  [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [int]$TimeoutSec, [switch]$Force,   # bench
   [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'
 $Rest = @($Rest | Where-Object { $null -ne $_ })
-if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step comes back here as local claude | codex)
+if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step comes back here as local claude)
   $ba = @($Rest) + @('-Agent', $Agent) + @(if ($Json) { '-Json' }) + @(if ($Force) { '-Force' }) + @(if ($N) { '-N', $N }) + @(if ($TimeoutSec) { '-TimeoutSec', $TimeoutSec })
-  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Since', $Since), @('-Transcripts', $Transcripts), @('-Client', $Runner))) { if ($bp[1]) { $ba += $bp } }
+  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Since', $Since), @('-Transcripts', $Transcripts))) { if ($bp[1]) { $ba += $bp } }
   & (Get-Python) -X utf8 (Join-Path $KitLibDir 'adapters/localbench.py') @ba; $global:LASTEXITCODE = $LASTEXITCODE; if ($LASTEXITCODE) { exit $LASTEXITCODE }; return
 }
 $cfg = Get-KitLocalModelConfig; $tok = Get-KitLocalModelToken $cfg.token
@@ -170,14 +158,13 @@ if ($Client -eq 'status') {
   "token ($(Format-KitLocalTokenRef $cfg.token)): $($so.token)"; return
 }
 $headless = [bool]$PromptFile
-if ($headless -and $Client -notin 'claude', 'codex') { Stop-KitVerb "local ${Client}: -PromptFile runs claude or codex only" }
+if ($headless -and $Client -ne 'claude') { Stop-KitVerb "local ${Client}: -PromptFile runs claude only" }
 if ($headless -and -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) { Stop-KitVerb "local: no prompt file $PromptFile" }
 if ($SchemaFile -and -not ($headless -and (Test-Path -LiteralPath $SchemaFile -PathType Leaf))) { Stop-KitVerb "local: -SchemaFile needs -PromptFile and an existing file ($SchemaFile)" }
-if ($AgentType -and -not ($headless -and $Client -eq 'claude')) { Stop-KitVerb 'local: -AgentType runs a crew agent headless: claude -PromptFile only (codex has no --agent)' }
+if ($AgentType -and -not $headless) { Stop-KitVerb 'local: -AgentType runs a crew agent headless: claude -PromptFile only' }
 if ($Unsafe -and $Client -in 'desktop', 'code') { Stop-KitVerb "local ${Client}: -Unsafe has no flag there" }
-if ($Unsafe -and -not $Print -and ($headless -or $env:CLAUDECODE -or $env:CLAUDE_AGENT -or @(Get-ChildItem env: | Where-Object Name -match '^CODEX_|ANTIGRAVITY').Count -or [Console]::IsInputRedirected)) { Stop-KitVerb "local: -Unsafe is for a person's own interactive session (agents never skip permissions): refused from an agent shell, piped input or -PromptFile" }
-$mdl = if ($Model) { $Model } elseif ($Client -eq 'codex' -or $headless) { $cfg.defaultModel } else { '' }   # interactive claude: the server's default unless -Model
-if ($Client -eq 'codex' -and -not $mdl) { Stop-KitVerb 'local codex: needs -Model or models.local.defaultModel (local status lists the served ids)' }
+if ($Unsafe -and -not $Print -and ($headless -or $env:CLAUDECODE -or $env:CLAUDE_AGENT -or [Console]::IsInputRedirected)) { Stop-KitVerb "local: -Unsafe is for a person's own interactive session (agents never skip permissions): refused from an agent shell, piped input or -PromptFile" }
+$mdl = if ($Model) { $Model } elseif ($headless) { $cfg.defaultModel } else { '' }   # interactive claude: the server's default unless -Model
 $envMap = Get-KitLocalModelEnv $Client $cfg $tok $mdl
 $bad = @(Get-KitLocalModelIds $envMap $Rest $mdl | Where-Object { Test-KitLocalModelForbidden $cfg $_ })
 if ($bad.Count) { Stop-KitVerb "REFUSED: model $($bad -join ', ') is forbidden here (models.local.forbiddenModels)" 1 }

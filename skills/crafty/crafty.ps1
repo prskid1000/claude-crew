@@ -16,11 +16,11 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  dir -Agent <id> [-Item <task>] [-Name <file>] | -Kind evidence -Item <task> [-Agent]  an agent's own folder (created) or file path
  checkpoint -Agent <id> [-Run <run>] -Step <step> [-Evidence] [-Dir <wt>] [-Next] | -Read  resume point (bossy.ps1 pause / resume)
  runtime use|release|status -Name <runtime> [-Agent]  leases on Docker, WSL, VMs
- local claude|desktop|code|codex|status [-Model] [-Print]  a client on the local model server
+ local claude|desktop|code|status [-Model] [-Print]  a client on the local model server
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
-Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L2041 dir · L2051 checkpoint ·
-  L2091 prior · L2130 tracker · L2152 task spec · L2357 scope · L2405 host
+Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L2025 dir · L2035 checkpoint ·
+  L2075 prior · L2114 tracker · L2136 task spec · L2341 scope · L2389 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -1255,7 +1255,6 @@ if ($SelfTest) {
   @('E', '{LIVE}/{RT}/work/agents/x/x.md', $false, $lk),
   @('E', '{LIVE}/.git/info/exclude', $false, $lk),
   @('E', '{LIVE}/../wt/skills/crafty/crafty.ps1', $false, $lk),
-  @('A', "*** Begin Patch`n*** Update File: {LIVE}/AGENTS.md", $true, $lk),
   @('P', 'Set-Content {LIVE}/AGENTS.md x', $true, $lk),
   @('B', 'sed -i s/a/b/ {LIVE}/README.md', $true, $lk),
   @('B', 'git -C "{LIVE}" commit -m x', $true, $lk),
@@ -1287,14 +1286,14 @@ if ($SelfTest) {
   @('B', 'cd web && npx cypress run', $true, 'e2e runs go through'), @('P', 'yarn e2e:ci; npx playwright test x.spec.ts', $true, 'e2e runs go through'),
   @('P', '& D:/k/skills/crafty/crafty.ps1 check -Dir web -Step e2e', $false, 'e2e runs go through'), @('B', 'crafty.ps1 check -Dir w -Step test; npx cypress run', $true, 'e2e runs go through'),
   @('B', 'cat cypress/tsconfig.json; git log --grep "cypress run"; yarn playwright install; npm run cypress:open', $false, 'e2e runs go through'),
-  # a file path as the command (G = Antigravity run_command)
+  # a file path as the command
   @('B', '"{KIT}/skills/bossy/SKILL.md"', $true, $rt), @('B', '{CR}/NOTICE', $true, $rt), @('B', 'cd "{CR}" && ./NOTICE', $true, $rt),
   @('B', 'start {CR}/NOTICE', $true, $rt), @('B', '& "{CR}\NOTICE"', $true, $rt), @('B', 'cd x; "./tool.ps1" -A', $true, $rt),
   @('B', 'cd "{CR}" && ./run; bash .githooks/pre-push; cat "{KIT}/README.md"; echo "a; ./x.md"; ls {KIT}', $false, $rt),
   @('B', 'f=$(ls -d */wf_1)/journal.jsonl; grep -c x $f', $false, $rt), @('B', '(ls){ ./NOTICE.md; }', $true, $rt),
   @('P', '& "{CR}/NOTICE"', $true, $rt), @('P', '& "{KIT}"', $true, $rt), @('P', 'Set-Location "{CR}"; .\NOTICE', $true, $rt),
   @('P', '$g = Join-Path "{KIT}" ''skills/bossy/SKILL.md''; & $g', $true, $rt), @('P', '$f = "{KIT}/README.md"; Start-Process -FilePath $f', $true, $rt),
-  @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('G', '{CR}\NOTICE', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
+  @('P', 'Start-Process "{CR}/NOTICE"', $true, $rt), @('P', 'Start-Process (Join-Path "{KIT}" ''README.md'')', $true, $rt),
   @('B', "git log \`n  -- docs/readme.md; git diff \`n  skills/crafty/crafty.ps1", $false, $rt),
   @('P', '$py = ''C:/x/python.exe''; & $py a.py; Get-Content "{CR}/NOTICE"; "{KIT}/README.md" | Out-Null; cd "{KIT}"; .\.githooks\pre-commit.ps1', $false, $rt),
   # pytest / docker runs go through the gate
@@ -1339,15 +1338,14 @@ if ($SelfTest) {
   $live = Split-Path (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir)
   $krt = [IO.Path]::GetFullPath((Get-KitRuntime)).Replace('\', '/'); $fail = 0
   foreach ($c in $cases) {
-    $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit'; A = 'apply_patch'; G = 'run_command' }[$c[0]]
+    $tool = @{ P = 'PowerShell'; B = 'Bash'; E = 'Edit' }[$c[0]]
     $v = $c[1].Replace('{KRTU}', ($krt -replace '[^/]+$', { $_.Value.ToUpper() })).Replace('{RTU}', '.RUNTIME').Replace('{KRTB}', ($krt -replace '^([A-Za-z]):', { '/' + $_.Groups[1].Value.ToLower() })).Replace('{KRT}', $krt).Replace('{WS}', (Split-Path $live)).Replace('{RT}', '.runtime').Replace('{KIT}', (Split-Path (Split-Path $PSScriptRoot))).Replace('{LIVE}', $live).Replace('{CR}', $cr)
     # cwd-independent results
     $hookIn = @{ tool_name = $tool; cwd = $nr; tool_input = $(if ($tool -eq 'Edit') { @{ file_path = $v } } else { @{ command = $v } }) }
-    if ($tool -eq 'run_command') { $hookIn = @{ conversationId = 'selftest'; toolCall = @{ args = @{ CommandLine = $v } }; cwd = $hookIn.cwd } }
     $json = $hookIn | ConvertTo-Json -Compress -Depth 4
     $out = (& $PSCommandPath guard -Json $json) -join ''
-    $denied = $out -match '"(permissionDecision|decision)":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
-    $ok = if ($c[2]) { $denied } else { $out -notmatch '"(permissionDecision|decision)":"deny"' }   # strict allow (K63s): a deny for any reason fails it
+    $denied = $out -match '"permissionDecision":"deny"' -and $out -match $(if ($c.Count -gt 3) { [regex]::Escape($c[3]) } else { 'git stash is shared' })
+    $ok = if ($c[2]) { $denied } else { $out -notmatch '"permissionDecision":"deny"' }   # strict allow (K63s): a deny for any reason fails it
     if (-not $ok) { $fail++ }
     '{0} {1,-10} {2,-6} {3}' -f $(if ($ok) { 'PASS' } else { 'FAIL' }), $tool, $(if ($c[2]) { 'deny' } else { 'allow' }), (($c[1] -replace "`n", ' \n ') + $(if (-not $ok -and $out -match '(?:Reason|reason)":"([^"]{1,160})') { " <- $($Matches[1])" }))
   }
@@ -1359,19 +1357,10 @@ if (-not "$stdin".Trim()) { exit 0 }
 try { $in = $stdin | ConvertFrom-Json -ErrorAction Stop } catch {
   $one = "$stdin" -replace "[\r\n\t]+", ' '; $one = $one.Substring(0, [math]::Min(300, $one.Length))
   Write-KitLog guard deny @{ why = 'malformed hook input'; cmd = $one }
-  if ($stdin -match '"toolCall"|"conversationId"') {
-    @{ decision = 'deny'; reason = 'kit guard: hook input not JSON (logged: bossy.ps1 audit); retry' } | ConvertTo-Json -Compress
-  } else {
-    @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged: bossy.ps1 audit); retry' } } | ConvertTo-Json -Compress -Depth 4
-  }
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = 'kit guard: hook input not JSON (logged: bossy.ps1 audit); retry' } } | ConvertTo-Json -Compress -Depth 4
   exit 0
 }
-$isGravity = [bool]($in.toolCall -or $in.conversationId)
-$cmd = if ($in.tool_input.command) { [string]$in.tool_input.command }
-       elseif ($in.toolCall.args.CommandLine) { [string]$in.toolCall.args.CommandLine }
-       elseif ($in.toolCall.args.command) { [string]$in.toolCall.args.command }
-       elseif ($in.CommandLine) { [string]$in.CommandLine }
-       else { '' }
+$cmd = if ($in.tool_input.command) { [string]$in.tool_input.command } else { '' }
 $K = $PSScriptRoot
 try { $kc = Read-KitText (Join-Path $K 'kit.local.json') | ConvertFrom-Json } catch {}
 $protectedRx = Get-KitProtectedBranches -Rx -Any '\S+'
@@ -1382,11 +1371,7 @@ function Deny($why) {
     if ($one.Length -gt 2000) { $one = $one.Substring(0, 1000) + ' /*...*/ ' + $one.Substring($one.Length - 1000) }
     Write-KitLog guard deny @{ session = "$($in.session_id)"; agentId = "$($in.agent_id)"; tool = "$($in.tool_name)"; why = $why; cmd = $one }
   }
-  if ($isGravity) {
-    @{ decision = 'deny'; reason = $why } | ConvertTo-Json -Compress
-  } else {
-    @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
-  }
+  @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; permissionDecision = 'deny'; permissionDecisionReason = $why } } | ConvertTo-Json -Compress -Depth 4
   exit 0
 }
 function GitCommon([string]$d) {
@@ -1453,7 +1438,7 @@ function RuntimeKinds([string]$seg, [string]$base) {
   [regex]::Matches($seg, "(?i)(?<![\w.-])[^\s'""=]*(?<![\w.-])$([regex]::Escape($rtLeaf))(?=[\\/'""\s;|)]|$)") | ForEach-Object { RuntimeKind $_.Value $base }
 }
 $segBase = $here
-$edits = @($in.tool_input.file_path, $in.tool_input.notebook_path) + @([regex]::Matches("$(if ($in.tool_name -eq 'apply_patch') { $cmd })", '(?m)^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value + $_.Groups[2].Value })
+$edits = @($in.tool_input.file_path, $in.tool_input.notebook_path)
 foreach ($e in $edits) { if (-not $liveOk -and (LiveFile $e $here)) { $raw = "$($in.tool_name) $e"; Deny $liveWhy } }
 # the crash switch: the owner's (K67); a commit or search is no write
 $bpw = '(?i)\bsetx\b|SetEnvironmentVariable|\breg(\.exe)?\s+add\b|(New|Set)-ItemProperty|(>|\btee\b|\bsed\s+-i|Set-Content|Add-Content|Out-File).*(settings[\w.-]*\.json|\.bashrc|\$PROFILE)'
@@ -1536,7 +1521,7 @@ if ("$cmd" -match '(?i)>|\btee\b|Tee-Object|Set-Content|Add-Content|Out-File|Wri
 $off = @(foreach ($e in $edits) { OffLayout $e $here })
 if (-not $cmd) {
   LayoutCheck
-  if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress } elseif ($script:layoutNote) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = $script:layoutNote } } | ConvertTo-Json -Compress -Depth 4 }
+  if ($script:layoutNote) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = $script:layoutNote } } | ConvertTo-Json -Compress -Depth 4 }
   exit 0
 }
 
@@ -2033,8 +2018,7 @@ $bgNote = $null; if ($in.tool_input.run_in_background -eq $true) {
 # adapter rules last (script-faults after bans): notes only follow commands that run
 $notes = foreach ($rule in @($KitAdapters.guard.Keys | Sort-Object { $_ -eq 'script-faults' } | ForEach-Object { $KitAdapters.guard[$_] })) { $why = & $rule.check @{ cmd = $cmd; raw = $raw; config = $kc; hook = $in }; if ($why.note) { $why.note } elseif ($why) { Deny $why } }   # not @(): Deny's output would die with it
 LayoutCheck; $notes = @(@($notes) + $script:layoutNote + $bgNote | Where-Object { $_ })
-if ($isGravity) { @{ decision = 'allow' } | ConvertTo-Json -Compress }
-elseif ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = (@($notes) -join "`n") } } | ConvertTo-Json -Compress -Depth 4 }
+if ($notes) { @{ hookSpecificOutput = @{ hookEventName = 'PreToolUse'; additionalContext = (@($notes) -join "`n") } } | ConvertTo-Json -Compress -Depth 4 }
 exit 0
 }
 

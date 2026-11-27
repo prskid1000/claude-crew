@@ -1,7 +1,7 @@
 #!/bin/sh
 # Kit pre-commit gate (enabled by bossy.ps1 setup): regenerates the README graph sections (kitbag.py flow --readme), runs lint.
-# Ports (kitbag.py port: .codex, .agents, GEMINI.md) are regenerated only when a staged agent, skill, rule, workflow or manifest
-# changes them (written only when changed); the workspace-root deploy is post-merge's. No tests: the agent runs them first.
+# Agents' Character blocks and tools lines (kitbag.py tools --write) are regenerated when a staged agent or the manifest changes
+# them. No tests: the agent runs them first.
 # Pre-commit blocks only on: flow --readme failure, or kitbag.py lint problems (unreached files, budgets: trim first,
 # then kitbag.py budget raise, file cap, conventions). Logic: skills/bossy/bossy.ps1 precommit. Exit 1 = blocked.
 root="$(git rev-parse --show-toplevel)"

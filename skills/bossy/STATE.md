@@ -60,7 +60,6 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `pauses` | `bossy.ps1 pause / resume` | `dir v1: at run state` | keep |
 | `programs` | `bossy.ps1 program` | `dir v1: updated` | keep |
 | `browser-ports` | `browser.mjs` | `json v0` | keep |
-| `ports-deployed` | `kitbag.py port` | `json v1: files` | per deploy |
 | `owner-apps` | `bossy.ps1 supervise` | `json v0` | keep |
 | `runtimes` | `crafty.ps1 runtime` | `dir v0: leases` | keep |
 | `locks` | `lib.ps1` (`repos[].exclusiveTests`) | `json v0: held waiting` | keep |

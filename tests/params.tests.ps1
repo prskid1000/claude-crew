@@ -114,15 +114,15 @@ $root = Join-Path (Get-KitPath cache -Create) 'tx'; New-Item -ItemType Directory
 function Invoke-KitAdapter { [pscustomobject]@{ dir = $root; filter = '*.jsonl' } }
 $n1 = @(Get-KitLiveTranscripts (Get-Date) 10).Count; New-Item -ItemType Directory -Force "$root/s2/subagents" | Out-Null; 'x' | Set-Content "$root/s2/subagents/b.jsonl"; $n2 = @(Get-KitLiveTranscripts (Get-Date) 10).Count
 $cf = Get-KitPath transcript-dirs; $c = Get-Content $cf -Raw | ConvertFrom-Json -AsHashtable; $c[$root].at = (Get-Date).AddMinutes(-2).ToString('o'); $c | ConvertTo-Json -Depth 4 | Set-Content $cf
-"tx:$n1$n2$(@(Get-KitLiveTranscripts (Get-Date) 10).Count)"; '{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":75}}}}' | Set-Content "$root/c.jsonl"; "spend:$((Get-KitSpend "$root/c.jsonl").spend)"
-Set-Content "$root/d.jsonl" (@('{"message":{"model":"m1","usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":4}}}') + @(1..700 | ForEach-Object { '{"x":"' + ('y' * 1000) + '"}' })); "spend2:$((Get-KitSpend "$root/d.jsonl").spend)"; "ss:$(Format-KitSessionStart 'hi' @{ conversationId = 'c' })|$(Format-KitSessionStart '' @{ conversationId = 'c' })|$(ConvertTo-KitAskPayload @() | ConvertTo-Json -Compress)"
+"tx:$n1$n2$(@(Get-KitLiveTranscripts (Get-Date) 10).Count)"
+Set-Content "$root/d.jsonl" (@('{"message":{"model":"m1","usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":4}}}') + @(1..700 | ForEach-Object { '{"x":"' + ('y' * 1000) + '"}' })); "spend2:$((Get-KitSpend "$root/d.jsonl").spend)"; "ss:$((Format-KitSessionStart 'hi' $null) -match '"additionalContext":"hi"')|$(Format-KitSessionStart '' $null)|$(ConvertTo-KitAskPayload @() | ConvertTo-Json -Compress)"
 '@ @((Lib))
 Expect "net: after a timeout the next call waits x1.5, then back ($(@($nr -match '^backoff:') -join ' '))" ($nr -contains 'backoff:40,60,60,40')
 Expect "net: a timeout is observed at the learned value, not the x1.5 back-off ($(@($nr -match '^tobs:') -join ' '))" ($nr -contains 'tobs:30,30|45,45')
 Expect "net: hang retries within 10% of the calls of 10 min (>= 1 a minute); a dead writer's count lock is taken (the OS freed it), not held after; spent: the call returns at once ($(@($nr -match '^(budget|spent):') -join ' '))" ($nr -contains 'budget:True,True,True,False:False' -and $nr -contains 'spent:True')
-Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); Codex spend = last token_count" ($nr -contains 'tx:112' -and $nr -contains 'spend:75' -and $nr -contains 'spend2:10')
-Expect 'Antigravity SessionStart: injectSteps (empty: []); no blocking decision: ids []' ($nr -contains 'ss:{"injectSteps":[{"systemMessage":{"systemMessage":"hi"}}]}|{"injectSteps":[]}|{"ids":[],"questions":[]}')
-# health: the python checks (lint, port --check) run in the background; the next session shows their lines
+Expect "transcripts: the session folder walk is cached 60 s ($(@($nr -match '^tx:') -join ' ')); spend = the last usage line" ($nr -contains 'tx:112' -and $nr -contains 'spend2:10')
+Expect 'SessionStart: additionalContext (empty: nothing); no blocking decision: ids []' ($nr -contains 'ss:True||{"ids":[],"questions":[]}')
+# health: the python checks (lint, tools --deploy) run in the background; the next session shows their lines
 $hcw = { $r = Read-Json (Join-Path (TkPath $k background) 'health-checks.json'); for ($i = 0; $i -lt 300 -and (& { . (Lib); Test-KitPid $r.pid $r.start }); $i++) { Start-Sleep -Milliseconds 100 } }
 '# a' | Set-Content "$k/AGENTS.md"; $hh = Px $O health | Out-String; & $hcw   # a kit folder: lint has lines
 $hc = (Get-Content (Join-Path (TkPath $k background) 'health-checks.out') -Raw) -replace '\s+', ' '; $hh2 = Px $O health | Out-String; & $hcw; Remove-Item "$k/AGENTS.md"

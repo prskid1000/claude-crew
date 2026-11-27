@@ -14,19 +14,17 @@ $lmCfg = @{ baseUrl = 'http://127.0.0.1:9/'; token = 'env:LM_TEST_TOKEN'; defaul
 $pc = Invoke-TestScript $D local claude -Print -Json
 $pj = try { $pc.out | ConvertFrom-Json } catch { $null }
 Expect "local: -Print resolves config: base URL trimmed, env overrides (one dropped, one added), no model for interactive claude ($($pc.out.Substring(0, [math]::Min(200, $pc.out.Length))))" ($pc.code -eq 0 -and $pj.env.ANTHROPIC_BASE_URL -eq 'http://127.0.0.1:9' -and $pj.env.EXTRA_FLAG -eq '1' -and -not $pj.env.BASH_MAX_TIMEOUT_MS -and $pj.env.KIT_MODEL_MODE -eq 'local' -and $pj.model -eq '(server default)')
-$px = Invoke-TestScript $D local codex -Print
-Expect "local: the token never printed, its env names redacted (claude + codex)" ($pc.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN) -and $px.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN) -and $pj.env.ANTHROPIC_AUTH_TOKEN -eq '<redacted>' -and $px.out -match 'KIT_LOCAL_MODEL_TOKEN=<redacted>' -and $pj.token -eq 'set')
-Expect "local: codex gets the provider, the default model, the token by env name, never a value ($($px.code))" ($px.code -eq 0 -and $px.out -match 'model_providers\.local\.base_url=http://127\.0\.0\.1:9/v1' -and $px.out -match 'env_key=KIT_LOCAL_MODEL_TOKEN' -and $px.out -match '-m small-a')
-Expect "local: no permission-skip flag by default (claude, codex)" ($pc.out -notmatch 'dangerously' -and $px.out -notmatch 'dangerously')
-$pu = Invoke-TestScript $D local claude -Print -Unsafe; $pu2 = Invoke-TestScript $D local codex -Print -Unsafe
-Expect "local: -Unsafe adds the flag only when asked ($($pu.code))" ($pu.out -match '--dangerously-skip-permissions' -and $pu2.out -match '--dangerously-bypass-approvals-and-sandbox')
+Expect "local: the token never printed, its env name redacted" ($pc.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN) -and $pj.env.ANTHROPIC_AUTH_TOKEN -eq '<redacted>' -and $pj.token -eq 'set')
+Expect "local: no permission-skip flag by default" ($pc.out -notmatch 'dangerously')
+$pu = Invoke-TestScript $D local claude -Print -Unsafe
+Expect "local: -Unsafe adds the flag only when asked ($($pu.code))" ($pu.out -match '--dangerously-skip-permissions')
 $ua = Invoke-TestScript $D local claude -Unsafe
 Expect "local: -Unsafe refused from an agent shell, exit 2 ($($ua.code))" ($ua.code -eq 2 -and $ua.out -match 'agents never skip permissions')
-$fm = Invoke-TestScript $D local codex -Model big-27b-mtp -Print; $fa = Invoke-TestScript $D local claude -Print '--' --model big-x-mtp   # pwsh drops a bare -- (end of parameters): quoted
+$fm = Invoke-TestScript $D local claude -Model big-27b-mtp -Print; $fa = Invoke-TestScript $D local claude -Print '--' --model big-x-mtp   # pwsh drops a bare -- (end of parameters): quoted
 Expect "local: a forbidden model refused, from -Model and from the client args, exit 1 ($($fm.code) $($fa.code))" ($fm.code -eq 1 -and $fm.out -match 'REFUSED: model big-27b-mtp is forbidden' -and $fa.code -eq 1 -and $fa.out -match 'big-x-mtp')
-$fb = @(@{ a = @('-Model', 'small-a', '--', '--model', 'big-1-mtp') }, @{ a = @('--', '--fallback-model', 'big-2-mtp') }, @{ a = @('--', '-c', 'model=big-3-mtp'); c = 'codex' }, @{ a = @(); e = 'big-4-mtp' }) | ForEach-Object {
+$fb = @(@{ a = @('-Model', 'small-a', '--', '--model', 'big-1-mtp') }, @{ a = @('--', '--fallback-model', 'big-2-mtp') }, @{ a = @(); e = 'big-4-mtp' }) | ForEach-Object {
   if ($_.e) { $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $_.e }; $fr = Invoke-TestScript $D local $(if ($_.c) { $_.c } else { 'claude' }) -Print @($_.a); Remove-Item Env:ANTHROPIC_DEFAULT_SONNET_MODEL -ErrorAction SilentlyContinue; "$($fr.code):$(@($fr.out -split "`n" | Where-Object { $_ -match 'REFUSED' })[0] -replace '^.*model ([\w-]+).*$', '$1')" }
-Expect "local: no way past the forbidden list: -Model before --, --fallback-model, codex -c model=, an inherited ANTHROPIC_*_MODEL ($($fb -join ' '))" (($fb -join ' ') -eq '1:big-1-mtp 1:big-2-mtp 1:big-3-mtp 1:big-4-mtp')
+Expect "local: no way past the forbidden list: -Model before --, --fallback-model, an inherited ANTHROPIC_*_MODEL ($($fb -join ' '))" (($fb -join ' ') -eq '1:big-1-mtp 1:big-2-mtp 1:big-4-mtp')
 $litCfg = $lmCfg.Clone(); $litCfg.token = 'literal-' + $env:LM_TEST_TOKEN; & $J @{ models = @{ local = $litCfg } } $cfgFile; $lt = Invoke-TestScript $D local status; $lp = Invoke-TestScript $D local claude -Print; & $J @{ models = @{ local = $lmCfg } } $cfgFile
 Expect "local: a token value put in models.local.token is never printed (status, -Print)" ($lt.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN) -and $lp.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN) -and $lt.out -match 'a value, ignored')
 $env:CLAUDE_GATE_KEEP_FREE_GB = '99999'; $rm = Invoke-TestScript $D local claude; Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB

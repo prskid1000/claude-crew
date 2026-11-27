@@ -3,20 +3,20 @@ Read by `kitty` at step 0 and by `revy` (kind kit). README "Extending" points he
 
 ## Parts
 Parts are added, renamed or removed with the scaffold (`kitbag.py new | rename | remove <kind> <name>`, `new adr <title>`:
-template, manifest, Router / Events rows, test stub; lint TODO-STUB refuses unfilled ones); then `port`, lint 0, tests. A vendor
+template, manifest, Router / Events rows, test stub; lint TODO-STUB refuses unfilled ones); then `tools --write`, lint 0, tests. A vendor
 adapter sits in its skill's `adapters/` and runs only when config selects it.
 - **Registry** [MANIFEST, OLD-NAME]: `_manifest` holds every agent, skill, workflow, Router / Events row and cap; README tables,
-  Character blocks and ports are generated from it; `renamed` lists old names (no aliases).
-- **Parity** [PARITY]: `skills/crafty/parity.json`; new verb: `verbs` / `fallback`, a sibling lacking it: `gaps`; ports: `harness`.
+  Character blocks and tools lines are generated from it; `renamed` lists old names (no aliases).
+- **Parity** [PARITY]: `skills/crafty/parity.json`; new verb: `verbs` / `fallback`, a sibling lacking it: `gaps`.
 - **Renames**: no forwarders or old-name stand-ins; outside callers of a renamed path or name (settings, scheduled tasks, notes,
   local files) get the exact edit as a coordinator step in the report.
 - **Formats** [SCHEMA, AGENT-TYPE]: SKILL.md and subagent front matter + the Character shape, JSON-Schema checked; every workflow
   `agent()` names a crew agentType. **Versions**: SemVer tags from Conventional Commits (`kitbag.py release`; no CHANGELOG).
   **Decisions**: ADR lines in LESSONS.md "Decisions". Every addition: front matter, manifest entry, reachability edge, test, flow
-  node, README row, ports; lint refuses a half-added part.
+  node, README row; lint refuses a half-added part.
 
 ## Hard rules
-- **Doc and plumbing file caps** (`_manifest.caps`) [FILE-CAP, PLUMBING-CAP]: docs = tracked `.md` files minus the ports; plumbing
+- **Doc and plumbing file caps** (`_manifest.caps`) [FILE-CAP, PLUMBING-CAP]: docs = tracked `.md` files; plumbing
   = LICENSE, .gitignore, .gitattributes, .githooks/*, .github/*, settings.json. Templates fold into a SKILL.md, an agent or
   `skills/crafty/templates.md`; tests in `tests/<area>.tests.ps1` (shared helpers: `tests/harness.ps1`).
 - **Token budgets** (UTF-8 bytes / 4; README graph sections excluded): a role's start load (always-loaded + its agent file, skill
@@ -47,12 +47,12 @@ adapter sits in its skill's `adapters/` and runs only when config selects it.
   `kit.example.json` sample. **Hook**: `pwsh` exec form, SessionStart < 2 s, slow work async.
 
 ## Before every push
-`agents/kitty.md` step 8 (lint, ports, tests, org terms, cost); no hook tests (owner 2026-11-19); the full suite runs while
-idle every `kitTests.fullEveryDays` (kit changed). pre-commit regenerates README graph, staged `Sections:` maps and ports
-(a staged source), blocks on lint (`flow: <reason>`: deliberate); pre-push: org terms, local files.
+`agents/kitty.md` step 8 (lint, tests, org terms, cost); no hook tests (owner 2026-11-19); the full suite runs while
+idle every `kitTests.fullEveryDays` (kit changed). pre-commit regenerates README graph, staged `Sections:` maps and agents'
+Character / tools lines (a staged source), blocks on lint (`flow: <reason>`: deliberate); pre-push: org terms, local files.
 
 ## kitty steps 1-3 (`$A` = `python -X utf8 <wt>/skills/bossy/kitbag.py audit`)
-1. **Setup:** `$A setup` (clone, git hooks, `localOnly` excludes, runtime + state folders, hooks clean and fast, ports, CLIs and
+1. **Setup:** `$A setup` (clone, git hooks, `localOnly` excludes, runtime + state folders, hooks clean and fast, CLIs and
    auth: check only, never log in). `$A setup --fix` runs `bossy.ps1 setup` (idempotent).
 2. **Missing config:** `$A config` (local files vs `kit.example.json`, the README "Configuration" table and the keys scripts
    read). `--fill` writes only documented defaults (backup next to the file). Org values (hosts, ids, credentials, `orgTerms`)
@@ -66,7 +66,7 @@ idle every `kitTests.fullEveryDays` (kit changed). pre-commit regenerates README
    product, tenant, status, list id, host, path, stack, DB; each such value -> config key with default, org value in report
    additions. Any stack, local env shape, deploy mechanism and tracker must work through config.
 6. **Consistency:** Files indexes vs disk; README "Configuration" vs script keys; manifest vs agents, skills, workflows,
-   Router and Events; ports (`kitbag.py port --check`), README graph, DESKTOP-OPEN, reach from root, budgets (`kitbag.py
+   Router and Events; README graph, DESKTOP-OPEN, reach from root, budgets (`kitbag.py
    budget`), script headers, parity (`kitbag.py parity`).
    Writing: lint PROSE for kit files; `kitbag.py prose --kind <kind> <file>` on sample artefacts (MR bodies,
    comments, briefs, testing docs, QA reports).
@@ -122,7 +122,7 @@ Saved to `<runtime>/logs/kitty-audits/<run>.md` (kitty step 9).
 ```markdown
 # Kit audit <run> (<date>, <commit>, branch kit/<run>)
 ## Result
-- <N> fixed (<commits>), <N> proposed, <N> ASK, <N> rejected · lint 0 · ports ok · tests ok · org terms 0 · docs <n>/<cap> · plumbing <n>/<cap> · max start <n>
+- <N> fixed (<commits>), <N> proposed, <N> ASK, <N> rejected · lint 0 · tests ok · org terms 0 · docs <n>/<cap> · plumbing <n>/<cap> · max start <n>
 ## ASK
 - `<file> <key>`: <why> (never values)
 ## Findings

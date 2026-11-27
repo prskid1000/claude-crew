@@ -186,7 +186,7 @@ switch ($Action) {
     $me = $script:beatEntry
     $rt = if ($me.tool) { Invoke-KitAdapter transcript (Get-KitTranscriptKind $me.tool) root }
     $tf = if ($me.transcript) { $me.transcript } elseif ($rt -and -not ($me.txTry -and ((Get-Date) - [datetime]$me.txTry).TotalMinutes -lt (Get-KitParam 'board.transcriptRetryMinutes'))) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty txTry (Get-KitStamp); $x }; Find-KitTranscript "(pass -Session $Session to beat" $rt.filter $rt.dir }; $sp = Get-KitSpend $tf
-    if ($tf -and -not $sp -and -not $me.transcript) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty transcript $tf; $x } }   # Codex / Antigravity: no usage lines
+    if ($tf -and -not $sp -and -not $me.transcript) { Update-BoardEntry $f { param($x) $x | Add-Member -Force NoteProperty transcript $tf; $x } }   # no usage lines yet
     if ($sp) {
       $bg = if ($sp.model -and $sp.model -ne $me.model) { Get-KitBudget -Model $sp.model -Role $me.type } else { [pscustomobject]@{ budget = $me.budget; handoff = $me.handoff; model = $me.model; capBy = $me.capBy } }
       Update-BoardEntry $f { param($x) foreach ($p in @{ transcript = $tf; spend = $sp.spend; model = $bg.model; budget = $bg.budget; handoff = $bg.handoff; capBy = $bg.capBy }.GetEnumerator()) { $x | Add-Member -Force NoteProperty $p.Key $p.Value }; $x }
@@ -1953,7 +1953,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $kit = $KitConf.Kit
 $py = if (Get-Command (Get-Python) -ErrorAction SilentlyContinue) { Get-Python }
 if ($Checks) {   # 6-7 s: background, health shows the last run
-  if ($py) { "$(& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null)"; foreach ($c in 'port --deploy', 'port --check') { & $py -X utf8 $KitCmd.kitbag @($c -split ' ') 2>$null } }
+  if ($py) { "$(& $py -X utf8 $KitCmd.kitbag lint $kit --summary --warn --no-flow 2>$null)"; & $py -X utf8 $KitCmd.kitbag tools --deploy 2>$null }
   exit 0
 }
 if ($Flow -or $Fetch) {
@@ -2108,7 +2108,6 @@ foreach ($k in $want.Keys) {
   if ($WriteLocal) { $want[$k] | ConvertTo-Json -Depth 20 | Set-Content $f -Encoding utf8; Say "wrote $k from kit.example.json: fill in the <...> values (git-ignored)" }
   else { Say "to do: $k is missing (setup -WriteLocal writes it from kit.example.json, then fill it in)" }
 }
-if (Test-Path "$kit/../.codex") { Say 'codex: approve the kit hooks once (/hooks)' }
 Say 'kit ready.'
 }
 
@@ -2149,7 +2148,7 @@ if ($MyInvocation.InvocationName -ne '.') {  # dot-sourced (tests): functions on
     'param' { Invoke-KitVerb Invoke-Param $__rest }
     'budget' { Invoke-KitVerb Invoke-Budget $__rest }
     'usage' { Invoke-KitVerb Invoke-KitContextUsage $__rest }
-    'heartbeat' { $fn = if ("$__rest" -match '^(install|uninstall|status|tick)\b') { 'Invoke-KitOsBeat' } else { 'Invoke-Heartbeat' }; Invoke-KitVerb $fn $__rest }
+    'heartbeat' { Invoke-KitVerb 'Invoke-KitOsBeat' $__rest }
     'health' { Invoke-KitVerb Invoke-Health $__rest }
     'setup' { Invoke-KitVerb Invoke-Setup $__rest }
     'guard-sendmessage' { Invoke-KitVerb Invoke-GuardSendMessage $__rest }

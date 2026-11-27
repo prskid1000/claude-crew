@@ -118,7 +118,7 @@ Active rules, one line each `- <when> -> <do> (<why>)`, newest first, `(n×)` = 
 - editing files from Git Bash via pwsh -Command with ${...} -> use the Edit tool (bash ate the variable and an empty string emptied testy.js)
 - piping a long kit-tests run through grep | head -> redirect kit-tests output to a file, read it after (no output until the end, run stopped and redone)
 - pushing a kit worktree to main from Git Bash -> run git -C D:/<wt> push origin HEAD:main; no cd /d/... prefix (it hides the kit dir from the guard) (push refused 2x) (2×)
-- launching a .bat launcher (codexl.bat) with a prompt -> pass a one-line prompt (%* cuts a multi-line prompt at the first newline)
+- launching a .bat launcher with a prompt -> pass a one-line prompt (%* cuts a multi-line prompt at the first newline)
 - running pwsh -Command from Bash -> use single quotes or a script file; backticks inside Bash double quotes run as bash commands (the command ran wrong, 0 matches)
 - a command prints a long result (audit, lint, scan, ls-files) -> filter or range it (--warn | head, grep, -First) before it enters context (kitty bigresult: 28 runs, 327k tokens)
 - a kit file is needed again in the same run -> note its facts once; later Read only an offset/limit range or grep the line (kitty reread: 101 runs, 843k tokens in one retro window)

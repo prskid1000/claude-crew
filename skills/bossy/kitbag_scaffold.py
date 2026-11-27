@@ -240,14 +240,14 @@ return r || {{ ok: false, summary: 'the agent returned nothing' }}
         print(cmd_new.__doc__, file=sys.stderr)
         return 2
     _regen(kit)
-    print(f'{kind} {name}: fill every {TODO}, then kitbag.py port, lint (0 problems), tests/kit-tests.ps1')
+    print(f'{kind} {name}: fill every {TODO}, then kitbag.py tools --write, lint (0 problems), tests/kit-tests.ps1')
     return 0
 
 # ---- shared: regenerate, find references
 def _regen(kit):
-    """After new / rename / remove: the ports and README's generated sections follow the registry at once."""
+    """After new / rename / remove: agents' Character / tools lines and README's generated sections follow the registry at once."""
     with contextlib.redirect_stdout(io.StringIO()):
-        PLUGINS.get('port', lambda a: 0)([])   # kitbag_ports.py, when present
+        PLUGINS.get('tools', lambda a: 0)(['--write'])   # kitbag_admin.py, when present
     k2 = load(kit)
     p = osp.join(kit, 'README.md')
     old = read(p)
@@ -260,7 +260,7 @@ def _references(kit, word, skip=()):
     rx = old_name_rx(word)
     hits = []
     for f in tracked(kit):
-        if f.startswith(GENERATED) or f in skip or not (f.lower().endswith(TEXT_EXT) or '.' not in osp.basename(f)):
+        if f in skip or not (f.lower().endswith(TEXT_EXT) or '.' not in osp.basename(f)):
             continue
         t = read(osp.join(kit, f))
         if f == PATHS_JSON:
@@ -313,7 +313,7 @@ def _rename_id(kit, kind, old, new):
     rx = re.compile(r'(?<![\w.-])' + re.escape(old) + r'(?![\w-]|\.\w)')
     for f in tracked(kit):
         p = osp.join(kit, f)
-        if f.startswith(GENERATED) or f == PATHS_JSON or not f.lower().endswith(TEXT_EXT) or not osp.isfile(p):
+        if f == PATHS_JSON or not f.lower().endswith(TEXT_EXT) or not osp.isfile(p):
             continue
         with open(p, encoding='utf-8', errors='replace', newline='') as fh:
             raw = fh.read()
@@ -333,7 +333,7 @@ def bad_names(names):
 
 def cmd_rename(a):
     """kitbag.py rename agent|skill|workflow|rule|event|config-key <old> <new>: moves the part, rewrites every reference, updates
-    the manifest (a part's old -> new joins _manifest.renamed; a config key also moves in kit.local.json), regenerates the ports."""
+    the manifest (a part's old -> new joins _manifest.renamed; a config key also moves in kit.local.json), regenerates the agents' generated lines."""
     kit = KIT_DIR
     if bad_names(a[1:3]):
         sys.exit(f'kitbag rename: not a part name: {bad_names(a[1:3])}')
@@ -354,7 +354,7 @@ def cmd_rename(a):
             sys.exit(f'kitbag rename: {src} -> {dst} failed: {r.stderr.strip()} / {x}')
     rx = old_name_rx(old)
     for f in tracked(kit):
-        if f.startswith(GENERATED) or not (f.lower().endswith(TEXT_EXT) or '.' not in osp.basename(f)) or not osp.isfile(osp.join(kit, f)):
+        if not (f.lower().endswith(TEXT_EXT) or '.' not in osp.basename(f)) or not osp.isfile(osp.join(kit, f)):
             continue
         if f == PATHS_JSON:
             continue   # manifest edited below (renamed map keeps the old name)

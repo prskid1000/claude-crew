@@ -137,27 +137,19 @@ $dsR = & { . (Join-Path $k 'skills/crafty/lib.ps1'); . (Join-Path $src 'skills/e
   "nocaps:$(-not $KitAdapters['db-engine'].redis.supportsMarks -and -not $KitAdapters['db-engine'].elasticsearch.supportsTemp)" }
 Expect-Each $dsR 'data store: #' @('redis', 'search', 'searchSql', 'nocaps') -Show 5
 
-# transcripts: every read goes through the transcript adapter (workflow dirs, own-transcript search, agent meta); Codex / Antigravity
-# say UNSUPPORTED for Claude-only verbs; no kit file outside the adapter names a CLI's transcript folder
+# transcripts: every read goes through the transcript adapter (workflow dirs, own-transcript search, agent meta); none says
+# UNSUPPORTED for agent-meta; no kit file outside the adapter names the transcript folder
 $txR = & { $tdir = Join-Path $k 'tx'; New-Item -ItemType Directory -Force (Join-Path $tdir 's1/subagents/workflows/wf1') | Out-Null
   '{"description":"x1 build"}' | Set-Content (Join-Path $tdir 's1/subagents/workflows/wf1/agent-a1b2c3d4e5f6a.meta.json'); 'marker-tx-77' | Set-Content (Join-Path $tdir 's1/subagents/workflows/wf1/agent-a1.jsonl')
   $env:KIT_TRANSCRIPTS = $tdir; . (Join-Path $k 'skills/crafty/lib.ps1')
   "wfdirs:$(@(Get-KitWorkflowDirs | ForEach-Object Name) -contains 'wf1')"; "find:$((Find-KitTranscript 'marker-tx-77' 'agent-*.jsonl') -like '*agent-a1.jsonl')"
   "meta:$((Invoke-KitAdapter transcript claude agent-meta @{ id = 'a1b2c3d4e5f6a' }).Name -eq 'agent-a1b2c3d4e5f6a.meta.json')"
-  # parity agentMeta: a Codex subagent rollout (session_meta with a parent thread; a root session is no agent), an Antigravity subagent state file
-  $env:KIT_TRANSCRIPTS_CODEX = Join-Path $k 'txc'; $env:KIT_TRANSCRIPTS_ANTIGRAVITY = Join-Path $k 'txa'
-  New-Item -ItemType Directory -Force (Join-Path $k 'txc/2026/01/02'), (Join-Path $k 'txa/c1/.system_generated/subagents') | Out-Null
-  '{"type":"session_meta","payload":{"id":"th-sub1","parent_thread_id":"th-root","agent_role":"revy"}}' | Set-Content (Join-Path $k 'txc/2026/01/02/rollout-2026-01-02T10-00-00-th-sub1.jsonl')
-  '{"type":"session_meta","payload":{"id":"th-root"}}' | Set-Content (Join-Path $k 'txc/2026/01/02/rollout-2026-01-02T09-00-00-th-root.jsonl')
-  '{"subagentDescriptor":{"typeName":"checky","role":"Kit File Checker"},"state":"SUBAGENT_STATE_ALIVE"}' | Set-Content (Join-Path $k 'txa/c1/.system_generated/subagents/ag-1.json')
-  "meta-ports:$((Invoke-KitAdapter transcript codex agent-meta @{ id = 'th-sub1' }).Name -like '*th-sub1.jsonl' -and -not (Invoke-KitAdapter transcript codex agent-meta @{ id = 'th-root' }) -and (Invoke-KitAdapter transcript antigravity agent-meta @{ id = 'ag-1' }).Name -eq 'ag-1.json' -and -not (Invoke-KitAdapter transcript antigravity agent-meta @{ id = 'nope' }))"
-  Remove-Item Env:KIT_TRANSCRIPTS_CODEX, Env:KIT_TRANSCRIPTS_ANTIGRAVITY
   "unsupported:$(@(foreach ($txKind in @('none')) { try { Invoke-KitAdapter transcript $txKind agent-meta @{ id = 'a1' }; $txKind } catch { if ("$_" -notmatch "^UNSUPPORTED transcript/$txKind/agent-meta") { $txKind } } }).Count -eq 0)"
   $env:KIT_TRANSCRIPTS = $null
   $by = @(Get-ChildItem -Recurse -File (Join-Path $src 'skills'), (Join-Path $src 'workflows') -Include *.ps1, *.py, *.js, *.mjs | Where-Object { $_.FullName -notmatch 'node_modules' } |
-    Select-String -Pattern 'ClaudeProjectDir|\.claude[/\\]projects|\.codex[/\\]sessions|antigravity-cli[/\\]brain' | Where-Object { -not ($_.Path -like '*crafty?lib.ps1' -and ($_.Line -match "^\s*(ClaudeProjectDir =|'root' =|'agent-meta' =)")) })
+    Select-String -Pattern 'ClaudeProjectDir|\.claude[/\\]projects' | Where-Object { -not ($_.Path -like '*crafty?lib.ps1' -and ($_.Line -match "^\s*(ClaudeProjectDir =|'root' =|'agent-meta' =)")) })
   "bypass:$(-not $by.Count)"; if ($by.Count) { $by | Select-Object -First 3 | ForEach-Object { "  $($_.Path):$($_.LineNumber)" } } }
-Expect-Each $txR 'transcript adapter: #' @('wfdirs', 'find', 'meta', 'meta-ports', 'unsupported', 'bypass') -Show 9
+Expect-Each $txR 'transcript adapter: #' @('wfdirs', 'find', 'meta', 'unsupported', 'bypass') -Show 9
 # device registry (parity.json device): android every ui action, ios all but photo / mic through idb (a fixture: no Mac here; the
 # refusal names the registry's), none none
 $dvS = Join-Path $k 'dv.ps1'; $dvA = Join-Path (Split-Path $PSScriptRoot) 'skills/pokey/adapters'

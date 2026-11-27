@@ -532,7 +532,7 @@ FILE_RX = {'.py': r'^[a-z][a-z0-9_]*\.py$', '.ps1': r'^[a-z][a-z0-9]*(?:-[a-z0-9
 BAK_RX = re.compile(r'\.(?:bak|bad|orig|old|stale)(?:[-.]|$)', re.I)
 PAD_RX = re.compile(r"""-(?:\{[^{}]*:0\d+d\}|\{\d+:(?:0{2,}|D\d)\}|\$\(Get-Date -Format '[yMdHms]{6,}'\))""")   # padded or dated after a dash
 NUM_RX = re.compile(r'\bNew-KitId\s+[-$(\w]|\bnext_id\(')   # NAME-NUMBER: a made counter name
-HOOK_CFG = ('settings.json', '.agents/hooks.json', '.codex/config.toml')
+HOOK_CFG = ('settings.json',)
 
 
 def hook_entry_names(kd, files):

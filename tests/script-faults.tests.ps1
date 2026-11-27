@@ -2,7 +2,7 @@
 <#
 script-faults.tests.ps1: agents' own script failures (owner 2026-11-25): the guard rule script-faults (crafty adapters/guard-scripts.ps1:
 python -c through a .bat shim, bash -n, PowerShell payloads, MSYS path conversion, wrapper folders, case-clashing agent scripts, Java
-escapes at Write / Edit); kitbag.py faults capture from Claude Code, Codex and Antigravity transcripts (masked, cursor, recurring, leaks);
+escapes at Write / Edit); kitbag.py faults capture from Claude Code transcripts (masked, cursor, recurring, leaks);
 the supervise SCRIPT-FAULTS ACT.
 Usage: pwsh -NoProfile -File <kit>/tests/script-faults.tests.ps1 (or tests/kit-tests.ps1 -Area script-faults).
 Exit codes: 0 pass · 1 a check failed.
@@ -81,25 +81,19 @@ foreach ($n in 1..3) {
   if ($n -eq 2) { $use2 = $use2.Replace('node frob.mjs', 'node login.mjs -Password hunter2xyz'); $res2 = $res2.Replace('frobnicate failed token=abc123secret456', 'login refused') }
   Set-Content (Join-Path $cl "agent-a$n.jsonl") @($use, $res, $use3, $res3, $(if ($n -le 2) { $use2; $res2 })) -Encoding utf8
 }
-$cx = Join-Path $tx "codex/2026/11/25"; New-Item -ItemType Directory -Force $cx | Out-Null
-Set-Content (Join-Path $cx 'rollout-2026-11-25T01-00-00-c0ffee.jsonl') @((@{ type = 'session_meta'; payload = @{ cwd = $ws } } | ConvertTo-Json -Compress),
-  (@{ type = 'response_item'; timestamp = $at; payload = @{ type = 'function_call'; name = 'exec_command'; call_id = 'c1'; arguments = '{"cmd":"node frob.mjs"}' } } | ConvertTo-Json -Compress -Depth 4),
-  (@{ type = 'response_item'; timestamp = $at; payload = @{ type = 'function_call_output'; call_id = 'c1'; output = "Process exited with code 1`nOutput:`nError: frobnicate failed token=zzz999secret" } } | ConvertTo-Json -Compress -Depth 4)) -Encoding utf8
-# a Codex session of another project: never captured
-Set-Content (Join-Path $cx 'rollout-2026-11-25T02-00-00-0ther.jsonl') @((@{ type = 'session_meta'; payload = @{ cwd = 'D:/elsewhere' } } | ConvertTo-Json -Compress),
-  (@{ type = 'response_item'; timestamp = $at; payload = @{ type = 'function_call'; name = 'exec_command'; call_id = 'o1'; arguments = '{"cmd":"make"}' } } | ConvertTo-Json -Compress -Depth 4),
-  (@{ type = 'response_item'; timestamp = $at; payload = @{ type = 'function_call_output'; call_id = 'o1'; output = "Process exited with code 2`nOutput:`nError: other project failed" } } | ConvertTo-Json -Compress -Depth 4)) -Encoding utf8
-$ag = Join-Path $tx 'agy/b1/.system_generated/logs'; New-Item -ItemType Directory -Force $ag | Out-Null
-Set-Content (Join-Path $ag 'transcript.jsonl') @((@{ type = 'PLANNER_RESPONSE'; created_at = $at; tool_calls = @(@{ name = 'run_command'; args = @{ CommandLine = '"node frob.mjs"' } }) } | ConvertTo-Json -Compress -Depth 5),
-  (@{ type = 'GENERIC'; created_at = $at; content = "The command exited with code 1.`nOutput:`nError: frobnicate failed token=agy777secret" } | ConvertTo-Json -Compress)) -Encoding utf8
-$env:KIT_TRANSCRIPTS = Join-Path $tx 'claude'; $env:KIT_TRANSCRIPTS_CODEX = Join-Path $tx 'codex'; $env:KIT_TRANSCRIPTS_ANTIGRAVITY = Join-Path $tx 'agy'
+foreach ($sec in 'zzz999secret', 'qqq777secret') {   # two more agents hit the same failure (other secrets: each masked)
+  $fu = @{ type = 'assistant'; timestamp = $at; message = @{ content = @(@{ type = 'tool_use'; id = "f$sec"; name = 'Bash'; input = @{ command = 'node frob.mjs' } }) } } | ConvertTo-Json -Compress -Depth 6
+  $fr = @{ type = 'user'; timestamp = $at; message = @{ content = @(@{ type = 'tool_result'; tool_use_id = "f$sec"; is_error = $true; content = "Exit code 1`nError: frobnicate failed token=$sec" }) } } | ConvertTo-Json -Compress -Depth 6
+  Set-Content (Join-Path $cl "agent-b$($sec.Substring(0, 3)).jsonl") @($fu, $fr) -Encoding utf8
+}
+$env:KIT_TRANSCRIPTS = Join-Path $tx 'claude'
 $kb = Join-Path $k 'skills/bossy/kitbag.py'
 $f1 = python -X utf8 $kb faults --json --days 7 | Out-String | ConvertFrom-Json; $f2 = python -X utf8 $kb faults --json --days 7 | Out-String | ConvertFrom-Json
 $nx = python -X utf8 $kb faults next --n 2 | Out-String   # 2: from 2026-11-26 the guarded py-shim-quote is due too (same hits)
-Remove-Item Env:KIT_TRANSCRIPTS, Env:KIT_TRANSCRIPTS_CODEX, Env:KIT_TRANSCRIPTS_ANTIGRAVITY
+Remove-Item Env:KIT_TRANSCRIPTS
 $frob = @($f1.items | Where-Object { $_.sig -like 'exit Error: frobnicate failed*' })[0]; $shim = @($f1.items | Where-Object cls -eq 'py-shim-quote')[0]
 $logged = Get-Content (Join-Path $k ".state/audit/$day/faults.jsonl") -Raw
-Expect "faults: 3 harnesses, 3 agents, one due signature (no prevention), secrets masked (=, spaced), no read of quoted fault text, no other Codex project ($($frob.hits) $($frob.agents) $($frob.harness -join ',') due=$($frob.due))" ($frob.hits -eq 3 -and $frob.agents -eq 3 -and @($frob.harness).Count -eq 3 -and $frob.due -and $logged -notmatch 'secret456|zzz999|agy777|hunter2|other project|notes\.md' -and $logged -match 'token=\[redacted\]' -and $logged -match 'Password \[redacted\]')
+Expect "faults: 3 agents, one due signature (no prevention), secrets masked (=, spaced), no read of quoted fault text ($($frob.hits) $($frob.agents) $($frob.harness -join ',') due=$($frob.due))" ($frob.hits -eq 3 -and $frob.agents -eq 3 -and $frob.due -and $logged -notmatch 'secret456|zzz999|qqq777|hunter2|notes\.md' -and $logged -match 'token=\[redacted\]' -and $logged -match 'Password \[redacted\]')
 Expect "faults: a guarded class (py-shim-quote) is due only after its since day; a second scan reads nothing new ($($shim.hits) due=$($shim.due) new=$($f2.new))" ($shim.hits -eq 3 -and $shim.due -eq ($day -gt '2026-11-27') -and $shim.prevent -match 'guard' -and $f1.new -eq 7 -and $f2.new -eq 0)
 Expect "faults next: the top item and the open count ($($nx.Trim() -replace '\s+', ' '))" ($nx -match 'frobnicate' -and $nx -match 'faults next: [1-9]\d* open')
 # a .get / .keys on a str or list (JSON of another shape) = data-shape (doc prevention); any other AttributeError stays py-exception
@@ -113,8 +107,8 @@ Expect "faults: AttributeError .get on a str = data-shape, other attributes = py
 # records scanned before a class shipped are relabelled from their first error line: a prevented class, never due on its day
 $rl = foreach ($n in 1..3) { @{ at = $at; harness = 'claude'; agent = "rl$n"; tool = 'Bash'; rc = 2; cls = 'kit-usage'; sig = 'kit-usage usage: board msg'; line = "usage: board msg -Agent <me> -To <id>"; cmd = 'pwsh -File bossy.ps1 board msg -To x -Text y'; prevent = '' } | ConvertTo-Json -Compress }
 Add-Content (Join-Path $k ".state/audit/$day/faults.jsonl") $rl -Encoding utf8
-$env:KIT_TRANSCRIPTS = Join-Path $tx 'claude'; $env:KIT_TRANSCRIPTS_CODEX = Join-Path $tx 'codex'; $env:KIT_TRANSCRIPTS_ANTIGRAVITY = Join-Path $tx 'agy'   # the fixtures only, never real transcripts
-$f3 = python -X utf8 $kb faults --json --days 7 | Out-String | ConvertFrom-Json; Remove-Item Env:KIT_TRANSCRIPTS, Env:KIT_TRANSCRIPTS_CODEX, Env:KIT_TRANSCRIPTS_ANTIGRAVITY; $bm = @($f3.items | Where-Object { $_.sig -like '*usage: board msg*' })
+$env:KIT_TRANSCRIPTS = Join-Path $tx 'claude'   # the fixtures only, never real transcripts
+$f3 = python -X utf8 $kb faults --json --days 7 | Out-String | ConvertFrom-Json; Remove-Item Env:KIT_TRANSCRIPTS; $bm = @($f3.items | Where-Object { $_.sig -like '*usage: board msg*' })
 Expect "faults: older records relabelled to a shipped class (board-msg-sender), not due on its day ($($bm.cls -join ',') due=$($bm.due -join ','))" ($bm.Count -eq 1 -and $bm[0].cls -eq 'board-msg-sender' -and $bm[0].hits -eq 3 -and $bm[0].due -eq ($day -gt '2026-11-25'))
 # board msg without -Agent: the sender is -Session's agent, else KIT_AGENT / CLAUDE_AGENT; neither = usage, exit 2
 $bmEnv = @($env:KIT_AGENT, $env:CLAUDE_AGENT); $env:KIT_AGENT = $null; $env:CLAUDE_AGENT = $null

@@ -1,7 +1,7 @@
 // ctx_hook.mjs: the PostToolUse hook (settings.json, Claude Code): the context self-check of every agent, workflow agent and the
 // coordinator (owner 2026-11-23). At budget.reviewAt x budget.window tokens, then every budget.reviewEvery, it adds one CONTEXT-CHECK
 // line to the agent's context; the agent decides continue or a fresh agent and records it (bossy.ps1 board check -Decision). Same
-// record and line as usage.ps1 Get-KitCtxCheckLine (board beat asks it on Codex / Antigravity). Node, not pwsh: it runs after every
+// record and line as usage.ps1 Get-KitCtxCheckLine (board beat asks it too). Node, not pwsh: it runs after every
 // tool call (~50 ms). Also the event queue: a joined agent's unread board msgs (inboxLines). Usage: node <kit>/skills/bossy/ctx_hook.mjs < hook input. Exit codes: 0 always (a check never blocks a call).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, openSync, readSync, fstatSync, closeSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'

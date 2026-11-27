@@ -10,7 +10,7 @@ pwsh 7: & <kit>/skills/crafty/flagged.ps1 <verb> ...
  credread -Text <target>  a Windows generic credential's secret, to the caller only (a tracker CLI's stored token)
  credwrite | creddelete -Text <target>  write (value: env KIT_SECRET_VALUE, never argv) or delete one (secret-store keychain); True | False
  credlist  the names of the generic credentials the kit wrote (user kit), never values
- unsafeflag -Text claude|codex  the client's permission-skip flag (crafty.ps1 local -Unsafe: a person's own session only)
+ unsafeflag -Text claude  the client's permission-skip flag (crafty.ps1 local -Unsafe: a person's own session only)
 Exit codes: 0 ok · 2 usage
 #>
 #Requires -Version 7
@@ -56,6 +56,6 @@ switch ($Verb) {
           try { for (int i = 0; i < n; i++) { var c = (C)Marshal.PtrToStructure(Marshal.ReadIntPtr(p, i * IntPtr.Size), typeof(C)); if (c.T == 1 && c.U == "kit") r.Add(c.N); } } finally { CredFree(p); } return r.ToArray(); } }' }
     switch ($Verb) { 'credread' { [KitCred2]::Read($Text) } 'credwrite' { [KitCred2]::Write($Text, "$env:KIT_SECRET_VALUE") } 'credlist' { [KitCred2]::List() } default { [KitCred2]::Delete($Text) } }
   }
-  'unsafeflag' { @{ claude = '--dangerously-skip-permissions'; codex = '--dangerously-bypass-approvals-and-sandbox' }[$Text] }
-  default { 'usage: flagged.ps1 hash -Text <text> [-Algorithm MD5|SHA1|SHA256] | linkfiles -Text <from> -To <to> [-Release] [-Move] | ipv4 | unsafeflag -Text claude|codex | credlist | credread | credwrite | creddelete -Text <target>'; exit 2 }
+  'unsafeflag' { @{ claude = '--dangerously-skip-permissions' }[$Text] }
+  default { 'usage: flagged.ps1 hash -Text <text> [-Algorithm MD5|SHA1|SHA256] | linkfiles -Text <from> -To <to> [-Release] [-Move] | ipv4 | unsafeflag -Text claude | credlist | credread | credwrite | creddelete -Text <target>'; exit 2 }
 }

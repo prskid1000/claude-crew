@@ -195,7 +195,7 @@ Expect "matrix-scope: .ts edits = reduced (1366x768 + 390x844), recorded on the 
 $aiRx = @'
 (\bai\b|\bmodel|\bllm|\bprompt|llm-driven).{0,80}([0-9]+\+?|\bN) (times|runs|reruns|attempts)
 '@.Trim()
-$aiHits = @(git -C $src grep -n -i -E $aiRx -- '*.md' '*.js' '*.mjs' ':!.codex' ':!.agents' 2>&1); $aiCode = $LASTEXITCODE
+$aiHits = @(git -C $src grep -n -i -E $aiRx -- '*.md' '*.js' '*.mjs' 2>&1); $aiCode = $LASTEXITCODE
 $aiHits = @($aiHits | Where-Object { "$_" -notmatch 'never (rerun|N reruns)|never reruns it|passRate|pass rate' })
 $aiSelf = @("LLM-driven checks: 5+ runs in fresh sessions", "never rerun a model N times") | Where-Object { $_ -match "(?i)$aiRx" -and $_ -notmatch 'never (rerun|N reruns)' }
 Expect "no kit text tells an agent to rerun an AI flow N times (grep exit $aiCode, $($aiHits.Count): $($aiHits | Select-Object -First 2))" ($aiCode -le 1 -and $aiHits.Count -eq 0 -and @($aiSelf).Count -eq 1 -and $pfSelf -match 'PASS proof: a goal per channel')

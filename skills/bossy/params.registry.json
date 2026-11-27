@@ -177,7 +177,6 @@
   "models.local.needGB": "config default=2 unit=GB",
   "models.local.probeSec": "config default=5 unit=s",
   "models.local.queueMinutes": "config default=4 unit=min",
-  "models.local.streamIdleTimeoutMs": "config default=1800000 unit=ms",
   "sync.everyMinutes": "config default=60 unit=min",
   "cleanup.worktreeIdleHours": "config default=2 unit=h",
   "tidy.judgeMinutes": "config default=3 unit=min",

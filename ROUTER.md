@@ -1,6 +1,6 @@
 # Router (main session only)
-The main session classifies every request here. SessionStart `bossy.ps1 health` puts this file in its context (Claude Code,
-Codex, Antigravity); not in context -> Read it before acting. Spawned agents skip it: their prompt names the job.
+The main session classifies every request here. SessionStart `bossy.ps1 health` puts this file in its context; not
+in context -> Read it before acting. Spawned agents skip it: their prompt names the job.
 
 ## Router
 Classify every request before acting: the first row whose conditions all hold wins; load the **Load first** skill, then go to

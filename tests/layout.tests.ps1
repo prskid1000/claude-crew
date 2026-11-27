@@ -181,9 +181,6 @@ $jv = Invoke-PsTest 'dupjoin' '$null = . $args[0] 6>$null; @(Get-KitStatusRows |
 $jvBud = "$jv" -replace '(?s)^.*B:', ''; $jv = "$jv" -replace '(?s)\s*B:.*$', ''
 Expect "status: a board row's budget = effective handoff, its source and the last context check (dashboard tooltip) ($jvBud)" ($jvBud.Trim() -eq 'handoff at 774k (cap0.8) · context check continue at 180k')
 Expect "status: two board entries of one agent on one transcript = one row, the typed one, a live re-join over its left twin ($jv)" ((@("$jv".Trim() -split ',') | Sort-Object) -join ',' -eq 'JV (devy)/,KZ (devy)/r2')
-# tracked ports current (GEMINI.md went stale after a commit): kitbag.py port --check, workspace copies aside; 2 = ports unavailable
-$pck = python -X utf8 (Join-Path $src 'skills/bossy/kitbag.py') port --check 2>&1 | Out-String; $pckc = $LASTEXITCODE; $pst = @([regex]::Matches($pck, "'([^']+)'") | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -notmatch '\(workspace copy\)$' })
-Expect "port: the tracked ports (.codex, .agents, GEMINI.md) match a fresh generation: run kitbag.py port before committing ($($pst -join ', '))" ($pckc -eq 2 -or -not $pst.Count)
 # org and project facts live only in local files: each stays git-ignored (pre-push also blocks them)
 $ignRel = @('ROLES.local.md', 'rules/org.local.md', 'LESSONS.local.md', 'skills/crafty/kit.local.json', 'skills/pokey/targets.local.json', 'settings.local.json', "$rtName/", '.state/')
 $ignOut = @(git -C $src check-ignore --no-index -- @ignRel); Expect "gitignore: org and local files never reach git ($($ignOut.Count) of $($ignRel.Count) ignored)" ($ignOut.Count -eq $ignRel.Count)

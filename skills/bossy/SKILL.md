@@ -52,7 +52,7 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
 
 ## Steps (you = the coordinator)
 0. `bossy.ps1 learn -Read -Skill bossy`. Project facts: the brief, run.json, memory, the repo's CLAUDE.md. Several coordinators
-   (Claude Code, Codex, Antigravity sessions): each `board join -Type coordinator`; one supervises, the others' heartbeat prints
+   (sessions): each `board join -Type coordinator`; one supervises, the others' heartbeat prints
    their own runs' flags; pause / resume / recover act on your runs (`-Everyone`: all); a task another run works on is refused.
 1. **Scope:** group work by area (disjoint screens / packages per agent), not item count; the local env each repo uses.
 2. **Brief:** spawn `briefy` (kind brief, bugs: bugfix; the owner's words verbatim): brief, `<brief>.contracts.md`, impact check,
@@ -81,7 +81,7 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
 | E10 | A run finished or stopped (pause, `launch -Done`: their signals are recorded then), supervise says "retro due", or signals piled up | launch /tidy yourself, no owner ask, once no other workflow of this session runs (one retro covers several runs); a `kitty` applies its sound `proposedForApproval` (scripts: no run live) |
 | E11 | HEAL: guard block wrong, script crash, workaround, kit friction | spawn `kitty` (kind fix; K1-K3) |
 | E12 | LEARN: something cost time, failed or surprised you | `bossy.ps1 learn -Skill <s> -Kind <kind> -Text "<what + fix>"`; 2x -> lesson (`-When -Do -Why`); 3x -> script check / default |
-| E13 | SessionStart kit line (git state, gates, lint, ports, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |
+| E13 | SessionStart kit line (git state, gates, lint, stopped runs, retro/audit due) | stopped runs -> E3 + E1; uncommitted -> commit + push; behind -> `git pull --rebase` when idle; audit due -> spawn ONE `kitty` (kind audit); pulls live clone when idle, relays ASK list |
 | E14 | A new repo or stack joins | `crafty.ps1 stack -Dir <module>`; wrong commands -> `.claude-stack.json`; conventions -> `rules/*.local.md` (README "Rule examples") |
 | E15 | opsy reported `watch` (a deploy recorded), the nightly timer, or a watchy `ROLLBACK?` board msg | `watch`: one-shot timers (`watch.windows`), each spawning `watchy` kind window; nightly: one `watchy` kind sweep (model haiku); `ROLLBACK?` -> `decide ask` (roll back / fix forward / keep); the owner's answer -> `opsy` kind rollback |
 
@@ -92,7 +92,7 @@ Only these dev paths need you (the workflow handles the rest: `workflows/buildy.
   live clone), keeps the kit generic (org values in `kit.local.json`), prefers a script check over a rule; its run id
   (HANDOFF: pass it on). A queued kit item (`- [ ]` in `work/agents/kitty/kit-*.md`) = a kitty spawned now or live.
 - K2. Its checks and `revy` (kind kit) on the diff: kitty step 8.
-- K3. It commits (the pre-commit hook regenerates the README graph and the ports, and blocks on lint), rebases, pushes main
+- K3. It commits (the pre-commit hook regenerates README graph and agents' generated lines, blocks on lint), rebases, pushes main
   fast-forward (pre-push blocks org terms and local files) and retires the lesson the change fixes (`learn -Fixed`). You pull the
   live clone once no run uses it and relay its ASK lines.
 

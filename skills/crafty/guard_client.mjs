@@ -5,7 +5,7 @@
 // guard event crash; no answer before the hook timeout = let through, logged as event timeout. KIT_GUARD_TIMEOUT_MS: tests only.
 // Not caught here: node missing or this file broken (the hook exits 1 / 127: pre-commit runs node --check on it).
 // KIT_GUARD_WARM=0: always the plain pwsh path. KIT_GUARD_BYPASS=1 (owner only, while the guard is fixed): a crash lets the call through.
-// Sections: L25 crash · L50 plain · L90 warm · L115 context · L174 idle
+// Sections: L25 crash · L50 plain · L90 warm · L115 context · L173 idle
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
@@ -120,8 +120,7 @@ function param(key) {
   if (typeof v === 'number') return v
   try { return Number(/default=([\d.]+)/.exec(JSON.parse(readFileSync(join(kit, 'skills', 'bossy', 'params.registry.json'), 'utf8')).params[key])[1]) } catch { return 0 }
 }
-let gravity = false   // Antigravity's hook input (toolCall) wants { decision, reason } back
-function deny(why) { process.stdout.write(JSON.stringify(gravity ? { decision: 'deny', reason: why } : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
+function deny(why) { process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why } }) + '\n'); process.exit(0) }
 // a screenshot costs ~2k tokens per read (owner 2026-11-27: 14 per test session, 1.3 of them re-reads): its browser.viewScale copy
 // first, never the same unchanged image twice in one agent's session; Read limit: 1 = the full image on purpose (small text, after a compaction)
 function imageRule(f, who) {
@@ -189,14 +188,5 @@ if (!input.trim()) process.exit(0)
   const tn = `${j?.tool_name || ''}`
   if (tn === 'Read') { readRule(j.tool_input || {}, j.session_id ? `${j.session_id}-${j.agent_id || 'main'}` : ''); process.exit(0) }
   warmRule(tn, j?.tool_input || {}, j?.agent_id); if (tn === 'Monitor') process.exit(0)
-  if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) }
-  // Antigravity (https://antigravity.google/docs/hooks/): view_file { AbsolutePath, StartLine, EndLine }; MCP through call_mcp_tool
-  // { ServerName, ToolName, Arguments } or an eager server's mcp_<server>_<tool>; arg values may come JSON-encoded
-  const gn = `${j?.toolCall?.name || ''}`, ga = j?.toolCall?.args || {}, dec = (v) => { if (typeof v !== 'string') return v; try { return JSON.parse(v) } catch { return v } }
-  if (gn) gravity = true
-  if (gn === 'view_file') { const s = Number(dec(ga.StartLine)) || null, e = Number(dec(ga.EndLine)) || null
-    readRule({ file_path: dec(ga.AbsolutePath), ...(s || e ? { offset: s || 1, limit: e ? e - (s || 1) + 1 : undefined } : {}) }); process.stdout.write('{"decision":"allow"}\n'); process.exit(0) }
-  if (gn === 'call_mcp_tool' || /^mcp_/.test(gn)) { const a = gn === 'call_mcp_tool' ? dec(ga.Arguments) || {} : ga
-    if (/sql|query/i.test(gn === 'call_mcp_tool' ? `${dec(ga.ToolName)}` : gn)) sqlRule(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, dec(v)])))
-    process.stdout.write('{"decision":"allow"}\n'); process.exit(0) } }
+  if (/^mcp__/.test(tn)) { sqlRule(j.tool_input || {}); process.exit(0) } }
 if (process.env.KIT_GUARD_WARM === '0') plain(false); else ask(2)

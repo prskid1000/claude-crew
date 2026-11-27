@@ -3,8 +3,7 @@
 
   python -X utf8 kitbag.py lint  [<kit>] [--summary] [--warn (+ the uncounted warnings, exit 0)] [--no-flow [--reuse: skip when the same files passed within 30 min]] [--ratchet] [--org-terms <kit.local.json | a,b>] [--json <out>]
   python -X utf8 kitbag.py flow --readme [<kit>]       # README graph sections (the interactive page: kitbag_flow.py)
-  python -X utf8 kitbag.py port  [--check]             # Codex / Antigravity ports of agents, hooks, workflows (kitbag_ports.py)
-  python -X utf8 kitbag.py tools [--days 14] [--json]  # crew allowlists vs real tool use; MCP servers no role grants (exit 1: a used tool not allowed)
+  python -X utf8 kitbag.py tools [--days 14] [--json] | --write | --deploy   # crew allowlists vs tool use (exit 1: a used tool not allowed); Character blocks + tools lines (kitbag_admin.py)
   python -X utf8 kitbag.py audit stamp | scan [--kit <dir>] [--json <file>]   # stamp resets the audit nudge; scan: kitbag_admin.py
   python -X utf8 kitbag.py cost  [<kit>] [--steps] [--json]   # start tokens per agent, workflow prompts (kitbag_admin.py)
   python -X utf8 kitbag.py prose --kind <kind> <file | -> [--json] · prose --kinds   # vs templates.md "Writing standards"
@@ -13,19 +12,19 @@
   python -X utf8 kitbag.py sections [--fix] [<file> ...]   # section maps vs `---- <name>:` markers (lint SECTION-*)
   python -X utf8 kitbag.py budget [show]   # start tokens per role vs START_CAP (lint START-BUDGET); repo and tests totals (INFO)
   python -X utf8 kitbag.py naming check|next|make|scan|rename ...   # the naming standard: keys, titles, docs, runs, branches (kitbag_naming.py)
-  python -X utf8 kitbag.py parity [--json] | parity next [--n 3]   # adapter x verb, harness x feature: native / fallback / gap (lint PARITY; skills/crafty/parity.json); next: cells to close first
+  python -X utf8 kitbag.py parity [--json] | parity next [--n 3]   # adapter x verb: native / fallback / gap (lint PARITY; skills/crafty/parity.json); next: cells to close first
   python -X utf8 kitbag.py migrate         # one-time: retired install records out (.githooks/post-merge runs it)
   python -X utf8 kitbag.py state lint [--since <min>] [--json] | state writers | state todo add|done|lint <file> ...   # state files vs STATE.md Inventory; run files vs its Artefacts (drift guard)
   python -X utf8 kitbag.py ui-check <page.html> [--widths 1920,1366,900,390] [--click 'sel,sel;sel']   # headless shots (<shots>/ui-check) + clipped text
 
 lint problem codes: each message says what is wrong and the fix; skills/bossy/kit-admin.md lists them.
 audit output: `<LEVEL> <CODE> <where>: <what> [-> <fix>]`, LEVEL FIX | ACT | ASK | WARN | INFO.
-Exit codes: 0 ok · 1 problems found (lint, stale ports, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
+Exit codes: 0 ok · 1 problems found (lint, ACT/ASK audit findings) · 2 usage error (an unknown command or flag,
 a non-kit dir).
 
-Sections: L41 paths · L138 state · L186 the one name normaliser (owner 2026-11-25) · L365 kitlog · L494 load · L998 lint ·
-  L1420 README graph · L1538 lint command · L1851 audit · L1999 registry · L2060 tools · L2148 parity · L2754 arch lint ·
-  L3073 prose · L3328 sections · L3460 budget · L3478 migrate · L3629 plugins · L3686 state lint · L3874 main
+Sections: L40 paths · L137 state · L185 the one name normaliser (owner 2026-11-25) · L364 kitlog · L493 load · L996 lint ·
+  L1418 README graph · L1534 lint command · L1847 audit · L1995 registry · L2056 tools · L2144 parity · L2674 arch lint ·
+  L2993 prose · L3248 sections · L3380 budget · L3398 migrate · L3548 plugins · L3605 state lint · L3793 main
 """
 import ast, base64, contextlib, datetime, fnmatch, functools, html, importlib.util, io, json, os, re, shutil, subprocess, sys, tempfile, time, traceback
 import os.path as osp
@@ -493,9 +492,8 @@ def audited(script, argv, cli, task_of=None):
 
 # ---- load: kit files, the reach graph
 SKIP_DIRS = {'node_modules', '__pycache__', '.git', '.runtime', '.state', '.claude-runtime', 'worktrees', 'memory'}
-# outside the graph: generated ports, git / legal files, assets (README images, never loaded by agents)
-REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', 'GEMINI.md', '.codex', '.agents', '.github', 'assets')
-GENERATED = ('.codex/', '.agents/', 'GEMINI.md')
+# outside the graph: git / legal files, assets (README images, never loaded by agents)
+REPO_ONLY = ('LICENSE', '.gitignore', '.gitattributes', '.github', 'assets')
 ASSETS = ('assets/',)   # outside the token budget and the file caps
 # caps: content = read by agents / people; plumbing = read only by git, CI, harness
 PLUMBING = ('LICENSE', '.gitignore', '.gitattributes', '.githooks/', '.github/', 'settings.json')
@@ -503,13 +501,13 @@ START_CAP = 12000   # what one role loads at start (always-loaded + its agent fi
 
 def size_tokens(kdir, f):   # git blob size (LF: a CRLF checkout must not count more)
     t = read(os.path.join(kdir, f))
-    if f == 'README.md':   # generated graph blocks excluded, like ports
+    if f == 'README.md':   # generated graph blocks excluded
         t = re.sub(r'<!-- kit-graph:start .*?<!-- kit-graph:end -->', '', t, flags=re.S)
     return len(t.encode('utf-8')) // 4
 
 def counted_files(kdir):
-    """Tracked files the budget counts: all but the generated ports and assets (a deletion not staged yet is gone)."""
-    return [x for x in tracked(kdir) if not x.startswith(GENERATED + ASSETS) and osp.isfile(osp.join(kdir, x))]
+    """Tracked files the budget counts: all but assets (a deletion not staged yet is gone)."""
+    return [x for x in tracked(kdir) if not x.startswith(ASSETS) and osp.isfile(osp.join(kdir, x))]
 
 def split_total(sizes):
     """(repo total, tests total) of {file: tokens}: INFO only; what agents load is capped per role (start_rows)."""
@@ -1168,8 +1166,8 @@ def lint(k, g=None, org_terms=None):
             continue
         bad('RUNTIME-STRAY', d, f'a {MAP["runtimeDir"]} outside the kit (a relative path from the wrong folder; the guard denies new ones): '
             f'move what is needed under <kit>/{MAP["runtimeDir"]} (crafty.ps1 dir), then delete it')
-    # ---- file caps (ports excluded), per group
-    counted = counted_files(k.dir) or [x for x in k.files if not x.startswith(GENERATED)]
+    # ---- file caps, per group
+    counted = counted_files(k.dir) or list(k.files)
     plumbing = [x for x in counted if x.startswith(PLUMBING)]
     content = [x for x in counted if x not in plumbing and x.endswith('.md')]   # docs agents or people read; scripts run, never read
     caps = manifest(k.dir).get('caps') or {}
@@ -1178,7 +1176,7 @@ def lint(k, g=None, org_terms=None):
         caps = {'content': 30, 'plumbing': 8, **caps}
     cap_c, cap_p = caps['content'], caps['plumbing']
     if len(content) > cap_c:
-        bad('FILE-CAP', 'kit', f'{len(content)} docs (cap {cap_c}: .md files outside .githooks / .github; ports excluded): merge docs '
+        bad('FILE-CAP', 'kit', f'{len(content)} docs (cap {cap_c}: .md files outside .githooks / .github): merge docs '
          '(kit-admin.md "Hard rules")')
     if len(plumbing) > cap_p:
         bad('PLUMBING-CAP', 'kit', f'{len(plumbing)} plumbing files (cap {cap_p}: LICENSE, .gitignore, .gitattributes, .githooks/*, '
@@ -1220,14 +1218,14 @@ def lint(k, g=None, org_terms=None):
                 bad('YAML', f, f'line {ln}: {why}')
     # ---- script headers: usage + exit codes up top
     for f in counted:
-        if not f.endswith(('.ps1', '.py', '.mjs')) or f.startswith(GENERATED):
+        if not f.endswith(('.ps1', '.py', '.mjs')):
             continue
         head = '\n'.join(k.texts.get(f, '').splitlines()[:40])
         if not re.search(r'Exit codes?:', head, re.I) or not re.search(r'usage|verbs?:|\bpython\b|\bpwsh\b|^\s*[#/]*\s*&\s', head, re.I | re.M):
             bad('SCRIPT-HEADER', f, 'no header block with usage and "Exit codes:" in the first 40 lines (kit-admin.md "Script header")')
     # ---- section maps: "Sections:" line vs markers; every function and verb in a section
     # Windows PowerShell 5 misreads BOM-less UTF-8 and pwsh 7 syntax: the line stops it with a clear message
-    for f in [x for x in counted if x.endswith('.ps1') and not x.startswith(GENERATED)]:
+    for f in [x for x in counted if x.endswith('.ps1')]:
         if not re.search(r'^#requires\s+-version\s+7', read(osp.join(k.dir, f)), re.I | re.M):
             bad('PS-VERSION', f, 'no "#Requires -Version 7" line (Windows PowerShell 5 cannot run kit scripts)')
     for f in sec_files(list(counted)):
@@ -1240,7 +1238,7 @@ def lint(k, g=None, org_terms=None):
        '.js': r'\bexec(?:Sync)?\(\s*[\'"`](?:start|open|xdg-open)\s'}
     for f in counted:
         ext = osp.splitext(f)[1]
-        if ext not in rx_open or f.startswith(GENERATED):
+        if ext not in rx_open:
             continue
         ls = k.texts.get(f, '').splitlines()
         for i, line in enumerate(ls):
@@ -1257,7 +1255,7 @@ def lint(k, g=None, org_terms=None):
               '.mjs': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'|hidden-ok"), '.js': (r'\bdetached:\s*true', r"platform\s*!==\s*'win32'|hidden-ok")}   # arch-ok: Windows window flags
     for f in counted:
         ext = osp.splitext(f)[1]
-        if ext not in rx_win or f.startswith(GENERATED):
+        if ext not in rx_win:
             continue
         ls = k.texts.get(f, '').splitlines()
         for i, line in enumerate(ls):
@@ -1268,7 +1266,7 @@ def lint(k, g=None, org_terms=None):
     # forever at full rate; a bossy -Recurse over the runtime trees walks ~140k files per sweep
     rx_call = r'Invoke-HostVerb|Invoke-BoundedSsh|\bssh\b|\bglab\b|\bgh\s|ConvertFrom-Json|Get-Content'
     for f in counted:
-        if not f.endswith('.ps1') or f.startswith(('tests/',) + GENERATED):
+        if not f.endswith('.ps1') or f.startswith('tests/'):
             continue
         ls = k.texts.get(f, '').splitlines()
         for i, line in enumerate(ls):
@@ -1284,7 +1282,7 @@ def lint(k, g=None, org_terms=None):
                 bad('DEEP-WALK', f'{f}:{i + 1}', 'a -Recurse walk over the runtime trees without -Depth: name the depth (Get-KitQaRunFiles for qa-runs) or mark the line "# walk-ok: <why>"')
     # ---- every lease or hold is written with its holder (README "Leases")
     for f in counted:
-        if f.endswith('.ps1') and not f.startswith(('tests/',) + GENERATED):
+        if f.endswith('.ps1') and not f.startswith('tests/'):
             for i, line in enumerate(k.texts.get(f, '').splitlines()):
                 if re.search(r'\.(leases|holds)\[[^\]]+\]\s*=\s*@\{', line) and 'New-KitLease' not in line:
                     bad('LEASE-HOLDER', f'{f}:{i + 1}', 'a lease or hold written without New-KitLease: nothing would free it (README "Leases")')
@@ -1461,8 +1459,6 @@ def readme_sections(k, g):
         return ' · '.join(f"{s}: " + ', '.join(f'{v} ({c[(s2, v)]})' for s2, v in sorted(c) if s2 == s) for s in ('fallback', 'gap', 'MISSING') if any(x[0] == s for x in c))
     out['table-adapters'] = ['| Kind | Selected by | Interface (verbs; caps: Test-KitCap) | Built in | Vendor (config-selected) | Not native (adapters) | Code |', '|---|---|---|---|---|---|---|'] + [
      f"| {n} | `{a.get('config', '')}` | {a.get('verbs', '')}{'; caps: ' + a['caps'] if a.get('caps') else ''} | {', '.join(a.get('names', '').split())} | {', '.join(a.get('vendors', '').split())} | {odd(n, a)} | `{a.get('file', '')}` |" for n, a in (man.get('adapters') or {}).items() if isinstance(a, dict)]
-    out['table-ports'] = ['| Feature | Codex | Antigravity |', '|---|---|---|'] + [
-     f"| {f} | {' | '.join(c[h][0] + (': ' + c[h][1] if c[h][1] else '') for h in HARNESS)} |" for f, c in harness_matrix(k) if any(c[h][0] != 'port' for h in HARNESS)]
     bd = ((json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}').get('budget') or {}).get('defaults') or {})   # per-tool budget defaults
     out['table-budget'] = ['| Tool / window | Budget | Source |', '|---|---|---|'] + [f"| {n} | {v.get('tokens') or str(v.get('fraction')) + ' x window'} | {v.get('source', '')} |" for n, v in bd.items()]
     ex = json.loads(read(osp.join(k.dir, PATHS_JSON)) or '{}')   # config table: each key's _readme, else its _doc row
@@ -2048,7 +2044,7 @@ def schema_errors(obj, sch, where='$'):
             out.append(f'{where}: {len(obj)} chars (max {sch["maxLength"]})')
     return out
 
-PARITY_JSON = 'skills/crafty/parity.json'   # the adapter families (manifest 'adapters') and the harness port table
+PARITY_JSON = 'skills/crafty/parity.json'   # the adapter families (manifest 'adapters')
 
 def manifest(kit=None):
     try:
@@ -2145,13 +2141,12 @@ def yaml_problems(text):
         out.append(((mk.line + 1) if mk else 0, str(e).split('\n')[0]))
     return out
 
-# ---- parity: every adapter x its family's verbs, every harness x kit feature (AGENTS.md "Parity", skills/crafty/parity.json)
+# ---- parity: every adapter x its family's verbs (AGENTS.md "Parity", skills/crafty/parity.json)
 # a registration: Register-KitAdapter <kind> <name> <@{...} | $var[.Clone()]> (ps1) or ADAPTERS['<kind>']['<name>'] = {...} (py)
 AD_REG = re.compile(r"""Register-KitAdapter\s+'?([\w-]+)'?\s+'?([\w-]+)'?|ADAPTERS(?:\[['"]([\w-]+)['"]\]|\.setdefault\(['"]([\w-]+)['"],\s*\{\}\))\[['"]([\w-]+)['"]\]\s*=""")
 AD_KEY = re.compile(r"""(['"]?)([\w.*-]+)\1\s*(=(?!=)|:)""")   # a key of an adapter's hashtable / dict
 AD_DELEGATE = re.compile(r"""\$KitAdapters(?:\.([\w-]+)|\[['"]([\w-]+)['"]\])(?:\.([\w-]+)|\[['"]([\w-]+)['"]\])""")   # '*' = another adapter's verbs
-ktext = lambda k, rel: k.texts.get(rel) or read(osp.join(k.dir, rel))   # port copies and settings.json: not in every k.texts
-HARNESS = ('codex', 'antigravity')
+ktext = lambda k, rel: k.texts.get(rel) or read(osp.join(k.dir, rel))   # settings.json: not in every k.texts
 AD_EXT, AD_COMMENT = ('.ps1', '.py', '.mjs'), r'(?m)^[ \t]*(#|//).*$'   # .mjs: ADAPTERS['<kind>']['<name>'] = {...} (browser.mjs)
 kebab = lambda v: re.sub('([A-Z])', r'-\1', v).lower()   # Test-KitCap: cap commentEdit = verb comment-edit
 # a verb whose whole body only refuses: { [param(..)] throw 'UNSUPPORTED ..' | '..not supported' } (ps1), lambda ..: sys.exit / raise (py)
@@ -2384,77 +2379,8 @@ def adapter_matrix(k, fam, a, bad=None):
             bad('PARITY', PARITY_JSON, f'{fam}: accepted "{key}" has no reason: say why the fallback is the design')
     return out
 
-def _port_hooks(k):
-    """{harness: [(event, hook text)]} from the kit's ported hook files (kitbag.py port writes them)."""
-    toml = ktext(k, '.codex/config.toml')
-    cx = [(m.group(1), toml[m.end():(nx.start() if (nx := re.compile(r'^\[\[hooks\.\w+\]\]$', re.M).search(toml, m.end())) else len(toml))])
-          for m in re.finditer(r'^\[\[hooks\.(\w+)\]\]$', toml, re.M)]
-    try:
-        agy = json.loads(ktext(k, '.agents/hooks.json') or '{}')
-    except ValueError:
-        agy = {}
-    ag = [(ev, json.dumps(h)) for g in agy.values() if isinstance(g, dict) for ev, hs in g.items() if isinstance(hs, list) for h in hs]
-    def plain(t):   # an -EncodedCommand hook (kitbag_ports found_cmd): its pwsh text, so the script + verb match
-        for m in re.finditer(r'-EncodedCommand ([A-Za-z0-9+/=]+)', t):
-            with contextlib.suppress(ValueError, UnicodeDecodeError):
-                t += '\n' + base64.b64decode(m.group(1)).decode('utf-16-le')
-        return t
-    return {'codex': [(e, plain(t)) for e, t in cx], 'antigravity': [(e, plain(t)) for e, t in ag]}
-
-def harness_matrix(k, bad=None):
-    """[(feature, {claude, codex, antigravity: port | fallback | gap | MISSING, note})]: every Claude Code hook (settings.json),
-    agent, workflow and skill, plus the Claude-only features of parity.json harness.features."""
-    bad = bad or (lambda *x: None)
-    reg = (json.loads(ktext(k, PARITY_JSON) or '{}').get('harness') or {})
-    hk, feats, ports, rows = reg.get('hooks') or {}, reg.get('features') or {}, _port_hooks(k), []
-    word = lambda v: (v.split(':', 1)[0], v.split(':', 1)[1].strip()) if re.match(r'^(gap|fallback|port):', v or '') else (None, v)
-    try:
-        st = json.loads(ktext(k, 'settings.json') or '{}').get('hooks') or {}
-    except ValueError:
-        st = {}
-    for ev, groups in st.items():
-        for h in [h for g in groups for h in g.get('hooks', [])]:
-            av = h.get('args') or []
-            i = next((j for j, x in enumerate(av) if re.search(r'\.(ps1|mjs|py)$', x)), None)
-            feat = f"hook {ev} " + ' '.join([osp.basename(av[i])] + av[i + 1:] if i is not None else [h.get('command', '')])
-            cell, want = {'claude': ('native', '')}, hk.get(feat[5:]) or {}
-            for hn in HARNESS:
-                w, frag = word(want.get(hn) or feat.split(' ', 2)[2])
-                if w in ('gap', 'fallback'):
-                    cell[hn] = (w, frag)
-                else:
-                    hit = re.compile(re.escape(frag) + r"""(?=\s*['"\\]|\s*$)""", re.M)   # the whole command: health is no prefix of health -Flow
-                    cell[hn] = ('port', frag) if any(e == ev and hit.search(t) for e, t in ports[hn]) else ('MISSING', frag)
-            rows.append((feat, cell))
-    for kind, folder, files in (('agent', 'agents', ('.codex/agents/{}.toml', '.agents/agents/{}.md')),
-                                ('workflow', 'workflows', ('.codex/workflows/{}.md', '.agents/kit-workflows/{}.py'))):
-        for f in sorted(x for x in k.files if re.match(rf'{folder}/[\w-]+\.(md|js)$', x) and '.local.' not in x):
-            n = osp.splitext(osp.basename(f))[0]
-            cell = {'claude': ('native', '')}
-            for hn, pat in zip(HARNESS, files):
-                ok = bool(ktext(k, pat.format(n)))
-                cell[hn] = (('fallback', 'by-hand procedure, gates in the doc') if kind == 'workflow' and hn == 'codex' else ('port', pat.format(n))) if ok else ('MISSING', pat.format(n))
-            rows.append((f'{kind} {n}', cell))
-    sk = '.claude/skills' in ktext(k, '.agents/skills.json')
-    for s in sorted(k.skills):
-        rows.append((f'skill {s}', {'claude': ('native', ''), 'codex': ('port', '.agents/skills link'), 'antigravity': ('port', '.agents/skills.json') if sk else ('MISSING', '.agents/skills.json')}))
-    have = {f: c for f, c in rows}
-    for feat, want in feats.items():   # a declared entry: a Claude-only feature, or a gap / fallback of an auto row
-        if not feat.startswith('_'):
-            cell = {hn: (word(want[hn])[0] or 'MISSING', word(want[hn])[1]) for hn in HARNESS if hn in want}
-            if feat in have:
-                have[feat].update(cell)
-            else:
-                rows.append((feat, {'claude': ('native', ''), **{hn: ('MISSING', 'no entry') for hn in HARNESS}, **cell}))
-    for feat, cell in rows:
-        for hn in HARNESS:
-            if cell[hn][0] == 'MISSING':
-                bad('PARITY', PARITY_JSON, f'{feat}: not in the {hn} port ({cell[hn][1] or "no entry"}): port it (kitbag.py port) or declare '
-                    f'harness.{"hooks" if feat.startswith("hook ") else "features"} "{feat[5:] if feat.startswith("hook ") else feat}".{hn} = "gap: <why>" | "fallback: <how>"')
-    return rows
-
 def adapter_lint(k, man, bad):
-    """PARITY: every adapter family and harness port (AGENTS.md "Parity")."""
+    """PARITY: every adapter family (AGENTS.md "Parity")."""
     fams = man.get('adapters') or {}
     for fam, a in fams.items():
         if isinstance(a, dict):
@@ -2464,7 +2390,6 @@ def adapter_lint(k, man, bad):
                     bad('PARITY', PARITY_JSON, f'{fam}: gaps "{key}" says no such feature without its doc link: "no such feature: https://<the tool\'s doc> <why>"')
     for kind in sorted(adapter_kinds(k) - set(fams)):
         bad('PARITY', PARITY_JSON, f'family {kind}: the code registers it, {PARITY_JSON} adapters has no entry: add it (or "parity": why it is not walked)')
-    harness_matrix(k, bad)
 
 NOFEATURE = re.compile(r'^no such feature: https?://\S+')   # a gap the tool itself cannot close: kept, never in parity next
 
@@ -2512,7 +2437,7 @@ def parity_next(k, man, cfg):
     return sorted(out)
 
 def cmd_parity(a):
-    """parity [--json] | parity next [--n 3]: the family x adapter x verb and harness x feature matrices (README "Adapters", "Install");
+    """parity [--json] | parity next [--n 3]: the family x adapter x verb matrix (README "Adapters");
     next: the cells to close first (kit-admin.md "Parity")."""
     k = load(KIT_DIR)
     probs, man = [], manifest(KIT_DIR)
@@ -2524,10 +2449,9 @@ def cmd_parity(a):
         print(f'parity next: {len(cells)} open cell(s) (fallback or gap; `no such feature: <link>` gaps, accepted fallbacks and none adapters excluded)')
         return 0
     fams = {f: adapter_matrix(k, f, a) for f, a in (man.get('adapters') or {}).items() if isinstance(a, dict)}
-    hm = harness_matrix(k)
     adapter_lint(k, man, lambda *x: probs.append(x))
     if '--json' in a:
-        print(json.dumps({'adapters': fams, 'harness': [{'feature': f, **{h: {'state': s, 'note': n} for h, (s, n) in c.items()}} for f, c in hm],
+        print(json.dumps({'adapters': fams,
                           'problems': [f'{c} {w}: {m}' for c, w, m in probs]}, indent=1))
         return 1 if probs else 0
     for fam, rows in fams.items():
@@ -2535,10 +2459,6 @@ def cmd_parity(a):
         for n, row in rows.items():
             odd = [f'{v}={s}' for v, s in row.items() if s != 'native']
             print(f'  {n:<14} {"all native" if not odd else " ".join(odd)}')
-    print(f'harness: {"feature":<46} codex            antigravity')
-    for feat, c in hm:
-        if any(c[h][0] != 'port' for h in HARNESS):
-            print(f'  {feat:<54} {c["codex"][0]:<16} {c["antigravity"][0]}')
     print(f'parity: {len(probs)} problem(s)' + ''.join(f'\n  {c} {w}: {m}' for c, w, m in probs))
     return 1 if probs else 0
 
@@ -2583,11 +2503,11 @@ def registry_lint(k, bad):
         for e in schema_errors(m, SCHEMAS['manifest-agent'], f'_manifest.agents.{a}') + schema_errors(m.get('character') or {}, SCHEMAS['character'], f'_manifest.agents.{a}.character'):
             bad('SCHEMA', PATHS_JSON, e)
         if ch and m.get('character') and ch != m['character']:
-            bad('MANIFEST', p, 'the Character block differs from _manifest (kitbag.py port writes it from the manifest)')
+            bad('MANIFEST', p, 'the Character block differs from _manifest (kitbag.py tools --write writes it from the manifest)')
         want = {role_tools(a, k.dir), role_tools(a, k.dir, tools_live(k.dir))}
         if fm.get('tools') not in want:
             bad('MANIFEST', p, f'tools "{fm.get("tools")}" differ from _manifest.agents.{a}.tools expanded "{role_tools(a, k.dir)}" '
-                '(a crew role carries an allowlist; kitbag.py port writes it)')
+                '(a crew role carries an allowlist; kitbag.py tools --write writes it)')
         allow = set((role_tools(a, k.dir, True) or '').split(', '))
         for n, line in enumerate(text.splitlines(), 1):
             for t in tools_named(line):
@@ -2824,7 +2744,7 @@ DEFAULT_RX = {'.ps1': (re.compile(r"Get-KitSetting\s+['\"]([\w.]+)['\"]\s+"), re
   '.js': (re.compile(r"\b(?:cfg|conf|config|kitConf|CFG)\w*(?:\?\.|\.)([\w?.]+)\s*"), re.compile(r'(?:\|\||\?\?)\s*'))}
 
 def arch_lint(k):
-    """ARCH-* problems [(code, where, msg)]. Exempt: tests/, ports, *.local.*, vendor-named files (basename holds a vendor / stack
+    """ARCH-* problems [(code, where, msg)]. Exempt: tests/, *.local.*, vendor-named files (basename holds a vendor / stack
     word), `arch-ok: <why>` lines, legacy-defaults blocks; ENUM and VENDOR-API also adapters/ (DEFAULT, PLATFORM: core moved there too)."""
     if getattr(k, 'arch', None) is not None:
         return k.arch
@@ -2837,7 +2757,7 @@ def arch_lint(k):
     rx_of = {n: word_rx(x.get('words') or []) for n, x in fams.items()}
     vendor_words = [w for n in ('vendors', 'stacks') for w in (fams.get(n) or {}).get('words', [])]
     named = lambda f: any(re.sub(r'[\s-]', '', w.lower()) in re.sub(r'[\s_-]', '', osp.basename(f).lower()) for w in vendor_words)
-    base = [f for f in k.files if not f.startswith(('tests/',) + GENERATED) and not is_overlay(k, f) and f != VOCAB_JSON]   # org-only files (localOnly, *.local.*) are the org's own
+    base = [f for f in k.files if not f.startswith('tests/') and not is_overlay(k, f) and f != VOCAB_JSON]   # org-only files (localOnly, *.local.*) are the org's own
     code = [f for f in base if f.endswith(CODE_EXT)]
     core = [f for f in code if '/adapters/' not in f and not named(f)]
     lines = {f: arch_lines(f, k.texts.get(f) or read(osp.join(k.dir, f))) for f in code}
@@ -3051,7 +2971,7 @@ def dead_keys(k):
             if re.match(r'^[A-Za-z][\w.]*$', x):
                 keys.setdefault(x)
     readers = '\n'.join(k.texts.get(f) or read(osp.join(k.dir, f)) for f in k.files
-                        if (f.endswith(CODE_EXT) or f.startswith('.githooks/')) and not f.startswith(('tests/',) + GENERATED))
+                        if (f.endswith(CODE_EXT) or f.startswith('.githooks/')) and not f.startswith('tests/'))
     probs = []
     for key in keys:
         leaf = key.rsplit('.', 1)[-1]
@@ -3333,7 +3253,7 @@ SEC_FN = {'.ps1': r'function\s+([\w-]+)', '.py': r'(?:async\s+)?(?:def|class)\s+
 SEC_INDIRECT = re.compile(r'Assert-Kit\w+|Get-Command|Invoke-KitVerb')   # a handler looked up by name (an adapter's function)
 
 def sec_files(files):
-    return [f for f in files if osp.splitext(f)[1] in SEC_CM and not f.startswith(('tests/',) + GENERATED)]
+    return [f for f in files if osp.splitext(f)[1] in SEC_CM and not f.startswith('tests/')]
 
 def sec_marks(lines, cm):
     return [(i + 1, m.group(1).strip()) for i, l in enumerate(lines) if (m := re.match(re.escape(cm) + r' ---- ([^:·]+):', l))]
@@ -3558,7 +3478,6 @@ LEGACY_DEFAULTS = {   # version -> {dotted key -> the default before it} (README
         'deploy.ssh.manager': 'systemd',
         'deploy.ssh.sudo': True,
         'api.tokenFields': ['access_token'],
-        'ports.targets': 'both',
         'localEnv.defaultService': 'api',
         'localEnv.defaults.db.cascadeGuard': True,
     },

@@ -1,12 +1,12 @@
 <p align="center"><img src="assets/claude-crew.svg" alt="claude-crew" width="330"></p>
 <p align="center"><b>A crew of AI agents that builds, tests, ships and watches your code, with one coordinator in charge.</b></p>
-<p align="center"><img src="assets/badges.svg" alt="license MIT · agents: Claude Code, Codex, Antigravity · scripts: PowerShell 7, Python 3 · telemetry: none"></p>
+<p align="center"><img src="assets/badges.svg" alt="license MIT · agents: Claude Code · scripts: PowerShell 7, Python 3 · telemetry: none"></p>
 
 # claude-crew
 
 **[Interactive kit map ->](https://prskid1000.github.io/claude-crew/)** (every command, step, decision and loop; built on each push from `kitbag_flow.py`)
 
-A multi-agent dev + QA kit for Claude Code (ports for Codex and Antigravity) for **any project type**: any stack, migration tool,
+A multi-agent dev + QA kit for Claude Code for **any project type**: any stack, migration tool,
 local env shape, test env, deploy mechanism and tracker. Org specifics live only in git-ignored config
 (`skills/crafty/kit.local.json`, `rules/*.local.md`). Core defaults assume no tenants, no web + API + app trio, no database
 engine, migration tool, testing docs or deploy mechanism: each is a built-in or adapter that runs only when config selects it.
@@ -93,8 +93,6 @@ retry = opus; steps (ci, ship, track, close, learn) = haiku. Agents spawned by h
 |---|---|---|
 | claude-1m | 967000 | Claude Code docs: 1M models compact at ~967k |
 | claude-200k | 167000 | conservative 83.5% of 200k (docs: at the limit) |
-| codex | 0.9 x window | 0.9 x the models_cache.json window; auto_compact_token_limit wins |
-| antigravity | 800000 | unverified: 0.8 x the model window (no window: 0.8 x a 1M Gemini window) |
 | local | 32000 | a locally served model (llama.cpp -c, Ollama num_ctx): set tokens to its context; KIT_TOOL=local or a model id under local/ |
 | unknown | 160000 | 0.8 x 200k |
 <!-- kit-graph:end -->
@@ -191,35 +189,6 @@ Needs pwsh 7, Python 3.8+, git, Node 18+, `glab` or `gh`; optional: the tracker 
 `npm install` in `skills/pokey`. Update: `git pull` once nothing runs.
 Org specifics: settings in `kit.local.json` (keys: "Configuration"); org rules, house style, extra CLIs, **Org router rows**,
 products, repos, test envs (names only), deploy rules and tracker statuses in `rules/*.local.md`; org-only skills in `localOnly`; per-role ones: `ROLES.local.md` (learn -Read).
-Codex / Antigravity (`kitbag.py port`): off by default; `kit.local.json` `ports.targets: codex | antigravity | both` deploys
-them (`none` removes the kit-written copies; unset keeps an earlier deploy). Start them in the workspace root (Codex: hooks approved once with `/hooks`); the port writes absolute hook paths, `.agents/skills/<name>` links, the org rules (`.agents/rules/` always-on,
-`AGENTS.override.md`; local only) and each CLI's mechanics (GEMINI.md, AGENTS.override.md). Antigravity runs the workflows
-(`run_workflow` on `.agents/kit-workflows/<name>.py`, journal in `<runtime>/work/port-runs/`); Codex follows
-`.codex/workflows/*.md` by hand (each phase with the engine's gates). Codex config: `approval_policy = "never"`, workspace-write
-with network (trusted project; Windows: `~/.codex/config.toml` `[windows] sandbox`). Not ported natively (gaps and
-fallbacks: `skills/crafty/parity.json` `harness`; `kitbag.py parity`, lint PARITY):
-<!-- kit-graph:start table-ports -->
-| Feature | Codex | Antigravity |
-|---|---|---|
-| hook PreToolUse bossy.ps1 guard-sendmessage | fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg | fallback: no SendMessage hook; AGENTS.md Crew rule: crew messages only through bossy.ps1 board msg |
-| hook PostToolUse ctx_hook.mjs | fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print (board beat, crafty.ps1 wt / check / checkpoint, the gate). PostToolUse additionalContext exists (https://learn.chatgpt.com/docs/hooks) but its input names no agent: a sub-agent's hook would drain its parent's inbox | fallback: board beat prints the CONTEXT-CHECK line; board msgs: the per-command inbox print. PostToolUse returns {} only (https://antigravity.google/docs/hooks/); PostInvocation injectSteps is not wired: sub-agent firing unverified |
-| workflow buildy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/buildy.py |
-| workflow testy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/testy.py |
-| workflow tidy | fallback: by-hand procedure, gates in the doc | port: .agents/kit-workflows/tidy.py |
-| idle-wait guard (Monitor timeout_ms, foreground sleep over guard.warmSeconds; subagents only) | fallback: kit waits return within guard.warmSeconds (decide wait 4 min, envy wait 4.5 min / 270 s); AGENTS.md Waits | fallback: kit waits return within guard.warmSeconds; AGENTS.md Waits |
-| screenshot view copy and re-read deny | gap: Codex reads images outside the hooks; the view copy is written, AGENTS.md points to it | port: guard_client.mjs redirects view_file of a shot to its view copy; re-read deny gap (no session id in the hook input) |
-| test-login read deny | fallback: kit.rules exec policy + the shell guard (best-effort) | port: guard_client.mjs denies view_file of the logins file, an always-on rule, the shell guard |
-| dated model override (kit.local.json models.override {model, until: ISO time}: every claude tier and models.<phase> id until then; brief agents[].model / items[].model, debateModels and inherit keep theirs) | fallback: Claude tiers only (usage.ps1 Get-KitModelOverride); a Codex session sets models.tiers.codex by hand and removes it after | fallback: Claude tiers only; an Antigravity session sets models.tiers.antigravity / ports.models by hand and removes it after |
-| per-role prompt cache TTL (agent front matter experimental.cacheTtl: devy 1h; settings subagentPromptCacheTtl / env CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL override it) | gap: no config.toml key or custom-agent field sets a cache TTL (codex.exe 2026-11-27: prompt_cache_key / options are set by Codex itself); caching stays automatic | gap: no per-agent cache TTL setting; Gemini caching stays implicit |
-| per-agent tool and MCP lists | gap: no such feature: https://learn.chatgpt.com/docs/agent-configuration/subagents a custom agent has no tools allow-list and its mcp_servers / sandbox_mode do not override the parent: the ported note names the allowlist, the guard covers both | port: tools: [<agy names>] in .agents/agents/*.md (https://antigravity.google/docs/subagents/; kitbag_ports.py GRAVITY_TOOL_MAP + call_mcp_tool); an agent with a tool agy cannot name (WebFetch, WebSearch) keeps all tools |
-| Artifacts | fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; the Codex CLI has no viewer (https://learn.chatgpt.com/docs/artifacts-viewer) | fallback: the HTML file itself (supervise-report.html, a report artifact under <runtime>), opened in a browser; agy Artifacts are its own plans and walkthroughs (https://antigravity.google/docs/artifacts/) |
-| heartbeat cron (CronList) | fallback: bossy.ps1 heartbeat (OS timer) | fallback: schedule |
-| blocking owner questions | fallback: request_user_input in Plan mode, else bossy.ps1 decide ask (blocking) | fallback: ask_question when listed, else bossy.ps1 decide ask |
-| run journals (Runs band, stuck checks, recover) | fallback: the .codex/workflows procedure journals each step (kitbag.py port --journal) into <runtime>/work/port-runs/codex/ | port: run_workflow journal in <runtime>/work/port-runs/ |
-| local model launcher (crafty.ps1 local: a client on a local server, its env from models.local, seats, RAM and forbidden-model checks) | port: crafty.ps1 local codex starts Codex on the server (-c model_providers.local.{base_url, wire_api, env_key, stream_idle_timeout_ms}, model_provider=local; headless: codex exec --output-schema); the same verb runs from a Codex shell | gap: no such feature: https://antigravity.google/docs/settings/ (read 2026-11-27) the app, CLI and IDE add custom models only over the Gemini API (customModelsConfig, modelName gemini-api://<base_url>/models/<model>, modelProvider gemini + GEMINI_API_KEY), not an OpenAI or Anthropic endpoint; only the Python SDK has LocalOpenAIAgentConfig(base_url) (https://antigravity.google/docs/sdk/local-models/), which the kit's agy port does not run. Closes when the local server answers the Gemini API (then local antigravity writes customModelsConfig) or the port runs on the SDK |
-| local model bench (crafty.ps1 local bench: recorded real steps replayed on the local model, scored per role) | port: run -Runner codex replays a set through local codex (codex exec, reply = stdout); gap: build reads Claude Code subagent transcripts only (no Codex session reader): a set built from Claude Code runs is replayed and scored the same from a Codex shell | gap: no local model client (row above), so no bench run; build / score / report / diff run from any shell. Closes with the launcher's gap |
-<!-- kit-graph:end -->
-
 ## Using it
 - Ask the main session; the Router launches the rest. The heartbeat (`bossy.ps1 supervise -AutoFix -Brief`: a recurring durable
   session cron, plus the opt-in OS timer `bossy.ps1 heartbeat install|uninstall|status` that ticks every `supervise.osTimerTickMinutes` (5) and runs it once the last sweep is a beat old (a session skips one under half a beat),
@@ -315,7 +284,7 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `supervise` | {"ramActPct": 90, "minDiskFreeGB": 30, "briefSeconds": 40,… | heartbeat: ramActPct, ramCleanupPct (85: RAM % to clean), minDiskFreeGB, ramNames (_manifest.ram), briefSeconds; heartbeatMinutes (15): NEXT=&lt;n&gt; (5-30; manyAgents 8); stuckMinutes (20) / shellStuckMinutes (30, learned): an idle agent = STUCK / a shell with no CPU, IO, output = STALLED; finishedMinutes (30): -Brief drops older FINISHED; output, historySweeps, publish: README Using it; sectionMinutes: section cadence |
 | `idle` | {"graceMinutes": 10} | README Leases: no live holder for graceMinutes -&gt; released; a board beat counts for beatMinutes |
 | `cleanup` | {"maxBrowserProfiles": 4} | maxBrowserProfiles: profiles kept; worktreeDays (7): idle days before a clean worktree with a gone upstream goes; idleDaemons: idle build daemons to stop [{process, match, label, busyKinds}] |
-| `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger); mode cloud / local / mixed; local: crafty.ps1 local (token env:&lt;VAR&gt; / secret:&lt;name&gt;; wireApi, commands, env, bench.env) |
+| `kitBranch`, `models` |  | kit branch (origin/HEAD); &lt;phase&gt;: tier fast / balanced / strong / inherit, or a model id; tiers.&lt;tool&gt;: tier -&gt; model (unset: next stronger); mode cloud / local / mixed; local: crafty.ps1 local (token env:&lt;VAR&gt; / secret:&lt;name&gt;; commands, env, bench.env) |
 | `localOnly`, `orgTerms` | ["skills/&lt;org-only-skill&gt;", "&lt;another org-only path&gt;"] | org-only kit paths kept out of git; words pre-push blocks |
 | `localFiles` | {"skills/pokey/targets.local.json": {"_readme": "One entry per TEST… | example (setup -WriteLocal) |
 | `localEnv` |  | local envs the dev flow tests on; `defaults` / `envs.&lt;env&gt;.extends` share one shape (envy reference.md); baseMove {targets, donorPort, verifyPort, bin, service, adminSchema, registryTable, poolTable}: mysql-base-move.ps1 |
@@ -343,7 +312,6 @@ run and the page's own `window.uiBusy()` false (the kit map: a pending resize).
 | `browsers` | {"chromePolicies": {}} | chromePolicies: {&lt;key under Software/Policies, e.g. Google/Chrome&gt;: {&lt;policy&gt;: &lt;number or text&gt;}}: bossy.ps1 setup writes them per user (HKCU; an admin-only key: prints the elevated command); setup -BrowserPolicy -Undo removes them, -Clean deletes model folders in kit and Cypress profiles. |
 | `decide` | {"neverAuto": []} | neverAuto: regex words a question never gets a standing rule for, added to the built-in deploy / prod / data / customer list (bossy outcomes.ps1) |
 | `guard` | {"layout": "warn", "writeRoots": []} | heavyPatterns / e2ePatterns: commands that need the gate. layout: warn (default) / block: an agent's own write into .runtime / .state outside the _paths names (crafty.ps1 dir; kit scripts exempt). writeRoots: more folders agents may create files in; envChangeCommands: more deployed-env change commands to deny (regexes; built-in: vocab.json); a new file at a drive root or outside the workspace, kit, repos, worktree roots, temp, ~/.claude, ~/Downloads is denied. |
-| `ports` | {"targets": "none", "models": {"haiku": "flash"}} | kitbag.py port workspace copies: none (default) / codex / antigravity / both. models: {&lt;Claude model&gt;: &lt;agy model&gt;} for the runner (default haiku -&gt; flash) |
 | `memory` | {"keepDefault": false} | false = auto memory off (settings.json); true = on (settings.local.json). |
 | `kitAudit` | {"everyDays": 7} | everyDays: SessionStart nudges a kitty audit past it (default 7; 0 = off). |
 | `build` | {"mavenOffline": false} | mavenOffline: Maven -o when ~/.m2/repository exists (default false). |
@@ -365,7 +333,7 @@ A repo whose stack is detected wrongly: `.claude-stack.json` next to its build f
 One interface per kind, chosen by config; `command` = your CLI per verb (`{placeholders}` in, JSON out); `kitbag.py new adapter <kind> <name>` scaffolds one.
 Vendor adapters sit in `skills/crafty/adapters/` and load only when config selects them (env vars / keys: each file's header).
 Registry: `skills/crafty/parity.json` (per family: verbs, caps, fallbacks, declared gaps); `kitbag.py parity [--json]` prints
-adapter x verb (native, config, fallback, gap) and harness x feature; lint PARITY fails a verb or feature with neither.
+adapter x verb (native, config, fallback, gap); lint PARITY fails a verb with neither.
 `kitbag.py parity next [--n 3]`: the cells to close next (kit-admin.md "Parity"); supervise ACT `PARITY next batch` starts each batch.
 `kitbag.py faults [next]`: agents' failed commands -> recurring script-fault items (ACT `SCRIPT-FAULTS`; guard: `adapters/guard-scripts.ps1`).
 <!-- kit-graph:start table-adapters -->
@@ -375,7 +343,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
 | git-host | `gitHostType` | mr.get mr.list mr.changes mr.create mr.update mr.merge mr.unauto mr.url mr.parseRef whoami repo.base repo.commit repo.compare branch.protect; caps: mr.labels | command | github, gitlab, bitbucket, azure, gitea | gap: mr.labels (1) | `skills/crafty/lib.ps1` |
 | report | `reports.type` | publish selftest; caps: evidence tags | markdown, html, command | gdocs, pdf, confluence, notion |  | `skills/crafty/devtools.py` |
 | ci | `ci.type` | runs jobs log status config failure parseUrl | command, none | github, gitlab, bitbucket, azure, gitea, jenkins |  | `skills/crafty/lib.ps1` |
-| transcript | `board tool` | root last; caps: agentMeta | claude, codex, antigravity, none |  | gap: agentMeta (1) | `skills/crafty/lib.ps1` |
+| transcript | `board tool` | root last; caps: agentMeta | claude, none |  | gap: agentMeta (1) | `skills/crafty/lib.ps1` |
 | deploy-kind | `repos[].deploys[] (kind)` | isDeployed plan; caps: deploy | command, ci-job, branch-mr, ssh, tag, probe, manual, awsStack, laneApk |  | fallback: deploy (1), isRunning (3), lastDeploy (2), restart (5) | `skills/pokey/adapters/deployed-checks.ps1` |
 | secret-store | `secrets.store` | get; caps: write list rotate | file, env, keychain, command |  | gap: delete (1), rotate (1), set (1), write (1) | `skills/crafty/adapters/secret-store.ps1` |
 | process-gate | `process.gates.<gate>` | promote merge finish bugFix mrBody |  | testingDocs, reproRow | not walked: a built-in is one rule for its own gates (testingDocs: promote here, finish / merge / mrBody in devtools.py; reproRow: bugFix in devtools.py); an unset gate passes | `skills/crafty/adapters/process-gates.ps1` |
@@ -415,7 +383,7 @@ adapter x verb (native, config, fallback, gap) and harness x feature; lint PARIT
   to the live kit clone's tracked or new files (edit a kit worktree; a deliberate live edit: `KIT_LIVE_EDIT=1`),
   a raw `glab mr create` / `gh pr create` without `<tag><id>` in title or branch and a raw `glab mr merge` / `gh pr merge` of an MR no
   task tracks (no task: `KIT_NO_TASK=<reason>`, logged). Deploys start only from a person's word. Never production. One
-  machine (a local memory gate); Codex runs no workflows (ported procedures, "Install").
+  machine (a local memory gate).
 ## Extending (change the kit)
 The kit is the workspace's `.claude` folder, a git clone of this repo; `kitty` changes it in a kit worktree while runs execute the
 live clone, keeps it generic, gets a `revy` review and pushes main (`main` is protected:
@@ -512,7 +480,6 @@ flowchart LR
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_deploy_merge_ps1["deploy-merge.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_deploys_ps1["deploys.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_guard_sendmessage_ps1["guard-sendmessage.ps1"]
-  skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_heartbeat_ps1["heartbeat.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_kit_admin_ps1["kit-admin.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_localenv_supervise_ps1["localenv-supervise.ps1"]
   skills_bossy_SKILL_md -->|"dot-sourced by bossy.ps1"| skills_bossy_adapters_os_timer_ps1["os-timer.ps1"]
@@ -534,7 +501,6 @@ flowchart LR
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_flow_py["kitbag_flow.py"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_forget_py["kitbag_forget.py"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_naming_py["kitbag_naming.py"]
-  skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_ports_py["kitbag_ports.py"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_kitbag_scaffold_py["kitbag_scaffold.py"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| skills_bossy_lint_vocab_json["lint-vocab.json"]
   skills_bossy_SKILL_md -->|"K1-K3 (the kitty agent runs them); E14: README…"| README_md["README.md"]
@@ -599,7 +565,7 @@ flowchart LR
   skills_crafty_SKILL_md -->|"step 4: check -Step test runs it for a web…"| skills_crafty_spec_mjs["spec.mjs"]
   skills_crafty_SKILL_md -->|"revy kind module (devtools.py findings)"| skills_crafty_module_audit_md["module-audit.md"]
   skills_crafty_SKILL_md -->|"setup (bossy.ps1 setup -WriteLocal; keys:…"| skills_crafty_kit_example_json["kit.example.json"]
-  skills_crafty_SKILL_md -->|"a new adapter verb or kit feature (AGENTS.md…"| skills_crafty_parity_json["parity.json"]
+  skills_crafty_SKILL_md -->|"a new adapter verb (AGENTS.md #quot;Parity#quot;;…"| skills_crafty_parity_json["parity.json"]
   skills_crafty_SKILL_md -->|"built-in defaults (statuses, tracker vendor ids…"| skills_crafty_vocab_json["vocab.json"]
 ```
 <!-- kit-graph:end -->

@@ -34,7 +34,6 @@ function Get-ChangedArea([string]$KitDir, [string[]]$Known) {
     if ($f -match '^tests/(harness|kit-tests|hostverb-shim|test-mysql)\.ps1$|^skills/crafty/adapters/' -or (-not $own -and $f -notmatch '\.md$' -and $harness.Contains("'$f'"))) { $whyAll = $f; break }
     if ($f -match '^tests/(.+)\.tests\.ps1$') { if ($Matches[1] -in $Known) { $pick.Add($Matches[1]) }; continue }
     $hit = @(& $names (Split-Path $f -Leaf)); if ($own) { $hit += & $names $own }
-    if (-not $hit.Count -and $f -match '^(\.\w+)/') { $hit = @(& $names "$($Matches[1])/") }   # a generated port (.codex/...): the areas testing that folder
     if ($hit.Count) { $pick.AddRange([string[]]$hit) } elseif ($f -notmatch '\.md$') { $whyAll = "$f (no area names it)"; break }
   }
   if ($whyAll) { return [pscustomobject]@{ areas = $Known; why = "$whyAll changed: all" } }

@@ -170,12 +170,9 @@ $ad = Join-Path $k 'skills/bossy/adapters'; New-Item -ItemType Directory -Force 
 $ld = Invoke-TestScript $O track -Rebuild -Force; Remove-Item "$ad/fake.ps1", "$ad/broken.ps1"
 Expect 'board dispute: usage error naming /buildy, exit 2; an adapter file loads (sees its caller''s params); a broken one only warns' ($dx.code -eq 2 -and $dx.out -match 'no such verb; disputes run inside /buildy' -and $ld.code -eq 0 -and $ld.out -match 'fake rebuild True' -and $ld.out -match 'adapter broken\.ps1')
 $bj = { param([string[]]$a) Px $O budget @a -Json | ConvertFrom-Json }
-$cx = Join-Path (Kd) 'codex'; New-Item -ItemType Directory -Force $cx | Out-Null
-'{"models":[{"slug":"gpt-5.5","context_window":272000,"effective_context_window_percent":95}]}' | Set-Content "$cx/models_cache.json"; 'model = "gpt-5.5"' | Set-Content "$cx/config.toml"
 $b1 = & $bj '-Tool', 'claude', '-Model', 'claude-opus-5-5'; $b2 = & $bj '-Tool', 'claude', '-Model', 'claude-sonnet-4-6'; $b5 = & $bj '-Tool', 'unknown'
-$env:CODEX_HOME = $cx; $b3 = & $bj '-Tool', 'codex'; "model = ""gpt-5.5""`nmodel_auto_compact_token_limit = 200000" | Set-Content "$cx/config.toml"; $b4 = & $bj '-Tool', 'codex'; Remove-Item Env:CODEX_HOME
 $bp = & $bj '-Tool', 'claude', '-Plan', 'devy/claude-opus-5-5:1,revy/claude-sonnet-4-6:1'
-Expect "budget: per-tool defaults and the plan cap (sum)" ("$($b1.budget)/$($b1.handoff) $($b2.budget)/$($b2.handoff) $($b3.budget)/$($b3.handoff) $($b4.budget)/$($b4.handoff) $($b5.budget)/$($b5.handoff) $($bp.cap)" -eq '967000/773600 167000/133600 232560/186048 200000/160000 160000/128000 1134000')
+Expect "budget: per-tool defaults and the plan cap (sum)" ("$($b1.budget)/$($b1.handoff) $($b2.budget)/$($b2.handoff) $($b5.budget)/$($b5.handoff) $($bp.cap)" -eq '967000/773600 167000/133600 160000/128000 1134000')
 $env:KIT_TRANSCRIPTS = Join-Path (Kd) 'tx'; New-Item -ItemType Directory -Force $env:KIT_TRANSCRIPTS | Out-Null
 $hj = pwsh @np $O board join -Agent H1 -Run hr -Model claude-opus-5-5 | Out-String; $ht = if ($hj -match 'SESSION (\S+)') { $Matches[1] }
 @("{""type"":""user"",""text"":""SESSION $ht   (pass -Session $ht to beat / check / leave)""}", '{"message":{"model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":799999,"output_tokens":0}}}') | Set-Content (Join-Path $env:KIT_TRANSCRIPTS 'agent-h1.jsonl')

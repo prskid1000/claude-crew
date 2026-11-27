@@ -6,7 +6,7 @@ kit-admin.ps1: kitty's tools in bossy.ps1, dot-sourced by bossy.ps1 (adapters/):
   health: the weekly kitty audit nudge (Get-KitHealthLinesAudit)
   setup [-BrowserPolicy [-Undo] [-Clean]]: browsers.chromePolicies -> HKCU policies; model folders left in test profiles (Get-KitSetupLinesBrowser)
 Learn record, -Read and -Show stay in core.
-Sections: L13 learn · L159 health · L168 browser policy · L212 prepush · L276 weekly tests · L312 state lint · L321 precommit
+Sections: L13 learn · L159 health · L168 browser policy · L212 prepush · L275 weekly tests · L311 state lint · L320 precommit
 Exit codes: 0 ok · 1 blocked (prepush, precommit) / -Bump or -Fixed matched not exactly one lesson · 2 usage.
 #>
 #Requires -Version 7
@@ -209,8 +209,8 @@ function Get-KitBrowserModelLine([switch]$Clean) {
   "browser models: deleted $($dirs.Count - $left.Count) folder(s) ($mb MB)$(if ($left.Count) { "; $($left.Count) in use (close that browser, rerun): $(@($left.FullName) -join ', ')" })"
 }
 function Get-KitSetupLinesBrowser([switch]$Undo, [switch]$Clean) { Set-KitBrowserPolicy -Undo:$Undo; Get-KitBrowserModelLine -Clean:$Clean }
-# ---- prepush: local files, org terms, ports (no tests: the agent tests before it commits and pushes, owner 2026-11-19)
-# the kit's git pre-push hook (.githooks/pre-push): blocks local files and org terms; warns on stale ports
+# ---- prepush: local files, org terms (no tests: the agent tests before it commits and pushes, owner 2026-11-19)
+# the kit's git pre-push hook (.githooks/pre-push): blocks local files and org terms
 function Invoke-PrePush {
 $ErrorActionPreference = 'Stop'
 $root = $KitConf.Kit
@@ -262,7 +262,6 @@ else {
 }
 
 $py = Get-Python
-if (Get-Command $py -ErrorAction SilentlyContinue) { $pc = & $py -X utf8 $KitCmd.kitbag port --check 2>&1; if ($LASTEXITCODE -eq 1) { Write-Host "pre-push: warning: ports differ (optional; run kitbag.py port if deploying to codex/gemini)" } }   # 2: kitbag.py port is unavailable
 
 if ($hits.Count) {
   Write-Host "pre-push: BLOCKED - $($hits.Count) problem(s):" -ForegroundColor Red
@@ -318,8 +317,8 @@ function Get-KitSuperviseFlagsStateLint([switch]$AutoFix) {
   foreach ($b in @(try { $sl.out | ConvertFrom-Json } catch { @() }) | Where-Object level -eq 'BAD') { [pscustomobject]@{ level = 'WATCH'; what = "state file $($b.file): $($b.problem)"; action = 'Readers skip it: fix or move it aside, then kitbag.py state lint' } }
 }
 
-# ---- precommit: graph, ports, section maps, lint
-# the kit's git pre-commit hook (.githooks/pre-commit): regenerates + stages the README graph, section maps and ports, runs lint
+# ---- precommit: graph, agents' Character / tools lines, section maps, lint
+# the kit's git pre-commit hook (.githooks/pre-commit): regenerates + stages the README graph, section maps and agents' Character / tools lines, runs lint
 # never stage the user's changes
 function Test-UnstagedEdits([string]$Root, [string]$Path) { [bool]@(git -C $Root status --porcelain -- $Path | Where-Object { $_.Length -gt 1 -and $_[1] -ne ' ' }).Count }
 function Invoke-PreCommit {
@@ -339,11 +338,12 @@ function Invoke-PreCommit {
   }
   # a broken hook script fails open (Claude Code blocks only on exit 2): node --check each staged .mjs (workflows need a wrapper)
   foreach ($f in @(git -C $root diff --cached --name-only --diff-filter=ACMR -- '*.mjs')) { $nc = node --check (Join-Path $root $f) 2>&1; if ($LASTEXITCODE) { Write-Host "pre-commit: BLOCKED - node --check $f`: $(@($nc)[0..3] -join ' ')" -ForegroundColor Red; exit 1 } }
-  # ports: only when a staged agent, skill, rule, workflow or manifest can change them (the workspace deploy is post-merge's)
-  if (@(git -C $root diff --cached --name-only -- 'agents/*' 'skills/*/SKILL.md' 'rules/*' 'workflows/*' 'AGENTS.md' 'CLAUDE.md' 'skills/crafty/kit.example.json').Count) { & $py -X utf8 $KitCmd.kitbag port 2>$null | Out-Null }
-  if (@(git -C $root status --porcelain -- .codex .agents GEMINI.md).Count) {
-    git -C $root add -- .codex .agents GEMINI.md
-    Write-Host 'pre-commit: ports (.codex, .agents, GEMINI.md) regenerated and staged'
+  # Character blocks + tools lines from the manifest: only when a staged agent or the manifest can change them
+  $sa = @(git -C $root diff --cached --name-only -- 'agents/*' 'skills/crafty/kit.example.json')
+  if ($sa.Count) {
+    $dirty = @(git -C $root diff --name-only -- 'agents/*')   # a person's unstaged agent edit is never staged for them
+    & $py -X utf8 $KitCmd.kitbag tools --write 2>$null | Out-Null
+    foreach ($f in @(git -C $root diff --name-only -- 'agents/*' | Where-Object { $_ -notin $dirty })) { git -C $root add -- $f; Write-Host "pre-commit: $f regenerated from the manifest and staged" }
   }
   $out = Join-Path (Get-KitTemp) "kit-precommit-$PID.json"
   & $py -X utf8 $KitCmd.kitbag lint $root --no-flow --reuse --json $out | Out-Null

@@ -112,7 +112,7 @@ function Test-KitScriptEdit([string]$Path, $ToolInput) {
 # ---- commands: shim quotes, bash -n, PowerShell payloads, MSYS path conversion, wrapper folders, case-clashing agent scripts
 Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
     $raw = "$($a.raw)"; $hook = $a.hook; $tool = "$($hook.tool_name)"; $cwd = if ($hook.cwd) { "$($hook.cwd)" } else { (Get-Location).Path }; $cwd0 = $cwd   # $cwd follows cd; $null after a cd to an unknown place
-    $isBash = $tool -eq 'Bash' -and "$($hook.transcript_path)" -notmatch '[\\/]\.codex[\\/]'   # Codex names its shell Bash: PowerShell on Windows
+    $isBash = $tool -eq 'Bash'
     $fix = "& $($KitCmd.dev) dir -Agent <id> -Name"
     $body = [regex]::Replace($raw, '(?ms)<<-?\s*([''"]?)(\w+)\1([^\n]*)\n.*?^\s*\2\s*$', '<<doc$3')   # heredoc bodies are data
     $segs = if ($isBash -or -not $tool) { @(Split-CommandSegments $body 'Bash') } else { @() }

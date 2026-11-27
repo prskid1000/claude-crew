@@ -173,10 +173,10 @@ $ov = Invoke-PsTest ov @'
 $null = . $args[0] 6>$null; $env:KIT_TOOL = 'claude'
 $__cfg = [pscustomobject]@{ models = [pscustomobject]@{ build = 'm-own'; docs = 'fast'; retestEffort = 'high'; override = [pscustomobject]@{ model = 'm-all'; until = '2026-11-30T00:00+05:30' } } }
 foreach ($now in '2026-11-29T23:59+05:30', '2026-11-30T00:01+05:30') { $env:KIT_NOW = $now; $t = Get-KitTiers claude; $c = Get-KitWorkflowConfig; $f = @(Get-KitSuperviseFlagsModelOverride)
-  "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)|$($c.models.build)/$($c.models.docs)/$($c.models.retestEffort)|$($c.tiers.strong)|$((Get-KitTiers codex).strong)|$($f.what)" }
+  "$($t.fast)/$($t.balanced)/$($t.strong)/$($t.inherit)|$($c.models.build)/$($c.models.docs)/$($c.models.retestEffort)|$($c.tiers.strong)|$((Get-KitTiers local).strong)|$($f.what)" }
 $env:KIT_NOW = '2026-11-29T23:59+05:30'; $d = [pscustomobject]@{ at = (Get-Date); rows = @(); flags = @(Get-KitSuperviseFlagsModelOverride) }
 "brief:$(@(Format-KitSuperviseOut $d @() 'C:/r/supervise-report.html') -match '^INFO · model override m-all until')"
-"sites:$(Get-KitModelNote)|$(Get-KitModelArg)|$(Resolve-KitPlanModel 'sonnet' 'claude')/$(Resolve-KitPlanModel 'inherit' 'claude')/$(Resolve-KitPlanModel 'gpt-5.5' 'codex')|$((Get-KitPlanCap 'devy/@build=sonnet:1' claude).cap -eq (Get-KitPlanCap 'devy/m-all:1' claude).cap)"
+"sites:$(Get-KitModelNote)|$(Get-KitModelArg)|$(Resolve-KitPlanModel 'sonnet' 'claude')/$(Resolve-KitPlanModel 'inherit' 'claude')/$(Resolve-KitPlanModel 'small-a' 'local')|$((Get-KitPlanCap 'devy/@build=sonnet:1' claude).cap -eq (Get-KitPlanCap 'devy/m-all:1' claude).cap)"
 "action:$("$($d.flags[0].action)" -match "as the LAST key: config: \{ tiers: \{ fast: 'm-all', balanced: 'm-all', strong: 'm-all' \} \}")"
 # recover's args + config: a config in the middle keeps every key after it (the appended one wins), a last one is replaced, tidy untouched
 $mid = Add-KitResumeConfig '{"brief":"C:/b.md","config":{"tiers":{"fast":"x"}},"agents":[{"id":"A1"}],"local":{"lane":"r4"}}' 'buildy.js'
@@ -186,9 +186,9 @@ foreach ($u in ('{"u":"2026-11-30T00:00:00+05:30"}' | ConvertFrom-Json).u, '30 N
 $__cfg.models.override = 'm-all'; "string:$([bool](Get-KitModelOverride))"
 '@ @($O)
 $exM = (Get-Content (Join-Path $src 'skills/crafty/kit.example.json') -Raw | ConvertFrom-Json).models
-Expect "models.override: before until every claude tier and model id = the model (tier names, efforts, codex untouched), supervise says so; after it the config again; python the same; defaults unchanged ($($ov -join ' // ') $($ovV.Trim()))" (
-  $ov[0] -eq 'm-all/m-all/m-all/|m-all/fast/high|m-all|gpt-5.5|model override m-all until 2026-11-30 00:00 +05:30' -and $ov[1] -eq 'haiku/sonnet/opus/|m-own/fast/high|opus|gpt-5.5|' -and $ovV.Trim() -eq 'm-all||||' -and
-  ($ov -join ' ') -match 'brief:INFO · model override' -and ($ov -join ' ') -match "sites:MODEL m-all until 2026-11-30 00:00 \+05:30: pass model: 'm-all'[^|]*\|, model: 'm-all'\|m-all/inherit/gpt-5\.5\|True" -and ($ov -join ' ') -match 'until:True until:False until:False string:False' -and ($ov -join ' ') -match 'action:True resume:True/m-all/1/m-all/\{"a":1\} ' -and
+Expect "models.override: before until every claude tier and model id = the model (tier names, efforts; local untouched), supervise says so; after it the config again; python the same; defaults unchanged ($($ov -join ' // ') $($ovV.Trim()))" (
+  $ov[0] -eq 'm-all/m-all/m-all/|m-all/fast/high|m-all||model override m-all until 2026-11-30 00:00 +05:30' -and $ov[1] -eq 'haiku/sonnet/opus/|m-own/fast/high|opus||' -and $ovV.Trim() -eq 'm-all||||' -and
+  ($ov -join ' ') -match 'brief:INFO · model override' -and ($ov -join ' ') -match "sites:MODEL m-all until 2026-11-30 00:00 \+05:30: pass model: 'm-all'[^|]*\|, model: 'm-all'\|m-all/inherit/small-a\|True" -and ($ov -join ' ') -match 'until:True until:False until:False string:False' -and ($ov -join ' ') -match 'action:True resume:True/m-all/1/m-all/\{"a":1\} ' -and
   "$($exM.tiers.claude.fast)/$($exM.tiers.claude.strong)/$($exM.override.model)" -eq 'haiku/opus/' -and (Get-Content (Join-Path $src 'agents/devy.md') -Raw) -match '(?m)^model: sonnet\r?$')
 Remove-TestKit $k
 Complete-Tests
