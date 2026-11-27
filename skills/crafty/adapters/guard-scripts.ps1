@@ -122,7 +122,7 @@ Register-KitAdapter 'guard' 'script-faults' @{ check = { param($a)
       $codes = if ($tool -eq 'PowerShell') { @(@(CmdAsts $raw) | ForEach-Object { Get-KitPyCode @($_.CommandElements | ForEach-Object { if ($null -ne $_.Value) { "$($_.Value)" } else { "$($_.Extent.Text)" } }) }) }
         else { @(foreach ($seg in @(Split-CommandSegments $body 'Bash')) { Get-KitPyCode @(Get-KitBashWords $seg) }) }
       # cmd.exe ends the call at a newline, toggles on \" and splits an unquoted (space-free) argument at & | < > ^
-      if (@($codes | Where-Object { $_ -match '[\r\n"]' -or ($_ -notmatch '\s' -and $_ -match '[&|<>^]') }).Count) { return "kit guard: python here is $shim (a .bat shim: cmd.exe re-reads python -c code, so quotes, | & < > ^ % and newlines break it: '|| goto :error'). Write the program to a .py file (Write tool; $fix x.py) and run python -X utf8 <file> (script-fault py-shim-quote)." }
+      if (@($codes | Where-Object { $_ -match '[\r\n"]' -or ($_ -notmatch '\s' -and $_ -match '[&|<>^()%]') }).Count) { return "kit guard: python here is $shim (a .bat shim: cmd.exe re-reads python -c code, so quotes, | & < > ^ ( ) % and newlines break it: '|| goto :error'). Write the program to a .py file (Write tool; $fix x.py) and run python -X utf8 <file> (script-fault py-shim-quote)." }
     }
     # a command that does not parse fails the same way at run time, with a worse message
     if ($tool -eq 'PowerShell' -and ($pe = Get-KitPsParseError $raw)) { return "kit guard: this PowerShell does not parse ($pe): write it to a .ps1 (Write tool; $fix x.ps1) and run pwsh -NoProfile -File <file> (script-fault ps-parse)." }

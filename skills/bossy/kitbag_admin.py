@@ -859,8 +859,8 @@ FAULT_GUARD = 'guard (crafty adapters/guard-scripts.ps1): '
 FAULT_KIT = r'\b(crafty|bossy|pokey|envy|phoney|reversy|devtools|kitbag\w*|browser|video)\.(ps1|py|mjs)\b'   # a kit verb in the command
 FAULT_CLASSES = [
     ('ps-case-clash', None, None, FAULT_GUARD + 'a work/agents .ps1 with $a and $A in one scope is denied at Write / Edit and before it runs', '2026-11-25'),
-    ('tool-missing', r'No such tool available: \w+', None, 'doc: AGENTS.md "Multi-agent work": no PowerShell tool -> pwsh -NoProfile -File <x.ps1> from Bash', '2026-11-25'),
-    ('py-shim-quote', r'goto :error|was unexpected at this time', None,FAULT_GUARD + 'bare python -c code with a newline, \\" or an unquoted & | < > ^ through a .bat shim: write a .py', '2026-11-25'),
+    ('tool-missing', r'No such tool available: \w+', None, 'accepted: this agent type has no PowerShell tool and no hook sees a missing tool; AGENTS.md "Multi-agent work" names the fallback (pwsh -NoProfile -File <x.ps1> from Bash)', ''),
+    ('py-shim-quote', r'goto :error|was unexpected at this time', None,FAULT_GUARD + 'bare python -c code with a newline, \\" or an unquoted & | < > ^ ( ) % through a .bat shim: write a .py', '2026-11-27'),
     ('msys-path', r'[A-Za-z]:[\\/]Program Files[\\/]Git[\\/](?!(bin|cmd|usr|mingw64|etc)\b)\w', None, FAULT_GUARD + 'a Git Bash /x argument to a Windows program without MSYS_NO_PATHCONV=1', '2026-11-25'),
     ('java-escape', r'illegal escape character', None, FAULT_GUARD + 'a Write / Edit adding an illegal \\ escape to a Java string literal', '2026-11-25'),
     ('wrapper-path', r"(mvnw|gradlew)(\.cmd|\.bat)?['\"]?:? (No such file|not found|is not recognized|command not found)|there is no POM in this directory", None, FAULT_GUARD + './mvnw or ./gradlew run from a folder without it', '2026-11-25'),
@@ -884,7 +884,7 @@ FAULT_CLASSES = [
     ('py-exception', r'^Traceback|^[\w.]+(Error|Exception): ', None, '', ''),
 ]
 FAULT_KNOWN = re.compile('|'.join(c[1] for c in FAULT_CLASSES[2:6]))   # error text that marks a fault even under exit 0 (a pipe hides it)
-FAULT_READ = re.compile(r'^\s*(cd\s+\S+\s*(&&|;)\s*)?(cat|grep|rg|sed|head|tail|less|git\s+(show|diff|log|grep)|Get-Content|Select-String)\b')
+FAULT_READ = re.compile(r'^\s*(cd\s+\S+\s*(&&|;)\s*)?(cat|grep|rg|sed|head|tail|less|git\s+(show|diff|log|grep)|Get-Content|Select-String)\b|.*\blearn\b[^|;&\n]*\s-(Read|Show|History|Stats)\b(?!.*(;|&&))')   # learn prints lessons that quote fault text
 FAULT_SECRET = re.compile(r'(?i)(-{1,2}(?:passw\w*|token|secret|api-?key|pwd)[\s=]+|\bmysql\w*\b[^|;&\n]*?\s-p(?=\S)|\s-u\s+[^\s:]+:|//[^/\s:@]+:)[^\s\'"]+')
 
 def fault_known(cmd, text):

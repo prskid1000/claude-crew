@@ -18,6 +18,8 @@ Set-Content (Join-Path $sfAgents 'Old.java') "class Old { String a = `"\q`"; }" 
 $sfCases = @(
   @('B', "python -X utf8 -c `"import json`nprint(1)`"", '', 'py-shim-quote', 'C:/py/shims/python.bat'),
   @('B', "python -c 'print(d[`"x`"])'", '', 'py-shim-quote', 'C:/py/shims/python.bat'),
+  @('B', "python -X utf8 -c `"print(open('x.json').read())`"", '', 'py-shim-quote', 'C:/py/shims/python.bat'),
+  @('B', "python -X utf8 -c `"print(len('a') + 1)`"", '', '', 'C:/py/shims/python.bat'),
   @('B', "glab mr view 1 | python -X utf8 -c 'import json,sys; print(1)'", '', '', 'C:/py/shims/python.bat'),
   @('B', "`"C:/py/versions/3/python.exe`" -c `"import a`nb`"", '', '', 'C:/py/shims/python.bat'),
   @('B', "python -X utf8 -c `"import json`nprint(1)`"", '', '', '0'),
@@ -98,16 +100,16 @@ Remove-Item Env:KIT_TRANSCRIPTS, Env:KIT_TRANSCRIPTS_CODEX, Env:KIT_TRANSCRIPTS_
 $frob = @($f1.items | Where-Object { $_.sig -like 'exit Error: frobnicate failed*' })[0]; $shim = @($f1.items | Where-Object cls -eq 'py-shim-quote')[0]
 $logged = Get-Content (Join-Path $k ".state/audit/$day/faults.jsonl") -Raw
 Expect "faults: 3 harnesses, 3 agents, one due signature (no prevention), secrets masked (=, spaced), no read of quoted fault text, no other Codex project ($($frob.hits) $($frob.agents) $($frob.harness -join ',') due=$($frob.due))" ($frob.hits -eq 3 -and $frob.agents -eq 3 -and @($frob.harness).Count -eq 3 -and $frob.due -and $logged -notmatch 'secret456|zzz999|agy777|hunter2|other project|notes\.md' -and $logged -match 'token=\[redacted\]' -and $logged -match 'Password \[redacted\]')
-Expect "faults: a guarded class (py-shim-quote) is due only after its since day; a second scan reads nothing new ($($shim.hits) due=$($shim.due) new=$($f2.new))" ($shim.hits -eq 3 -and $shim.due -eq ($day -gt '2026-11-25') -and $shim.prevent -match 'guard' -and $f1.new -eq 7 -and $f2.new -eq 0)
+Expect "faults: a guarded class (py-shim-quote) is due only after its since day; a second scan reads nothing new ($($shim.hits) due=$($shim.due) new=$($f2.new))" ($shim.hits -eq 3 -and $shim.due -eq ($day -gt '2026-11-27') -and $shim.prevent -match 'guard' -and $f1.new -eq 7 -and $f2.new -eq 0)
 Expect "faults next: the top item and the open count ($($nx.Trim() -replace '\s+', ' '))" ($nx -match 'frobnicate' -and $nx -match 'faults next: [1-9]\d* open')
 # a .get / .keys on a str or list (JSON of another shape) = data-shape (doc prevention); any other AttributeError stays py-exception
 $fcPy = Join-Path (Kd) 'fault-class.py'
 $fcDir = Join-Path $k 'skills/bossy'
 Set-Content $fcPy @('import sys, importlib.util', "sys.path.insert(0, r'$fcDir')", 'import kitbag as kb', "spec = importlib.util.spec_from_file_location('kitbag_admin', r'$fcDir/kitbag_admin.py')",
   'a = importlib.util.module_from_spec(spec); a.__dict__.update({n: v for n, v in vars(kb).items() if not n.startswith("__")}); spec.loader.exec_module(a)',
-  "print(a.fault_class('python r.py', `"AttributeError: 'str' object has no attribute 'get'`")[0], a.fault_class('python r.py', `"AttributeError: 'Foo' object has no attribute 'bar'`")[0])") -Encoding utf8
+  "print(a.fault_class('python r.py', `"AttributeError: 'str' object has no attribute 'get'`")[0], a.fault_class('python r.py', `"AttributeError: 'Foo' object has no attribute 'bar'`")[0], a.fault_known('pwsh -File bossy.ps1 learn -Read -Skill x | head', 'was unexpected at this time.'), a.fault_known('pwsh -File k.ps1 go', 'was unexpected at this time.'), a.fault_known('bossy.ps1 learn -Skill x -Read', 'was unexpected at this time.'), a.fault_known('bossy.ps1 learn -Read && python k.py', 'was unexpected at this time.'))") -Encoding utf8
 $fcOut = "$(python -X utf8 $fcPy 2>&1)".Trim()
-Expect "faults: AttributeError .get on a str = data-shape, other attributes = py-exception ($fcOut)" ($fcOut -eq 'data-shape py-exception')
+Expect "faults: AttributeError .get on a str = data-shape, other attributes = py-exception, a learn -Read output is no fault ($fcOut)" ($fcOut -eq 'data-shape py-exception False True False True')
 # records scanned before a class shipped are relabelled from their first error line: a prevented class, never due on its day
 $rl = foreach ($n in 1..3) { @{ at = $at; harness = 'claude'; agent = "rl$n"; tool = 'Bash'; rc = 2; cls = 'kit-usage'; sig = 'kit-usage usage: board msg'; line = "usage: board msg -Agent <me> -To <id>"; cmd = 'pwsh -File bossy.ps1 board msg -To x -Text y'; prevent = '' } | ConvertTo-Json -Compress }
 Add-Content (Join-Path $k ".state/audit/$day/faults.jsonl") $rl -Encoding utf8
