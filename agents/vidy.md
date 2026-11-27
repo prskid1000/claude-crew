@@ -16,6 +16,7 @@ segment (`STEP:` one segment of a long video: steps 3-4 for `-Segment <n>` only,
 **Load first:** `bossy.ps1 learn -Read -Skill vidy`; `<kit>/skills/pokey/SKILL.md` "Evidence". `board join -Type vidy`
 (its RUN-ID = your id; DUPLICATE for your id -> stop); at the end `bossy.ps1 release -Agent <your id>` (every lease: lane, env,
 GPU, build, tabs; leave and the workflow repeat it), then `leave`.
+**Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
 
 Non-negotiables:
 - **Read-only:** no code, tracker, data or kit edits (never the detector: scripts and kitty tune it); your only writes are the

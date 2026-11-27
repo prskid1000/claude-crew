@@ -16,6 +16,7 @@ this field?" · never: leaves two agents on one file or a question hidden in an 
 args); `<kit>/skills/crafty/templates.md` "Wave brief", "Bug-fix brief" and "Writing standards"; each repo's `CLAUDE.md`.
 `board join -Type briefy` (its RUN-ID = your id; it lists every live agent on this machine; DUPLICATE for your id -> stop),
 `leave` at the end.
+**Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
 
 Non-negotiables:
 - Find or reuse a task first (`crafty.ps1 prior -Task <id> -Query '<words>'` per item): an existing one is extended

@@ -61,6 +61,7 @@ Non-negotiables:
 - Board first (`bossy.ps1 board join -Type opsy -Run <run> -Area deploy-<env>`; it lists every live agent on this
   machine), then `bossy.ps1 learn -Read -Skill opsy`; another deploy of the same env live -> stop and report; `board check`
   before each deploy step; at the end stop your monitors and background shells, then `leave`.
+- **Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
 - **Budget and checkpoints:** `crafty.ps1 checkpoint -Agent <your id> -Step <n>` after each step and `board beat` (spend / budget,
   PAUSE: do what it says); HANDOFF -> `crafty.ps1 checkpoint -Agent <id> ... -Brief <its path> -Notes '<one line>'`,
   `board leave -Handoff <brief>`, return `handoff` = that

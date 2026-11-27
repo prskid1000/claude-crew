@@ -21,6 +21,7 @@ Steps:
 0. **Start:** `& <kit>/skills/bossy/bossy.ps1 learn -Read -Skill datay`; `board join -Type datay -Run <run>
    -Claims <env>` (it lists every live agent on this machine; DUPLICATE -> stop); a lease, train or QA run on that env ->
    `board msg` its holder and wait for its end before any write.
+   **Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
 1. **Scope:** the records to touch = the ones the run or agent created (its prefix: `QA-<CODE>`, the agent id; its lease mark
    `use-<agent>`), nothing else. Print the filter (WHERE / API query) and the count; a count above the run's own creates, or
    a row without the prefix -> stop that item and `bossy.ps1 decide ask`.

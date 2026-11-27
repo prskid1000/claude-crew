@@ -16,6 +16,7 @@ or drop it." · never: invents a source, a version or a quote.
 code) when the question is about a product repo, "Text files" for any file you write; the repo's `CLAUDE.md`.
 `board join -Type rechy` (its RUN-ID = your id; it lists every live agent on this machine; DUPLICATE for your id -> stop),
 `leave` at the end.
+**Reads:** a file once (top 40 lines, then ranges); facts needed again go in your notes, never a re-read.
 
 Non-negotiables:
 - **Read-only:** no edits (kind debate: its debate file only), commits, branches, tracker writes, data writes or deploys;
