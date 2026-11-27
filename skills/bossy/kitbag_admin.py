@@ -9,8 +9,8 @@ scan, token cost and releases.
 
 A kitbag.py plugin: kitbag.py loads it and shares its own names (out, run, git, load_json, key_paths, manifest, start_rows,
 _sub_file).
-Sections: L19 helpers · L60 setup · L181 config · L410 recover · L555 release · L606 cost · L716 registry · L720 scan ·
-  L856 faults · L1071 popups
+Sections: L19 helpers · L60 setup · L181 config · L410 recover · L559 release · L610 cost · L720 registry · L724 scan ·
+  L860 faults · L1075 popups
 Exit codes: 0 ok · 1 an ACT or ASK finding remains, an unpublished release · 2 usage error.
 """
 import datetime, glob, json, os, re, shutil, subprocess, sys, tempfile, time
@@ -448,6 +448,10 @@ def cmd_recover(kit, fix):
         if not path or osp.normcase(osp.abspath(path)) == main or 'prunable' in w:
             continue
         in_wt.add(br)
+        _, slot_gd, _ = git(path, 'rev-parse', '--path-format=absolute', '--git-dir')
+        if slot_gd.strip() and osp.isfile(osp.join(slot_gd.strip(), 'claude-slot')):   # a kit pool slot (parallel.kitty): wt release frees it, never removed
+            out('INFO', 'RECOVER-WORKTREE', path, f'kit slot on {br or "detached HEAD"}: crafty.ps1 wt pool -Repo {kit} shows its lease')
+            continue
         _, wd, _ = git(path, 'status', '--porcelain')
         tip = br or str(w.get('HEAD', ''))   # a detached worktree: its own HEAD commit, never the main clone's
         rc_m, _, _ = git(kit, 'merge-base', '--is-ancestor', tip, 'origin/main') if tip else (1, '', '')

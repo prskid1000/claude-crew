@@ -78,7 +78,7 @@ $D = '<kit>/skills/crafty/crafty.ps1'; $O = '<kit>/skills/bossy/bossy.ps1'; $L =
   it too; uncommitted work becomes a WIP commit (hooks refuse it: a patch file, `wt lease -Branch` prints it),
   else the slot parks for that branch). A fix round, resume or handoff leases the same branch again (any free slot; two
   agents never share one). `wt pool` lists slots; `wt new` only for
-  dedicated worktrees (env, deploy merge, kit). Deps-differ warning -> `-LinkFrom <checkout of the target branch>`; `wt
+  dedicated worktrees (env, deploy merge). Deps-differ warning -> `-LinkFrom <checkout of the target branch>`; `wt
   sync` before editing, before every push, before merging.
 - **Gate:** every build/test through `crafty.ps1 check` (or `gate -Cmd "<cmd>"`), never a build or test tool
   directly; waiting and killed builds are normal. Tool timeout 600000 ms, or `run_in_background` bounded

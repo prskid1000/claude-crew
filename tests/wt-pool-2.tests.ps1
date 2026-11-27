@@ -2,7 +2,7 @@
 <#
 wt-pool-2.tests.ps1: agents after board leave / handoff (wt-pool.tests.ps1 is at its cap): lease waits (Remove-KitPoolWaits,
 Test-KitPoolWaiterGone, the wait loop exits), messages to a left id (Resolve-KitMsgTarget) and the inbox on wt / check / checkpoint;
-e2e lane portFiles (Use- / Restore-KitLanePortFiles); a slot leased to another agent (Get-KitSlotForeign).
+e2e lane portFiles (Use- / Restore-KitLanePortFiles); a slot leased to another agent (Get-KitSlotForeign); kit slots (parallel.kitty).
 Usage: pwsh -NoProfile -File <kit>/tests/wt-pool-2.tests.ps1 (or tests/kit-tests.ps1 -Area wt-pool-2).
 Exit codes: 0 pass · 1 a check failed.
 #>
@@ -88,5 +88,17 @@ Remove-Item -LiteralPath `$sff; "free:[`$(Get-KitSlotForeign '$sfSlot' 'devy-sig
 "@
 $sfOut = $sfTest -join ' // '; $sfCrafty = Get-Content (Join-Path $k 'skills/crafty/crafty.ps1') -Raw; $sfEnvy = Get-Content (Join-Path $src 'skills/envy/envy.ps1') -Raw
 Expect "pool: a slot leased to another agent is refused with its holder and the wt lease command; the holder, a free slot, a plain repo or no caller id pass; envy deploy, wt commit and wt sync call it ($sfOut)" ($sfOut -match 'other:\S+ is pool slot sf-Heron, leased to devy-kyc \(no live holder yet\) on f/theirs since .+wt lease -Repo sf-repo -Branch <your branch> -Agent devy-signup' -and $sfOut -match 'holder:\[\]' -and $sfOut -match 'noid:\[\]' -and $sfOut -match 'envid:\S+ is pool slot sf-Heron, leased to devy-kyc' -and $sfOut -match 'repo:\[\]' -and $sfOut -match 'free:\[\]' -and $sfOut -match 'assert:1\|commit refused: \S+ is pool slot sf-Heron' -and $sfOut -notmatch 'passed' -and $sfCrafty -match "Assert-KitSlotOwn \`$Dir \`$Agent 'wt sync'" -and $sfCrafty -match "Assert-KitSlotOwn \`$Dir \`$Agent 'commit'" -and $sfEnvy -match 'Assert-KitSlotOwn \$dd \$Agent "envy\.ps1: \[\$e\] deploy"')
+# kit slots (owner 2026-11-27: up to 3 kitty at once): parallel.kitty slots of the kit's own clone, wt new refused, a 3rd waits; the sync never moves the live clone
+$ksBase = Kd; $ksD = Join-Path $k 'skills/crafty/crafty.ps1'; $env:CLAUDE_WT_ROOT = "$ksBase/wt"; Save-GitRepo $k kit
+git init -q --bare -b main "$ksBase/kit.git"; git -C $k branch -M main; git -C $k remote add origin "$ksBase/kit.git"; git -C $k push -q -u origin main 2>$null; git -C $k symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+& $J @{ tracker = @{ type = 'none' }; parallel = @{ kitty = 2 } } "$k/skills/crafty/kit.local.json"
+$kLease = { param($ag, $br) (pwsh @np $ksD wt lease -Repo $k -Branch $br -Agent $ag -WaitMinutes 0 2>&1 | ForEach-Object { "$_" }) -join "`n" }
+$kn = (pwsh @np $ksD wt new -Repo $k -Branch kit/n -Target main -Name kn 2>&1 | Out-String) -replace '\s*\|\s*|\s+', ' '
+$kq1 = & $kLease kitty-1 kit/one; $kq2 = & $kLease kitty-2 kit/two; $kq3 = & $kLease kitty-3 kit/three
+Expect "kit slots: wt new refused, 2 slots (parallel.kitty) leased as .claude·Falcon / Kestrel, a 3rd kitty waits ($($kq3 -replace '\s+', ' '))" ($kn -match 'wt new refused: the kit has 2 kit slots' -and $kq1 -match 'new slot \.claude·Falcon \(pool 1/2\)' -and $kq2 -match 'new slot \.claude·Kestrel \(pool 2/2\)' -and $kq3 -match 'no \.claude slot free within 0 min' -and (Test-Path "$ksBase/wt/falcon-.claude"))
+$ksClone = "$ksBase/kitc"; git clone -q "$ksBase/kit.git" $ksClone 2>$null; 'n' | Set-Content "$ksClone/new.txt"; Save-GitRepo $ksClone 'feat: ahead'; git -C $ksClone push -q origin main 2>$null
+$kh0 = "$(git -C $k rev-parse HEAD)".Trim(); $null = pwsh @np $ksD wt release -Agent kitty-1 2>&1; $ks = pwsh @np $ksD wt pool -Repo $k -Sync 2>&1 | Out-String
+$kq4 = & $kLease kitty-3 kit/three; $kf = "$ksBase/wt/falcon-.claude"
+Expect "kit slots: the sync leaves the live clone's main behind (named), a released slot goes to the waiter on a fresh origin/main ($(($ks -split "`n" | Select-String 'kept') -join ' '))" ("$(git -C $k rev-parse HEAD)".Trim() -eq $kh0 -and $ks -match 'main behind 1 \(the live kit clone' -and $kq4 -match '\.claude·Falcon' -and (Test-Path "$kf/new.txt") -and (git -C $kf branch --show-current) -eq 'kit/three')
 Remove-TestKit $k
 Complete-Tests
