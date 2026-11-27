@@ -1,18 +1,18 @@
 # Kit state (`.state/` durable, `.runtime/` disposable)
-Read by kitty, revy (kind kit), agents with task links ("Indexes").
+Read by kitty, revy (kind kit), agents with task links (Indexes).
 Paths: `kit.example.json` `_paths`; schemas: the Inventory (`kitbag.py state lint`; supervise: BAD = WATCH).
 
 ## Rules
 - **One file per key** (task, session, decision, run, publish key); a shared map only with one owning writer.
-- **Writes:** `Write-KitState` (lib.ps1) / `state_write` (kitbag.py): temp file + move, `schemaVersion`, `updated`,
-  `holder`; read-modify-write inside `Invoke-KitLocked` / `locked()` on that file. Log lines: kitlog only.
+- **Writes:** `Write-KitState` / `state_write`: temp file + move, `schemaVersion`, `updated`, `holder`;
+  read-modify-write inside `Invoke-KitLocked` / `locked()` on it. Log lines: kitlog only.
 - **Reads:** `Read-KitState` / `state_read`: `$null` / `None` when missing or broken, never throws; unknown fields kept.
 - **Times:** `Get-KitStamp` / `kit_stamp` (stored UTC ISO ms, shown `yyyy-MM-dd HH:mm`), never in a name; readers accept older forms.
 - **Ids:** stable, file-safe; task = tracker id; names: `kitbag.py naming next name <kind> <topic>` (<= 12 chars, tie -2).
-- **Format:** JSON for scripts; markdown only for people.
+- **Format:** JSON for scripts, markdown for people.
 - **Change a schema:** bump `v<n>` in its row and the writer; readers accept `n-1`. A new file: a `_paths` name + a row.
-  Deleting state in use: the owner decides.
-- **Lifecycle:** `.runtime` ages out by `_paths.keep`; in `.state` it only trims the Inventory's logs
+  Deleting state in use: owner decides.
+- **Lifecycle:** `.runtime` ages out by `_paths.keep`; `.state` only trims the Inventory's logs
   (`Invoke-KitLogTrim`), deletes `tracking.json.migrated`.
 
 ## Indexes
@@ -43,6 +43,7 @@ object a line; the last is checked), text; v0 = no schemaVersion yet.
 | `standing-rules` | `bossy.ps1 decide rules`, `decide answer` (its ask) | `json v1: rules` | keep (approved ones -> `rules/standing-rules.local.md`) |
 | `forgotten` | `kitbag.py forget` | `text v0` | `forget --purge` |
 | `naming` | `kitbag.py naming` | `json v1` | keep |
+| `local-bench` | `localbench.py` | `dir v0` | keep |
 | `pool-usage` | `adapters/wt-pool.ps1` | `json v1: repos` | keep (samples 7 d) |
 | `disk-writes` | `bossy.ps1 supervise` | `jsonl v0: at m k o + d` | 35 d |
 | `kit-tests-db` | `tests/test-mysql.ps1` | `json v0: server port key holders` | keep |

@@ -9,6 +9,8 @@ local-model.ps1: Claude Code, Claude Desktop, VS Code or Codex on a local model 
   & <kit>/skills/crafty/crafty.ps1 local <claude|codex> -PromptFile <f> [-SchemaFile <f>] [-AgentType <crew>] [-Agent <id>]
       headless, the prompt on stdin: claude -p --output-format json [--json-schema] [--agent] · codex exec [--output-schema] -
   & <kit>/skills/crafty/crafty.ps1 local status [-Json]   mode, mixed-mode use list, server models, seats, RAM, token set or not
+  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Runner claude|codex] ...
+      recorded real steps replayed on the local model, scored per role (localbench.py header: verbs, store, scoring)
 Checks before a start, in order: forbidden model ids (models.local.forbiddenModels, wildcards: -Model, ANTHROPIC_*MODEL,
 --model / -m in the client args), free RAM (Get-GateAvailGB - models.local.needGB >= Get-KitKeepFreeGB), the server
 (GET <baseUrl>/v1/models within models.local.probeSec lists the model), a seat (lease local-model, models.local.maxConcurrent;
@@ -19,7 +21,7 @@ models.local { baseUrl, token (env:<VAR> | secret:<name>; never printed), defaul
 env (name: value, null drops a default), use, overflow, maxConcurrent, needGB, probeSec, queueMinutes, streamIdleTimeoutMs }
 (README "Configuration"). Lease state: video.ps1 Get-KitLocalAiState local-model. Outputs: text, JSON with -Json.
 Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat · else the client's (its 1-3 as 11-13).
-Sections: L25 config · L103 checks · L123 verb
+Sections: L27 config · L105 checks · L125 verb
 #>
 #Requires -Version 7
 # ---- config: models.mode, models.local, the token, each client's env and arguments
@@ -123,13 +125,20 @@ function Format-KitLocalEnv($EnvMap, [string]$Token) {
 # ---- verb: crafty.ps1 local
 function Invoke-Local {
 param(
-  [Parameter(Mandatory, Position = 0)][ValidateSet('claude', 'desktop', 'code', 'codex', 'status')][string]$Client,
+  [Parameter(Mandatory, Position = 0)][ValidateSet('claude', 'desktop', 'code', 'codex', 'status', 'bench')][string]$Client,
   [string]$Model, [switch]$Unsafe, [switch]$Print, [switch]$Json, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session, [double]$WaitMinutes = -1,
+  [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [string]$Runner, [int]$TimeoutSec, [switch]$Force,   # bench
   [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'
-$cfg = Get-KitLocalModelConfig; $Rest = @($Rest | Where-Object { $null -ne $_ }); $tok = Get-KitLocalModelToken $cfg.token
+$Rest = @($Rest | Where-Object { $null -ne $_ })
+if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step comes back here as local claude | codex)
+  $ba = @($Rest) + @('-Agent', $Agent) + @(if ($Json) { '-Json' }) + @(if ($Force) { '-Force' }) + @(if ($N) { '-N', $N }) + @(if ($TimeoutSec) { '-TimeoutSec', $TimeoutSec })
+  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Since', $Since), @('-Transcripts', $Transcripts), @('-Client', $Runner))) { if ($bp[1]) { $ba += $bp } }
+  & (Get-Python) -X utf8 (Join-Path $KitLibDir 'adapters/localbench.py') @ba; $global:LASTEXITCODE = $LASTEXITCODE; if ($LASTEXITCODE) { exit $LASTEXITCODE }; return
+}
+$cfg = Get-KitLocalModelConfig; $tok = Get-KitLocalModelToken $cfg.token
 if ($Client -eq 'status') {
   $sv = Get-KitLocalModelServed $cfg $tok; $ram = Test-KitLocalModelRam $cfg; $sts = Get-KitLocalAiState 'local-model'; $mo = Get-KitModelMode
   $so = [ordered]@{ mode = $mo; use = @($cfg.use); baseUrl = $cfg.baseUrl; up = $sv.up; served = @($sv.ids); forbidden = @($sv.ids | Where-Object { Test-KitLocalModelForbidden $cfg $_ }); error = $sv.error
