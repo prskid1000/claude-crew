@@ -14,6 +14,10 @@
          ran (rc 0) on the same prompt + contract; -Ids re-runs them; claude --tools= (none); every run appends the kit's final-answer
          contract (AGENTS.md "Final answer" + the answer's shape, as StructuredOutput's schema is in production) as a system prompt file
   score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (fields, list items, text facts)
+  judge: score -Judge <model> (or models.local.bench.judge; none: word recall) = free text judged by a cheap claude model, one call per
+         text pair, "same facts as the reference, nothing contradicted or invented?"; ids, URLs, counts, statuses, enums stay strict;
+         verdict + reason cached in <set>/<model>/judge.json (audit: score -Judge x -Json prints none; read the file)
+  bare: -Model <m>~bare runs and scores without the system contract (the before of a contract change), stored apart
   report -Model m [-Set s] [-Json]   accept rate over the ids that ran, infra fails apart, median / p90 s per role, cloud tier
   diff   -Model m -Against m2 [-Set s] [-Json]   per role delta and the ids that flip
 A role: <agentType>:<step label> (workflow steps, e.g. checky:close, kitty:learn) or <agentType> (ad hoc agents, e.g. watchy).
@@ -22,7 +26,7 @@ derived from the answer the cloud run returned (cloud.json). Nothing runs tools:
 writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<set>/tasks/<id>/ (set) and
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (the transcript adapter's root, */subagents/**). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L41 store · L75 runon · L210 reply parsing · L255 outcome · L368 build · L519 contract · L601 run
+Sections: L45 store · L79 runon · L214 reply parsing · L259 outcome · L411 build · L562 contract · L644 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
@@ -286,6 +290,45 @@ def item_key(x):
     return next((str(x[k]).strip().lower() for k in ITEM_KEYS if isinstance(x, dict) and x.get(k) not in (None, '')), None)
 
 
+JUDGE = None   # set by score: (reference, candidate) -> bool | None (None: no verdict, word recall decides)
+
+
+def text_same(c, l):
+    if not str(l or '').strip():
+        return False
+    r = recall(c, l)
+    if r >= 0.8 or JUDGE is None:
+        return r >= 0.5
+    v = JUDGE(str(c), str(l))
+    return r >= 0.5 if v is None else v
+
+
+def make_judge(model, path):
+    """One claude call per text pair (cached by content): the verdict and its reason are kept in judge.json for audit."""
+    cache = rjson(path, {}) or {}
+    exe = shutil.which('claude') or 'claude'
+    ask = ('Reference text:\n<<<\n%s\n>>>\n\nCandidate text:\n<<<\n%s\n>>>\n\nDoes the candidate state the same facts as the reference, with no '
+           'contradiction and nothing invented? Wording, order and level of detail may differ; a missing minor detail is fine; a missing or '
+           'wrong key fact (id, number, name, decision, state) is not. Reply with ONE JSON object only: {"same": true or false, "reason": "<one sentence>"}')
+
+    def judge(c, l):
+        key = sha(c + '\0' + l)
+        if key in cache:
+            return cache[key]['same']
+        try:
+            pr = subprocess.run([exe, '-p', '--model', model, '--tools=', '--strict-mcp-config', '--no-session-persistence'], input=ask % (c[:3000], l[:3000]),
+                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=180, env={**os.environ, 'ANTHROPIC_CUSTOM_HEADERS': 'User-Agent: kit-local-bench-judge'})
+            d = json_object(pr.stdout)
+        except (OSError, subprocess.SubprocessError):
+            d = None
+        if not isinstance(d, dict) or not isinstance(d.get('same'), bool):
+            return None
+        cache[key] = {'same': d['same'], 'reason': str(d.get('reason', ''))[:300], 'judge': model, 'ref': c[:240], 'cand': l[:240]}
+        wjson(path, cache)
+        return d['same']
+    return judge
+
+
 def same_value(c, l):
     """One field: flags, numbers and short strings equal; long text by its salient words; lists item by item; objects field by field."""
     if isinstance(c, bool):
@@ -298,7 +341,7 @@ def same_value(c, l):
     if c is None:
         return l in (None, '', [], {})
     if isinstance(c, str):
-        return c.strip().lower() == str(l if l is not None else '').strip().lower() if enum(c) else recall(c, l) >= 0.5
+        return c.strip().lower() == str(l if l is not None else '').strip().lower() if enum(c) else text_same(c, l)
     if isinstance(c, dict):
         return isinstance(l, dict) and compare(c, l)[0]
     if isinstance(c, list):
@@ -361,7 +404,7 @@ def outcome(loc, cloud):
             ltype = loc.get('type')
         ctype = re.split(r'[(:!]', cloud['commit'].strip())[0]
         rc = recall(cloud['commit'], body)
-        return ltype == ctype and len(subj) <= 72 and rc >= 0.4, f"type {ltype} vs {ctype}; subject {len(subj)} ch; facts {round(rc * 100)}%"
+        return ltype == ctype and len(subj) <= 72 and (rc >= 0.4 or (JUDGE is not None and text_same(cloud['commit'], body))), f"type {ltype} vs {ctype}; subject {len(subj)} ch; facts {round(rc * 100)}%"
     return compare(cloud, loc)   # any other answer: >= 70% of its fields the same (see same_value)
 
 
@@ -607,6 +650,7 @@ def cmd_run(a):
     res_p = osp.join(md, 'results.json')
     res = rjson(res_p, {}) or {}
     env = dict(os.environ)
+    real, bare = a.model.split('~')[0], a.model.endswith('~bare')
     benv = (cfg().get('bench') or {}).get('env')
     for k, v in (benv if isinstance(benv, dict) else {'ANTHROPIC_CUSTOM_HEADERS': 'User-Agent: kit-local-bench'}).items():   # a proxy's own client profile (tool split, managed tools) stays out of the replay
         if v is None:
@@ -617,17 +661,18 @@ def cmd_run(a):
     pwsh = 'pwsh'
     for tid in ids:
         psha = (rjson(osp.join(td, tid, 'meta.json'), {}) or {}).get('promptSha')
-        con = contract_of(td, tid)
+        con = '' if bare else contract_of(td, tid)
         csha = sha(con)
         if not a.force and (res.get(tid) or {}).get('rc') == '0' and res[tid].get('promptSha') == psha and res[tid].get('contract') == csha:
             continue   # ran on this prompt; a launcher refusal or a timeout runs again
         # --tools= (not --tools ''): a .cmd shim drops an empty argument
         os.makedirs(osp.join(md, 'runs'), exist_ok=True)
         cp = osp.join(md, 'runs', tid + '.system.md')
-        with open(cp, 'w', encoding='utf-8') as fh:
-            fh.write(con)
-        rest = ['--', '--tools=', '--strict-mcp-config', '--no-session-persistence', '--append-system-prompt-file', cp]
-        argv = [pwsh, '-NoProfile', '-File', crafty, 'local', 'claude', '-Model', a.model, '-Agent', a.agent, '-WaitMinutes', '0', '-PromptFile', osp.join(td, tid, 'prompt.md')] + rest
+        if not bare:
+            with open(cp, 'w', encoding='utf-8') as fh:
+                fh.write(con)
+        rest = ['--', '--tools=', '--strict-mcp-config', '--no-session-persistence'] + ([] if bare else ['--append-system-prompt-file', cp])
+        argv = [pwsh, '-NoProfile', '-File', crafty, 'local', 'claude', '-Model', real, '-Agent', a.agent, '-WaitMinutes', '0', '-PromptFile', osp.join(td, tid, 'prompt.md')] + rest
         t0 = time.time()
         pr = subprocess.Popen(argv, cwd=osp.join(td, tid), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=os.name != 'nt')
         try:
@@ -667,8 +712,11 @@ def reply_of(path):
 
 
 def cmd_score(a):
+    global JUDGE
     td, ids = tasks_of(a)
     md = bench_dir(a.set, a.model)
+    jm = a.judge or str((cfg().get('bench') or {}).get('judge') or '')
+    JUDGE = make_judge(jm, osp.join(md, 'judge.json')) if jm and jm != 'off' else None
     res = rjson(osp.join(md, 'results.json'), {}) or {}
     sc_p = osp.join(md, 'score.json')
     sc = {k: v for k, v in (rjson(sc_p, {}) or {}).items() if osp.isdir(osp.join(td, k))}   # ids of a rebuilt set drop out
@@ -687,6 +735,7 @@ def cmd_score(a):
         sc[tid] = {'id': tid, 'role': meta.get('role'), 'tier': meta.get('tier'), 'rc': r['rc'], 'sec': r['sec'], 'strict': isinstance(rp['strict'], dict),
                    'repairable': isinstance(rp['repairable'], dict), 'lenient': isinstance(rp['lenient'], dict), 'toolText': rp['toolText'],
                    'schema': sv, 'outcome': oc, 'accepted': bool(isinstance(rp['strict'], dict) and sv and oc), 'why': why}
+    JUDGE = None
     wjson(sc_p, sc)
     print(f'score {a.set}/{a.model}: {len(sc)} scored, {sum(s["accepted"] for s in sc.values())} accepted ({sc_p})')
     return 0
@@ -790,6 +839,7 @@ def main(argv):
     ap.add_argument('-Transcripts', '--transcripts', dest='transcripts', default='')
     ap.add_argument('-Agent', '--agent', dest='agent', default=os.environ.get('CLAUDE_AGENT') or 'main')
     ap.add_argument('-TimeoutSec', '--timeoutsec', dest='timeoutsec', type=int, default=600)
+    ap.add_argument('-Judge', '--judge', dest='judge', default='')
     ap.add_argument('-Degrade', '--degrade', dest='degrade', default='')
     ap.add_argument('-Force', '--force', dest='force', action='store_true')
     ap.add_argument('-Json', '--json', dest='json', action='store_true')

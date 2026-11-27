@@ -14,7 +14,7 @@ local-model.ps1: Claude Code, Claude Desktop or VS Code on a local model server 
   & <kit>/skills/crafty/crafty.ps1 local run -JobFile <f> [-Fnv <hash>] [-DeadlineSec 540]   one workflow step locally: the job { unit, agentType,
       schema, prompt } through local claude (every check below); prints the step's JSON on one line, or exits 3 with
       "FALLBACK cloud[ (started)]: <why>" (not local, refused, no seat; started: client error, deadline, no JSON), logged
-  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff|coverage|runon [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Add] [-Degrade <set>] [-Write <f>] [-WriteRunonEvidence] ...
+  & <kit>/skills/crafty/crafty.ps1 local bench build|run|score|report|diff|coverage|runon [-Model <id>] [-Json] [-Set <s>] [-Roles a,b] [-Ids x,y] [-Against <id>] [-Add] [-Degrade <set>] [-Judge <model>] [-Write <f>] [-WriteRunonEvidence] ...
       recorded real steps replayed on the local model, scored per role; run units and their bench coverage (localbench.py header)
 Checks before a start, in order: forbidden model ids (models.local.forbiddenModels, wildcards: -Model, ANTHROPIC_*MODEL,
 --model / -m in the client args), free RAM (Get-GateAvailGB - models.local.needGB >= Get-KitKeepFreeGB; skipped while the requested model is resident: GET /v1/models/active), the server
@@ -180,14 +180,14 @@ param(
   [string]$Model, [switch]$Unsafe, [switch]$Print, [switch]$Json, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType,
   [string]$Agent = $(if ($env:CLAUDE_AGENT) { $env:CLAUDE_AGENT } else { 'main' }), [string]$Session, [double]$WaitMinutes = -1,
   [string]$Set, [string]$Roles, [string]$Ids, [string]$Against, [int]$N, [string]$Since, [string]$Transcripts, [Alias('TimeoutSeconds')][int]$TimeoutSec, [switch]$Force,   # bench
-  [switch]$Add, [string]$Degrade, [string]$Write, [switch]$WriteRunonEvidence, [int]$Min,   # bench build / runon / report / coverage
+  [switch]$Add, [string]$Degrade, [string]$Judge, [string]$Write, [switch]$WriteRunonEvidence, [int]$Min,   # bench build / runon / report / coverage
   [Parameter(ValueFromRemainingArguments)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'
 $Rest = @($Rest | Where-Object { $null -ne $_ })
 if ($Client -eq 'bench') {   # the replay bench: localbench.py (each run step comes back here as local claude)
   $ba = @($Rest) + @('-Agent', $Agent) + @(if ($Json) { '-Json' }) + @(if ($Force) { '-Force' }) + @(if ($Add) { '-Add' }) + @(if ($WriteRunonEvidence) { '-WriteRunonEvidence' }) + @(if ($N) { '-N', $N }) + @(if ($Min) { '-Min', $Min }) + @(if ($TimeoutSec) { '-TimeoutSec', $TimeoutSec })
-  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Degrade', $Degrade), @('-Since', $Since), @('-Transcripts', $Transcripts), @('-Write', $Write))) { if ($bp[1]) { $ba += $bp } }
+  foreach ($bp in @(@('-Model', $Model), @('-Set', $Set), @('-Roles', $Roles), @('-Ids', $Ids), @('-Against', $Against), @('-Degrade', $Degrade), @('-Judge', $Judge), @('-Since', $Since), @('-Transcripts', $Transcripts), @('-Write', $Write))) { if ($bp[1]) { $ba += $bp } }
   & (Get-Python) -X utf8 (Join-Path $KitLibDir 'adapters/localbench.py') @ba; $global:LASTEXITCODE = $LASTEXITCODE; if ($LASTEXITCODE) { exit $LASTEXITCODE }; return
 }
 if ($Client -eq 'resolve') {   # one run unit: cloud | local and how a local one starts (the coordinator, before each spawn)

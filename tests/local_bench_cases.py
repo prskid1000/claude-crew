@@ -44,6 +44,22 @@ extra = [
     ('deep schema names list item keys', b.deep_schema({'mrs': [{'url': 'u', 'merged': False}], 'n': 1})['properties']['mrs']['items']['properties']['merged'] == {'type': 'boolean'}),
     ('the final rule is read from AGENTS.md', 'StructuredOutput' in b.final_rule()),
 ]
+ref, other = 'The publish retries after the row lock times out and logs warning A21.', 'Retry on lock timeout was added; see A21 warning in the log output.'
+b.JUDGE = lambda c, l: True
+j_yes = b.same_value(ref, other)
+b.JUDGE = lambda c, l: False
+j_no = b.same_value(ref, other)
+b.JUDGE = lambda c, l: None
+j_none = b.same_value(ref, other)
+b.JUDGE = None
+extra += [
+    ('a judge yes accepts reworded text', j_yes is True),
+    ('a judge no rejects it', j_no is False),
+    ('no verdict falls back to word recall', j_none == b.same_value(ref, other)),
+    ('empty candidate text is never the same', b.same_value(ref, '') is False),
+    ('enums stay strict with a judge', (setattr(b, 'JUDGE', lambda c, l: True) or b.same_value('PASS', 'FAIL')) is False),
+]
+b.JUDGE = None
 for name, ok in extra:
     if not ok:
         bad += 1
