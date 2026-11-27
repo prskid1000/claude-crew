@@ -13,7 +13,7 @@ writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<se
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (~/.claude/projects/<workspace>/*/subagents/**); Codex / Antigravity sessions:
 no reader (README parity row). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L32 store · L66 reply parsing · L111 outcome · L151 build · L267 run
+Sections: L32 store · L66 reply parsing · L111 outcome · L151 build · L268 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
@@ -135,7 +135,7 @@ def outcome(loc, cloud):
         cf = facts(cloud.get('output', ''))
         hit = {f for f in cf if f in str(loc.get('output', ''))}
         if not cf:
-            return None, 'unscored: no URL, count or status word to compare'
+            return True, 'ok same; no URL, count or status word to compare'
         return len(hit) / len(cf) >= 0.8, f'facts {len(hit)}/{len(cf)}' + (f' missing {sorted(cf - hit)[:4]}' if cf - hit else '')
     if 'reclassify' in cloud and 'newDefects' in cloud:   # a note audit: the same defect / notExercised ids, the same new defect count
         ids = lambda o, k: sorted(str(x.get('id')) for x in o.get('reclassify') or [] if isinstance(x, dict) and x.get(k))
@@ -218,7 +218,8 @@ def cmd_build(a):
     if osp.isdir(old) and os.listdir(old):
         if not a.force:
             print(f'build: set {a.set} has tasks ({old}): -Force rebuilds it, or name a new -Set'); return 1
-        shutil.rmtree(old)   # results of a changed id never match again: run compares meta.promptSha
+        for e in os.listdir(sd):   # tasks and every model's runs and scores: ids are reused
+            shutil.rmtree(osp.join(sd, e)) if osp.isdir(osp.join(sd, e)) else os.remove(osp.join(sd, e))
     metas = []
     for dp, _, fs in os.walk(root):
         for f in fs:
@@ -366,9 +367,13 @@ def summary(sc):
                      'rate': round(100 * sum(s['accepted'] for s in ss) / rated) if rated else None, 'infra': infra, 'unscored': unscored,
                      'badJson': sum(not s['strict'] for s in ss if s['rc'] == '0'),
                      'repairable': sum(s['repairable'] and not s['strict'] for s in ss), 'toolText': sum(s['toolText'] for s in ss),
-                     'timeouts': sum(s['rc'] == 'timeout' for s in ss), 'p50': statistics.median(secs) if secs else None,
+                     'timeouts': sum(s['rc'] == 'timeout' for s in ss), 'p50': round(statistics.median(secs), 1) if secs else None,
                      'p90': secs[min(len(secs) - 1, round(0.9 * (len(secs) - 1)))] if secs else None})
     return rows
+
+
+def pct(rate):
+    return '-' if rate is None else f'{rate}%'
 
 
 def cmd_report(a):
@@ -378,10 +383,11 @@ def cmd_report(a):
     rows = summary(sc)
     if a.json:
         print(json.dumps(rows)); return 0
-    print(f'{a.set} on {a.model}: {sum(r["accepted"] for r in rows)}/{sum(r["n"] for r in rows)} accepted')
+    print(f'{a.set} on {a.model}: {sum(r["accepted"] for r in rows)}/{sum(r["n"] - r["infra"] - r["unscored"] for r in rows)} accepted'
+          f' ({sum(r["infra"] for r in rows)} infra, {sum(r["unscored"] for r in rows)} unscored)')
     print(f'{"role":22} {"tier":10} {"n":>3} {"accept":>7} {"p50 s":>7} {"p90 s":>7} {"badJSON":>8} {"repair":>7} {"toolTxt":>8} {"timeout":>8} {"infra":>6} {"unscored":>9}')
     for r in rows:
-        print(f'{r["role"]:22} {r["tier"]:10} {r["n"]:3} {str(r["rate"]) + "%":>7} {str(r["p50"]):>7} {str(r["p90"]):>7} {r["badJson"]:8} {r["repairable"]:7} {r["toolText"]:8} {r["timeouts"]:8} {r["infra"]:6} {r["unscored"]:9}')
+        print(f'{r["role"]:22} {r["tier"]:10} {r["n"]:3} {pct(r["rate"]):>7} {str(r["p50"]):>7} {str(r["p90"]):>7} {r["badJson"]:8} {r["repairable"]:7} {r["toolText"]:8} {r["timeouts"]:8} {r["infra"]:6} {r["unscored"]:9}')
     return 0
 
 
@@ -392,13 +398,14 @@ def cmd_diff(a):
     both = sorted(set(s1) & set(s2))
     r1 = {r['role']: r for r in summary({i: s1[i] for i in both})}
     r2 = {r['role']: r for r in summary({i: s2[i] for i in both})}
-    flips = [(i, s1[i]['accepted'], s2[i]['accepted']) for i in both if s1[i]['accepted'] != s2[i]['accepted']]
+    judged = lambda s: s['outcome'] is not None and s['rc'] in ('0', 'timeout')   # infra / unscored never flip
+    flips = [(i, s1[i]['accepted'], s2[i]['accepted']) for i in both if judged(s1[i]) and judged(s2[i]) and s1[i]['accepted'] != s2[i]['accepted']]
     if a.json:
         print(json.dumps({'roles': [{'role': k, a.model: r1[k], a.against: r2.get(k)} for k in r1], 'flips': flips})); return 0
     print(f'{"role":22} {a.model[:18]:>18} {a.against[:18]:>18}   (accept %, p50 s; {len(both)} common ids)')
     for k in r1:
         x, y = r1[k], r2.get(k) or {}
-        print(f'{k:22} {str(x["rate"]) + "% " + str(x["p50"]):>18} {str(y.get("rate")) + "% " + str(y.get("p50")):>18}')
+        print(f'{k:22} {pct(x["rate"]) + " " + str(x["p50"]):>18} {pct(y.get("rate")) + " " + str(y.get("p50")):>18}')
     for i, x, y in flips:
         print(f'  flip {i}: {a.model} {"accepted" if x else "rejected"}, {a.against} {"accepted" if y else "rejected"}')
     return 0

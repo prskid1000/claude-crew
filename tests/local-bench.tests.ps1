@@ -20,17 +20,18 @@ function Add-Fixture([string]$Dir, [string]$Name, [string]$Type, [string]$Label,
     (& $ln @{ type = 'user'; message = @{ content = @(@{ type = 'tool_result'; tool_use_id = 'u1'; content = $ToolOut }) } }), $last) | Set-Content (Join-Path $Dir "$Name.jsonl") -Encoding utf8
   @{ agentType = $Type; description = $Label } | ConvertTo-Json | Set-Content (Join-Path $Dir "$Name.meta.json") -Encoding utf8
 }
+Add-Fixture $wf 'agent-c5' checky 'close:T5' 'STEP (checky, role lead): publish T5.' 'nothing to publish' @{ ok = $true; output = 'done' }
 foreach ($cn in 1..4) { Add-Fixture $wf "agent-c$cn" checky "close:T$cn" "STEP (checky, role lead): publish T$cn." "T$cn report: https://docs.example/d/$cn 3/3 pass" @{ ok = $true; output = "T$cn published: https://docs.example/d/$cn 3/3 pass" } }
 Add-Fixture $ah 'agent-w1' watchy 'nightly sweep' 'Kind sweep, watch W1.' '0 errors' $null "Clean.`n``````json`n{`"status`": `"clean`", `"bugs`": 0}`n``````"
 Add-Fixture $ah 'agent-d1' datay 'data check' 'Kind check, data D1.' '3 rows' $null "Done.`n``````json`n{`"status`": `"clean`", `"rows`": 3, `"mr`": null}`n``````"
 $sys = $sys -replace 'haiku', 'sonnet'; Add-Fixture $ah 'agent-w2' watchy 'nightly sweep 2' 'Kind sweep, watch W2.' '1 error' $null "``````json`n{`"status`": `"bug`", `"bugs`": 1}`n``````"
 
-$bd = Invoke-TestScript $D local bench build -Set t1 -Roles 'checky:close,watchy,datay,vidy' -Since 2000-01-01 -Transcripts $tr
+$bd = Invoke-TestScript $D local bench build -Set t1 -Roles 'checky:close,watchy,datay,vidy' -N 9 -Since 2000-01-01 -Transcripts $tr
 $sd = Join-Path $k '.state/local-bench/t1/tasks'
 $byLabel = @{}; foreach ($td in @(Get-ChildItem $sd -Directory -ErrorAction SilentlyContinue)) { $mt = Get-Content (Join-Path $td.FullName 'meta.json') -Raw | ConvertFrom-Json; $byLabel[$mt.label] = $mt }
 $c1 = $byLabel['close:T1']; $cj = try { Get-Content (Join-Path $sd "$($c1.id)/cloud.json") -Raw | ConvertFrom-Json } catch { $null }
 $dsch = try { Get-Content (Join-Path $sd "$($byLabel['data check'].id)/schema.json") -Raw | ConvertFrom-Json } catch { $null }
-Expect "bench build: one task per recorded step, the cloud answer (StructuredOutput / final JSON), its tier, a prompt hash, a missing role named ($($bd.code): $($bd.out.Trim()))" ($bd.code -eq 0 -and $byLabel.Count -eq 7 -and $cj.ok -eq $true -and $byLabel['nightly sweep 2'].tier -eq 'sonnet' -and $c1.tier -eq 'haiku' -and $c1.promptSha -and $bd.out -match 'no samples: vidy' -and (Get-Content (Join-Path $sd "$($c1.id)/prompt.md") -Raw) -match '(?s)never call a tool.*run close:T1.*3/3 pass.*JSON SCHEMA')
+Expect "bench build: one task per recorded step, the cloud answer (StructuredOutput / final JSON), its tier, a prompt hash, a missing role named ($($bd.code): $($bd.out.Trim()))" ($bd.code -eq 0 -and $byLabel.Count -eq 8 -and $cj.ok -eq $true -and $byLabel['nightly sweep 2'].tier -eq 'sonnet' -and $c1.tier -eq 'haiku' -and $c1.promptSha -and $bd.out -match 'no samples: vidy' -and (Get-Content (Join-Path $sd "$($c1.id)/prompt.md") -Raw) -match '(?s)never call a tool.*run close:T1.*3/3 pass.*JSON SCHEMA')
 Expect "bench build: a null in the cloud answer allows any type in the schema" ($dsch -and $null -eq $dsch.properties.mr.type -and $dsch.properties.rows.type -eq 'number')
 $b2 = Invoke-TestScript $D local bench build -Set t1 -Roles watchy -Since 2000-01-01 -Transcripts $tr
 Expect "bench build: an existing set is not rebuilt without -Force, exit 1 ($($b2.code))" ($b2.code -eq 1 -and $b2.out -match '-Force rebuilds it')
@@ -50,6 +51,7 @@ if ($in -match 'publish T4') { Set-Content -LiteralPath 'PIDFILE' $PID; Start-Sl
 $r = if ($in -match 'publish T1') { '{"ok": true, "output": "T1 report https://docs.example/d/1 3/3 pass"}' }
   elseif ($in -match 'publish T2') { '{"ok": false, "output": "T2 report https://docs.example/d/2 3/3 pass"}' }
   elseif ($in -match 'publish T3') { "{`"ok`": true, `"output`": `"T3 report https://docs.example/d/3`nsee doc`"}" }
+  elseif ($in -match 'publish T5') { '{"ok": true, "output": "nothing to publish, done"}' }
   elseif ($in -match 'watch W1') { '{"status": "clean", "bugs": 0}' }
   elseif ($in -match 'data D1') { '```json' + "`n" + '{"status": "clean", "rows": 3, "mr": null}' + "`n" + '```' }
   else { '<tool_call><function=Read></function></tool_call>' }
@@ -73,12 +75,12 @@ Expect "bench run: ids that ran are skipped, a timeout runs again, -Ids re-runs 
 $s1 = Invoke-TestScript $D local bench score -Set t1 -Model small-a
 $sc = Get-Content (Join-Path $md 'score.json') -Raw | ConvertFrom-Json
 $g = { param($l) $sc.($byLabel[$l].id) }
-Expect "bench score: right answers accepted (same ok + URL + count; same short fields; a null field)" ((& $g 'close:T1').accepted -and (& $g 'nightly sweep').accepted -and (& $g 'data check').outcome -and -not (& $g 'data check').strict -and (& $g 'data check').repairable)
+Expect "bench score: right answers accepted (same ok + URL + count; same ok, nothing to compare; same short fields; a null field)" ((& $g 'close:T1').accepted -and (& $g 'close:T5').accepted -and (& $g 'nightly sweep').accepted -and (& $g 'data check').outcome -and -not (& $g 'data check').strict -and (& $g 'data check').repairable)
 Expect "bench score: a flipped ok, a dropped count and a tool call written as text rejected ($((& $g 'close:T2').why) / $((& $g 'close:T3').why) / $((& $g 'nightly sweep 2').why))" (-not (& $g 'close:T2').accepted -and (& $g 'close:T2').why -match 'ok False vs True' -and -not (& $g 'close:T3').accepted -and -not (& $g 'close:T3').strict -and (& $g 'close:T3').why -match 'missing .*3/3' -and (& $g 'nightly sweep 2').why -eq 'tool-call-text')
 $rp = Invoke-TestScript $D local bench report -Set t1 -Model small-a -Json
 $rj = try { $rp.out | ConvertFrom-Json } catch { @() }
 $rc1 = @($rj | Where-Object role -eq 'checky:close')[0]; $rw = @($rj | Where-Object role -eq 'watchy')[0]
-Expect "bench report: accept rate, p50 and the cloud tier per role ($($rp.out.Substring(0, [math]::Min(220, $rp.out.Length))))" ($rp.code -eq 0 -and $rc1.rate -eq 25 -and $rc1.timeouts -eq 1 -and $rc1.tier -eq 'haiku' -and $rw.rate -eq 50 -and $rw.toolText -eq 1 -and $null -ne $rc1.p50)
+Expect "bench report: accept rate, p50 and the cloud tier per role ($($rp.out.Substring(0, [math]::Min(220, $rp.out.Length))))" ($rp.code -eq 0 -and $rc1.rate -eq 40 -and $rc1.timeouts -eq 1 -and $rc1.tier -eq 'haiku' -and $rw.rate -eq 50 -and $rw.toolText -eq 1 -and $null -ne $rc1.p50)
 
 $ix = Invoke-TestScript $D local bench run -Set t1 -Model other-1 -Ids $w1; $null = Invoke-TestScript $D local bench score -Set t1 -Model other-1
 $ir = try { (Invoke-TestScript $D local bench report -Set t1 -Model other-1 -Json).out | ConvertFrom-Json } catch { @() }
@@ -96,7 +98,9 @@ Expect "bench parse: a raw newline in a string or a code fence is repairable, no
 $m2 = Join-Path $k '.state/local-bench/t1/small-b'; Copy-Item $md $m2 -Recurse
 $s2 = Get-Content (Join-Path $m2 'score.json') -Raw | ConvertFrom-Json; $s2.($c1.id).accepted = $false; $s2 | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $m2 'score.json') -Encoding utf8
 $df = Invoke-TestScript $D local bench diff -Set t1 -Model small-a -Against small-b
-Expect "bench diff: per role rates side by side and the ids that flip ($($df.out.Trim() -replace '\s+', ' '))" ($df.code -eq 0 -and $df.out -match 'checky:close\s+25% \S+\s+0%' -and $df.out -match "flip $($c1.id): small-a accepted, small-b rejected")
+Expect "bench diff: per role rates side by side and the ids that flip ($($df.out.Trim() -replace '\s+', ' '))" ($df.code -eq 0 -and $df.out -match 'checky:close\s+40% \S+\s+20%' -and $df.out -match "flip $($c1.id): small-a accepted, small-b rejected")
+$fb = Invoke-TestScript $D local bench build -Set t1 -Roles watchy -Since 2000-01-01 -Transcripts $tr -Force; $nb = Invoke-TestScript $D local bench report -Set t1 -Model small-b
+Expect "bench build -Force: the set's old runs and scores go with its tasks (ids are reused) ($($fb.code) $($nb.code))" ($fb.code -eq 0 -and $nb.code -eq 1 -and -not (Test-Path (Join-Path $k '.state/local-bench/t1/small-b')))
 $nm = Invoke-TestScript $D local bench report -Set nope -Model small-a
 Expect "bench report: a set never scored says so, exit 1 ($($nm.code))" ($nm.code -eq 1 -and $nm.out -match 'no score for nope/small-a')
 
