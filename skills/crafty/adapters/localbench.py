@@ -3,7 +3,7 @@
          role; an existing set: -Force empties it (results of a changed task are never reused: meta.promptSha)
   run    -Model m [-Set s] [-Ids a,b] [-Roles ..] [-Runner claude|codex] [-TimeoutSec 600] [-Force]   resumable: skips ids that
          ran (rc 0) on the same prompt; -Ids re-runs them; claude: --tools= (none), codex: --sandbox read-only
-  score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (none comparable: unscored)
+  score  -Model m [-Set s]        strict / repairable / lenient JSON, schema, outcome per id (fields, list items, text facts)
   report -Model m [-Set s] [-Json]   accept rate over the ids that ran, infra fails apart, median / p90 s per role, cloud tier
   diff   -Model m -Against m2 [-Set s] [-Json]   per role delta and the ids that flip
 A role: <agentType>:<step label> (workflow steps, e.g. checky:close, kitty:learn) or <agentType> (ad hoc agents, e.g. watchy).
@@ -13,7 +13,7 @@ writes a tool call as text scores tool-call-text. Store: <state>/local-bench/<se
 <state>/local-bench/<set>/<model>/ (runs/<id>.json, results.json, score.json); re-running ids overwrites only those ids.
 Transcripts: Claude Code subagent transcripts (~/.claude/projects/<workspace>/*/subagents/**); Codex / Antigravity sessions:
 no reader (README parity row). Exit codes: 0 ok · 1 nothing to do / missing set · 2 usage.
-Sections: L32 store · L66 reply parsing · L111 outcome · L151 build · L268 run
+Sections: L32 store · L66 reply parsing · L111 outcome · L203 build · L336 run
 """
 import argparse, datetime, hashlib, json, os, re, shutil, signal, statistics, subprocess, sys, time
 import os.path as osp
@@ -21,8 +21,8 @@ sys.path.insert(0, osp.join(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__fi
 from kitbag import kit_path, local_config, KIT_DIR  # noqa: E402
 
 CUT_RES, CUT_CMD, CUT_ALL = 2500, 1500, 60000
-DEFAULT_ROLES = ['steppy', 'checky:close', 'checky:hold', 'kitty:learn', 'kitty:track', 'devy:track', 'devy:followups',
-                 'checky:audit', 'checky:verify', 'checky:test', 'watchy', 'vidy']
+DEFAULT_ROLES = ['steppy', 'checky:close', 'checky:hold', 'kitty:learn', 'kitty:track', 'devy:track', 'devy:followups', 'checky:audit',
+                 'checky:verify', 'checky:test', 'devy:build', 'devy:fix', 'watchy', 'vidy', 'revy', 'briefy', 'rechy', 'opsy', 'checky@lead', 'kitty']
 PREFIX = ('SHADOW TASK. No tools exist in this session: never call a tool, never search for one; every command below has already run.\n'
           'Below: the instructions a workflow step gave an agent, then every tool call that agent made, in order, with its output '
           '(long outputs cut). Your job: write the final answer that step returns, judged from those outputs, as ONE JSON object '
@@ -116,16 +116,66 @@ def facts(text):
     return {f.rstrip('.') for f in fs | ({lead.group(1)} if lead else set())}
 
 
-def short_fields(o):
-    out = {}
-    for k, v in (o or {}).items():
-        if isinstance(v, (bool, int, float)):
-            out[k] = v
-        elif isinstance(v, str) and len(v) <= 24:
-            out[k] = v.strip().lower()
-        elif isinstance(v, list):
-            out[k + '#len'] = len(v)
-    return out
+ITEM_KEYS = ('id', 'code', 'file', 'path', 'check', 'ref', 'name', 'title', 'key', 'task')
+
+
+def salient(text):
+    """Words that carry the facts: identifiers, paths, numbers, words of 5+ letters."""
+    return {w for w in re.findall(r'[\w./:#!-]+', str(text).lower()) if len(w) >= 5 or re.search(r'\d|[._/:#!]', w)}
+
+
+def recall(c, l):
+    cs = salient(c)
+    return 1.0 if not cs else len(cs & salient(l)) / len(cs)
+
+
+def enum(s):
+    """A status, id or name (compared exactly): short and one word; prose is compared by its words."""
+    return len(s) <= 24 and not re.search(r'\s', s.strip())
+
+
+def item_key(x):
+    return next((str(x[k]).strip().lower() for k in ITEM_KEYS if isinstance(x, dict) and x.get(k) not in (None, '')), None)
+
+
+def same_value(c, l):
+    """One field: flags, numbers and short strings equal; long text by its salient words; lists item by item; objects field by field."""
+    if isinstance(c, bool) or isinstance(c, (int, float)):
+        return c == l
+    if c is None:
+        return l in (None, '', [], {})
+    if isinstance(c, str):
+        return c.strip().lower() == str(l if l is not None else '').strip().lower() if enum(c) else recall(c, l) >= 0.5
+    if isinstance(c, dict):
+        return isinstance(l, dict) and compare(c, l)[0]
+    if isinstance(c, list):
+        return list_match(c, l if isinstance(l, list) else [])[0]
+    return c == l
+
+
+def list_match(c, l):
+    """Each cloud item finds its local item (same id / file / name..., else most of its words) with the same short fields."""
+    if not c:
+        return not l, f'items: {len(l)} where none'
+    used, hit = set(), 0
+    for ci in c:
+        k = item_key(ci)
+        j = next((j for j, li in enumerate(l) if j not in used and (item_key(li) == k if k is not None else recall(json.dumps(ci, ensure_ascii=False) if not isinstance(ci, str) else ci, json.dumps(li, ensure_ascii=False) if not isinstance(li, str) else li) >= 0.5)), None)
+        if j is None:
+            continue
+        used.add(j)
+        if isinstance(ci, dict) and isinstance(l[j], dict):
+            flags = [f for f, v in ci.items() if isinstance(v, (bool, int, float)) or (isinstance(v, str) and enum(v))]
+            hit += (not flags or sum(same_value(ci[f], l[j].get(f)) for f in flags) / len(flags) >= 0.8)
+        else:
+            hit += 1
+    extra = len(l) - len(used)
+    return hit / len(c) >= 0.6 and extra <= max(1, len(c) // 2), f'items {hit}/{len(c)}' + (f' +{extra} extra' if extra else '')
+
+
+def compare(cloud, loc):
+    bad = [k for k, v in cloud.items() if not same_value(v, (loc or {}).get(k))]
+    return (len(cloud) - len(bad)) / max(1, len(cloud)) >= 0.7, f'fields {len(cloud) - len(bad)}/{len(cloud)}' + (f' differ {bad[:5]}' if bad else '')
 
 
 def outcome(loc, cloud):
@@ -141,11 +191,13 @@ def outcome(loc, cloud):
         ids = lambda o, k: sorted(str(x.get('id')) for x in o.get('reclassify') or [] if isinstance(x, dict) and x.get(k))
         same = ids(loc, 'defect') == ids(cloud, 'defect') and ids(loc, 'notExercised') == ids(cloud, 'notExercised') and len(loc.get('newDefects') or []) == len(cloud.get('newDefects') or [])
         return same, f"defect {ids(loc, 'defect')} vs {ids(cloud, 'defect')}; newDefects {len(loc.get('newDefects') or [])} vs {len(cloud.get('newDefects') or [])}"
-    cf, lf = short_fields(cloud), short_fields(loc)   # any other answer: >= 80% of its short fields (flags, statuses, counts, list sizes) equal
-    same = [k for k in cf if lf.get(k) == cf[k]]
-    if not cf:
-        return None, 'unscored: no short field to compare'
-    return len(same) / len(cf) >= 0.8, f'fields {len(same)}/{len(cf)}' + (f" diff {sorted(set(cf) - set(same))[:4]}" if len(same) < len(cf) else '')
+    if set(cloud) == {'commit'}:   # a ship text: the spec renders the same type, a subject <= 72 chars, the commit's facts
+        subj = f"{loc.get('type')}({loc.get('scope')}): {loc.get('change')}"
+        body = subj + ' ' + ' '.join(f"{c.get('text', '')} {c.get('technical', '')}" for c in loc.get('changes') or [] if isinstance(c, dict))
+        ctype = re.split(r'[(:!]', cloud['commit'].strip())[0]
+        rc = recall(cloud['commit'], body)
+        return loc.get('type') == ctype and len(subj) <= 72 and rc >= 0.4, f"type {loc.get('type')} vs {ctype}; subject {len(subj)} ch; facts {round(rc * 100)}%"
+    return compare(cloud, loc)   # any other answer: >= 70% of its fields the same (see same_value)
 
 
 # ---- build: recorded subagent transcripts -> tasks
@@ -207,6 +259,20 @@ def role_of(meta, path):
     return t
 
 
+def kind_of(prompt):
+    """An ad hoc agent's kind from its brief: 'role lead', else 'Kind mr' / 'kind: plan'."""
+    head = prompt[:1500]
+    if re.search(r'\brole[: ]+lead\b', head, re.I):
+        return 'lead'
+    m = re.search(r'\bkind[: ]+([a-z][\w-]*)', head, re.I)
+    return m.group(1).lower() if m else ''
+
+
+def wanted(want, role):
+    """A wanted role matches itself, a bare type all its steps and kinds (checky), type@kind its kind (revy@mr)."""
+    return role == want or role.split(':')[0].split('@')[0] == want or role.startswith(want + '@')
+
+
 def cmd_build(a):
     root = transcript_root(a.transcripts)
     if not osp.isdir(root):
@@ -231,11 +297,13 @@ def cmd_build(a):
     for _, p, js in sorted(metas, reverse=True):   # newest first
         m = rjson(p, {})
         role = role_of(m, js)
-        hit = next((w for w in want if role == w or (':' not in w and role.split(':')[0] == w)), None)   # a bare type: all its steps
-        if not hit or made.get(hit, 0) >= a.n:
+        if not any(wanted(w.split('@')[0], role) for w in want):
             continue
         prompt, seq, final, model = read_transcript(js)
-        if not isinstance(final, dict) or not final or not seq or prompt[:3000] in seen:
+        if ':' not in role and kind_of(prompt):
+            role = f'{role}@{kind_of(prompt)}'   # ad hoc: per kind (revy@mr, revy@plan, checky@lead)
+        hit = role if any(wanted(w, role) for w in want) else None
+        if not hit or made.get(hit, 0) >= a.n or not isinstance(final, dict) or not final or not seq or prompt[:3000] in seen:
             continue
         seen.add(prompt[:3000])
         made[hit] = made.get(hit, 0) + 1
@@ -250,7 +318,7 @@ def cmd_build(a):
         wjson(osp.join(td, 'schema.json'), sch)
         wjson(osp.join(td, 'cloud.json'), final)
         wjson(osp.join(td, 'meta.json'), {'id': tid, 'role': hit, 'tier': model, 'label': m.get('description'), 'transcript': js, 'calls': len(seq), 'promptSha': sha(body)})
-    missing = [w for w in want if not made.get(w)]
+    missing = [w for w in want if not any(wanted(w, r) for r in made)]
     print(f"build {a.set}: {sum(made.values())} task(s) in {sd}: " + ', '.join(f'{k} {v}' for k, v in made.items()) + (f' · no samples: {", ".join(missing)}' if missing else ''))
     return 0 if made else 1
 
@@ -361,10 +429,9 @@ def summary(sc):
     for role, ss in sorted(roles.items()):
         secs = sorted(s['sec'] for s in ss if s['rc'] == '0')
         infra = sum(s['rc'] not in ('0', 'timeout') for s in ss)
-        unscored = sum(s['outcome'] is None and s['rc'] in ('0', 'timeout') for s in ss)
-        rated = len(ss) - infra - unscored   # the rate counts only ids the model answered and a rule could judge
+        rated = len(ss) - infra   # the rate counts only ids the model answered
         rows.append({'role': role, 'tier': '/'.join(sorted({s.get('tier') or '?' for s in ss})), 'n': len(ss), 'accepted': sum(s['accepted'] for s in ss),
-                     'rate': round(100 * sum(s['accepted'] for s in ss) / rated) if rated else None, 'infra': infra, 'unscored': unscored,
+                     'rate': round(100 * sum(s['accepted'] for s in ss) / rated) if rated else None, 'infra': infra,
                      'badJson': sum(not s['strict'] for s in ss if s['rc'] == '0'),
                      'repairable': sum(s['repairable'] and not s['strict'] for s in ss), 'toolText': sum(s['toolText'] for s in ss),
                      'timeouts': sum(s['rc'] == 'timeout' for s in ss), 'p50': round(statistics.median(secs), 1) if secs else None,
@@ -383,11 +450,10 @@ def cmd_report(a):
     rows = summary(sc)
     if a.json:
         print(json.dumps(rows)); return 0
-    print(f'{a.set} on {a.model}: {sum(r["accepted"] for r in rows)}/{sum(r["n"] - r["infra"] - r["unscored"] for r in rows)} accepted'
-          f' ({sum(r["infra"] for r in rows)} infra, {sum(r["unscored"] for r in rows)} unscored)')
-    print(f'{"role":22} {"tier":10} {"n":>3} {"accept":>7} {"p50 s":>7} {"p90 s":>7} {"badJSON":>8} {"repair":>7} {"toolTxt":>8} {"timeout":>8} {"infra":>6} {"unscored":>9}')
+    print(f'{a.set} on {a.model}: {sum(r["accepted"] for r in rows)}/{sum(r["n"] - r["infra"] for r in rows)} accepted ({sum(r["infra"] for r in rows)} infra)')
+    print(f'{"role":22} {"tier":10} {"n":>3} {"accept":>7} {"p50 s":>7} {"p90 s":>7} {"badJSON":>8} {"repair":>7} {"toolTxt":>8} {"timeout":>8} {"infra":>6}')
     for r in rows:
-        print(f'{r["role"]:22} {r["tier"]:10} {r["n"]:3} {pct(r["rate"]):>7} {str(r["p50"]):>7} {str(r["p90"]):>7} {r["badJson"]:8} {r["repairable"]:7} {r["toolText"]:8} {r["timeouts"]:8} {r["infra"]:6} {r["unscored"]:9}')
+        print(f'{r["role"]:22} {r["tier"]:10} {r["n"]:3} {pct(r["rate"]):>7} {str(r["p50"]):>7} {str(r["p90"]):>7} {r["badJson"]:8} {r["repairable"]:7} {r["toolText"]:8} {r["timeouts"]:8} {r["infra"]:6}')
     return 0
 
 
@@ -398,14 +464,14 @@ def cmd_diff(a):
     both = sorted(set(s1) & set(s2))
     r1 = {r['role']: r for r in summary({i: s1[i] for i in both})}
     r2 = {r['role']: r for r in summary({i: s2[i] for i in both})}
-    judged = lambda s: s['outcome'] is not None and s['rc'] in ('0', 'timeout')   # infra / unscored never flip
+    judged = lambda s: s['outcome'] is not None and s['rc'] in ('0', 'timeout')   # an infra fail never flips
     flips = [(i, s1[i]['accepted'], s2[i]['accepted']) for i in both if judged(s1[i]) and judged(s2[i]) and s1[i]['accepted'] != s2[i]['accepted']]
     if a.json:
         print(json.dumps({'roles': [{'role': k, a.model: r1[k], a.against: r2.get(k)} for k in r1], 'flips': flips})); return 0
-    print(f'{"role":22} {a.model[:18]:>18} {a.against[:18]:>18}   (accept %, p50 s; {len(both)} common ids)')
+    print(f'{"role":22} {"tier":10} {a.model[:18]:>18} {a.against[:18]:>18}   (accept %, p50 s; {len(both)} common ids)')
     for k in r1:
         x, y = r1[k], r2.get(k) or {}
-        print(f'{k:22} {pct(x["rate"]) + " " + str(x["p50"]):>18} {pct(y.get("rate")) + " " + str(y.get("p50")):>18}')
+        print(f'{k:22} {x["tier"]:10} {pct(x["rate"]) + " " + str(x["p50"]):>18} {pct(y.get("rate")) + " " + str(y.get("p50")):>18}')
     for i, x, y in flips:
         print(f'  flip {i}: {a.model} {"accepted" if x else "rejected"}, {a.against} {"accepted" if y else "rejected"}')
     return 0
