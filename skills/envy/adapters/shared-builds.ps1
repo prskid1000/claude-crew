@@ -1,6 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L4 shared builds · L144 lane pick · L194 start room · L238 thin artifacts · L280 lane priority · L340 static server
+# Sections: L5 shared builds · L145 java incremental · L275 lane pick · L325 start room · L369 thin artifacts ·
+#   L411 lane priority · L471 static server
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -140,6 +141,136 @@ function Get-LayerReactorFlags([string]$e, $s, [string]$cmd) {
     if ($inc.Count) { Write-Host "[$e] $($s.name): layers change build(s) $(@($inc | ForEach-Object { [IO.Path]::GetRelativePath($wt, $_) }) -join ', '): included (--include-build)"; return (@($inc | ForEach-Object { "--include-build `"$_`"" }) -join ' ') }
   }
   ''
+}
+# ---- java incremental: services[].javaIncremental (true | { fullEvery, fullWhen, alwaysWith, maxFiles, mergeIndex }; reference.md): a
+# Maven build compiles only the sources changed since its last good build plus their dependants (useIncrementalCompilation=false);
+# Build-Repo runs Get-JavaIncPlan, then Step-JavaInc after each run (next: the full fallback or the verify build); Get-BuildWrites
+function Get-JavaIncOpts($s) {
+  $o = if ($s.javaIncremental -is [bool]) { $null } else { $s.javaIncremental }
+  @{ fullEvery = [int]$(if ($o.fullEvery) { $o.fullEvery } else { 10 }); maxFiles = [int]$(if ($o.maxFiles) { $o.maxFiles } else { 2000 }); fullWhen = [string]$o.fullWhen
+    alwaysWith = [string]$(if ($null -ne $o.alwaysWith) { $o.alwaysWith } else { '@Mapper([^A-Za-z0-9_]|$)' })   # git grep -E; generated from types they never name (nested mappings)
+    mergeIndex = [string]$(if ($null -ne $o.mergeIndex) { $o.mergeIndex } else { 'entity/index' }) }   # an aggregating processor's index (JPA entities, enum values)
+}
+# @{ mode incremental | verify | full; cmd; base; why; head; n; touched } or $null (off, not Maven); full: no baseline, a pom,
+# a deleted or other-module source, too many files, or a compile set matching fullWhen
+function Get-JavaIncPlan([string]$e, $s, [string]$dir, [string]$cmd) {
+  if (-not $s.javaIncremental -or $cmd -notmatch '\b(mvn|mvnw|mvnd)\b' -or -not (Test-Path -LiteralPath (Join-Path $dir 'pom.xml'))) { return $null }
+  $o = Get-JavaIncOpts $s; $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; $rec = Get-KitMember (Read-State $e).javaInc $s.name
+  $p = @{ base = $cmd; cmd = $cmd; mode = 'full'; why = ''; head = "$(git -C $wt rev-parse HEAD 2>$null)".Trim(); n = [int]$rec.n; phase = 1; dir = $dir; touched = 0 }
+  $full = { param($why) $p.mode = 'full'; $p.cmd = $cmd; $p.why = $why; Reset-JavaIncStatus $dir; $p }
+  if (-not $rec.sha -or -not (Test-Path -LiteralPath (Join-Path $dir 'target/classes'))) { return (& $full 'no baseline build') }
+  $null = git -C $wt cat-file -e "$($rec.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { return (& $full 'baseline commit gone') }
+  $rel = [IO.Path]::GetRelativePath($wt, $dir).Replace('\', '/'); $src = if ($rel -eq '.') { 'src/main/java' } else { "$rel/src/main/java" }
+  $java = @(); $gone = @()
+  foreach ($row in @(git -C $wt -c core.quotepath=off diff --name-status --no-renames $rec.sha 2>$null | Where-Object { $_ })) {
+    $how, $f = $row -split "`t", 2
+    if ($f -match '(^|/)src/test/') { continue }
+    if ($f -match '(^|/)pom\.xml$') { return (& $full "pom changed: $f") }
+    if ($f -notmatch '\.java$') { continue }
+    if (-not $f.StartsWith("$src/")) { return (& $full "source outside the module: $f") }
+    if ($how -eq 'D') { $gone += $f } else { $java += $f }
+  }
+  if ($gone.Count) { Remove-JavaClasses $wt $dir $src $gone -Generated; return (& $full "$($gone.Count) deleted source(s)") }
+  $p.mode = if ($p.n + 1 -ge $o.fullEvery) { 'verify' } else { 'incremental' }
+  $p.cmd = Add-ToolFlags $cmd '-Dmaven.compiler.useIncrementalCompilation=false'
+  if (-not $java.Count) { $p.why = 'no main source changed'; return $p }
+  $set = @(Get-JavaDependants $wt $src $java $o.alwaysWith)
+  if ($set.Count -gt $o.maxFiles) { return (& $full "$($set.Count) sources to compile (maxFiles $($o.maxFiles))") }
+  $hit = @(if ($o.fullWhen) { $set | Where-Object { [regex]::IsMatch([IO.File]::ReadAllText((Join-Path $wt $_)), $o.fullWhen) } | Select-Object -First 1 })
+  if ($hit.Count) { return (& $full "fullWhen matches $($hit[0])") }
+  Remove-JavaClasses $wt $dir $src $java
+  if ($o.mergeIndex) { $p.idx = Join-Path $dir "target/generated-sources/annotations/$($o.mergeIndex)"; $p.snap = Get-JavaIndexSnap $p.idx; $p.fqns = @($set | ForEach-Object { $_.Substring($src.Length + 1) -replace '\.java$' -replace '/', '.' }) }
+  $now = [datetime]::UtcNow; foreach ($f in $set) { [IO.File]::SetLastWriteTimeUtc((Join-Path $wt $f), $now) }   # stale = newer than its class
+  $p.touched = $set.Count; $p.why = "$($java.Count) changed, $($set.Count) compiled"; $p
+}
+# file name -> @{ text; t } of an index folder
+function Get-JavaIndexSnap([string]$root) {
+  $h = @{}; if (Test-Path -LiteralPath $root) { foreach ($fi in [IO.DirectoryInfo]::new($root).EnumerateFiles()) { $h[$fi.Name] = @{ text = [IO.File]::ReadAllText($fi.FullName); t = $fi.LastWriteTimeUtc } } }
+  $h
+}
+# the processor wrote only what this compile saw: a '.<value>' file (types holding that enum value) = what it wrote + the old types
+# it did not see (a seen type's old entry it did not write: that value is gone); an entity file (one class) not rewritten whose class
+# was compiled: that entity name is gone. Exact for the Hibernate processor's entity index (verify builds compare it)
+function Merge-JavaIndex($p) {
+  if (-not $p.idx -or -not (Test-Path -LiteralPath $p.idx)) { return }
+  $now = Get-JavaIndexSnap $p.idx; $tok = { param($t) @("$t" -split '\s+' | Where-Object { $_ }) }
+  $wrote = @($now.Keys | Where-Object { -not $p.snap[$_] -or $p.snap[$_].t -ne $now[$_].t })
+  $seen = [Collections.Generic.HashSet[string]]::new([string[]]@($wrote | Where-Object { $_.StartsWith('.') } | ForEach-Object { & $tok $now[$_].text }))
+  foreach ($name in @($p.snap.Keys)) {
+    $f = Join-Path $p.idx $name; $old = $p.snap[$name].text
+    if ($name.StartsWith('.')) {
+      $keep = @(@(& $tok $old | Where-Object { -not $seen.Contains($_) }) + @(if ($name -in $wrote) { & $tok $now[$name].text }) | Select-Object -Unique)
+      $txt = (@([Linq.Enumerable]::OrderBy([string[]]$keep, [Func[string, string]] { $args[0] }, [StringComparer]::Ordinal)) | ForEach-Object { "$_ " }) -join ''
+      if (-not $keep.Count) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue } elseif ($txt -ne "$($now[$name].text)") { [IO.File]::WriteAllText($f, $txt) }
+    } elseif ($name -notin $wrote -and "$old".Trim() -in $p.fqns) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+  }
+}
+# worktree paths of the changed sources + every source naming one of them or a subclass of one (transitively) + alwaysWith matches
+function Get-JavaDependants([string]$wt, [string]$src, [string[]]$changed, [string]$always) {
+  $leaf = { param($f) [IO.Path]::GetFileNameWithoutExtension($f) }
+  $names = [Collections.Generic.HashSet[string]]::new([string[]]@($changed | ForEach-Object { & $leaf $_ }))
+  $pf = Join-Path (Get-KitPath localenv -Create) "javainc-$PID.txt"; $w = '[^A-Za-z0-9_$]'
+  $grep = { param([string[]]$pat, [string[]]$how) [IO.File]::WriteAllText($pf, (($pat -join "`n") + "`n")); @(git -C $wt -c core.quotepath=off grep -l @how -f $pf -- $src 2>$null | Where-Object { $_ }) }
+  try {
+    $todo = @($names)
+    for ($i = 0; $todo.Count -and $i -lt 10; $i++) {
+      $todo = @(& $grep @($todo | ForEach-Object { "(extends|implements)[^{]*$w$([regex]::Escape($_))($w|$)" }) @('-E') | ForEach-Object { & $leaf $_ } | Where-Object { $names.Add($_) })
+    }
+    $out = @($changed) + @(& $grep @($names) @('-w', '-F'))
+    if ($always) { [IO.File]::WriteAllText($pf, "$always`n"); $out += @(& $grep @($always) @('-E')) }
+    @($out | Select-Object -Unique)
+  } finally { Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue }
+}
+# the classes of these sources (X.class, X$*.class); -Generated: a deleted source's processor output too (X_, XImpl)
+function Remove-JavaClasses([string]$wt, [string]$dir, [string]$src, [string[]]$files, [switch]$Generated) {
+  foreach ($f in $files) {
+    $pkg = Split-Path ($f.Substring($src.Length + 1)); $x = [IO.Path]::GetFileNameWithoutExtension($f)
+    $pats = @("$x.class", "$x`$*.class") + @(if ($Generated) { "$($x)_.class", "$($x)_`$*.class", "$($x)Impl.class", "$($x)_.java", "$($x)Impl.java" })
+    foreach ($root in (Join-Path $dir "target/classes/$pkg"), (Join-Path $dir "target/generated-sources/annotations/$pkg")) {
+      if (Test-Path -LiteralPath $root) { foreach ($pt in $pats) { Get-ChildItem -LiteralPath $root -Filter $pt -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue } }
+    }
+  }
+}
+# no recorded inputs: maven-compiler's own change check recompiles the whole module
+function Reset-JavaIncStatus([string]$dir) { Remove-Item -LiteralPath (Join-Path $dir 'target/maven-status/maven-compiler-plugin/compile') -Recurse -Force -ErrorAction SilentlyContinue }
+# after a run of $p: the next command (failed incremental -> full; verify -> full + compare), $null when done (good: baseline recorded)
+function Step-JavaInc([string]$e, $s, $p, [int]$bc, [string]$log) {
+  if ($p.phase -eq 1 -and $p.mode -ne 'full' -and -not $bc) { Merge-JavaIndex $p }
+  if ($p.phase -eq 1 -and $p.mode -ne 'full' -and ($bc -or $p.mode -eq 'verify')) {
+    $p.phase = 2; Reset-JavaIncStatus $p.dir
+    if ($bc) {
+      $err = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue | Where-Object { $_ -match '(?i)\berror\b' } | Select-Object -First 2) -join ' | '
+      $p.mode = 'fallback'; $p.why = "incremental failed (exit $bc): $err"; Write-Host "[$e] $($s.name): incremental compile failed: a full build"
+    } else { $p.sums = Get-JavaIncSums $p.dir; Write-Host "[$e] $($s.name): verify: a full build to compare" }
+    return $p.base
+  }
+  if ($p.mode -eq 'verify' -and -not $bc) {
+    $now = Get-JavaIncSums $p.dir; $diff = @(@($p.sums.Keys) + @($now.Keys) | Select-Object -Unique | Where-Object { $p.sums[$_] -ne $now[$_] })
+    $p.diff = $diff.Count
+    if ($diff.Count) { Write-Host "[$e] $($s.name): verify MISMATCH: $($diff.Count) file(s) differ from the full build (kept the full one)"; Event $e 'java-incremental-mismatch' @{ service = $s.name; files = $diff.Count; sample = @($diff | Select-Object -First 5); why = $p.why } }
+  }
+  if (-not $bc) {   # distinct names: Update-State's body loops over $n, $k
+    $jiRec = @{ sha = $p.head; n = $(if ($p.mode -eq 'incremental') { $p.n + 1 } else { 0 }); at = (Now) }; $jiSvc = $s.name
+    Update-State $e { param($x) if ($x.javaInc -isnot [hashtable]) { $x.javaInc = @{} }; $x.javaInc[$jiSvc] = $jiRec }
+  }
+  $null
+}
+# relative path -> MD5 of every class file and every processor resource (not .java: they carry dates)
+function Get-JavaIncSums([string]$dir) {
+  $h = @{}
+  foreach ($r in 'target/classes', 'target/generated-sources/annotations') {
+    $root = Join-Path $dir $r; if (-not (Test-Path -LiteralPath $root)) { continue }
+    $fs = @([IO.DirectoryInfo]::new($root).EnumerateFiles('*', [IO.SearchOption]::AllDirectories) | Where-Object { -not ($r -eq 'target/classes' -and $_.Extension -ne '.class' -or $_.Extension -eq '.java') })
+    if ($fs.Count) { foreach ($x in Get-FileHash -LiteralPath $fs.FullName -Algorithm MD5) { $h["$r/$([IO.Path]::GetRelativePath($root, $x.Path))"] = $x.Hash } }
+  }
+  $h
+}
+# files and MB a build wrote under <dir>/target (a Maven build's churn; build event fields files, mb)
+function Get-BuildWrites([string]$dir, [datetime]$since) {
+  $root = Join-Path $dir 'target'; if (-not (Test-Path -LiteralPath $root -PathType Container)) { return $null }
+  $n = 0; $b = [long]0; $t = $since.ToUniversalTime().AddSeconds(-1)   # file times tick coarser than Get-Date
+  foreach ($fi in [IO.DirectoryInfo]::new($root).EnumerateFiles('*', [IO.SearchOption]::AllDirectories)) { if ($fi.LastWriteTimeUtc -ge $t) { $n++; $b += $fi.Length } }
+  @{ files = $n; mb = [math]::Round($b / 1MB, 1) }
 }
 # ---- lane pick: envy.ps1 calls Select-Lane at -Env <env> (K58 lane opening); Get-LaneLoad, Get-LanesOpen
 # a lane's users: agents with a layer, lease, hold or open deploy there; services up; train running

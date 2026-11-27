@@ -23,8 +23,8 @@ DB parts (README "Adapters"): db.engine = adapters/db-engines.ps1 (kind db-engin
   db.migrations.tool / migrations.tool = crafty/adapters/<tool>.ps1 (kind migration); db.rollback = any tool command, or the tool's
   name for its tag / rollback (only with db.restoreVia tool-then-kit or restore -UseToolRollback).
 Sections: L36 config · L244 state · L291 layer drops · L366 leases · L477 code · L488 migrations ·
-  L491 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L640 shared builds · L751 hooks · L825 marks · L1009 seed ·
-  L1076 processes · L1432 daemon · L1913 cleanup · L1985 verbs
+  L491 migration tool (kind migration; crafty/adapters/<tool>.ps1) · L640 shared builds · L760 hooks · L834 marks · L1018 seed ·
+  L1085 processes · L1441 daemon · L1922 cleanup · L1994 verbs
 #>
 #Requires -Version 7
 $__envyArgs = @($args); if ($__envyArgs.Count -and "$($__envyArgs[0])" -eq 'localenv') { $__envyArgs = @($__envyArgs | Select-Object -Skip 1) }   # agents repeat the old action word: envy.ps1 localenv mark
@@ -649,11 +649,20 @@ function Build-Repo([string]$e, [string]$rn) {
     $dir = SvcDir $e $s; $cmd = Expand-Placeholders ([string]$s.build) $e $s $dir ''
     if ($cmd -match '\{reactor\}') { $cmd = $cmd.Replace('{reactor}', (Write-Reactor $e $s)) }
     elseif ($lr = Get-LayerReactorFlags $e $s $cmd) { $cmd = Add-ToolFlags $cmd $lr }
-    Write-Host "[$e] building $($s.name): $cmd"
-    $log = LogFile $e "$($s.name)-build"; Remove-Item $log -ErrorAction SilentlyContinue; $t0 = Get-Date
-    With-Env (LaneEnv $e $s) { & $KitCmd.dev gate -Dir $dir -Cmd "$cmd > `"$log`" 2>&1" *>&1 | Select-String -Pattern '^\[gate\] (starting|waiting.*Biggest|stopped by the kit|PAUSE)' | ForEach-Object { if ("$_" -match 'kit: (.+?) \(exit|\] (PAUSE.+)') { $script:Killed = "$($Matches[1])$($Matches[2])" }; Write-Host "  $_" } }
-    $bc = $LASTEXITCODE
-    Event $e 'build' @{ service = $s.name; repo = $rn; ok = -not $bc; code = $bc; sec = [int]((Get-Date) - $t0).TotalSeconds; sha = "$(git -C (EnvRepos $e)[$rn].wt rev-parse --short HEAD 2>$null)".Trim() }   # durations feed the learned parameters
+    $t0 = Get-Date; $ji = Get-JavaIncPlan $e $s $dir $cmd   # services[].javaIncremental (adapters/shared-builds.ps1)
+    if ($ji) { $cmd = $ji.cmd; Write-Host "[$e] $($s.name): java $($ji.mode) ($($ji.why))" }
+    $log = LogFile $e "$($s.name)-build"
+    $run = $cmd
+    do {   # javaIncremental: a failed incremental run -> a full one; a verify run -> a full one to compare
+      Write-Host "[$e] building $($s.name): $run"; Remove-Item $log -ErrorAction SilentlyContinue
+      With-Env (LaneEnv $e $s) { & $KitCmd.dev gate -Dir $dir -Cmd "$run > `"$log`" 2>&1" *>&1 | Select-String -Pattern '^\[gate\] (starting|waiting.*Biggest|stopped by the kit|PAUSE)' | ForEach-Object { if ("$_" -match 'kit: (.+?) \(exit|\] (PAUSE.+)') { $script:Killed = "$($Matches[1])$($Matches[2])" }; Write-Host "  $_" } }
+      $bc = $LASTEXITCODE
+      $run = if ($ji -and -not $script:Killed) { Step-JavaInc $e $s $ji $bc $log }
+    } while ($run)
+    $ev = @{ service = $s.name; repo = $rn; ok = -not $bc; code = $bc; sec = [int]((Get-Date) - $t0).TotalSeconds; sha = "$(git -C (EnvRepos $e)[$rn].wt rev-parse --short HEAD 2>$null)".Trim() }
+    if ($cmd -match '\b(mvn|mvnw|mvnd)\b' -and ($w = Get-BuildWrites $dir $t0)) { $ev.files = $w.files; $ev.mb = $w.mb }   # churn per lane (javaIncremental trial)
+    if ($ji) { $ev.java = $ji.mode; $ev.javaWhy = $ji.why; $ev.touched = $ji.touched; if ($null -ne $ji.diff) { $ev.verifyDiff = $ji.diff } }
+    Event $e 'build' $ev   # durations feed the learned parameters
     if ($bc -and $script:Killed) { return "killed: $($s.name): $script:Killed" }
     if ($bc) {
       $code = $bc; $lines = @(Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '^\[gate\]|^WARNING:' })

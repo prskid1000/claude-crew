@@ -36,7 +36,7 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
   `localEnv.lanes.openAfterMinutes` (learned) and free RAM minus the keep-free floor holds its services; `-Env <lane id>` /
   `-Lane <k>` opens or pins one; owner verbs: the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
   N of M (why)`. Same layers: no target move (`refresh`).
-- API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1). Seed: the env's seed file; `{bird}` in it (e.g. `-Target local-shop-{bird}`).
+- API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1). Seed: `{bird}` in the env's seed file (`-Target local-shop-{bird}`).
 - `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first (`Unknown column` = a guessed name).
 - `services[].init` { cmd, creates, timeoutSec, donor }: runs before a start while `creates` is missing (a lane's own data
   copy); `donor` (a lane id) must be a clean baseline (db.md).
@@ -54,8 +54,8 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 - One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry the lane id (`{bird}` in a template).
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
 - Data and logs under the kit (`.state/localenv/lanes/<service>-<product>-<bird>`), never the system drive; low-write settings (MySQL lane ini: doublewrite off, `sync_binlog=0`).
-- Names (`localEnv.laneIds`; default `bird`) `nn` lane `lane-<10 x env index + k>`, `bird` `<product>-<bird>`; shown `shop·Kestrel`; the id in `-Env`, state, logs. Older ids (`shop2`, `shop-kestrel`, pokey `local-shop2`) warn; `doctor` flags old config keys.
-- Move a base env: `skills/envy/mysql-base-move.ps1` (`-Apply` copies product schemas only, `-Rename [-Ids nn]` lane names, `-Config`; config `localEnv.baseMove`).
+- Names (`localEnv.laneIds`; default `bird`) `nn` lane `lane-<10 x env index + k>`, `bird` `<product>-<bird>`; shown `shop·Kestrel`; the id in `-Env`, state, logs. Older ids (`shop2`) warn; `doctor` flags old config keys.
+- Move a base env: `skills/envy/mysql-base-move.ps1` (config `localEnv.baseMove`).
 
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)
@@ -70,7 +70,6 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 ```json
 { "localEnv": {
   "envs": { "shop": {
-   "description": "API + web of the shop",
    "services": [
     { "name": "db", "external": true, "port": 5432 },
     { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://127.0.0.1:{port}/health",
@@ -81,7 +80,7 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
    ],
    "smoke": [ { "name": "api health", "service": "api", "url": "http://127.0.0.1:8080/health" } ],
    "db": { "engine": "mysql", "user": "root", "schemas": ["shop"], "schemasQuery": "<SELECT listing more env schemas>",
-    "migrateSql": "<the migration tool's dry-run SQL command, run in the service folder>" },
+    "migrateSql": "<migration tool dry-run SQL command (service folder)>" },
    "seed": "<kit>/.state/localenv/shop.seed.json"
   } } } }
 ```
@@ -111,7 +110,8 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
   ERROR SPIKE classes; `dependency` = a start failed on a dependency that was down: wait, retry once). `expectedErrors`
   (`localEnv.` or `envs.<env>.`; a lane uses its env's): regexes of lines that never flag (a job calling an unreachable
   system). `defaultService`: what `logs` shows without `-Service` (else the only one).
-- `mvnd` on PATH replaces mvn / mvnw in gated builds.
+- `mvnd` on PATH replaces mvn / mvnw in gated builds; `services[].javaIncremental` (off; true | { fullEvery 10, maxFiles
+  2000, alwaysWith, mergeIndex, fullWhen }) compiles changed sources + dependants (failed, each fullEvery-th: + a full one).
 
 ## Cleanup
 - `cleanup [-Quick] [-DryRun]` (owner / coordinator): env worktrees (uncommitted ones kept), logs, run files and
