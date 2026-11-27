@@ -1,7 +1,7 @@
 #Requires -Version 7
 # Usage: dot-sourced by envy.ps1 from adapters/ (name order). Exit codes: none here (envy.ps1 verbs exit).
-# Sections: L5 shared builds · L145 java incremental · L275 lane pick · L325 start room · L369 thin artifacts ·
-#   L411 lane priority · L471 static server
+# Sections: L5 shared builds · L145 java incremental · L309 lane pick · L359 start room · L403 thin artifacts ·
+#   L445 lane priority · L505 static server
 # ---- shared builds: a lane stages a recorded copy of the same code + build config (reuseBuilds: own lane; shareBuild: any) or a
 # crafty.ps1 check build of the same tree (shareCheckBuild); Build-Repo and Stage-Artifacts call these; Write-Reactor: the {reactor} build flags.
 $script:BuildKeys = @{}; $script:SharedStage = @{}; $script:CheckBuild = @{}
@@ -156,25 +156,28 @@ function Get-JavaIncOpts($s) {
 function Get-JavaIncPlan([string]$e, $s, [string]$dir, [string]$cmd) {
   if (-not $s.javaIncremental -or $cmd -notmatch '\b(mvn|mvnw|mvnd)\b' -or -not (Test-Path -LiteralPath (Join-Path $dir 'pom.xml'))) { return $null }
   $o = Get-JavaIncOpts $s; $wt = (EnvRepos $e)[(RepoOf $e $s)].wt; $rec = Get-KitMember (Read-State $e).javaInc $s.name
-  $p = @{ base = $cmd; cmd = $cmd; mode = 'full'; why = ''; head = "$(git -C $wt rev-parse HEAD 2>$null)".Trim(); n = [int]$rec.n; phase = 1; dir = $dir; touched = 0 }
-  $full = { param($why) $p.mode = 'full'; $p.cmd = $cmd; $p.why = $why; Reset-JavaIncStatus $dir; $p }
-  if (-not $rec.sha -or -not (Test-Path -LiteralPath (Join-Path $dir 'target/classes'))) { return (& $full 'no baseline build') }
-  $null = git -C $wt cat-file -e "$($rec.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { return (& $full 'baseline commit gone') }
   $rel = [IO.Path]::GetRelativePath($wt, $dir).Replace('\', '/'); $src = if ($rel -eq '.') { 'src/main/java' } else { "$rel/src/main/java" }
+  $p = @{ base = $cmd; cmd = $cmd; mode = 'full'; why = ''; head = "$(git -C $wt rev-parse HEAD 2>$null)".Trim(); n = [int]$rec.n; phase = 1; dir = $dir; wt = $wt; src = $src; touched = 0 }
+  $full = { param($why) $p.mode = 'full'; $p.cmd = $cmd; $p.why = $why; Reset-JavaIncStatus $dir; $p }
+  $cls = Join-Path $dir 'target/classes'
+  if (-not $rec.sha -or -not (Test-Path -LiteralPath $cls) -or -not @([IO.Directory]::EnumerateFiles($cls, '*.class', [IO.SearchOption]::AllDirectories) | Select-Object -First 1).Count) { return (& $full 'no baseline build') }   # a cleaned full run that never finished: none
+  $null = git -C $wt cat-file -e "$($rec.sha)^{commit}" 2>$null; if ($LASTEXITCODE) { return (& $full 'baseline commit gone') }
+  if ($rec.deps -and $rec.deps -ne (Get-JavaDepsPrint $e $s $wt)) { return (& $full 'a dependency jar changed') }   # stale mode skips Maven's own dependency check
   $java = @(); $gone = @()
   foreach ($row in @(git -C $wt -c core.quotepath=off diff --name-status --no-renames $rec.sha 2>$null | Where-Object { $_ })) {
     $how, $f = $row -split "`t", 2
     if ($f -match '(^|/)src/test/') { continue }
-    if ($f -match '(^|/)pom\.xml$') { return (& $full "pom changed: $f") }
+    if ($f -match '(^|/)(pom\.xml|lombok\.config|\.mvn/.+)$') { return (& $full "build input changed: $f") }
     if ($f -notmatch '\.java$') { continue }
     if (-not $f.StartsWith("$src/")) { return (& $full "source outside the module: $f") }
     if ($how -eq 'D') { $gone += $f } else { $java += $f }
   }
+  foreach ($f in @($rec.dirty | Where-Object { $_ -and $_ -notin $java })) { if (Test-Path -LiteralPath (Join-Path $wt $f)) { $java += $f } else { $gone += $f } }   # last build's uncommitted edits (maybe reverted)
   if ($gone.Count) { Remove-JavaClasses $wt $dir $src $gone -Generated; return (& $full "$($gone.Count) deleted source(s)") }
   $p.mode = if ($p.n + 1 -ge $o.fullEvery) { 'verify' } else { 'incremental' }
   $p.cmd = Add-ToolFlags $cmd '-Dmaven.compiler.useIncrementalCompilation=false'
   if (-not $java.Count) { $p.why = 'no main source changed'; return $p }
-  $set = @(Get-JavaDependants $wt $src $java $o.alwaysWith)
+  $set = @(Get-JavaDependants $wt $src $java $o.alwaysWith $cls)
   if ($set.Count -gt $o.maxFiles) { return (& $full "$($set.Count) sources to compile (maxFiles $($o.maxFiles))") }
   $hit = @(if ($o.fullWhen) { $set | Where-Object { [regex]::IsMatch([IO.File]::ReadAllText((Join-Path $wt $_)), $o.fullWhen) } | Select-Object -First 1 })
   if ($hit.Count) { return (& $full "fullWhen matches $($hit[0])") }
@@ -205,18 +208,30 @@ function Merge-JavaIndex($p) {
     } elseif ($name -notin $wrote -and "$old".Trim() -in $p.fqns) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
   }
 }
-# worktree paths of the changed sources + every source naming one of them or a subclass of one (transitively) + alwaysWith matches
-function Get-JavaDependants([string]$wt, [string]$src, [string[]]$changed, [string]$always) {
+# worktree paths of the changed sources + every source naming one of them, a subclass of one (transitively) or its metamodel
+# (<Name>_) + every source whose last classes reference one (a chained call or var names its owner only in bytecode) + alwaysWith
+function Get-JavaDependants([string]$wt, [string]$src, [string[]]$changed, [string]$always, [string]$cls) {
   $leaf = { param($f) [IO.Path]::GetFileNameWithoutExtension($f) }
-  $names = [Collections.Generic.HashSet[string]]::new([string[]]@($changed | ForEach-Object { & $leaf $_ }))
+  $names = [Collections.Generic.HashSet[string]]::new([string[]]@($changed | ForEach-Object { & $leaf $_ })); $hier = @($changed)
   $pf = Join-Path (Get-KitPath localenv -Create) "javainc-$PID.txt"; $w = '[^A-Za-z0-9_$]'
   $grep = { param([string[]]$pat, [string[]]$how) [IO.File]::WriteAllText($pf, (($pat -join "`n") + "`n")); @(git -C $wt -c core.quotepath=off grep -l @how -f $pf -- $src 2>$null | Where-Object { $_ }) }
   try {
     $todo = @($names)
     for ($i = 0; $todo.Count -and $i -lt 10; $i++) {
-      $todo = @(& $grep @($todo | ForEach-Object { "(extends|implements)[^{]*$w$([regex]::Escape($_))($w|$)" }) @('-E') | ForEach-Object { & $leaf $_ } | Where-Object { $names.Add($_) })
+      $sub = @(& $grep @($todo | ForEach-Object { "(extends|implements)[^{]*$w$([regex]::Escape($_))($w|$)" }) @('-E') | Where-Object { $names.Add((& $leaf $_)) })
+      $hier += $sub; $todo = @($sub | ForEach-Object { & $leaf $_ })
     }
-    $out = @($changed) + @(& $grep @($names) @('-w', '-F'))
+    $out = @($changed) + @(& $grep @(@($names) + @($names | ForEach-Object { "$($_)_" })) @('-w', '-F'))
+    if ($cls -and (Test-Path -LiteralPath $cls)) {
+      $int = @($hier | ForEach-Object { [regex]::Escape(($_.Substring($src.Length + 1) -replace '\.java$')) })
+      $rx = [regex]::new("($($int -join '|'))_?(?![A-Za-z0-9_])")
+      foreach ($fi in [IO.DirectoryInfo]::new($cls).EnumerateFiles('*.class', [IO.SearchOption]::AllDirectories)) {
+        if ($rx.IsMatch([Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($fi.FullName)))) {
+          $sf = "$src/" + ([IO.Path]::GetRelativePath($cls, $fi.FullName).Replace('\', '/') -replace '(\$.*)?\.class$') + '.java'
+          if (Test-Path -LiteralPath (Join-Path $wt $sf)) { $out += $sf }   # processor output (XImpl, X_) has no source: its source regenerates it
+        }
+      }
+    }
     if ($always) { [IO.File]::WriteAllText($pf, "$always`n"); $out += @(& $grep @($always) @('-E')) }
     @($out | Select-Object -Unique)
   } finally { Remove-Item -LiteralPath $pf -Force -ErrorAction SilentlyContinue }
@@ -231,17 +246,33 @@ function Remove-JavaClasses([string]$wt, [string]$dir, [string]$src, [string[]]$
     }
   }
 }
-# no recorded inputs: maven-compiler's own change check recompiles the whole module
-function Reset-JavaIncStatus([string]$dir) { Remove-Item -LiteralPath (Join-Path $dir 'target/maven-status/maven-compiler-plugin/compile') -Recurse -Force -ErrorAction SilentlyContinue }
+# a full run = a clean compile: no recorded inputs (maven-compiler recompiles the module), no class or processor file left over
+# (Maven deletes old outputs only from the createdFiles.lst this removes: a removed inner class would ship)
+function Reset-JavaIncStatus([string]$dir) {
+  Remove-Item -LiteralPath (Join-Path $dir 'target/maven-status/maven-compiler-plugin/compile'), (Join-Path $dir 'target/generated-sources/annotations') -Recurse -Force -ErrorAction SilentlyContinue
+  $c = Join-Path $dir 'target/classes'; if (Test-Path -LiteralPath $c) { foreach ($f in [IO.Directory]::EnumerateFiles($c, '*.class', [IO.SearchOption]::AllDirectories)) { [IO.File]::Delete($f) } }
+}
+# the jars outside the worktree a build's classpathFile lists (saved after a good build): path, size and time per jar, hashed
+function Get-JavaDepsPrint([string]$e, $s, [string]$wt, [switch]$Save) {
+  $keep = Join-Path (Get-KitPath localenv -Create) "run/$e/$($s.name)/javainc-deps.txt"
+  if ($Save) {
+    $cp = if ($s.classpathFile) { Join-Path (SvcDir $e $s) $s.classpathFile }; if (-not $cp -or -not (Test-Path -LiteralPath $cp)) { return '' }
+    $jars = @((Get-Content -LiteralPath $cp -Raw) -split [regex]::Escape([IO.Path]::PathSeparator) | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith($wt, [StringComparison]::OrdinalIgnoreCase) })
+    $null = New-Item -ItemType Directory -Force (Split-Path $keep); Set-Content -LiteralPath $keep $jars -Encoding utf8
+  } elseif (Test-Path -LiteralPath $keep) { $jars = @(Get-Content -LiteralPath $keep) } else { return '' }
+  $pr = "$keep.$PID.print"; [IO.File]::WriteAllText($pr, (@($jars | ForEach-Object { $fi = [IO.FileInfo]::new($_); "$_|$(if ($fi.Exists) { "$($fi.Length)|$($fi.LastWriteTimeUtc.Ticks)" })" }) -join "`n"))
+  try { (Get-FileHash -LiteralPath $pr -Algorithm MD5).Hash } finally { Remove-Item -LiteralPath $pr -Force -ErrorAction SilentlyContinue }
+}
 # after a run of $p: the next command (failed incremental -> full; verify -> full + compare), $null when done (good: baseline recorded)
 function Step-JavaInc([string]$e, $s, $p, [int]$bc, [string]$log) {
   if ($p.phase -eq 1 -and $p.mode -ne 'full' -and -not $bc) { Merge-JavaIndex $p }
   if ($p.phase -eq 1 -and $p.mode -ne 'full' -and ($bc -or $p.mode -eq 'verify')) {
-    $p.phase = 2; Reset-JavaIncStatus $p.dir
+    $p.phase = 2; if (-not $bc) { $p.sums = Get-JavaIncSums $p.dir }   # before the clean
+    Reset-JavaIncStatus $p.dir
     if ($bc) {
       $err = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue | Where-Object { $_ -match '(?i)\berror\b' } | Select-Object -First 2) -join ' | '
       $p.mode = 'fallback'; $p.why = "incremental failed (exit $bc): $err"; Write-Host "[$e] $($s.name): incremental compile failed: a full build"
-    } else { $p.sums = Get-JavaIncSums $p.dir; Write-Host "[$e] $($s.name): verify: a full build to compare" }
+    } else { Write-Host "[$e] $($s.name): verify: a full build to compare" }
     return $p.base
   }
   if ($p.mode -eq 'verify' -and -not $bc) {
@@ -250,7 +281,8 @@ function Step-JavaInc([string]$e, $s, $p, [int]$bc, [string]$log) {
     if ($diff.Count) { Write-Host "[$e] $($s.name): verify MISMATCH: $($diff.Count) file(s) differ from the full build (kept the full one)"; Event $e 'java-incremental-mismatch' @{ service = $s.name; files = $diff.Count; sample = @($diff | Select-Object -First 5); why = $p.why } }
   }
   if (-not $bc) {   # distinct names: Update-State's body loops over $n, $k
-    $jiRec = @{ sha = $p.head; n = $(if ($p.mode -eq 'incremental') { $p.n + 1 } else { 0 }); at = (Now) }; $jiSvc = $s.name
+    $jiDirty = @(git -C $p.wt -c core.quotepath=off diff --name-only HEAD -- $p.src 2>$null | Where-Object { $_ -match '\.java$' })
+    $jiRec = @{ sha = $p.head; n = $(if ($p.mode -eq 'incremental') { $p.n + 1 } else { 0 }); at = (Now); dirty = $jiDirty; deps = (Get-JavaDepsPrint $e $s $p.wt -Save) }; $jiSvc = $s.name
     Update-State $e { param($x) if ($x.javaInc -isnot [hashtable]) { $x.javaInc = @{} }; $x.javaInc[$jiSvc] = $jiRec }
   }
   $null
@@ -268,9 +300,11 @@ function Get-JavaIncSums([string]$dir) {
 # files and MB a build wrote under <dir>/target (a Maven build's churn; build event fields files, mb)
 function Get-BuildWrites([string]$dir, [datetime]$since) {
   $root = Join-Path $dir 'target'; if (-not (Test-Path -LiteralPath $root -PathType Container)) { return $null }
-  $n = 0; $b = [long]0; $t = $since.ToUniversalTime().AddSeconds(-1)   # file times tick coarser than Get-Date
-  foreach ($fi in [IO.DirectoryInfo]::new($root).EnumerateFiles('*', [IO.SearchOption]::AllDirectories)) { if ($fi.LastWriteTimeUtc -ge $t) { $n++; $b += $fi.Length } }
-  @{ files = $n; mb = [math]::Round($b / 1MB, 1) }
+  try {   # a measure never fails a build (a folder gone mid-walk)
+    $n = 0; $b = [long]0; $t = $since.ToUniversalTime().AddSeconds(-1)   # file times tick coarser than Get-Date
+    foreach ($fi in [IO.DirectoryInfo]::new($root).EnumerateFiles('*', [IO.SearchOption]::AllDirectories)) { if ($fi.LastWriteTimeUtc -ge $t) { $n++; $b += $fi.Length } }
+    @{ files = $n; mb = [math]::Round($b / 1MB, 1) }
+  } catch { $null }
 }
 # ---- lane pick: envy.ps1 calls Select-Lane at -Env <env> (K58 lane opening); Get-LaneLoad, Get-LanesOpen
 # a lane's users: agents with a layer, lease, hold or open deploy there; services up; train running

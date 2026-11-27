@@ -26,18 +26,18 @@ For kitty / the coordinator (`localEnv`, owner verbs); any agent puzzled by a NO
 - Restarts count only real starts (backoff 3/30 min).
 
 ## Lanes
-- `envs.<env>.lanes` { max, portStep 100 }: env copies side by side, each its own state, controller, train, dirs.
+- `envs.<env>.lanes` { max, portStep 100 }: env copies, each its own state, controller, train, dirs.
 - Lane 1 = `<env>`, lane k = `<env><k>` (laneIds: "Names"), all derived alike: ports of services the env runs + (k-1) x portStep; in every string
   `{lane}` ('' / k), `{port:<svc>}` and `:<old port>` follow.
-- `envs.<lane id>` (or an older id) keys override that lane (e.g. its own DB service; `db.port` follows its port); env file `<env>.env`, then
+- `envs.<lane id>` (or an older id) keys override that lane (its own DB service: `db.port` follows its port); env file `<env>.env`, then
   `<env><k>.env`.
 - `-Env <env>` (deploy, use, task) = the agent's lane, else the least busy warm lane (services up or a train; shared when
   busy; a deploy skips one others lease for a free one with room); a cold one opens when warm queue wait reaches
   `localEnv.lanes.openAfterMinutes` (learned) and free RAM minus the keep-free floor holds its services; `-Env <lane id>` /
-  `-Lane <k>` opens or pins one; owner verbs: the named lane. An extra lane's services stop after `idle.graceMinutes` unheld (at least 3 start times). `status`: `lanes open
+  `-Lane <k>` opens or pins one; owner verbs: the named lane. An extra lane's services stop unheld past `idle.graceMinutes` (>= 3 start times). `status`: `lanes open
   N of M (why)`. Same layers: no target move (`refresh`).
 - API calls: `pokey.ps1 api -Target <target>-<bird>` (`-falcon` = lane 1). Seed: `{bird}` in the env's seed file (`-Target local-shop-{bird}`).
-- `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first (`Unknown column` = a guessed name).
+- `envy.ps1 sql`: `SHOW COLUMNS FROM <table>` first (an `Unknown column` was guessed).
 - `services[].init` { cmd, creates, timeoutSec, donor }: runs before a start while `creates` is missing (a lane's own data
   copy); `donor` (a lane id) must be a clean baseline (db.md).
 - A lane's own DB service (port = `db.port`) down: marks wait for its start; db checks, pool, mark expiry and the temp watchdog rest.
@@ -54,8 +54,8 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 - One per lane and per product: no service shared across lanes or products; data folder, log folder and port carry the lane id (`{bird}` in a template).
 - Started by envy (`start`, with `init` when it has data to copy) at a lease, stopped when idle (`idle.graceMinutes`); never `external` (always on) and never an OS service.
 - Data and logs under the kit (`.state/localenv/lanes/<service>-<product>-<bird>`), never the system drive; low-write settings (MySQL lane ini: doublewrite off, `sync_binlog=0`).
-- Names (`localEnv.laneIds`; default `bird`) `nn` lane `lane-<10 x env index + k>`, `bird` `<product>-<bird>`; shown `shop·Kestrel`; the id in `-Env`, state, logs. Older ids (`shop2`) warn; `doctor` flags old config keys.
-- Move a base env: `skills/envy/mysql-base-move.ps1` (config `localEnv.baseMove`).
+- Names (`localEnv.laneIds`; default `bird`) `nn` lane `lane-<10 x env index + k>`, `bird` `<product>-<bird>`; shown `shop·Kestrel`; the id in `-Env`, state, logs. Older ids warn (`doctor`: old keys).
+- Move a base env: `skills/envy/mysql-base-move.ps1` (`-Apply` copies product schemas only, `-Rename [-Ids nn]` lane names, `-Config`; config `localEnv.baseMove`).
 
 ## Config
 - Envs inherit `localEnv.defaults`, then `envs.<env>.extends` (another env); objects merge, named lists (`services`, `smoke`)
@@ -70,6 +70,7 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 ```json
 { "localEnv": {
   "envs": { "shop": {
+   "description": "API + web of the shop",
    "services": [
     { "name": "db", "external": true, "port": 5432 },
     { "name": "api", "repo": "backend", "dir": "api", "port": 8080, "health": "http://127.0.0.1:{port}/health",
@@ -89,11 +90,11 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 - `static` = the folder `build` writes; the kit's static server serves its staged copy (unknown routes -> index.html);
   `routes` (first `match` regex wins): `rewrite` = another path (`$1` captures), `cmd` = its stdout (captures: path characters
   only; fails: 404; `type`, `cacheSeconds`).
-- `prepare` = a command after each sync whose edits are committed locally on the lane branch `lane/<product>-<bird>` (a build cache at `{cache}`,
+- `prepare` = a command after each sync, its edits committed on lane branch `lane/<product>-<bird>` (`{cache}`: a build cache
   outside the repo).
-- `unpack` = a command unpacking `{artifact}` into `{out}` (failed: plain artifact staged, event `unpack-fallback`).
+- `unpack` = a command: `{artifact}` unpacked into `{out}` (failed: plain artifact staged, event `unpack-fallback`).
 - `keepReleases` (2) per service + running ones.
-- `stageLinks` (true): the artifact moves out of the build (copied when another service stages it); unpacked / static
+- `stageLinks` (true): the artifact moves out of the build (copied if another service stages it); unpacked / static
   files: one per content hash in `_lib`, hard-linked (never written in place).
 - `reuseBuilds` (false): its own copy of the same inputs + config re-staged, no build (unchanged: no restart);
   only for builds reading nothing outside the worktree (a local SNAPSHOT goes stale).
@@ -101,17 +102,17 @@ Every local-env service follows it; `doctor` checks (`adapters/lane-standard.ps1
 - `aotTrain` ({aotFile}): one gated background run per artifact after it is up; `{aot}` in `start` = `aotUse`
   (`-XX:AOTCache="{aotFile}"`) once it exists.
 - `classpathFile` (off): thin jar + this classpath: per-release argfile; `start`: `@"{javaArgs}" <main>`.
-- `{reactor}` in `build` = `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only modules whose parent is
-  in the module's parent chain, the rest from the local repository: doctor lists them). Without it (or `-pl`):
+- `{reactor}` in `build` = `-f <aggregator> -pl <module> -am` over `reactor` (module folder globs; only those whose parent is
+  in the module's parent chain, others from the local repository: doctor lists them). Without it (or `-pl`):
   needed modules a layer changes or a stale jar holds join its reactor (Gradle `--include-build`); never installed.
-- An edited kit.local.json, envy.ps1, lib.ps1 or `adapters/` file restarts the loop between trains.
+- Editing kit.local.json, envy.ps1, lib.ps1 or `adapters/` restarts the loop between trains.
 - `readyPattern`: a ready log line checks health at once (else every 5 s; fail lines every 1 s).
 - `logClasses` { expected, startup, connection, 5xx, dependency }: regexes replacing the generic log classes (supervise's
-  ERROR SPIKE classes; `dependency` = a start failed on a dependency that was down: wait, retry once). `expectedErrors`
-  (`localEnv.` or `envs.<env>.`; a lane uses its env's): regexes of lines that never flag (a job calling an unreachable
+  ERROR SPIKE classes; `dependency`: the start retry in "Train and leases"). `expectedErrors`
+  (`localEnv.` or `envs.<env>.`; a lane uses its env's): never-flag line regexes (a job calling an unreachable
   system). `defaultService`: what `logs` shows without `-Service` (else the only one).
-- `mvnd` on PATH replaces mvn / mvnw in gated builds; `services[].javaIncremental` (off; true | { fullEvery 10, maxFiles
-  2000, alwaysWith, mergeIndex, fullWhen }) compiles changed sources + dependants (failed, each fullEvery-th: + a full one).
+- `mvnd` on PATH replaces mvn / mvnw in gated builds; `services[].javaIncremental` (off; true | {fullEvery 10, maxFiles 2000,
+  alwaysWith, mergeIndex, fullWhen}): changed sources + dependants (failed, each fullEvery-th: + a clean full).
 
 ## Cleanup
 - `cleanup [-Quick] [-DryRun]` (owner / coordinator): env worktrees (uncommitted ones kept), logs, run files and

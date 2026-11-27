@@ -3,7 +3,7 @@
 tests/db-generic.tests.ps1: the db adapters on layouts other than ours, offline (mocked SQL, shims): migration sets (two masters,
 admin + tenant scopes: registry first on tag, last on rollback; search path = the resources root), several masters without sets
 refused, a flyway-style dir set (files under its dir count as migrations), tenant models none / column / one-DB, postgres never
-calls the mysql client, envy verbs a local adapter registers, a kit-stopped lane build (no owner, no layer blamed).
+calls the mysql client, envy verbs a local adapter registers, a kit-stopped lane build (no owner, no layer blamed), the javaIncremental build loop.
 Usage: pwsh -NoProfile -File tests/db-generic.tests.ps1 [-Kit <kit>] (or tests/kit-tests.ps1 -Area db-generic).
 Exit codes: 0 pass · 1 fail.
 #>
@@ -145,6 +145,19 @@ $kb = & { . (Join-Path $k 'skills/envy/envy.ps1') help *> $null; $g = Join-Path 
   $rs = @{}; Set-KilledBuild k @(@{ request = 1 }) { 1 } @(@{ kind = 'drop'; id = 2; branch = 'b' }) @{ r = @{ branch = 'b' } } r $rs
   "$(Build-Repo kb r 6>$null)|$(Get-Content "$g.txt")|$env:CLAUDE_AGENT|$($rs[1].outcome)$($rs[2].outcome)" }
 Expect "envy lane build killed, no owner; layer + drop failed ($kb)" ($kb -eq 'killed: api: x|o=|dv|failedfailed')
+# Build-Repo: a failed incremental run -> one full run (event java fallback, files); a killed run ends the loop; a lane without the key: one run
+$jbr = & { . (Join-Path $k 'skills/envy/envy.ps1') help *> $null; $bd = New-Item -ItemType Directory -Force (Join-Path $k 'ji-br/target'); $cf = Join-Path $k 'ji-br/n.txt'; $g = Join-Path $k 'ji-br/g.ps1'
+  Set-Content $g "`$c = [int](Get-Content '$cf' -ErrorAction SilentlyContinue) + 1; Set-Content '$cf' `$c; Add-Content '$cf.cmds' `"`$args`"; if (`$env:JI_KILL) { Write-Host '[gate] stopped by the kit: x (exit -1)'; exit -1 }; 'o' | Set-Content '$bd/o.txt'; if (`$c -eq 1) { exit 1 }; exit 0"
+  $KitCmd.dev = $g; $global:jiSvc = [pscustomobject]@{ name = 'api'; build = 'mvn -q package'; javaIncremental = $true }
+  function EnvServices { $global:jiSvc }; function RepoOf { 'r' }; function SvcDir { Split-Path $bd }; function EnvVars { [ordered]@{} }; function EnvRepos { @{ r = @{ wt = (Split-Path $bd) } } }
+  foreach ($f in 'BuildKey', 'Find-CheckBuild', 'Get-LayerReactorFlags', 'Update-State', 'Merge-JavaIndex') { Set-Item "function:$f" { } }
+  function Expand-Placeholders { $args[0] }; function Event { if ($args[1] -eq 'build') { $global:jiEv = $args[2] } }
+  function Get-JavaIncPlan { if ($args[1].javaIncremental) { @{ mode = 'incremental'; cmd = 'mvn -Dinc -q package'; base = 'mvn -q package'; why = 'w'; touched = 3; phase = 1; dir = (Split-Path $bd); n = 0 } } }
+  $r1 = Build-Repo t r 6>$null; $e1 = $global:jiEv; $c1 = @(Get-Content "$cf.cmds").Count
+  Remove-Item $cf, "$cf.cmds"; $env:JI_KILL = '1'; $r2 = Build-Repo t r 6>$null; $env:JI_KILL = $null; $c2 = @(Get-Content "$cf.cmds").Count
+  Remove-Item $cf, "$cf.cmds"; $global:jiSvc = [pscustomobject]@{ name = 'api'; build = 'mvn -q package' }; Set-Content $cf 1; $r3 = Build-Repo t r 6>$null; $e3 = $global:jiEv; $c3 = @(Get-Content "$cf.cmds").Count
+  "[$r1]$c1 $($e1.java) $($e1.ok) $($e1.files)|$r2 $c2|[$r3]$c3 $($e3.ok) [$($e3.java)] $($e3.files)" }
+Expect "javaIncremental Build-Repo: fallback runs once more, killed stops, off = one run ($jbr)" ($jbr -eq '[]2 fallback True 1|killed: api: x 1|[]1 True [] 1')
 Remove-TestKit $k
 # the test helper: a read without the end marker is asked again; a write batch is never re-run (it may have run: a re-run hides the flake)
 $tmq = & { $script:tmCalls = 0; function mysql { $script:tmCalls++; $global:LASTEXITCODE = 0; if ($script:tmCalls -eq 1) { 'lost' } else { 'r'; '__kit_rows_end__' } }

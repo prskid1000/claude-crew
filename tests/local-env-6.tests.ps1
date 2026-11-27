@@ -158,32 +158,38 @@ $svr = & { . $lkL; function SvcDir { $args[1].dir }; $wtd = Join-Path $laneKit '
     "$(@($rj).Count)|$(& $g '/s1/main.js')|$(& $g '/s1/about')|$(& $g '/s1/site.json')|$((& $g '/s1/a%26b.json') -replace ':.*')|$((& $g '/s1/no.txt') -replace ':.*')|$(& $g '/main.js')" } finally { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue } }
 Expect "static server routes: rewrite, cmd stdout, unsafe capture 400, failed cmd 404, plain files unchanged ($svr)" ($svr -eq '3|200:x|200:<html>i</html>|200:{"f":"site.json"}|400|404|200:x')
 Copy-Item (Join-Path $src 'skills/crafty/adapters/container-tests.ps1') (New-Item -ItemType Directory -Force (Join-Path $laneKit 'skills/crafty/adapters'))   # Add-ToolFlags
-# owner 2026-11-27 (javaIncremental trial): a Maven build compiles the changed sources + dependants (subclasses transitively, every
-# @Mapper); full on no baseline, an entity in the set, a deleted source; every fullEvery-th also a full one, compared; failed -> full
+# owner 2026-11-27 (javaIncremental trial): a Maven build compiles the changed sources + dependants (names, subclasses transitively,
+# bytecode refs, every @Mapper); full (clean) on no baseline, fullWhen in the set, a deleted source; every fullEvery-th also a full
+# one, compared; failed -> full
 $jit = & { . $lkL 6>$null; $jw = Join-Path $k 'ji-wt'; $jm = Join-Path $jw 'api'; $jp = Join-Path $jm 'src/main/java/p'; $jcl = Join-Path $jm 'target/classes/p'
   $null = New-Item -ItemType Directory -Force $jp, $jcl; git -C $jw init -q -b main; $jg = { git -C $jw -c user.name=t -c user.email=t@t @args 2>&1 | Out-Null }
-  $jsrc = [ordered]@{ A = 'public class A { }'; B = 'public class B extends A { }'; C = 'public class C extends B { }'; F = 'class F { C c; }'; D = 'class D { }'; M = '@Mapper interface M { }'; E = '@Entity class E { F f; }' }
-  'x' | Set-Content (Join-Path $jm 'pom.xml'); foreach ($jn in $jsrc.Keys) { $jsrc[$jn] | Set-Content (Join-Path $jp "$jn.java"); 'c' | Set-Content (Join-Path $jcl "$jn.class") }
-  'i' | Set-Content (Join-Path $jcl 'A$In.class'); & $jg add -A; & $jg commit -q -m base; $jb = "$(git -C $jw rev-parse HEAD)".Trim()
+  $jsrc = [ordered]@{ A = 'public class A { }'; B = 'public class B extends A { }'; C = 'public class C extends B { }'; F = 'class F { C c; }'; D = 'class D { }'; M = '@Mapper interface M { }'; E = '@Entity class E { F f; }'
+    G = 'class G { void m() { H.get().f(); } }'; K = 'class K { Object o = E_.f; }' }
+  $jcs = { param($skip, $odd) foreach ($jn in $jsrc.Keys | Where-Object { $_ -notin $skip }) { $(if ($jn -eq $odd) { 'changed' } elseif ($jn -eq 'G') { 'xx p/A yy' } else { 'c' }) | Set-Content (Join-Path $jcl "$jn.class") } }
+  'x' | Set-Content (Join-Path $jm 'pom.xml'); foreach ($jn in $jsrc.Keys) { $jsrc[$jn] | Set-Content (Join-Path $jp "$jn.java") }
+  & $jg add -A; & $jg commit -q -m base; $jb = "$(git -C $jw rev-parse HEAD)".Trim()
   function EnvRepos { @{ r = [pscustomobject]@{ wt = $jw } } }; function RepoOf { 'r' }
   $jsv = [pscustomobject]@{ name = 'api'; javaIncremental = [pscustomobject]@{ fullEvery = 3; fullWhen = '@Entity' } }; $jc = 'mvn -q package'; $jlog = Join-Path $k 'ji.log'; 'x' | Set-Content $jlog
   $jold = { Get-ChildItem $jp -File | ForEach-Object { $_.LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-1) } }
   $jnew = { @(Get-ChildItem $jp -File | Where-Object { $_.LastWriteTimeUtc -gt [datetime]::UtcNow.AddMinutes(-5) } | ForEach-Object BaseName | Sort-Object) -join '' }
-  $p0 = Get-JavaIncPlan t $jsv $jm $jc; Update-State t { param($x) $x.javaInc = @{ api = @{ sha = $jb; n = 0 } } }
+  $p0 = Get-JavaIncPlan t $jsv $jm $jc; Update-State t { param($x) $x.javaInc = @{ api = @{ sha = $jb; n = 0 } } }; & $jcs; 'i' | Set-Content (Join-Path $jcl 'A$In.class')
   'public class A { int x; }' | Set-Content (Join-Path $jp 'A.java'); & $jg commit -q -am a; & $jold
   $p1 = Get-JavaIncPlan t $jsv $jm $jc; $t1 = & $jnew; $gone1 = -not (Test-Path (Join-Path $jcl 'A.class')) -and -not (Test-Path (Join-Path $jcl 'A$In.class')) -and (Test-Path (Join-Path $jcl 'D.class'))
   $s1 = Step-JavaInc t $jsv $p1 0 $jlog; $n1 = (Read-State t).javaInc.api.n
-  $null = New-Item -ItemType Directory -Force (Join-Path $jm 'target/maven-status/maven-compiler-plugin/compile/x'); 'class F { C c; int q; }' | Set-Content (Join-Path $jp 'F.java'); & $jg commit -q -am f
-  $p2 = Get-JavaIncPlan t $jsv $jm $jc; $rs2 = -not (Test-Path (Join-Path $jm 'target/maven-status/maven-compiler-plugin/compile')); $null = Step-JavaInc t $jsv $p2 0 $jlog
+  $null = New-Item -ItemType Directory -Force (Join-Path $jm 'target/maven-status/maven-compiler-plugin/compile/x'), (Join-Path $jm 'target/generated-sources/annotations/p'); 'class F { C c; int q; }' | Set-Content (Join-Path $jp 'F.java'); & $jg commit -q -am f
+  $p2 = Get-JavaIncPlan t $jsv $jm $jc; $rs2 = -not (Test-Path (Join-Path $jm 'target/maven-status/maven-compiler-plugin/compile')) -and -not (Test-Path (Join-Path $jm 'target/generated-sources/annotations')) -and -not @(Get-ChildItem $jcl -Filter *.class).Count
+  $null = Step-JavaInc t $jsv $p2 0 $jlog; & $jcs
   Update-State t { param($x) $x.javaInc.api.n = 2 }; 'class D { int y; }' | Set-Content (Join-Path $jp 'D.java'); & $jg commit -q -am d
-  $p3 = Get-JavaIncPlan t $jsv $jm $jc; $s3a = Step-JavaInc t $jsv $p3 0 $jlog; 'changed' | Set-Content (Join-Path $jcl 'F.class'); $s3b = Step-JavaInc t $jsv $p3 0 $jlog
+  $p3 = Get-JavaIncPlan t $jsv $jm $jc; $s3a = Step-JavaInc t $jsv $p3 0 $jlog; & $jcs @('D') 'F'; $s3b = Step-JavaInc t $jsv $p3 0 $jlog
   'class D { int z; }' | Set-Content (Join-Path $jp 'D.java'); & $jg commit -q -am d2; 'error: cannot find symbol' | Set-Content $jlog
-  $p4 = Get-JavaIncPlan t $jsv $jm $jc; $s4 = Step-JavaInc t $jsv $p4 1 $jlog; $n4 = (Read-State t).javaInc.api.n
-  'c' | Set-Content (Join-Path $jcl 'D.class'); & $jg rm -q (Join-Path $jp 'D.java'); & $jg commit -q -m rm; $p5 = Get-JavaIncPlan t $jsv $jm $jc; $gone5 = -not (Test-Path (Join-Path $jcl 'D.class'))
-  $off = Get-JavaIncPlan t ([pscustomobject]@{ name = 'api' }) $jm $jc; Start-Sleep -Milliseconds 1100; $bw0 = Get-Date; 'y' | Set-Content (Join-Path $jcl 'Y.class'); $bw = Get-BuildWrites $jm $bw0
+  $p4 = Get-JavaIncPlan t $jsv $jm $jc; $s4 = Step-JavaInc t $jsv $p4 1 $jlog; $n4 = (Read-State t).javaInc.api.n; & $jcs
+  Update-State t { param($x) $x.javaInc.api.dirty = @('api/src/main/java/p/Gone.java') }; $p6 = Get-JavaIncPlan t $jsv $jm $jc; & $jcs; Update-State t { param($x) $x.javaInc.api.dirty = @() }
+  & $jg rm -q (Join-Path $jp 'D.java'); & $jg commit -q -m rm; $p5 = Get-JavaIncPlan t $jsv $jm $jc; $gone5 = -not (Test-Path (Join-Path $jcl 'D.class')); & $jcs
+  $kd = @(Get-JavaDependants $jw 'api/src/main/java' @('api/src/main/java/p/E.java') '' '') -join ','
+  $off = Get-JavaIncPlan t ([pscustomobject]@{ name = 'api' }) $jm $jc; $bwt = [datetime]::UtcNow.AddMinutes(-1); (Get-Item (Join-Path $jcl 'A.class')).LastWriteTimeUtc = $bwt.AddMinutes(-5); $bw = Get-BuildWrites $jm $bwt
   @("$($p0.mode):$($p0.why)", "$($p1.mode):$($p1.touched):${t1}:${gone1}:$($p1.cmd)", "[$s1]$n1", "$($p2.mode):$($p2.why):$rs2", "$($p3.mode):${s3a}:[$s3b]:$($p3.diff)",
-    "$($p4.mode):${s4}:${n4}:$($p4.why)", "$($p5.mode):$($p5.why):$gone5", "[$off]$($bw.files)") -join ' | ' }
-Expect "javaIncremental: full without a baseline; A changed -> A, B, C (subclass of B), F (names C), M (@Mapper) touched, A classes gone, the flag; fullWhen (an entity) in the set -> full + compiler status reset; every 3rd -> a full one compared (1 class differs); failed -> full; a deleted source -> full, its class gone; off -> none; writes counted ($jit)" ($jit -eq 'full:no baseline build | incremental:5:ABCFM:True:mvn -Dmaven.compiler.useIncrementalCompilation=false -q package | []1 | full:fullWhen matches api/src/main/java/p/E.java:True | verify:mvn -q package:[]:1 | fallback:mvn -q package:0:incremental failed (exit 1): error: cannot find symbol | full:1 deleted source(s):True | []1')
+    "$($p4.mode):${s4}:${n4}:$($p4.why)", "$($p6.mode):$($p6.why)", "$($p5.mode):$($p5.why):$gone5", $kd, "[$off]$($bw.files)") -join ' | ' }
+Expect "javaIncremental: full without a baseline; A changed -> A, B, C (subclass of B), F (names C), G (bytecode ref), M (@Mapper) touched, A classes gone, the flag; fullWhen in the set -> a clean full; every 3rd -> a full one compared (1 class differs); failed -> full; a gone uncommitted edit or a deleted source -> full; metamodel users; off -> none; writes counted ($jit)" ($jit -eq 'full:no baseline build | incremental:6:ABCFGM:True:mvn -Dmaven.compiler.useIncrementalCompilation=false -q package | []1 | full:fullWhen matches api/src/main/java/p/E.java:True | verify:mvn -q package:[]:1 | fallback:mvn -q package:0:incremental failed (exit 1): error: cannot find symbol | full:1 deleted source(s) | full:1 deleted source(s):True | api/src/main/java/p/E.java,api/src/main/java/p/K.java | []8')
 # the Hibernate entity index after a compile that saw only Lamp (DIM removed) and House: other types kept, gone values and names dropped
 $jix = & { . $lkL 6>$null; $ir = Join-Path $k 'ji-idx'; $null = New-Item -ItemType Directory -Force $ir
   $wr = { param($n, $t, $h) [IO.File]::WriteAllText((Join-Path $ir $n), $t); [IO.File]::SetLastWriteTimeUtc((Join-Path $ir $n), [datetime]::UtcNow.AddHours(-$h)) }
@@ -191,6 +197,12 @@ $jix = & { . $lkL 6>$null; $ir = Join-Path $k 'ji-idx'; $null = New-Item -ItemTy
   $jp2 = @{ idx = $ir; snap = (Get-JavaIndexSnap $ir); fqns = @('p.Gone', 'p.House') }
   & $wr '.ON' 'p.Lamp ' 0; & $wr '.OFF' 'p.Lamp ' 0; & $wr 'House' 'p.House' 0; Merge-JavaIndex $jp2
   @(Get-ChildItem $ir | Sort-Object Name | ForEach-Object { "$($_.Name)=$([IO.File]::ReadAllText($_.FullName))" }) -join ';' }
+$jdp = & { . $lkL 6>$null; $dw = New-Item -ItemType Directory -Force (Join-Path $k 'ji-dp/wt/target'); $jar = Join-Path $k 'ji-dp/lib.jar'; 'j' | Set-Content $jar
+  function SvcDir { Split-Path $dw }; $ds = [pscustomobject]@{ name = 'api'; classpathFile = 'target/cp.txt' }
+  Set-Content (Join-Path $dw 'cp.txt') "$jar$([IO.Path]::PathSeparator)$(Join-Path $dw 'classes')" -NoNewline
+  $d1 = Get-JavaDepsPrint t $ds (Split-Path $dw) -Save; $d2 = Get-JavaDepsPrint t $ds (Split-Path $dw); (Get-Item $jar).LastWriteTimeUtc = [datetime]::UtcNow.AddDays(-1); $d3 = Get-JavaDepsPrint t $ds (Split-Path $dw)
+  "$([bool]$d1)|$($d1 -eq $d2)|$($d1 -eq $d3)" }
+Expect "javaIncremental: a dependency jar outside the worktree rebuilt -> another print ($jdp)" ($jdp -eq 'True|True|False')
 Expect "javaIncremental: entity index merged after an incremental compile ($jix)" ($jix -eq '.OFF=p.Lamp ;.ON=p.Lamp p.Switch ;House=p.House;Room=p.Room')
 Remove-TestKit $laneKit
 Complete-Tests
