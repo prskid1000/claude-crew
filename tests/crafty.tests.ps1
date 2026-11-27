@@ -72,7 +72,7 @@ try {
 } finally { Remove-Item Env:CLAUDE_WT_ROOT -ErrorAction SilentlyContinue }
 $env:KIT_TRACKER_TYPE = 'none'
 $t = pwsh @np $D tracker create -Key qa-fx-crafty-72 -List L1 -Name 'T one' -Description 'd' | ConvertFrom-Json
-$null = pwsh @np $D tracker status $t.id inTest; $null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE
+Add-TestDeployRecord $k; $null = pwsh @np $D tracker status $t.id inTest -Deployed test; $null = pwsh @np $D tracker status $t.id failedTesting; $sNo = pwsh @np $D tracker status $t.id 2>&1 | Out-String; $stCode = $LASTEXITCODE
 $l = @(pwsh @np $D tracker list L1 failedTesting | ConvertFrom-Json)
 Expect 'tracker none: create, status failedTesting, list; status without a word = usage, rc 2, unchanged' ($t.id -like 'LOCAL-*' -and $l.Count -eq 1 -and $l[0].id -eq $t.id -and $stCode -eq 2 -and $sNo -match 'usage: tracker status')
 $d2 = (pwsh @np $D tracker create -Key qa-fx-crafty-76 -List L1 -Name 'Invoice export button' -Description 'd' | ConvertFrom-Json).id
@@ -126,7 +126,7 @@ $fx = [ordered]@{ '^view T1' = '{"id":"T1","name":"Bug","status":"In Progress","
  '^list B in test' = '[{"id":"T3","name":"A","assignees":[{"id":"ann"}]}]' }
 function mytr { $global:LASTEXITCODE = 0; $c = "$($args -join ' ')"; $global:log.Add($c); foreach ($k in $fx.Keys) { if ($c -match $k) { return $fx[$k] } }; throw "404 no fixture: $c" }
 Initialize-KitTracker -Type command
-$r = @{ v = Get-TrackerTask T1; s = Set-TrackerStatus T1 inTest; c = Add-TrackerComment T1 'two words'; n = New-TrackerTask -List B -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent T1 -Assignee 'Ann Lee' -Priority 2 -NewTask fixture; l = @(Get-TrackerTasks B inTest) }
+$r = @{ v = Get-TrackerTask T1; s = Set-TrackerStatus T1 inTest -Deployed deploy-intest; c = Add-TrackerComment T1 'two words'; n = New-TrackerTask -List B -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent T1 -Assignee 'Ann Lee' -Priority 2 -NewTask fixture; l = @(Get-TrackerTasks B inTest) }
 "command:$($r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.n.id -eq 'T9' -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 'ann')"
 '@
 $res = Invoke-PsTest 'tracker-test' $tb @(Lib)

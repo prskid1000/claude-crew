@@ -154,7 +154,7 @@ $fx = & {
 Expect "rollup: a subtask never gets another subtask's area rows or the rows its '(ports X)' words name ($($fx.h1 -replace '\s+', ' '))" ($fx.h1 -match '(?m)^- \[ \] HM-S01 · ' -and $fx.h1 -match '(?m)^- \[ \] HM-C01 · ' -and $fx.h1 -notmatch '(?m)^- \[.\] P1-' -and $fx.r1 -match '(?m)^- \[ \] P1-JS-01 · RM tables' -and $fx.r1 -notmatch 'HM-')
 Expect "track forget-item: the item stays out of the next rollup; stored as itemsDropped ($($fx.fo))" ($fx.h2 -notmatch '(?m)^- \[.\] HM-C01' -and $fx.h2 -match '(?m)^- \[ \] HM-S01 · ' -and $fx.dropped -eq 'HM-C01' -and $fx.fo -match 'HM-C01 dropped')
 Expect "track forget-item of every item: no 'MRs' line instead; a cut '(ports X (y…' value names nothing ($($fx.zo) | $($fx.cut))" (-not $fx.zo -and $fx.zd -notmatch 'kit:items' -and $fx.cut -eq 0)
-# counts match the task state (owner, 2026-11-16): held / deferred / undelivered / fix-round items unticked with a suffix; parent line too
+# counts match the task state (owner, 2026-11-16): held / deferred / undelivered / fix-round items unticked with a suffix
 $hx = & {
   $env:KIT_TRACKER_TYPE = 'none'; . (Join-Path $k 'skills/bossy/bossy.ps1') 6>$null; $view = { param($i) __TrA 'view' @{ id = $i } }
   $b5 = Join-Path (Kd) 'brief-e'; New-Item -ItemType Directory -Force $b5 | Out-Null
@@ -216,7 +216,7 @@ Set-TrackerStatus $b 'inProgress'; "t3:$(St $p)"
 Set-TrackerStatus $b 'promoted'; "t4:$(St $p)"
 Set-TrackerStatus $a 'closed'; Set-TrackerStatus $b 'closed'; "t5:$(St $p)"
 Set-TrackerStatus $p 'closed'; $c = (New-TrackerTask -Name 'Bug' -Description "Problem: p`nGoal: g`nItems: B1`nAcceptance: a`nLinks: l" -Parent $p -Assignee '-' -NewTask 'test').id; "t6:$(St $p)"
-Set-TrackerStatus $p 'inTest'; $d = (New-TrackerTask -Name 'Bug 2' -Description "Problem: p`nGoal: g`nItems: B1`nAcceptance: a`nLinks: l" -Parent $p -Assignee '-' -NewTask 'test').id; "t7:$(St $p)"
+Set-TrackerStatus $p 'inTest' -Deployed deploy-intest; $d = (New-TrackerTask -Name 'Bug 2' -Description "Problem: p`nGoal: g`nItems: B1`nAcceptance: a`nLinks: l" -Parent $p -Assignee '-' -NewTask 'test').id; "t7:$(St $p)"
 Set-TrackerStatus $c 'closed'; Set-TrackerStatus $d 'closed'; Set-TrackerStatus $p 'closed'; Set-TrackerStatus $d 'inProgress' 'reopened: a new round'; "t8:$(St $p)"
 Set-TrackerStatus $d 'closed'; $null = __TrNone $p 'x' { param($o) $o.status = 'closed' }; $null = __TrNone $d 'x' { param($o) $o.status = 'open' }
 $dry = @(Invoke-KitStatusSweep $p -All) -join '|'; "dry:$(St $p)|$dry"; $app = @(Invoke-KitStatusSweep $p -Apply) -join '|'; "app:$(St $p)|$app"

@@ -285,7 +285,7 @@ foreach ($rd in $ready) {
   if ($why) { Add-Tally 'not deployed yet' $id; Out-Line "WAIT  $id  $why | $short"; continue }
   if (-not $Apply) { Add-Tally 'would move to in test (no -Apply)' $id; Out-Line "MARK  $id  would set in test ($($live -join '; ')) | $short"; continue }
   try {
-    if ("$(Set-TrackerStatus $id 'inTest')" -match '^SKIPPED: (.*)') { Add-Tally $(if ($Matches[1] -match 'has no inTest status') { 'kept (its scope has no inTest status)' } else { 'kept (follows its subtasks)' }) $id; Out-Line "KEPT  $id  $($Matches[1]) | $short"; continue }
+    if ("$(Set-TrackerStatus $id 'inTest' '' 'deploy-intest')" -match '^SKIPPED: (.*)') { Add-Tally $(if ($Matches[1] -match 'has no inTest status') { 'kept (its scope has no inTest status)' } else { 'kept (follows its subtasks)' }) $id; Out-Line "KEPT  $id  $($Matches[1]) | $short"; continue }
     $null = Set-TrackerKitComment $id 'comment-intest' ("In test: every MR is deployed on a test env (checked " + [datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm') + " UTC): " + (@($live | ForEach-Object { $_ -replace '^\S+', { Format-KitMrLink $_.Value } }) -join '; ') + '.')   # full MR URLs (owner)
     Add-Tally 'moved to in test' $id; Out-Line "MARKED  $id  in test ($($live -join '; ')) | $short"
   } catch { Add-Tally 'blocked' "$id`: $($_.Exception.Message)"; Out-Line "ERROR $id  could not set status: $($_.Exception.Message)" }
@@ -1016,7 +1016,7 @@ function Get-KitSuperviseFlagsDeploys([switch]$AutoFix) {
     foreach ($l2 in $out) {
       if ($l2 -match '^WATCH ') { & $flag 'WATCH' "deploy intest: $($l2 -replace '^WATCH ')" 'Supervise runs it again next round.'; continue }
       if ($l2 -match '^MARKED\s+(?<t>\S+)\s+in test \((?<l>[^|]*?)\)\s*(\||$)') { & $flag 'INFO' "auto-fixed: FIXED $($Matches.t): promoted -> in test, every MR live ($($Matches.l))" 'Tracker set to inTest; nothing to do.' }
-      elseif ($l2 -match '^ERROR (?<t>\S+)\s+(?<w>.*)') { Set-KitTaskFields $Matches.t @{ inTestDue = (Get-KitStamp stored $now) }; & $flag 'WATCH' "STATUS $($Matches.t): every MR live, still promoted: $($Matches.w)" "& $($KitCmd.dev) tracker status $($Matches.t) inTest (supervise retries next round)" }
+      elseif ($l2 -match '^ERROR (?<t>\S+)\s+(?<w>.*)') { Set-KitTaskFields $Matches.t @{ inTestDue = (Get-KitStamp stored $now) }; & $flag 'WATCH' "STATUS $($Matches.t): every MR live, still promoted: $($Matches.w)" "& $($KitCmd.dev) deploy intest -Apply -Task $($Matches.t) (supervise retries next round)" }
       elseif ($l2 -match '^WAIT\s+(?<t>\S+)\s+(?<w>[^|]*(not checked|timed out|UNKNOWN)[^|]*?)\s*(\||$)') { & $flag 'WATCH' "STATUS $($Matches.t): deployed state unknown: $($Matches.w)" 'Supervise checks it again next round; still unknown: & bossy.ps1 deploy intest -Task <id> shows the probe (opsy kind status).' }
     }
   }

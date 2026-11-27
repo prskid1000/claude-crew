@@ -8,7 +8,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
  check -Dir <module> [-Step quick|test|e2e|build|migrations] [-Tests <names>] [-Touched] [-Force] [-Lane <id>]  gated checks (e2e: the diff's specs only, on the branch's lane ports; -AllTests = whole suite;
    a pass on the same sources + command is not rerun, -Force reruns)
  gate -Dir <dir> -Cmd "<command>"  a heavy command through the machine-wide memory gate
- tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text backed up), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), order <parent> [-Apply <brief>.order.json] (waves, waits-on links, wave tags), tags <id> <group>=<value> | prune -Unused, retag <parents> [-DryRun], list, ...)
+ tracker <verb> <id> ...  tracker adapter (view, roles <scope>, status [-Back <why>: a step back; -Deployed <record>: inTest], comment -Kind [-ProseOk] [-Spec <json> (rendered)], uncomment <id> <comment id>, create -Spec <json> [-DryRun] ("task spec" below; free text -File only with -Key: a QA / watch defect), update <id> -Spec <json> (merged by key; -ReplaceItems [-Force]: its items are the whole list), describe <id> <text | file> | -Text | -File (a missing file refused, old text backed up), render -Spec <json>, bug -Parent -Key -Name -File [-Signature], scope -Task -Add, move <id> [-Parent] [-List] [-NoParent], group -Parent <p> | -Spec <json> -Tasks <ids> (another list: an Items link), order <parent> [-Apply <brief>.order.json] (waves, waits-on links, wave tags), tags <id> <group>=<value> | prune -Unused, retag <parents> [-DryRun], list, ...)
  prior -Task <id> [-Repo <r>] [-Query '<words>'] [-Symbol <s>] [-Json]  prior work (duplicate tasks, MRs, branches, commits, docs, QA runs): the gate of wt lease / new, devtools.py mr / finish / doc
  pipes [-Mrs <repo!iid | url>,...] [-Run <run>] [-MaxMinutes 8] [-UntilMerged] | -Repo <repo> -Branch <branch> [-Sha <commit>]  wait for MR pipelines, or a branch's newest one (of that commit; -MaxMinutes deploy.pipelineWaitMinutes) (JSON; no -Mrs: a wt worktree's branch's open MRs, else tracked open MRs [of -Run]); -UntilMerged: for the merges
  host <verb> '<args JSON>' | <iid | [group/]repo!iid | MR URL | repo iid>  git-host / ci adapter verb (README "Adapters")
@@ -20,7 +20,7 @@ crafty.ps1: crafty commands (SKILL.md steps 1-8). pwsh 7: & <kit>/skills/crafty/
 In: kit.local.json + verb parameters. Out: text, or JSON with -Json.
 Exit codes: 0 ok · 1 problem (failed check, conflict, blocked) · 2 usage · gate/check: the command's code
 Sections: L26 init · L33 wt · L295 stack · L394 gate · L710 check · L1039 pipes · L1104 guard · L2041 dir · L2051 checkpoint ·
-  L2091 prior · L2130 tracker · L2152 task spec · L2358 scope · L2406 host
+  L2091 prior · L2130 tracker · L2152 task spec · L2357 scope · L2405 host
 #>
 #Requires -Version 7
 # ---- init: args, gate mutex, lib.ps1
@@ -2150,8 +2150,7 @@ function Use-KitLock([string]$Name, [string]$Holder, [string]$Dir = '', [double]
   }
 }
 # ---- task spec: agents pass facts (JSON), never task markdown; tracker create|update <id>|render -Spec <json> renders the
-# description (doc lines, tracker.taskTemplate sections), the items checklist `<code> · <desc> · <MR URLs>`, Decisions
-# (lib.ps1 Format-KitDecisionItems), parent items (adapters/task-items.ps1), any tracker. Spec: { kind: Feature|Bug|Chore, title, code (item code on the parent), parent, list,
+# description (doc lines, tracker.taskTemplate sections), items `<code> · <desc> · <MR URLs>`, Decisions, parent items, any tracker. Spec: { kind: Feature|Bug|Chore, title, code (item code on the parent), parent, list,
 # assignee, priority, newTask, problem, goal, items: [{ code, desc, mrs: [full MR URLs], done }], acceptance: [..], links: [url |
 # { text, url }], docs: { <process.docs key>: url }, decisions: [{ id, question, answer, by, at }], subtasks: [{ code, desc }], waitsOn: [task ids], wave: '<n>' (task-items.ps1 order), proseOk }.
 # what a spec lacks (bug: name + problem), a link or MR no full URL
@@ -2257,8 +2256,8 @@ function Invoke-Tracker {
   for ($__i = 0; $__i -lt $__trA.Count; $__i++) {
     $__a = [string]$__trA[$__i]
     if ($__a -match '^-(DryRun|Json|NoParent|ReplaceItems|Force|Unused)$') { $__trOpt[$Matches[1]] = $true }
-    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back|Area|Product|Apply)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
-    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Area -Product -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -Apply -NoParent -ReplaceItems -Force -Unused -DryRun -Json)"; exit 2 }
+    elseif ($__a -match '^-(Type|List|Name|Description|Parent|Assignee|Priority|Text|File|Kind|ProseOk|Key|NewTask|Related|Task|Tasks|Add|Signature|Spec|Back|Deployed|Area|Product|Apply)$' -and $__i + 1 -lt $__trA.Count) { $__trOpt[$Matches[1]] = [string]$__trA[++$__i] }
+    elseif ($__a -match '^-[A-Za-z]+$') { "tracker: unknown option $__a (options: -Spec -Area -Product -Key -Text -File -Name -Description -List -Parent -Assignee -Priority -Type -Kind -ProseOk -NewTask -Related -Task -Tasks -Add -Signature -Back -Deployed -Apply -NoParent -ReplaceItems -Force -Unused -DryRun -Json)"; exit 2 }
     else { [void]$__trPos.Add($__a) }
   }
   $__sp = if ($__trOpt.Spec) {   # `skills/crafty/crafty.ps1` "task spec": a file or inline JSON
@@ -2275,7 +2274,7 @@ function Invoke-Tracker {
     'view' { __TrOut (Get-TrackerTask $__id) }
     'statuses' { $__bad = 0; foreach ($__s in @(Split-KitList $__id)) { $__st = try { "$((Get-TrackerTask $__s).status)" } catch { '' }; if ($__st) { "$__s $((Get-KitStamp)) $__st" } else { $__bad++ } }; if ($__bad) { [Console]::Error.WriteLine("tracker statuses: $__bad view(s) failed") } }   # supervise: <id> <at> <status>
     'roles' { Show-KitScopeRoles $__id }
-    'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> [-Back <why>] (read it: tracker view <id>)'; exit 2 }; $__sr = Set-TrackerStatus $__id $__x $__trOpt.Back; $__sr; if ("$__sr" -like 'SKIPPED*' -and "$__sr" -notmatch 'has no \w+ status') { exit 1 } }   # an empty status set Open
+    'status' { if (-not $__id -or -not $__x) { 'tracker: usage: tracker status <id> <status> [-Back <why>] [-Deployed <record>: inTest] (read it: tracker view <id>)'; exit 2 }; $__sr = Set-TrackerStatus $__id $__x $__trOpt.Back $(if ($__trOpt.Deployed -ine 'deploy-intest') { $__trOpt.Deployed }); $__sr; if ("$__sr" -like 'SKIPPED*' -and "$__sr" -notmatch 'has no \w+ status') { exit 1 } }   # an empty status set Open
     'comment' {   # -Kind required; over prose limits = refused
       $__ct = __TrText $(if ($__x) { $__x } else { $__trOpt.Text }); $__k = "$($__trOpt.Kind)"
       if ($__sp -and -not "$__ct".Trim()) {   # -Spec: rendered as -Kind (templates.md "Comment spec")

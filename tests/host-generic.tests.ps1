@@ -104,11 +104,11 @@ $nt = @'
 $env:KIT_NET_TRIES = '1'   # a tracker CLI failing per $global:trFails: network, then fine, then a real error
 Register-KitAdapter 'tracker' 'fake' @{ status = { param($a) if ($global:trFails) { throw $global:trFails }; 'ok' } }; Initialize-KitTracker -Type fake
 $global:trFails = 'dial tcp: lookup api.example: no such host'
-$q = Set-TrackerStatus 'o/r#9' 'inTest' 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
+$q = Set-TrackerStatus 'o/r#9' 'inTest' -Deployed deploy-intest 3>$null; "queued:$("$q" -match '^QUEUED' -and (Test-Path (Get-KitPath outbox)))"
 $global:trFails = ''
 $s = @(Invoke-KitOutbox); "sent:$("$s" -match '^SENT status o/r#9' -and -not (Test-Path (Get-KitPath outbox)))"
 $global:trFails = 'no issue 9 in o/r (HTTP 404)'
-try { $null = Set-TrackerStatus 'o/r#9' 'inTest'; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
+try { $null = Set-TrackerStatus 'o/r#9' 'inTest' -Deployed deploy-intest; 'real:False' } catch { "real:$(-not (Test-Path (Get-KitPath outbox)))" }
 '@
 $res = Invoke-PsTest 'outbox-test' $nt @(Lib)
 Expect-Each $res 'outbox: #' @('queued', 'sent', 'real')

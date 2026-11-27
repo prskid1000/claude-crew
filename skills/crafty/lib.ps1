@@ -1143,8 +1143,7 @@ function Initialize-KitTracker([string]$Type, [switch]$DryRun) {
 $__trRepo = [string](Get-KitSetting 'tracker.repo' '')
 $__trNoneDir = Get-KitPath tracker-none
 
-# status roles (adapters/task-items.ps1 "status roles"): default names per role = vocab.json statuses (devtools.py reads the same),
-# tracker.statuses per role; null / [] = that step is skipped; live names per scope: Get-KitScopeRoles
+# status roles (adapters/task-items.ps1): default names = vocab.json statuses (devtools.py too), tracker.statuses per role; null / [] = step skipped; per scope: Get-KitScopeRoles
 $__trStatus = [ordered]@{}
 foreach ($__src in @($script:KitVocab.statuses, (Get-KitSetting 'tracker.statuses' $null))) { if ($__src) { foreach ($__p in (Get-KitProps $__src)) { $__trStatus[$__p.Name] = @($__p.Value | Where-Object { "$_".Trim() } | ForEach-Object { [string]$_ }) } } }
 
@@ -1153,9 +1152,9 @@ function ConvertTo-TrackerStatusKey([string]$Status) { $n = $Status -replace '[\
 function Resolve-TrackerStatus([string]$Status, [string]$Scope) { $k = ConvertTo-TrackerStatusKey $Status; if ($__trStatus.Contains($k)) { "$(@(Get-KitRoleNames $k $Scope)[0])" } else { $Status } }   # '' = the status is off
 function Test-TrackerStatusOff([string]$Status) { $k = ConvertTo-TrackerStatusKey $Status; $__trStatus.Contains($k) -and -not @($__trStatus[$k]).Count }
 function Test-TrackerStatus([string]$Status, [string[]]$Logical, [string]$Scope) { $k = Get-TrackerStatusKey $Status $Scope; [bool]($k -and @($Logical | Where-Object { $_ -ieq $k }).Count) }
-# one line that reads as a file path: a drive / ./ / ~/ / UNC start, or one word ending .md / .txt / .json ('n/a', 'yes/no', a URL: text)
+# one line that reads as a file path: a drive / ./ / ~/ / UNC start, or one word ending .md / .txt / .json
 function Test-KitPathLike([string]$s) { $t = "$s".Trim(); $t -and $t -notmatch '[\r\n]' -and $t -notmatch '^\w+://' -and ($t -match '^(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|~[\\/]|\\\\)' -or ($t -notmatch '\s' -and $t -match '(?i)\.(md|txt|json)$')) }
-# a body: an existing file's text, else the text itself; a path-like one that is no file throws (a missing file once became a task's description)
+# a body: an existing file's text, else the text itself; a path-like non-file throws
 function __TrText([string]$s) {
   $isFile = $false; if ($s -and $s.Length -lt 260 -and $s -notmatch '[\r\n<>|"*?]') { try { $isFile = Test-Path -LiteralPath $s -PathType Leaf } catch {} }
   if ($isFile) { return Get-Content -LiteralPath $s -Raw -Encoding utf8 }
@@ -1303,11 +1302,12 @@ function Invoke-KitOutbox([switch]$DryRun) {
     if ($keep.Count) { [IO.File]::WriteAllLines($f, $keep) } else { Remove-Item -LiteralPath $f -Force }
   }
 }
-function Set-TrackerStatus([string]$Id, [string]$Status, [string]$Back) {
-  $Status = ConvertTo-TrackerStatusKey $Status
+function Set-TrackerStatus([string]$Id, [string]$Status, [string]$Back, [string]$Deployed) {
+  $raw = $Status; $Status = ConvertTo-TrackerStatusKey $Status
   if (Test-TrackerStatusOff $Status) { $skip = "SKIPPED: $Id kept: the org has no $Status status"; Write-Host "tracker: $skip"; return $skip }
   $was = try { if (-not $__trDry) { Clear-TrackerMemo $Id; Get-TrackerTask $Id } } catch { $null }
-  $sc = "$($was.list)"; if ($sc -and $__trStatus.Contains($Status) -and -not @(Get-KitRoleNames $Status $sc).Count) { $skip = "SKIPPED: $Id kept '$($was.status)': scope $sc has no $Status status (step skipped; crafty.ps1 tracker roles $sc)"; Write-Host "tracker: $skip"; return $skip }   # never invented
+  $sc = "$($was.list)"; $Status = Resolve-KitInTestWrite $Id $raw $Status $Deployed $sc -Say
+  if ($sc -and $__trStatus.Contains($Status) -and -not @(Get-KitRoleNames $Status $sc).Count) { $skip = "SKIPPED: $Id kept '$($was.status)': scope $sc has no $Status status (step skipped; crafty.ps1 tracker roles $sc)"; Write-Host "tracker: $skip"; return $skip }   # never invented
   if ($bad = Test-KitScopeStatus $sc $Status) { throw "tracker: $Id not set: $bad" }
   if ($skip = Test-KitStatusWrite $Id $Status $Back $was) { Write-Host "tracker: $skip"; return @($skip) -like 'SKIPPED*' }
   # promoted: process.gates.promote (an unread task fails closed)

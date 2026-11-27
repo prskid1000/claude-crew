@@ -144,6 +144,8 @@ function New-TestKit([string]$name) {
 }
 # a hard-linked kit file a test is about to change in place: made its own copy first
 function Undo-TestKitLink([string]$Path) { $tl = Get-Item -LiteralPath $Path; if ($tl.LinkType -eq 'HardLink') { $tc = "$Path.$PID.copy"; Copy-Item -LiteralPath $Path $tc; Remove-Item -LiteralPath $Path -Force; Move-Item -LiteralPath $tc $Path } }
+# a recorded deploy in a test kit: the proof `tracker status <id> inTest -Deployed test` needs
+function Add-TestDeployRecord($tkDir, $tkTarget = 'test') { Add-Content -LiteralPath (Join-Path $tkDir '.state/deploys.jsonl') -Value (@{ at = (Get-Date).ToString('s'); event = 'record'; target = $tkTarget } | ConvertTo-Json -Compress) }
 function TkPath($tkDir, $tkName, [switch]$Create) {
   if (-not $tkDir) { throw 'TkPath: $tkDir is unset or empty' }
   & { . (Join-Path $tkDir 'skills/crafty/lib.ps1'); Get-KitPath $tkName -Create:$Create }

@@ -1,4 +1,4 @@
-"""Outcome rules of localbench.py on hand-made answers (tests/local-bench.tests.ps1 runs it): prints FAIL lines, exit 1 on any."""
+"""Outcome rules of localbench.py on hand-made answers (tests/local-bench.tests.ps1 runs it): prints FAIL lines. Usage: python tests/local_bench_cases.py <skills/crafty/adapters dir>. Exit codes: 0 pass, 1 a check failed."""
 import sys
 sys.path.insert(0, sys.argv[1])
 import localbench as b  # noqa: E402

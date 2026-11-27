@@ -79,7 +79,7 @@ $mkTask = { param($Name, $Desc) (pwsh -NoProfile -File $craftyPs tracker create 
 $tA = & $mkTask '[Bug] Orders sort' "**Testing doc (human):** [open](https://docs.example/h1)`n`nMR: https://git.example/g/web/-/merge_requests/5"
 $tB = & $mkTask '[Bug] No doc' 'MR: https://git.example/g/web/-/merge_requests/6'
 $tC = & $mkTask '[Bug] Excluded' "**Testing doc (human):** [open](https://docs.example/h3)`n`nMR: https://git.example/g/web/-/merge_requests/7"
-foreach ($tx in $tA, $tB, $tC) { $null = pwsh -NoProfile -File $craftyPs tracker status $tx 'in test' 2>&1 }
+Add-TestDeployRecord $k; foreach ($tx in $tA, $tB, $tC) { $null = pwsh -NoProfile -File $craftyPs tracker status $tx 'in test' -Deployed test 2>&1 }
 $pjob = @{ runFolder = "$wd/qa-runs/<yyyy-MM-dd>-stg"; statuses = @(); exclude = @($tC); target = 'stg-a'; kitDir = $k; runSettings = @{ mandate = @('test the sort') } } | ConvertTo-Json -Compress -Depth 4
 # the guide doc comes from process.docs (qa.guideDoc picks the entry); these values = the legacy two-doc rows
 Set-JsonFile "$k/skills/crafty/kit.local.json" @{ process = @{ docs = @(@{ key = 'ai'; label = 'Testing doc (AI)' }, @{ key = 'human'; label = 'Testing doc (human)' }) }; qa = @{ guideDoc = 'human' } }

@@ -40,7 +40,7 @@ Expect 'deployed -TimeoutSec: past the deadline the MRs left are UNKNOWN, the fi
 # prepare calls Invoke-Deployed in-process: its -Json returns, so prepare (pwsh -File, as testy runs it) still writes run.json and prints RUN
 $env:KIT_TRACKER_TYPE = 'none'; $craftyQ = Join-Path $k 'skills/crafty/crafty.ps1'
 $tPrep = (pwsh -NoProfile -File $craftyQ tracker create -Key qa-fx-deployed-checks-33 -Name '[Bug] Sort' -Description "**Testing doc (human):** [open](https://docs.example/h1)`n`nMR: https://git.example/g/nope/-/merge_requests/1" -NewTask fixture 2>$null | ConvertFrom-Json).id
-$null = pwsh -NoProfile -File $craftyQ tracker status $tPrep 'in test' 2>&1
+Add-TestDeployRecord $k; $null = pwsh -NoProfile -File $craftyQ tracker status $tPrep 'in test' -Deployed test 2>&1
 $prepJob = @{ runFolder = "$(Kd)/qa-runs/<yyyy-MM-dd>-dep"; tasks = @($tPrep); target = 'stg'; kitDir = $k } | ConvertTo-Json -Compress
 $prepOut = @(pwsh -NoProfile -File $Q prepare -Job $prepJob 2>&1); $prepCode = $LASTEXITCODE; $env:KIT_TRACKER_TYPE = $null
 $prepRun = try { "$($prepOut[-1])" -replace '^RUN ' | ConvertFrom-Json } catch { $null }
@@ -159,7 +159,7 @@ Expect "deployed: a target whose from lacks the MR's branch is N/A before any pr
 # prepare: a task whose every MR is N/A for the target (another product's change) is left out, never tested as undeployed
 $env:KIT_TRACKER_TYPE = 'none'; $craftyQ = Join-Path $k 'skills/crafty/crafty.ps1'
 $tOther = (pwsh -NoProfile -File $craftyQ tracker create -Key qa-fx-deployed-checks-160 -Name '[Bug] Other product' -Description "**Testing doc (human):** [open](https://docs.example/h9)`n`nMR: https://git.example/g/py/-/merge_requests/5" -NewTask fixture 2>$null | ConvertFrom-Json).id
-$null = pwsh -NoProfile -File $craftyQ tracker status $tOther 'in test' 2>&1
+Add-TestDeployRecord $k; $null = pwsh -NoProfile -File $craftyQ tracker status $tOther 'in test' -Deployed test 2>&1
 Set-Content "$(Kd)/other.ps1" @'
 . $args[0]; . $env:KIT_TEST_SHIM; function Invoke-HostApi($p) { if ($p -like '*requests/5*') { @{ iid = 5; state = 'merged'; sha = 'f' * 40; merged_at = '2026-01-02'; target_branch = 'main' } } }
 Invoke-Prepare -Job $args[1]

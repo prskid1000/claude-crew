@@ -48,7 +48,7 @@ $global:fx = [ordered]@{ 'assignees,body' = '{"number":5,"title":"Bug","state":"
  'view 6 ' = '{"number":6,"title":"Sub","state":"CLOSED","labels":[]}'; 'view 5 .*state,labels' = '{"state":"OPEN","labels":[{"name":"status:In Progress"}]}'; 'view 5 .*json body' = '{"body":"x"}'
  '^label create' = ''; 'edit 5 -R o/r --remove-label status:In Progress --add-label status:in test' = 'ok'; 'comment 5 -R o/r --body-file' = 'https://github.com/o/r/issues/5#c1'
  'create -R o/r --title New one --assignee Ann Lee --label priority:high' = 'https://github.com/o/r/issues/9'; '^issue edit 5 -R o/r --body-file' = 'ok'; 'list -R o/r .*--label status:in test' = '[{"number":7,"title":"A","assignees":[{"login":"ann"}]}]' }
-$r = @{ v = Get-TrackerTask 'o/r#5'; s = Set-TrackerStatus 'o/r#5' inTest; c = Add-TrackerComment 'o/r#5' 'two words'; n = New-TrackerTask -List o/r -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent 'o/r#5' -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks o/r inTest) }
+$r = @{ v = Get-TrackerTask 'o/r#5'; s = Set-TrackerStatus 'o/r#5' inTest -Deployed deploy-intest; c = Add-TrackerComment 'o/r#5' 'two words'; n = New-TrackerTask -List o/r -Name 'New one' -Description "Problem: p`nGoal: g`nItems: A1`nAcceptance: a`nLinks: l" -Parent 'o/r#5' -Assignee 'Ann Lee' -Priority 2; l = @(Get-TrackerTasks o/r inTest) }
 "tracker:$($r.v.name -eq 'Bug' -and $r.v.status -eq 'In Progress' -and $r.v.subtasks[0].name -eq 'Sub' -and $r.v.subtasks[0].status -eq 'closed' -and $r.v.parent -eq '1' -and $r.n.id -eq 9 -and $r.l[0].name -eq 'A' -and $r.l[0].assignees[0].id -eq 'ann')"
 $global:fx = [ordered]@{ 'view 5 -R o/r --json comments' = '{"comments":[{"author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z","body":"old","url":"https://github.com/o/r/issues/5#issuecomment-77"}]}'
  'api -X PATCH repos/o/r/issues/comments/77 .*new words' = '{"id":77}'; 'api -X DELETE repos/o/r/issues/comments/77' = '' }; $global:log.Clear()
@@ -81,5 +81,31 @@ $f = Invoke-HostVerb 'ci.failure' @{ repo = 'o/r'; id = 5 }; $p = @('#7', 'GH-8'
 "$($f.job)|$($f.id)|$($f.reason)|$($f.step)|$($f.url)|$($f.excerpt)|$($p -join ',')|$($null -eq (Invoke-HostVerb 'mr.parseRef' @{ ref = '#7' }))"
 '@ @(Join-Path $k 'skills/crafty/lib.ps1') | Select-Object -Last 1)"
 Expect "github natives: ci.failure = the timed-out job, its step, the failure annotation; mr.parseRef #7 / GH-8 in the repo, owner/repo#9 as core, no repo = none ($gn)" ($gn -eq 'unit|31|timeout|test|https://github.com/o/r/actions/runs/5/job/31|t/x.test.js:9 expected 2|o/r!7,o/r!8,o/r2!9|True')
+# inTest only after a deploy (owner 2026-11-27: "for test" set on merged work): refusals, the raw-name echo, the allowed paths, the parent rollup
+$ki = New-TestKit intest; $envWas = $env:KIT_TRACKER_TYPE; $env:KIT_TRACKER_TYPE = 'none'; $Dc = Join-Path $ki 'skills/crafty/crafty.ps1'
+[IO.File]::WriteAllText((Join-Path $ki 'skills/crafty/kit.local.json'), '{"tracker":{"statuses":{"inTest":["in test","for test"]}}}')
+$it1 = (pwsh @np $Dc tracker create -Key qa-fx-tracker-intest -List L1 -Name 'T intest' -Description 'd' | ConvertFrom-Json).id
+$null = pwsh @np $Dc tracker status $it1 review; $null = pwsh @np $Dc tracker status $it1 promoted
+$itRaw = pwsh @np $Dc tracker status $it1 'for test' 2>&1 | Out-String; $itRawCode = $LASTEXITCODE
+$itKey = pwsh @np $Dc tracker status $it1 inTest 2>&1 | Out-String
+$itFake = pwsh @np $Dc tracker status $it1 inTest -Deployed deploy-intest 2>&1 | Out-String
+$itNone = pwsh @np $Dc tracker status $it1 inTest -Deployed nosuch 2>&1 | Out-String
+$itSt1 = (pwsh @np $Dc tracker view $it1 | ConvertFrom-Json).status
+Expect "tracker status inTest or a raw alias ('for test') without a deploy: refused with the promoted hint, exit non-zero, task stays promoted; -Deployed deploy-intest from the CLI or an unknown record: refused ($itSt1)" ($itRawCode -ne 0 -and $itSt1 -eq 'promoted' -and @($itRaw, $itKey, $itFake, $itNone | Where-Object { $_ -match 'inTest only after a deploy: use promoted for merged work' }).Count -eq 4)
+$itLib = pwsh -NoProfile -Command ". '$(Join-Path $ki 'skills/crafty/lib.ps1')'; try { Set-TrackerStatus '$it1' 'inTest' } catch { `$_.Exception.Message }; try { Set-TrackerStatus '$it1' 'inTest' -Deployed deploy-intest } catch { 'raised' }; (Get-TrackerTask '$it1').status" 2>&1 | Out-String
+Expect "Set-TrackerStatus: no proof refused, the internal deploy-intest proof (deploy intest) allowed ($($itLib.Trim() -replace '\s+', ' '))" ($itLib -match 'inTest only after a deploy' -and $itLib -notmatch 'raised' -and $itLib -match 'in test')
+Add-TestDeployRecord $ki 'stage'
+$it2 = (pwsh @np $Dc tracker create -Key qa-fx-tracker-intest2 -List L1 -Name 'T intest 2' -Description 'd' | ConvertFrom-Json).id
+$itForge = pwsh @np $Dc tracker status $it2 inTest -Deployed ' Deploy-Intest ' 2>&1 | Out-String
+$itOk = pwsh @np $Dc tracker status $it2 inTest -Deployed stage 2>&1 | Out-String; $itSt2 = (pwsh @np $Dc tracker view $it2 | ConvertFrom-Json).status
+Expect "tracker status inTest -Deployed <a recorded deploy target>: allowed, task in test; the internal proof padded or in other case from the CLI: refused ($itSt2)" ($itOk -notmatch 'only after a deploy' -and $itSt2 -eq 'in test' -and $itForge -match 'only after a deploy')
+$itEcho = pwsh @np $Dc tracker status $it1 'failed testing' 2>&1 | Out-String
+Expect "a raw board name prints the kit role it maps to ($($itEcho.Trim()))" ($itEcho -match "'failed testing' -> failedTesting")
+$ip = (pwsh @np $Dc tracker create -Key qa-fx-tracker-intest-p -List L1 -Name 'P intest' -Description 'd' | ConvertFrom-Json).id
+$ic = (pwsh @np $Dc tracker create -Key qa-fx-tracker-intest-c -List L1 -Name 'C intest' -Description 'd' -Parent $ip | ConvertFrom-Json).id
+$null = pwsh @np $Dc tracker status $ic review; $null = pwsh @np $Dc tracker status $ic promoted; $null = pwsh @np $Dc tracker status $ic 'for test' 2>&1
+$ipSt = (pwsh @np $Dc tracker view $ip | ConvertFrom-Json).status; $icSt = (pwsh @np $Dc tracker view $ic | ConvertFrom-Json).status
+Expect "a child refused for inTest leaves its parent out of inTest too ($ipSt / $icSt)" ($ipSt -ne 'in test' -and $icSt -eq 'promoted')
+$env:KIT_TRACKER_TYPE = $envWas; Remove-TestKit $ki
 Remove-TestKit $k
 Complete-Tests

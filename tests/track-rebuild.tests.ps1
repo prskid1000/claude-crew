@@ -40,11 +40,11 @@ $global:Wr = [Collections.Generic.List[string]]::new(); $realSet = ${function:__
 ${function:__Set-TrackerStatus} = { param($Id, $Status) $global:Wr.Add("$Id=$Status"); & $realSet $Id $Status }.GetNewClosure()
 function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; function Ky($i) { Clear-TrackerMemo $i; Get-TrackerStatusKey (Get-TrackerTask $i).status }
 $t = Mk 'T' $null; Set-TrackerStatus $t 'inProgress' 6>$null; Set-TrackerStatus $t 'inProgress' 6>$null; "deb:$(@($Wr | Where-Object { $_ -like "$t=*" }).Count)"
-Set-TrackerStatus $t 'review' 6>$null; Set-TrackerStatus $t 'inProgress' 6>$null; "rv:$(Ky $t)"; Set-TrackerStatus $t 'inTest' 6>$null; Set-TrackerStatus $t 'review' 6>$null; "back:$(Ky $t)"
+Set-TrackerStatus $t 'review' 6>$null; Set-TrackerStatus $t 'inProgress' 6>$null; "rv:$(Ky $t)"; Set-TrackerStatus $t 'inTest' -Deployed deploy-intest 6>$null; Set-TrackerStatus $t 'review' 6>$null; "back:$(Ky $t)"
 Set-TrackerStatus $t 'inProgress' 'fix round 2' 6>$null; "backok:$(Ky $t)"
 Set-TrackerStatus $t 'promoted' 6>$null; Set-TrackerStatus $t 'failedTesting' 6>$null; "ft:$(Ky $t)"
 $p = Mk 'P' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Set-TrackerStatus $a 'promoted' 6>$null; $pr = Set-TrackerStatus $p 'promoted' 6>$null; "par:$(Ky $p)|$("$pr" -like 'SKIPPED*')"
-Set-TrackerStatus $b 'review' 6>$null; "roll:$(Ky $p)"; foreach ($c in $a, $b) { Set-TrackerStatus $c 'inTest' 6>$null }; Set-TrackerStatus $p 'failedTesting' 6>$null; "pft:$(Ky $p)"; $q = Mk 'Q' $null; $null = Mk '[Bug] Q leak' $q; Set-TrackerStatus $q 'closed' 6>$null; "bug:$(Ky $q)"
+Set-TrackerStatus $b 'review' 6>$null; "roll:$(Ky $p)"; foreach ($c in $a, $b) { Set-TrackerStatus $c 'inTest' -Deployed deploy-intest 6>$null }; Set-TrackerStatus $p 'failedTesting' 6>$null; "pft:$(Ky $p)"; $q = Mk 'Q' $null; $null = Mk '[Bug] Q leak' $q; Set-TrackerStatus $q 'closed' 6>$null; "bug:$(Ky $q)"
 # ROLLUP-OLDPARENT: a moved child's old parent follows the children it keeps (the one that left was its least advanced)
 $m = Mk 'M' $null; $m1 = Mk 'M1' $m; Set-TrackerStatus (Mk 'M2' $m) 'promoted' 6>$null; $mb = Ky $m; $null = Move-TrackerTask $m1 -Parent (Mk 'N' $null) 6>$null; "old:$mb>$(Ky $m)"
 '@ @((Join-Path $k 'skills/crafty/crafty.ps1'))
@@ -58,7 +58,7 @@ function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; fun
 $p = Mk 'P' $null; $a = Mk 'A' $p; Set-TrackerStatus $a 'inProgress' 6>$null; $t = Mk 'T' $null
 $po = Invoke-Track add -Task $p -Mrs 'g/web!70' 6>$null | Out-String; $to = Invoke-Track add -Task $t -Mrs 'g/web!71' 6>$null | Out-String
 "par:$($po -match "KEPT ${p}: $p not set to promoted: it follows its 1 open subtask" -and $po -notmatch "DONE $p" -and (Ky $p) -ne 'promoted' -and [bool](Read-KitTracking).tasks[$p].done)"
-Set-TrackerStatus $a 'inTest' 6>$null; $pin = Ky $p; Set-TrackerStatus $a 'review' -Back 'new fix round' 6>$null; $pback = Ky $p
+Set-TrackerStatus $a 'inTest' -Deployed deploy-intest 6>$null; $pin = Ky $p; Set-TrackerStatus $a 'review' -Back 'new fix round' 6>$null; $pback = Ky $p
 "derive:$($pin -eq 'inTest' -and $pback -eq 'review')"
 "plain:$($to -match "DONE ${t}: all 1 MRs merged -> status promoted" -and (Ky $t) -eq 'promoted')"
 '@
@@ -103,7 +103,7 @@ $__cfg.tracker | Add-Member -Force NoteProperty statusMap ([pscustomobject]@{ P 
 "jmap:$(Rl jira P)"
 # writes in scope P: names from the scope, a missing role skipped, the transition table, -Back
 Initialize-KitTracker -Type 'fake-jira'; $global:Tk['P-1'] = @{ status = 'To Do'; list = 'P' }
-$null = Set-TrackerStatus 'P-1' 'review' 6>$null; $pr = "$(Set-TrackerStatus 'P-1' 'promoted' 6>$null)"; $null = Set-TrackerStatus 'P-1' 'inTest' 6>$null; $bk = "$(Set-TrackerStatus 'P-1' 'review' 6>$null)"
+$null = Set-TrackerStatus 'P-1' 'review' 6>$null; $pr = "$(Set-TrackerStatus 'P-1' 'promoted' 6>$null)"; $null = Set-TrackerStatus 'P-1' 'inTest' -Deployed deploy-intest 6>$null; $bk = "$(Set-TrackerStatus 'P-1' 'review' 6>$null)"
 $null = Set-TrackerStatus 'P-1' 'closed' 6>$null; $nb = "$(Set-TrackerStatus 'P-1' 'inProgress' 6>$null)"; $null = Set-TrackerStatus 'P-1' 'inProgress' 'reopened: new round' 6>$null
 "wr:$($global:W -join ',')|$($pr -match 'has no promoted')|$($bk -like 'SKIPPED*')|$($nb -like 'SKIPPED*')"
 # a name the cache does not know: read again once
@@ -243,7 +243,7 @@ $env:KIT_TRACKER_TYPE = 'none'; . $args[0]; $ErrorActionPreference = 'Stop'
 function Mk($n, $par) { (__TrA 'create' @{ name = $n; parent = $par }).id }; function St($i) { (Get-TrackerTask $i).status }
 $p = Mk 'Ask' $null; $a = Mk 'A' $p; $b = Mk 'B' $p; Clear-TrackerMemo $p
 Set-TrackerStatus $a 'review' | Out-Null; Set-TrackerStatus $b 'review' | Out-Null; "par:$(St $p)"
-"pro:$(Set-TrackerStatus $a 'promoted')|$(St $a)"; "int:$(Set-TrackerStatus $a 'inTest')|$(St $a)"
+"pro:$(Set-TrackerStatus $a 'promoted')|$(St $a)"; "int:$(Set-TrackerStatus $a 'inTest' -Deployed deploy-intest)|$(St $a)"
 Set-TrackerStatus $a 'closed' | Out-Null; "cls:$(St $a)|$(St $p)"
 "rd:$(Test-TrackerStatus 'in test' 'inTest')|$(Test-TrackerStatus 'promoted' 'promoted')|$(Test-TrackerStatusOff 'inTest')|$(Test-TrackerStatusOff 'review')"
 '@ @((Join-Path $ko 'skills/crafty/crafty.ps1'))

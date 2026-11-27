@@ -3,8 +3,8 @@
 # task Items checklists: write one (adapter verb checklist, else a description section), item holds (counts match the task
 # state), spec items, the parent's line per subtask; item text: lib.ps1 Format-KitItemText; rollup: bossy adapters/task-rollup.ps1;
 # tracker move / group (K54)
-# Sections: L8 items · L98 move · L142 status roles · L298 task text · L315 naming · L319 meta (dec-60, owner 2026-11-25) ·
-#   L486 track lines · L491 task ids · L518 tags · L622 order
+# Sections: L8 items · L98 move · L142 status roles · L309 task text · L326 naming · L330 meta (dec-60, owner 2026-11-25) ·
+#   L497 track lines · L502 task ids · L529 tags · L633 order
 # ---- items: checklists, holds, the parent's Items
 $script:KitItemsSigV = 'prune1'   # in every Items signature: a new value rewrites each list once (prunes lines older writers left)
 # a named checklist on a task ({ text; done }; items keyed by the text before the first ' · '; done = false unticks): adapter verb
@@ -248,6 +248,17 @@ function Test-KitStatusWrite([string]$Id, [string]$Status, [string]$Back, $Was) 
   $subs = @($Was.subtasks | Where-Object { $_.id }); $open = @($subs | Where-Object { -not (Test-TrackerStatus "$($_.status)" 'closed') })
   if ($Status -eq 'failedTesting' -or -not $open.Count -or @($subs | Where-Object { -not (Get-TrackerStatusKey "$($_.status)" $sc) }).Count) { return '' }
   $sy = Sync-TrackerParent -ParentId $Id; "SKIPPED: $Id not set to $Status`: it follows its $($open.Count) open subtask(s)$(if ($sy) { " ($sy)" })"
+}
+# lib.ps1 Set-TrackerStatus (owner 2026-11-27: "for test", an inTest alias, set on merged work): inTest = deployed, merged work is promoted.
+# A raw board name that is an inTest alias (task scope or default names) counts as inTest; refused without a deploy proof: 'deploy intest'
+# (it checked every MR live) passes 'deploy-intest', else a deploy-log record (its target or time). -Say: print "raw -> role". Returns the role.
+function Resolve-KitInTestWrite([string]$Id, [string]$Raw, [string]$Status, [string]$Proof, [string]$Scope, [switch]$Say) {
+  $rk = if ($__trStatus.Contains($Status)) { $Status } else { Get-TrackerStatusKey $Raw $Scope }
+  if ($Say -and $rk -and $rk -cne $Raw) { Write-Host "tracker: status '$Raw' -> $rk" }
+  if ($rk -ne 'inTest') { return $Status }
+  $p = "$Proof".Trim(); if ($Proof -cne 'deploy-intest' -and -not @(Read-KitLog deploy-log -Since (Get-Date).AddDays(-30) | Where-Object { $_.event -eq 'record' -and $p -and ("$($_.target)" -ieq $p -or "$($_.at)" -eq $p) }).Count) {
+    throw "tracker: $Id not set: inTest only after a deploy: use promoted for merged work (deploy intest, or -Deployed <deploy record: its target or time>)" }
+  'inTest'
 }
 # lib.ps1 Invoke-KitOutbox: a queued status is checked again when sent (the task may have moved on meanwhile)
 function Send-KitQueuedStatus([string]$Id, [string]$Status) {

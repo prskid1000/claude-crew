@@ -29,6 +29,8 @@ Codex and Antigravity read this file, Claude Code via `CLAUDE.md`; edit only her
   human testing doc, tracker promoted (no user gate) -> merged work waits: nobody asks or proposes a deploy; a person says `deploy
   <env>` and `opsy` deploys at once (`deploy.trigger`) -> in test -> testers close it, or it fails testing and comes
   back. Bugs are reproduced locally before they are fixed.
+- **Tracker status keys** (never a raw board name like "for test"): `promoted` = merged, waiting for a deploy; `inTest` = deployed on a
+  test env. `tracker status <id> inTest` (any alias) is refused unless `deploy intest` / opsy set it after a recorded deploy.
 - **Test-only** (deployed tasks on a test env, on request): agent QA per human testing doc -> all pass: closed · own check failed
   or untested (undeployed): failedTesting · untested, no dev fix: owner decides · a new defect: one [Bug] under the original ask.
 - **Budget** (README "Configuration"): agent hands off (resume brief, fresh agent) at 80% of tool compaction point or its role's `budget.agentCap` (devy 200k), or at a `CONTEXT-CHECK` by its own call; run over cap is refused with split, at 80% nothing new starts (rest returns as `next`).
