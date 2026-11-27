@@ -1987,7 +1987,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
   $named = @{}; $pos = [Collections.Generic.List[object]]::new(); $i = 0
   while ($i -lt $Tokens.Count) {
     $t = "$($Tokens[$i])"
-    if ($t -eq '--') { $i++; while ($i -lt $Tokens.Count) { $pos.Add($Tokens[$i]); $i++ }; break }   # the rest: a client's own args
+    if ($t -eq '--') { $i++; while ($i -lt $Tokens.Count) { $pos.Add($Tokens[$i]); $i++ }; break }   # the rest: client args
     if ($t -in '--help', '-?' -or ($t -in '-h', '-help' -and -not @($own | Where-Object { $_ -ieq $t.TrimStart('-') }).Count)) { & $help }
     if ($t -match '^--\w') { [Console]::Error.WriteLine("$($Fn -replace '^Invoke-', ''): unknown option $t (parameters take one dash; --help prints the usage)"); exit 2 }
     if ($t -match '^-([A-Za-z][\w-]*)(?::(.*))?$') {
@@ -2000,7 +2000,7 @@ function Invoke-KitVerb([string]$Fn, [object[]]$Tokens) {
       $vals = [Collections.Generic.List[object]]::new(); if ($null -ne $inline) { $vals.Add($inline) }
       # a dash-leading value with a digit or inner dash naming no parameter (-Run '-hm-1121') is a value; a typo (-Agnet) still fails
       if ($null -eq $inline -and $i -lt $Tokens.Count -and "$($Tokens[$i])" -match '^-([A-Za-z][\w-]*[\d-][\w-]*)$' -and -not @($own | Where-Object { $_ -like "$($Matches[1])*" -or @($meta[$_].Aliases) -contains $Matches[1] }).Count) { $vals.Add($Tokens[$i]); $i++ }
-      while ($i -lt $Tokens.Count -and "$($Tokens[$i])" -notmatch '^-[A-Za-z][\w-]*(:.*)?$') { $vals.Add($Tokens[$i]); $i++ }
+      while ($i -lt $Tokens.Count -and "$($Tokens[$i])" -ne '--' -and "$($Tokens[$i])" -notmatch '^-[A-Za-z][\w-]*(:.*)?$') { $vals.Add($Tokens[$i]); $i++ }
       $named[$p[0]] = if ($pm.ParameterType.IsArray) { @($vals) } elseif ($vals.Count -gt 1) { @($vals) -join ' ' } elseif ($vals.Count) { $vals[0] } else { '' }
     } else { $pos.Add($Tokens[$i]); $i++ }
   }

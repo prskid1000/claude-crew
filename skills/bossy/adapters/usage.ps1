@@ -925,11 +925,11 @@ function Get-KitInstrCap([double]$Window) {
   $st = [double](Get-KitSetting 'budget.instructions.start' $ei.start); $cap = [math]::Max($cap, $st + [double](Get-KitSetting 'budget.instructions.skillAlways' $ei.skillAlways))   # a small window still holds the kit start + one skill
   [pscustomobject]@{ start = [int]$st; cap = [int]$cap; watch = [int][math]::Max($st, $cap * [double](Get-KitSetting 'budget.instructions.watchAt' $ei.watchAt)) }   # never under the kit start (a 32k window)
 }
-# the agent tool this runs under: local mode (crafty.ps1 local: the server answers claude-* ids too), a model id's prefix,
-# KIT_TOOL, then the tool's own env vars
+# the agent tool this runs under: KIT_TOOL=local (crafty.ps1 local: the server answers claude-* ids too), a model id's
+# prefix, KIT_TOOL, then the tool's own env vars
 function Get-KitTool([string]$Model = '') {
   $envs = @(Get-ChildItem env: | ForEach-Object Name)
-  if ($Model -match '^local/' -or $env:KIT_MODEL_MODE -eq 'local') { 'local' } elseif ($Model -match '^(claude|fable|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
+  if ($Model -match '^local/' -or $env:KIT_TOOL -eq 'local') { 'local' } elseif ($Model -match '^(claude|fable|opus|sonnet|haiku)') { 'claude' } elseif ($Model -match '^gpt') { 'codex' }
   elseif ($Model -match '^gemini') { 'antigravity' } elseif ($v = $env:KIT_TOOL) { $v } elseif ($env:CLAUDECODE) { 'claude' }
   elseif ($envs -like 'CODEX_*') { 'codex' } elseif ($envs -match 'ANTIGRAVITY') { 'antigravity' } else { 'unknown' }
 }

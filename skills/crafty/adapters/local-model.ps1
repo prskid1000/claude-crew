@@ -18,8 +18,8 @@ Inputs: kit.local.json models.mode (cloud | local | mixed; env KIT_MODEL_MODE wi
 models.local { baseUrl, token (env:<VAR> | secret:<name>; never printed), defaultModel, forbiddenModels, wireApi, commands,
 env (name: value, null drops a default), use, overflow, maxConcurrent, needGB, probeSec, queueMinutes, streamIdleTimeoutMs }
 (README "Configuration"). Lease state: video.ps1 Get-KitLocalAiState local-model. Outputs: text, JSON with -Json.
-Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat · else the client's.
-Sections: L25 config · L98 checks · L118 verb
+Exit codes: 0 ok · 1 refused (forbidden model, RAM, server down, model not served, client missing) · 2 usage · 3 no seat · else the client's (its 1-3 as 11-13).
+Sections: L25 config · L103 checks · L123 verb
 #>
 #Requires -Version 7
 # ---- config: models.mode, models.local, the token, each client's env and arguments
@@ -61,13 +61,18 @@ function Get-KitLocalModelEnv([string]$Client, $Cfg, [string]$Token, [string]$Mo
   foreach ($op in @(Get-KitProps $Cfg.env)) { if ($null -eq $op.Value -or "$($op.Value)" -eq '') { $ev.Remove($op.Name) } else { $ev[$op.Name] = "$($op.Value)" } }
   $ev
 }
-# every model id a start would use: -Model, the env's ANTHROPIC_*MODEL values, --model / -m / --model=<id> in the client args
+# every model id a start would use: -Model, ANTHROPIC_*MODEL / CLAUDE_CODE_SUBAGENT_MODEL (the map, else inherited), --model,
+# -m, --fallback-model (=<id> too), codex -c / --config model=<id>
 function Get-KitLocalModelIds($EnvMap, [string[]]$Rest, [string]$Model) {
   $mids = [Collections.Generic.List[string]]::new(); if ($Model) { $mids.Add($Model) }
-  foreach ($ek in @($EnvMap.Keys)) { if ($ek -match '^ANTHROPIC_(\w+_)?MODEL$' -and $EnvMap[$ek]) { $mids.Add("$($EnvMap[$ek])") } }
-  for ($ri = 0; $ri -lt $Rest.Count; $ri++) { if ("$($Rest[$ri])" -in '--model', '-m' -and $ri + 1 -lt $Rest.Count) { $mids.Add("$($Rest[$ri + 1])") } elseif ("$($Rest[$ri])" -match '^--model=(.+)$') { $mids.Add($Matches[1]) } }
+  foreach ($ek in @(@($EnvMap.Keys) + @(Get-ChildItem env: | ForEach-Object Name) | Select-Object -Unique)) {
+    if ($ek -match '^(ANTHROPIC_(\w+_)?MODEL|CLAUDE_CODE_SUBAGENT_MODEL)$') { $mv = if ($EnvMap.Contains($ek)) { $EnvMap[$ek] } else { [Environment]::GetEnvironmentVariable($ek) }; if ($mv) { $mids.Add("$mv") } } }
+  for ($ri = 0; $ri -lt $Rest.Count; $ri++) { $ra = "$($Rest[$ri])"; $nx = if ($ri + 1 -lt $Rest.Count) { "$($Rest[$ri + 1])" }
+    if ($ra -in '--model', '-m', '--fallback-model' -and $nx) { $mids.Add($nx) } elseif ($ra -match '^--(fallback-)?model=(.+)$') { $mids.Add($Matches[2]) } elseif ($ra -in '-c', '--config' -and $nx -match '^model\s*=\s*"?([^"]+)"?$') { $mids.Add($Matches[1]) } }
   @($mids | Select-Object -Unique)
 }
+# the token's config reference for output: a value put there by mistake is never shown
+function Format-KitLocalTokenRef([string]$Ref) { if ($Ref -match '^(env|secret):\w') { $Ref } elseif ($Ref) { '<a value, ignored: use env:<VAR> | secret:<name>>' } else { '' } }
 function Get-KitLocalModelArgs([string]$Client, $Cfg, [string]$Model, [bool]$Unsafe, [string]$PromptFile, [string]$SchemaFile, [string]$AgentType, [string[]]$Rest) {
   $av = [Collections.Generic.List[string]]::new(); $skip = if ($Unsafe) { "$(& (Join-Path $KitLibDir 'flagged.ps1') unsafeflag -Text $Client)" }   # its name makes pwsh log a script
   if ($Client -eq 'claude') {
@@ -134,7 +139,7 @@ if ($Client -eq 'status') {
   "server $($cfg.baseUrl): $(if ($sv.up) { "up, serves $(@($sv.ids) -join ', ')$(if ($so.forbidden.Count) { " (forbidden: $($so.forbidden -join ', '))" })" } else { "DOWN ($($sv.error))" })"
   "seats: $($sts.leases.Count)/$($cfg.maxConcurrent)$(if ($sts.leases.Count) { " ($($so.holders -join ', '))" }) · $($sts.waiting.Count) waiting"
   "RAM: $($ram.availGB) GB available, a start needs $($ram.needGB) GB over the $($ram.keepFreeGB) GB floor: $(if ($ram.ok) { 'ok' } else { 'SHORT' })"
-  "token ($($cfg.token)): $($so.token)"; return
+  "token ($(Format-KitLocalTokenRef $cfg.token)): $($so.token)"; return
 }
 $headless = [bool]$PromptFile
 if ($headless -and $Client -notin 'claude', 'codex') { Stop-KitVerb "local ${Client}: -PromptFile runs claude or codex only" }
@@ -142,7 +147,7 @@ if ($headless -and -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) { S
 if ($SchemaFile -and -not ($headless -and (Test-Path -LiteralPath $SchemaFile -PathType Leaf))) { Stop-KitVerb "local: -SchemaFile needs -PromptFile and an existing file ($SchemaFile)" }
 if ($AgentType -and -not ($headless -and $Client -eq 'claude')) { Stop-KitVerb 'local: -AgentType runs a crew agent headless: claude -PromptFile only (codex has no --agent)' }
 if ($Unsafe -and $Client -in 'desktop', 'code') { Stop-KitVerb "local ${Client}: -Unsafe has no flag there" }
-if ($Unsafe -and -not $Print -and ($headless -or $env:CLAUDECODE -or $env:CODEX_SANDBOX -or [Console]::IsInputRedirected)) { Stop-KitVerb "local: -Unsafe is for a person's own interactive session (agents never skip permissions): refused from an agent shell, piped input or -PromptFile" }
+if ($Unsafe -and -not $Print -and ($headless -or $env:CLAUDECODE -or $env:CLAUDE_AGENT -or @(Get-ChildItem env: | Where-Object Name -match '^CODEX_|ANTIGRAVITY').Count -or [Console]::IsInputRedirected)) { Stop-KitVerb "local: -Unsafe is for a person's own interactive session (agents never skip permissions): refused from an agent shell, piped input or -PromptFile" }
 $mdl = if ($Model) { $Model } elseif ($Client -eq 'codex' -or $headless) { $cfg.defaultModel } else { '' }   # interactive claude: the server's default unless -Model
 if ($Client -eq 'codex' -and -not $mdl) { Stop-KitVerb 'local codex: needs -Model or models.local.defaultModel (local status lists the served ids)' }
 $envMap = Get-KitLocalModelEnv $Client $cfg $tok $mdl
@@ -153,7 +158,7 @@ if ($Print) {
   $po = [ordered]@{ client = $Client; exe = "$exe"; args = $argv; model = $(if ($mdl) { $mdl } else { '(server default)' }); baseUrl = $cfg.baseUrl; mode = (Get-KitModelMode); token = $(if ($tok) { 'set' } else { 'unset' }); env = (Format-KitLocalEnv $envMap $tok) }
   if ($Json) { return ($po | ConvertTo-Json -Depth 5 -Compress) }
   "local ${Client}: $(if ($exe) { $exe } else { "(not found: models.local.commands.$Client)" }) $($argv -join ' ')"
-  "server $($cfg.baseUrl) · model $($po.model) · token ($($cfg.token)) $($po.token) · nothing started (-Print)"
+  "server $($cfg.baseUrl) · model $($po.model) · token ($(Format-KitLocalTokenRef $cfg.token)) $($po.token) · nothing started (-Print)"
   foreach ($pe in $po.env.GetEnumerator()) { "  $($pe.Key)=$($pe.Value)" }; return
 }
 if (-not $exe) { Stop-KitVerb "REFUSED: $Client not found (models.local.commands.${Client}: $(@($cfg.commands[$Client]) -join ', '))" 1 }
@@ -161,7 +166,11 @@ $ram = Test-KitLocalModelRam $cfg
 if (-not $ram.ok) { Stop-KitVerb "REFUSED: RAM $($ram.availGB) GB available; a local start needs $($ram.needGB) GB over the $($ram.keepFreeGB) GB floor (models.local.needGB, gate.keepFreeGB)" 1 }
 $sv = Get-KitLocalModelServed $cfg $tok
 if (-not $sv.up) { Stop-KitVerb "REFUSED: no local model server at $($cfg.baseUrl) ($($sv.error)): start it or set models.local.baseUrl" 1 }
-if ($mdl -and $mdl -notin $sv.ids) { Stop-KitVerb "REFUSED: model $mdl is not served at $($cfg.baseUrl) (served: $(@($sv.ids | Where-Object { -not (Test-KitLocalModelForbidden $cfg $_) }) -join ', '))" 1 }
+$okIds = @($sv.ids | Where-Object { -not (Test-KitLocalModelForbidden $cfg $_) })
+if ($mdl -and $mdl -notin $sv.ids) { Stop-KitVerb "REFUSED: model $mdl is not served at $($cfg.baseUrl) (served: $($okIds -join ', '))" 1 }
+if (-not $mdl -and @($sv.ids).Count -ne $okIds.Count) {   # no id named: a one-model server would answer with the forbidden one
+  if ($cfg.defaultModel -and $cfg.defaultModel -in $okIds) { $mdl = $cfg.defaultModel; $envMap.ANTHROPIC_MODEL = $mdl }
+  else { Stop-KitVerb "REFUSED: $($cfg.baseUrl) serves a forbidden model ($((@($sv.ids) | Where-Object { $_ -notin $okIds }) -join ', ')): pass -Model <an allowed id> or set models.local.defaultModel" 1 } }
 $over = $headless -and (Get-KitModelMode) -eq 'mixed' -and $cfg.overflow -eq 'cloud'
 $wait = if ($WaitMinutes -ge 0) { $WaitMinutes } elseif ($over) { 0 } else { [double](Get-KitParam 'models.local.queueMinutes') }
 if (-not (Use-KitLocalAi 'local-model' -Agent $Agent -Session $Session -WaitMinutes $wait -Max $cfg.maxConcurrent)) {
@@ -170,9 +179,12 @@ if (-not (Use-KitLocalAi 'local-model' -Agent $Agent -Session $Session -WaitMinu
 }
 if ($Client -in 'desktop', 'code') {
   try {
+    # a <app>/bin/<x>.cmd shim (VS Code) starts the app and exits: start the app's exe so the seat follows the window
+    if ($exe -match '\.(cmd|bat)$' -and (Split-Path (Split-Path $exe) -Leaf) -eq 'bin') { $ax = @(Get-ChildItem -LiteralPath (Split-Path (Split-Path $exe)) -Filter '*.exe' -File -ErrorAction SilentlyContinue | Where-Object Name -notmatch '^unins')[0]; if ($ax) { $exe = $ax.FullName } }
     $qa = @($argv | ForEach-Object { if ("$_" -match '\s') { '"' + $_ + '"' } else { "$_" } })   # Start-Process joins arguments with spaces
     $sp = @{ FilePath = $exe; Environment = @{} + $envMap; PassThru = $true }; if ($qa.Count) { $sp.ArgumentList = $qa }; if ($exe -match '\.(cmd|bat)$') { $sp.WindowStyle = 'Hidden' }
     $child = Start-Process @sp
+    if ($child.WaitForExit(5000)) { Remove-KitLocalAi 'local-model'; Stop-KitVerb "REFUSED: $Client exited at once (code $($child.ExitCode)): an open instance took the call without this env (close it first), or set models.local.commands.$Client to the app's exe" 1 }
     $null = Update-KitLocalAi 'local-model' { param($st) foreach ($ls in @($st.leases)) { if ($ls.pid -eq $PID) { $ls.pid = $child.Id; $ls.pidStart = Get-KitPidStart $child.Id } } }   # the seat lives as long as the app
   } catch { Remove-KitLocalAi 'local-model'; throw }
   return "started $Client (pid $($child.Id)) on $($cfg.baseUrl); its seat frees when that process ends"
@@ -183,5 +195,5 @@ try {
   if ($headless) { Get-Content -LiteralPath $PromptFile -Raw | & $exe @argv } else { & $exe @argv }
   $rc = $LASTEXITCODE
 } finally { foreach ($ek in @($saved.Keys)) { [Environment]::SetEnvironmentVariable($ek, $saved[$ek]) }; Remove-KitLocalAi 'local-model' }   # a dot-sourced caller keeps its own env
-$global:LASTEXITCODE = [int]$rc; if ($rc) { exit [int]$rc }
+$global:LASTEXITCODE = [int]$rc; if ($rc) { exit $(if ($rc -in 1, 2, 3) { 10 + $rc } else { [int]$rc }) }   # 1-3 are the verb's own codes
 }

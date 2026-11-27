@@ -23,26 +23,38 @@ $ua = Invoke-TestScript $D local claude -Unsafe
 Expect "local: -Unsafe refused from an agent shell, exit 2 ($($ua.code))" ($ua.code -eq 2 -and $ua.out -match 'agents never skip permissions')
 $fm = Invoke-TestScript $D local codex -Model big-27b-mtp -Print; $fa = Invoke-TestScript $D local claude -Print '--' --model big-x-mtp   # pwsh drops a bare -- (end of parameters): quoted
 Expect "local: a forbidden model refused, from -Model and from the client args, exit 1 ($($fm.code) $($fa.code))" ($fm.code -eq 1 -and $fm.out -match 'REFUSED: model big-27b-mtp is forbidden' -and $fa.code -eq 1 -and $fa.out -match 'big-x-mtp')
+$fb = @(@{ a = @('-Model', 'small-a', '--', '--model', 'big-1-mtp') }, @{ a = @('--', '--fallback-model', 'big-2-mtp') }, @{ a = @('--', '-c', 'model=big-3-mtp'); c = 'codex' }, @{ a = @(); e = 'big-4-mtp' }) | ForEach-Object {
+  if ($_.e) { $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $_.e }; $fr = Invoke-TestScript $D local $(if ($_.c) { $_.c } else { 'claude' }) -Print @($_.a); Remove-Item Env:ANTHROPIC_DEFAULT_SONNET_MODEL -ErrorAction SilentlyContinue; "$($fr.code):$(@($fr.out -split "`n" | Where-Object { $_ -match 'REFUSED' })[0] -replace '^.*model ([\w-]+).*$', '$1')" }
+Expect "local: no way past the forbidden list: -Model before --, --fallback-model, codex -c model=, an inherited ANTHROPIC_*_MODEL ($($fb -join ' '))" (($fb -join ' ') -eq '1:big-1-mtp 1:big-2-mtp 1:big-3-mtp 1:big-4-mtp')
+$litCfg = $lmCfg.Clone(); $litCfg.token = 'literal-' + $env:LM_TEST_TOKEN; & $J @{ models = @{ local = $litCfg } } $cfgFile; $lt = Invoke-TestScript $D local status; $lp = Invoke-TestScript $D local claude -Print; & $J @{ models = @{ local = $lmCfg } } $cfgFile
+Expect "local: a token value put in models.local.token is never printed (status, -Print)" ($lt.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN) -and $lp.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN) -and $lt.out -match 'a value, ignored')
 $env:CLAUDE_GATE_KEEP_FREE_GB = '99999'; $rm = Invoke-TestScript $D local claude; Remove-Item Env:CLAUDE_GATE_KEEP_FREE_GB
 Expect "local: RAM short of need + floor refused before any start, exit 1 ($($rm.code))" ($rm.code -eq 1 -and $rm.out -match 'REFUSED: RAM .* 99999 GB floor')
 $dn = Invoke-TestScript $D local claude
 Expect "local: no server at the base URL refused, exit 1 ($($dn.code))" ($dn.code -eq 1 -and $dn.out -match 'REFUSED: no local model server at http://127\.0\.0\.1:9')
 
-# a fake server: GET /v1/models lists small-a and a forbidden id; a fake client prints its env and exits 7
+# a fake server: GET /v1/models lists small-a and a forbidden id; a fake client prints its env and exits 3 (the verb: 13)
 $tl = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $tl.Start(); $port = $tl.LocalEndpoint.Port; $tl.Stop()
 $srv = Start-Job { param($p) $hl = [Net.HttpListener]::new(); $hl.Prefixes.Add("http://127.0.0.1:$p/"); $hl.Start(); $end = (Get-Date).AddMinutes(3)
   while ((Get-Date) -lt $end) { $ct = $hl.GetContextAsync(); while (-not $ct.Wait(500)) { if ((Get-Date) -ge $end) { break } }; if (-not $ct.IsCompleted) { break }
     $by = [Text.Encoding]::UTF8.GetBytes('{"object":"list","data":[{"id":"small-a"},{"id":"big-27b-mtp"}]}'); $rs = $ct.Result.Response; $rs.ContentType = 'application/json'; $rs.OutputStream.Write($by, 0, $by.Length); $rs.Close() } } -ArgumentList $port
-$fake = Join-Path (Kd) 'fakeclaude.ps1'; Set-Content $fake "`"BASE=`$env:ANTHROPIC_BASE_URL MODEL=`$env:ANTHROPIC_MODEL ARGS=`$(`$args -join ' ') IN=`$(@(`$input) -join '')`"; exit 7" -Encoding utf8
+$fake = Join-Path (Kd) 'fakeclaude.ps1'; Set-Content $fake "`"BASE=`$env:ANTHROPIC_BASE_URL MODEL=`$env:ANTHROPIC_MODEL ARGS=`$(`$args -join ' ') IN=`$(@(`$input) -join '')`"; exit 3" -Encoding utf8
 $lmCfg.baseUrl = "http://127.0.0.1:$port"; $lmCfg.commands = @{ claude = @($fake) }; & $J @{ models = @{ local = $lmCfg } } $cfgFile
 for ($wi = 0; $wi -lt 60; $wi++) { try { $tc = [Net.Sockets.TcpClient]::new('127.0.0.1', $port); $tc.Dispose(); break } catch { Start-Sleep -Milliseconds 250 } }   # the job's listener is up
 $st = Invoke-TestScript $D local status
 Expect "local: status names the served and the forbidden ids ($($st.out.Trim() -replace '\s+', ' '))" ($st.code -eq 0 -and $st.out -match 'up, serves small-a, big-27b-mtp \(forbidden: big-27b-mtp\)' -and $st.out -match 'seats: 0/2' -and $st.out -notmatch [regex]::Escape($env:LM_TEST_TOKEN))
 $ns = Invoke-TestScript $D local claude -Model other-1
 Expect "local: a model the server does not serve refused, the forbidden one not offered ($($ns.code))" ($ns.code -eq 1 -and $ns.out -match 'not served .*\(served: small-a\)')
+$ic = Invoke-TestScript $D local claude; $noDef = $lmCfg.Clone(); $noDef.Remove('defaultModel'); & $J @{ models = @{ local = $noDef } } $cfgFile; $ir = Invoke-TestScript $D local claude; & $J @{ models = @{ local = $lmCfg } } $cfgFile
+Expect "local: no -Model while the server also serves a forbidden id: the default model is pinned, none -> refused ($($ic.code) $($ir.code))" ($ic.code -eq 13 -and $ic.out -match 'MODEL=small-a' -and $ir.code -eq 1 -and $ir.out -match 'serves a forbidden model \(big-27b-mtp\)')
+$pw = (Get-Process -Id $PID).Path; $dkCfg = $lmCfg.Clone(); $dkCfg.commands = @{ claude = @($fake); desktop = @($pw) }; & $J @{ models = @{ local = $dkCfg } } $cfgFile
+$dq = Invoke-TestScript $D local desktop '--' -NoProfile -Command exit; $dqs = Invoke-TestScript $D local status; & $J @{ models = @{ local = $lmCfg } } $cfgFile
+Expect "local: a detached client that exits at once (an open instance took the call) is refused, its seat freed ($($dq.code))" ($dq.code -eq 1 -and $dq.out -match 'exited at once' -and $dqs.out -match 'seats: 0/2')
 $pf = Join-Path (Kd) 'prompt.txt'; Set-Content $pf 'hello local' -Encoding utf8
 $run = Invoke-TestScript $D local claude -PromptFile $pf -AgentType steppy
-Expect "local: a headless run gets the env, -p json, the crew agent, the prompt on stdin, and its client's exit code ($($run.code): $($run.out.Trim()))" ($run.code -eq 7 -and $run.out -match "BASE=http://127\.0\.0\.1:$port MODEL=small-a ARGS=-p --output-format json --agent steppy IN=hello local")
+Expect "local: a headless run gets the env, -p json, the crew agent, the prompt on stdin; the client's exit 3 comes back as 13 (3 = no seat) ($($run.code): $($run.out.Trim()))" ($run.code -eq 13 -and $run.out -match "BASE=http://127\.0\.0\.1:$port MODEL=small-a ARGS=-p --output-format json --agent steppy IN=hello local")
+$rst = pwsh -NoProfile -Command "`$null = & '$D' local claude -PromptFile '$pf' 2>&1; `"rc=`$LASTEXITCODE base=[`$env:ANTHROPIC_BASE_URL] tool=[`$env:KIT_TOOL]`"" 2>&1 | Select-Object -Last 1
+Expect "local: run in the caller's own pwsh (& crafty.ps1), the client's env is gone after it ($rst)" ("$rst" -eq 'rc=13 base=[] tool=[]')
 $sf = Join-Path (Kd) 'seat.ps1'; Set-Content $sf ". '$(Lib)'; `$me = @{ agent = 'busy'; pid = $PID; pidStart = (Get-KitPidStart $PID); at = (Get-KitStamp) }; `$null = Update-KitLocalAi 'local-model' { param(`$st) `$st.leases += `$me }" -Encoding utf8
 $lmCfg.maxConcurrent = 1; & $J @{ models = @{ mode = 'mixed'; local = $lmCfg } } $cfgFile; $null = pwsh @np $sf
 $ov = Invoke-TestScript $D local claude -PromptFile $pf; $qd = Invoke-TestScript $D local claude -WaitMinutes 0
